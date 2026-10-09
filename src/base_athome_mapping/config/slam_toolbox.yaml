@@ -1,0 +1,83 @@
+# ==============================================================================
+# CONFIGURACIÓN SLAM TOOLBOX (Mapeo 2D Online Asíncrono para Robot Solver)
+# Sensor: Hokuyo UST-05LX (40Hz, Ethernet 192.168.0.10)
+# Base: Hoverboard Diferencial con Odometría por Encoders Hall
+# ==============================================================================
+
+slam_toolbox:
+  ros__parameters:
+
+    # === CONFIGURACIÓN GENERAL ===
+    use_sim_time: false
+    mode: mapping                       # Modo: mapping (creación de mapa en vivo)
+    debug_logging: false
+    enable_interactive_mode: true       # Permite pausar/reanudar y guardar mapas interactivamente
+
+    # === FRAMES Y TOPICS DEL ÁRBOL TF ===
+    map_frame: map                      # Frame global del mapa
+    odom_frame: odom                    # Frame de odometría
+    base_frame: base_footprint          # Frame base en el piso del robot
+    scan_topic: /scan                   # Topic del LiDAR Hokuyo
+    use_map_saver: true
+
+    # === SOLUCIONADOR NO LINEAL (CERES) ===
+    solver_plugin: solver_plugins::CeresSolver
+    ceres_linear_solver: SPARSE_NORMAL_CHOLESKY
+    ceres_preconditioner: SCHUR_JACOBI
+    ceres_trust_strategy: LEVENBERG_MARQUARDT
+    ceres_dogleg_type: TRADITIONAL_DOGLEG
+    ceres_loss_function: None
+
+    # === PUBLICACIÓN Y ACTUALIZACIÓN DEL MAPA ===
+    transform_publish_period: 0.02      # Periodo de publicación de TF map -> odom (50 Hz)
+    map_update_interval: 1.0            # Actualizar rejilla de ocupación cada 1.0s
+    resolution: 0.05                    # Tamaño de celda del mapa: 5 cm (0.05 m)
+    max_laser_range: 5.5                # Rango máximo útil del UST-05LX (sensor de 5m)
+    minimum_time_interval: 0.05         # Frecuencia mínima entre escaneos procesados (20 Hz)
+    transform_timeout: 0.5              # Tolerancia de timeout de transformaciones TF (500 ms)
+    tf_buffer_duration: 30.0            # Buffer de historial TF
+    stack_size_to_use: 40000000         # Tamaño de memoria de serialización (40 MB)
+    scan_queue_size: 20                 # Cola de espera para sincronización TF con LiDAR de 40Hz
+    throttle_scans: 1                   # Procesar escaneos
+
+    # === CRITERIOS DE DESPLAZAMIENTO PARA ACTUALIZACIÓN ===
+    # El mapa se actualiza cuando el robot se mueve al menos esta distancia o ángulo
+    minimum_travel_distance: 0.15       # 15 cm de avance lineal
+    minimum_travel_heading: 0.15        # ~8.6 grados de giro angular
+
+    # === SCAN MATCHING (Alineación de Escaneos Láser) ===
+    use_scan_matching: true
+    use_scan_barycenter: true
+    scan_buffer_size: 20
+    scan_buffer_maximum_scan_distance: 5.5
+    link_match_minimum_response_fine: 0.65
+    link_scan_maximum_distance: 1.5
+
+    # === CIERRE DE BUCLES (LOOP CLOSURE) ===
+    do_loop_closing: true
+    loop_search_maximum_distance: 3.5   # Distancia de búsqueda para cerrar bucle
+    loop_match_minimum_chain_size: 10
+    loop_match_maximum_variance_coarse: 3.0
+    loop_match_minimum_response_coarse: 0.35
+    loop_match_minimum_response_fine: 0.45
+
+    # === ESPACIO DE BÚSQUEDA Y CORRELACIÓN ===
+    correlation_search_space_dimension: 0.5
+    correlation_search_space_resolution: 0.01
+    correlation_search_space_smear_deviation: 0.1
+
+    loop_search_space_dimension: 8.0
+    loop_search_space_resolution: 0.05
+    loop_search_space_smear_deviation: 0.03
+
+    # === PENALIZACIONES DE COINCIDENCIA ===
+    distance_variance_penalty: 0.5
+    angle_variance_penalty: 1.0
+    fine_search_angle_offset: 0.00349
+    coarse_search_angle_offset: 0.349
+    coarse_angle_resolution: 0.0349
+    minimum_angle_penalty: 0.9
+    minimum_distance_penalty: 0.5
+    use_response_expansion: true
+    min_pass_through: 2
+    occupancy_threshold: 0.1

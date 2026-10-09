@@ -1,0 +1,44 @@
+# ==============================================================================
+# PARÁMETROS CENTRALIZADOS - ROBOT BASE@HOME
+# ==============================================================================
+# Dimensiones físicas, cinemática diferencial y parámetros del Hoverboard.
+# ==============================================================================
+
+/**:
+  ros__parameters:
+    # Dimensiones del chasis cuadrado (metros)
+    chassis_length_m: 0.48      # Largo del chasis (X) = 48 cm
+    chassis_width_m: 0.48       # Ancho del chasis (Y) = 48 cm
+    chassis_height_m: 0.05      # Alto/grosor del chasis = 5 cm
+    ground_clearance_m: 0.04    # Despeje desde el piso hasta la base del chasis
+
+    # Disposición de ruedas de Hoverboard (CALIBRADO):
+    track_width_m: 0.5620       # Trocha cinemática efectiva entre ruedas (56.20 cm)
+    wheel_radius_m: 0.0853      # Radio efectivo rueda 6.5" bajo carga (85.3 mm)
+    wheel_offset_x_m: 0.095     # Desplazamiento del eje respecto al centro (+9.5 cm)
+
+    # Rueda loca trasera de apoyo (Caster):
+    caster_offset_x_m: -0.20    # Ubicada a 20 cm hacia atrás del centro
+    caster_radius_m: 0.04       # Radio de la rueda loca (4 cm)
+
+    # Ubicación del sensor LiDAR Hokuyo UST-05LX respecto a base_link:
+    laser_offset_x_m: 0.22      # +22 cm hacia adelante desde el centro del chasis
+    laser_offset_y_m: 0.00      # Centrado lateralmente (Y = 0)
+    laser_offset_z_m: 0.18      # +18 cm sobre el chasis
+
+# Configuración del Driver Hardware Hoverboard
+hoverboard_driver:
+  ros__parameters:
+    port: "/dev/ttyUSB0"
+    baudrate: 115200
+    wheel_radius_m: 0.0853
+    track_width_m: 0.5620
+    ticks_per_rev: 90.0        # 15 pares de polos * 6 estados = 90 ticks/vuelta
+    max_speed_raw: 450         # Límite firmware
+    max_steer_raw: 400         # Límite firmware
+    linear_scale: 200.0        # 1.0 m/s -> 200 unidades firmware
+    angular_scale: 160.0       # 1.0 rad/s -> 160 unidades firmware
+    publish_tf: true           # Broadcast directo TF odom -> base_footprint (50 Hz)
+    odom_frame: "odom"
+    base_frame: "base_footprint"
+    cmd_vel_timeout: 0.5       # Timeout de seguridad para frenar (segundos)

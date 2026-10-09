@@ -1,0 +1,28 @@
+# ROS 2 build directories
+build/
+install/
+log/
+
+# Python cache and bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+
+# Editor and OS
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Large datasets, maps and bag recordings
+*.bag
+*.db3
+*.db
+*.pgm

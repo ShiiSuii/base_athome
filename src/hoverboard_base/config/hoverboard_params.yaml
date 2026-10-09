@@ -1,0 +1,18 @@
+# ==============================================================================
+# PARÁMETROS DEL DRIVER DE HOVERBOARD (ROS 2 hoverboard_driver)
+# ==============================================================================
+hoverboard_driver:
+  ros__parameters:
+    port: "/dev/ttyUSB0"
+    baudrate: 115200
+    wheel_radius_m: 0.0853     # Radio calibrado (85.3 mm bajo peso del robot)
+    track_width_m: 0.5620      # Trocha cinemática efectiva calibrada (56.20 cm)
+    ticks_per_rev: 90.0        # 15 pares de polos * 6 estados = 90 ticks/vuelta
+    max_speed_raw: 450         # Límite máximo de velocidad firmware
+    max_steer_raw: 400         # Límite máximo de giro firmware
+    linear_scale: 200.0        # 1.0 m/s -> 200 unidades firmware
+    angular_scale: 160.0       # 1.0 rad/s -> 160 unidades firmware
+    publish_tf: true           # Broadcast directo de TF odom -> base_footprint (50 Hz)
+    odom_frame: "odom"
+    base_frame: "base_footprint"
+    cmd_vel_timeout: 0.5       # Timeout de seguridad para frenar (segundos)

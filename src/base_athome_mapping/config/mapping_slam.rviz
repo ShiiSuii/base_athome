@@ -1,0 +1,142 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+    Property Tree Widget:
+      Expanded:
+        - /Global Options1
+        - /TF1
+        - /RobotModel1
+        - /Map1
+        - /LaserScan1
+        - /Odometry1
+      Splitter Ratio: 0.5
+  - Class: rviz_common/Views
+    Name: Views
+    Property Tree Widget:
+      Expanded:
+        - /Current View1
+      Splitter Ratio: 0.5
+
+Visualization Manager:
+  Class: ""
+  Enabled: true
+
+  Global Options:
+    Background Color: 20; 24; 30
+    Fixed Frame: map
+    Frame Rate: 30
+
+  Displays:
+    # === REJILLA DE REFERENCIA ===
+    - Name: Grid
+      Class: rviz_default_plugins/Grid
+      Enabled: true
+      Cell Size: 1
+      Color: 80; 80; 90
+      Plane: XY
+      Plane Cell Count: 20
+      Reference Frame: <Fixed Frame>
+
+    # === MODELO 3D DEL ROBOT ===
+    - Name: RobotModel
+      Class: rviz_default_plugins/RobotModel
+      Enabled: true
+      Description Topic:
+        Depth: 5
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /robot_description
+      Visual Enabled: true
+      Collision Enabled: false
+      Alpha: 1.0
+
+    # === ÁRBOL TF DE COORDENADAS ===
+    - Name: TF
+      Class: rviz_default_plugins/TF
+      Enabled: true
+      Show Arrows: true
+      Show Axes: true
+      Show Names: true
+      Marker Scale: 0.25
+      Update Interval: 0.05
+
+    # === MAPA DE OCUPACIÓN 2D (SLAM TOOLBOX) ===
+    - Name: Map
+      Class: rviz_default_plugins/Map
+      Enabled: true
+      Topic:
+        Depth: 5
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /map
+      Alpha: 0.85
+      Color Scheme: map
+      Draw Behind: false
+      Update Topic:
+        Depth: 5
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: ""
+
+    # === ESCANEO LÁSER HOKUYO (UST-05LX) ===
+    - Name: LaserScan
+      Class: rviz_default_plugins/LaserScan
+      Enabled: true
+      Topic:
+        Depth: 10
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /scan
+      Color Transformer: FlatColor
+      Color: 255; 40; 40
+      Size (m): 0.04
+      Style: Flat Squares
+      Decay Time: 0.0
+
+    # === ODOMETRÍA DE RUEDAS EN VIVO ===
+    - Name: Odometry
+      Class: rviz_default_plugins/Odometry
+      Enabled: true
+      Topic:
+        Depth: 10
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /odom
+      Shape:
+        Axes:
+          Axes Length: 0.25
+          Axes Radius: 0.02
+        Type: Axes
+      Keep: 100
+
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+    - Class: rviz_default_plugins/SetInitialPose
+      Topic:
+        Value: /initialpose
+    - Class: rviz_default_plugins/SetGoal
+      Topic:
+        Value: /goal_pose
+
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 5.5
+      Focal Point:
+        X: 0.0
+        Y: 0.0
+        Z: 0.0
+      Name: Current View
+      Pitch: 0.75
+      Target Frame: base_footprint
+      Value: Orbit (rviz)
+      Yaw: 0.5
