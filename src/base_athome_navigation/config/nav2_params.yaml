@@ -95,8 +95,8 @@ controller_server:
     FollowPath:
       plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
       desired_linear_vel: 0.50
-      min_linear_vel: 0.18
-      min_approach_linear_velocity: 0.18
+      min_linear_vel: 0.22
+      min_approach_linear_velocity: 0.20
       max_linear_accel: 1.5
       max_angular_vel: 2.0
       max_angular_accel: 6.0
@@ -114,7 +114,7 @@ controller_server:
       use_interpolation: true
       use_cost_regulated_linear_velocity_scaling: false
       use_regulated_linear_velocity_scaling: true
-      regulated_linear_scaling_min_speed: 0.20
+      regulated_linear_scaling_min_speed: 0.22
 
 
 bt_navigator:

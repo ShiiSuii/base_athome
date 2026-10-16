@@ -41,6 +41,8 @@ class HoverboardDriver(Node):
         self.declare_parameter('ticks_per_rev', 90.0)       # 15 pares de polos * 6 estados = 90
         self.declare_parameter('max_speed_raw', 450)        # Límite máximo de velocidad (unidades firmware)
         self.declare_parameter('max_steer_raw', 400)        # Límite máximo de giro
+        self.declare_parameter('min_speed_raw', 46)         # Torque mínimo lineal para vencer fricción estática
+        self.declare_parameter('min_steer_raw', 50)         # Torque mínimo angular para giro sobre eje
         self.declare_parameter('linear_scale', 200.0)       # 1.0 m/s -> 200 unidades
         self.declare_parameter('angular_scale', 160.0)      # 1.0 rad/s -> 160 unidades (giro potente)
         self.declare_parameter('publish_tf', True)          # Publicar TF odom -> base_link
@@ -55,6 +57,8 @@ class HoverboardDriver(Node):
         self.ticks_per_rev = float(self.get_parameter('ticks_per_rev').value)
         self.max_speed_raw = int(self.get_parameter('max_speed_raw').value)
         self.max_steer_raw = int(self.get_parameter('max_steer_raw').value)
+        self.min_speed_raw = int(self.get_parameter('min_speed_raw').value)
+        self.min_steer_raw = int(self.get_parameter('min_steer_raw').value)
         self.linear_scale = float(self.get_parameter('linear_scale').value)
         self.angular_scale = float(self.get_parameter('angular_scale').value)
         self.publish_tf = bool(self.get_parameter('publish_tf').value)
@@ -233,24 +237,22 @@ class HoverboardDriver(Node):
         raw_steer = int(-angular * self.angular_scale)
 
         # Compensación de fricción estática (stiction) lineal para salida del reposo:
-        # Si se solicita avance o retroceso, asegurar un mínimo de torque (38 unidades ~0.19 m/s)
-        # para que las ruedas rompan la inercia del reposo por sí solas sin empujón manual.
+        # Si se solicita avance o retroceso, asegurar un mínimo de torque para que
+        # las ruedas rompan la inercia del reposo por sí solas sin empujón manual.
         if raw_speed != 0:
-            min_speed = 38
-            if 0 < raw_speed < min_speed:
-                raw_speed = min_speed
-            elif -min_speed < raw_speed < 0:
-                raw_speed = -min_speed
+            if 0 < raw_speed < self.min_speed_raw:
+                raw_speed = self.min_speed_raw
+            elif -self.min_speed_raw < raw_speed < 0:
+                raw_speed = -self.min_speed_raw
 
         # Compensación de fricción estática (stiction) para giro sobre el eje:
-        # Cuando no hay avance lineal y se pide girar, asegurar un torque mínimo (45 unidades)
+        # Cuando no hay avance lineal y se pide girar, asegurar un torque mínimo
         # para que los motores venzan la fricción del piso y no se tranquen en el arranque.
         if raw_speed == 0 and raw_steer != 0:
-            min_steer = 45
-            if 0 < raw_steer < min_steer:
-                raw_steer = min_steer
-            elif -min_steer < raw_steer < 0:
-                raw_steer = -min_steer
+            if 0 < raw_steer < self.min_steer_raw:
+                raw_steer = self.min_steer_raw
+            elif -self.min_steer_raw < raw_steer < 0:
+                raw_steer = -self.min_steer_raw
 
         self.target_speed = max(min(raw_speed, self.max_speed_raw), -self.max_speed_raw)
         self.target_steer = max(min(raw_steer, self.max_steer_raw), -self.max_steer_raw)
@@ -375,6 +377,12 @@ class HoverboardDriver(Node):
             elif param.name == 'track_width_m':
                 self.track_width = float(param.value)
                 self.get_logger().info(f"⚙️ Parámetro track_width_m actualizado a {self.track_width:.4f} m")
+            elif param.name == 'min_speed_raw':
+                self.min_speed_raw = int(param.value)
+                self.get_logger().info(f"⚙️ Parámetro min_speed_raw actualizado a {self.min_speed_raw}")
+            elif param.name == 'min_steer_raw':
+                self.min_steer_raw = int(param.value)
+                self.get_logger().info(f"⚙️ Parámetro min_steer_raw actualizado a {self.min_steer_raw}")
         return SetParametersResult(successful=True)
 
 
