@@ -42,9 +42,9 @@ class HoverboardDriver(Node):
         self.declare_parameter('max_speed_raw', 450)        # Límite máximo de velocidad (unidades firmware)
         self.declare_parameter('max_steer_raw', 400)        # Límite máximo de giro
         self.declare_parameter('min_speed_raw', 75)         # Torque mínimo lineal para vencer fricción estática
-        self.declare_parameter('min_steer_raw', 85)         # Torque mínimo angular para giro sobre eje (vence arrastre de neumáticos)
+        self.declare_parameter('min_steer_raw', 90)         # Torque mínimo angular para giro sobre eje (vence arrastre de neumáticos de 12-20kg)
         self.declare_parameter('linear_scale', 280.0)       # 1.0 m/s -> 280 unidades (más torque por velocidad comandada)
-        self.declare_parameter('angular_scale', 220.0)      # 1.0 rad/s -> 220 unidades (torque rotacional firme)
+        self.declare_parameter('angular_scale', 230.0)      # 1.0 rad/s -> 230 unidades (torque rotacional firme)
         self.declare_parameter('publish_tf', True)          # Publicar TF odom -> base_link
         self.declare_parameter('odom_frame', 'odom')
         self.declare_parameter('base_frame', 'base_footprint')
@@ -236,9 +236,9 @@ class HoverboardDriver(Node):
         angular = msg.angular.z
 
         # Zona muerta lineal para rotación pura en el lugar:
-        # Si la velocidad lineal es ínfima (< 2.5 cm/s), forzar cero absoluto para permitir
+        # Si la velocidad lineal es ínfima (< 3.5 cm/s), forzar cero absoluto para permitir
         # que el robot dedique todo el torque disponible a alinear la orientación exacta del waypoint.
-        if abs(linear) < 0.025:
+        if abs(linear) < 0.035:
             linear = 0.0
 
         raw_speed = int(linear * self.linear_scale)
@@ -275,11 +275,11 @@ class HoverboardDriver(Node):
             self.target_speed = 0
             self.target_steer = 0
 
-        # Rampa suave (anti-chatter / anti-vibración):
-        # Filtra oscilaciones de alta frecuencia entre ciclos (20 Hz) de Nav2,
-        # evitando pulsos alternados que hacen temblar los motores en el reposo.
+        # Rampa suave (anti-chatter / anti-vibración) con desaceleración rápida:
+        # Aceleración suave (filtra oscilaciones de 20 Hz de Nav2 para evitar temblores)
+        # y frenado rápido (evita que la inercia sobrepase el ángulo objetivo al detenerse).
         speed_diff = self.target_speed - self.sent_speed
-        max_speed_step = 8  # Rampa de aceleración: 400 unidades/s (alcanza 70 en ~0.18s)
+        max_speed_step = 8 if abs(self.target_speed) >= abs(self.sent_speed) else 20
         if speed_diff > max_speed_step:
             self.sent_speed += max_speed_step
         elif speed_diff < -max_speed_step:
@@ -288,7 +288,7 @@ class HoverboardDriver(Node):
             self.sent_speed = self.target_speed
 
         steer_diff = self.target_steer - self.sent_steer
-        max_steer_step = 12  # Rampa angular: 600 unidades/s (giros ágiles pero sin tirones)
+        max_steer_step = 12 if abs(self.target_steer) >= abs(self.sent_steer) else 30
         if steer_diff > max_steer_step:
             self.sent_steer += max_steer_step
         elif steer_diff < -max_steer_step:
