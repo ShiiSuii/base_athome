@@ -41,10 +41,10 @@ class HoverboardDriver(Node):
         self.declare_parameter('ticks_per_rev', 90.0)       # 15 pares de polos * 6 estados = 90
         self.declare_parameter('max_speed_raw', 450)        # Límite máximo de velocidad (unidades firmware)
         self.declare_parameter('max_steer_raw', 400)        # Límite máximo de giro
-        self.declare_parameter('min_speed_raw', 70)         # Torque mínimo lineal para vencer fricción estática
-        self.declare_parameter('min_steer_raw', 65)         # Torque mínimo angular para giro sobre eje
-        self.declare_parameter('linear_scale', 200.0)       # 1.0 m/s -> 200 unidades
-        self.declare_parameter('angular_scale', 160.0)      # 1.0 rad/s -> 160 unidades (giro potente)
+        self.declare_parameter('min_speed_raw', 75)         # Torque mínimo lineal para vencer fricción estática
+        self.declare_parameter('min_steer_raw', 85)         # Torque mínimo angular para giro sobre eje (vence arrastre de neumáticos)
+        self.declare_parameter('linear_scale', 280.0)       # 1.0 m/s -> 280 unidades (más torque por velocidad comandada)
+        self.declare_parameter('angular_scale', 220.0)      # 1.0 rad/s -> 220 unidades (torque rotacional firme)
         self.declare_parameter('publish_tf', True)          # Publicar TF odom -> base_link
         self.declare_parameter('odom_frame', 'odom')
         self.declare_parameter('base_frame', 'base_footprint')
@@ -235,6 +235,12 @@ class HoverboardDriver(Node):
         linear = msg.linear.x
         angular = msg.angular.z
 
+        # Zona muerta lineal para rotación pura en el lugar:
+        # Si la velocidad lineal es ínfima (< 2.5 cm/s), forzar cero absoluto para permitir
+        # que el robot dedique todo el torque disponible a alinear la orientación exacta del waypoint.
+        if abs(linear) < 0.025:
+            linear = 0.0
+
         raw_speed = int(linear * self.linear_scale)
         raw_steer = int(-angular * self.angular_scale)
 
@@ -406,6 +412,12 @@ class HoverboardDriver(Node):
             elif param.name == 'min_steer_raw':
                 self.min_steer_raw = int(param.value)
                 self.get_logger().info(f"⚙️ Parámetro min_steer_raw actualizado a {self.min_steer_raw}")
+            elif param.name == 'linear_scale':
+                self.linear_scale = float(param.value)
+                self.get_logger().info(f"⚙️ Parámetro linear_scale actualizado a {self.linear_scale}")
+            elif param.name == 'angular_scale':
+                self.angular_scale = float(param.value)
+                self.get_logger().info(f"⚙️ Parámetro angular_scale actualizado a {self.angular_scale}")
         return SetParametersResult(successful=True)
 
 
