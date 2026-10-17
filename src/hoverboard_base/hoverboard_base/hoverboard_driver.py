@@ -42,9 +42,9 @@ class HoverboardDriver(Node):
         self.declare_parameter('max_speed_raw', 450)        # Límite máximo de velocidad (unidades firmware)
         self.declare_parameter('max_steer_raw', 400)        # Límite máximo de giro
         self.declare_parameter('min_speed_raw', 75)         # Torque mínimo lineal para vencer fricción estática
-        self.declare_parameter('min_steer_raw', 90)         # Torque mínimo angular para giro sobre eje (vence arrastre de neumáticos de 12-20kg)
+        self.declare_parameter('min_steer_raw', 165)        # Torque mínimo angular para giro sobre eje (en firmware 165 * 0.5 = 82.5 efectivo)
         self.declare_parameter('linear_scale', 280.0)       # 1.0 m/s -> 280 unidades (más torque por velocidad comandada)
-        self.declare_parameter('angular_scale', 230.0)      # 1.0 rad/s -> 230 unidades (torque rotacional firme)
+        self.declare_parameter('angular_scale', 260.0)      # 1.0 rad/s -> 260 unidades (torque rotacional firme)
         self.declare_parameter('publish_tf', True)          # Publicar TF odom -> base_link
         self.declare_parameter('odom_frame', 'odom')
         self.declare_parameter('base_frame', 'base_footprint')

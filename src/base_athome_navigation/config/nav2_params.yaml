@@ -88,7 +88,7 @@ controller_server:
     goal_checker:
       plugin: "nav2_controller::SimpleGoalChecker"
       xy_goal_tolerance: 0.18
-      yaw_goal_tolerance: 0.08   # ~4.6 grados (fija con precisión la orientación pedida en RViz2)
+      yaw_goal_tolerance: 0.10   # ~5.7 grados (orientación precisa y estable en RViz2)
       stateful: true
 
     # ----- Controller: Rotation Shim Controller wrapping Regulated Pure Pursuit -----
