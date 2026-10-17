@@ -38,8 +38,8 @@ hoverboard_driver:
     max_steer_raw: 400         # Límite firmware
     linear_scale: 200.0        # 1.0 m/s -> 200 unidades firmware
     angular_scale: 160.0       # 1.0 rad/s -> 160 unidades firmware
-    min_speed_raw: 46          # Torque mínimo lineal para romper inercia en reposo
-    min_steer_raw: 50          # Torque mínimo angular para giro sobre eje
+    min_speed_raw: 60          # Torque mínimo lineal para romper inercia en reposo
+    min_steer_raw: 60          # Torque mínimo angular para giro sobre eje
     publish_tf: true           # Broadcast directo TF odom -> base_footprint (50 Hz)
     odom_frame: "odom"
     base_frame: "base_footprint"
