@@ -16,6 +16,10 @@
   <depend>nav2_bt_navigator</depend>
   <depend>nav2_lifecycle_manager</depend>
   <depend>nav2_regulated_pure_pursuit_controller</depend>
+  <depend>nav2_rotation_shim_controller</depend>
+  <depend>nav2_simple_commander</depend>
+  <depend>geometry_msgs</depend>
+  <depend>visualization_msgs</depend>
   <depend>nav2_smac_planner</depend>
   <depend>rviz2</depend>
 

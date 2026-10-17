@@ -25,6 +25,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
+            'waypoint_navigator = base_athome_navigation.waypoint_navigator:main',
         ],
     },
 )
