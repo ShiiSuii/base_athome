@@ -94,27 +94,27 @@ controller_server:
     # ----- Controller: Regulated Pure Pursuit (ideal para base diferencial Hoverboard) -----
     FollowPath:
       plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
-      desired_linear_vel: 0.55
-      min_linear_vel: 0.30
-      min_approach_linear_velocity: 0.25
+      desired_linear_vel: 0.60
+      min_linear_vel: 0.35
+      min_approach_linear_velocity: 0.26
       max_linear_accel: 1.8
-      max_angular_vel: 2.4
-      max_angular_accel: 7.0
+      max_angular_vel: 1.8
+      max_angular_accel: 3.5
 
-      lookahead_dist: 0.6
-      min_lookahead_dist: 0.35
-      max_lookahead_dist: 1.0
+      lookahead_dist: 0.85
+      min_lookahead_dist: 0.60
+      max_lookahead_dist: 1.5
       use_velocity_scaled_lookahead_dist: true
 
       transform_tolerance: 0.5
       use_rotate_to_heading: true
       rotate_to_heading_min_angle: 0.40
-      rotate_to_heading_angular_vel: 1.8
+      rotate_to_heading_angular_vel: 1.5
       allow_reversing: false
       use_interpolation: true
       use_cost_regulated_linear_velocity_scaling: false
       use_regulated_linear_velocity_scaling: true
-      regulated_linear_scaling_min_speed: 0.30
+      regulated_linear_scaling_min_speed: 0.35
 
 
 bt_navigator:

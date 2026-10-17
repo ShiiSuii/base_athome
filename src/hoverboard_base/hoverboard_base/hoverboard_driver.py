@@ -41,8 +41,8 @@ class HoverboardDriver(Node):
         self.declare_parameter('ticks_per_rev', 90.0)       # 15 pares de polos * 6 estados = 90
         self.declare_parameter('max_speed_raw', 450)        # Límite máximo de velocidad (unidades firmware)
         self.declare_parameter('max_steer_raw', 400)        # Límite máximo de giro
-        self.declare_parameter('min_speed_raw', 65)         # Torque mínimo lineal para vencer fricción estática
-        self.declare_parameter('min_steer_raw', 70)         # Torque mínimo angular para giro sobre eje
+        self.declare_parameter('min_speed_raw', 70)         # Torque mínimo lineal para vencer fricción estática
+        self.declare_parameter('min_steer_raw', 65)         # Torque mínimo angular para giro sobre eje
         self.declare_parameter('linear_scale', 200.0)       # 1.0 m/s -> 200 unidades
         self.declare_parameter('angular_scale', 160.0)      # 1.0 rad/s -> 160 unidades (giro potente)
         self.declare_parameter('publish_tf', True)          # Publicar TF odom -> base_link
@@ -80,6 +80,8 @@ class HoverboardDriver(Node):
         # --- Estado del Robot ---
         self.target_speed = 0
         self.target_steer = 0
+        self.sent_speed = 0
+        self.sent_steer = 0
         self.last_cmd_time = time.time()
 
         # Odometría Pose y Velocidad (protegidos por Lock)
@@ -267,6 +269,27 @@ class HoverboardDriver(Node):
             self.target_speed = 0
             self.target_steer = 0
 
+        # Rampa suave (anti-chatter / anti-vibración):
+        # Filtra oscilaciones de alta frecuencia entre ciclos (20 Hz) de Nav2,
+        # evitando pulsos alternados que hacen temblar los motores en el reposo.
+        speed_diff = self.target_speed - self.sent_speed
+        max_speed_step = 8  # Rampa de aceleración: 400 unidades/s (alcanza 70 en ~0.18s)
+        if speed_diff > max_speed_step:
+            self.sent_speed += max_speed_step
+        elif speed_diff < -max_speed_step:
+            self.sent_speed -= max_speed_step
+        else:
+            self.sent_speed = self.target_speed
+
+        steer_diff = self.target_steer - self.sent_steer
+        max_steer_step = 12  # Rampa angular: 600 unidades/s (giros ágiles pero sin tirones)
+        if steer_diff > max_steer_step:
+            self.sent_steer += max_steer_step
+        elif steer_diff < -max_steer_step:
+            self.sent_steer -= max_steer_step
+        else:
+            self.sent_steer = self.target_steer
+
         # 2. Reintento de reconexión si el puerto falló
         if self.ser is None or not self.ser.is_open:
             if self.loop_count % 100 == 0:
@@ -274,8 +297,8 @@ class HoverboardDriver(Node):
             return
 
         # 3. Transmisión del paquete de control a la placa (50 Hz)
-        chk = (self.START_FRAME ^ (self.target_steer & 0xFFFF) ^ (self.target_speed & 0xFFFF)) & 0xFFFF
-        cmd_pkt = struct.pack('<HhhH', self.START_FRAME, self.target_steer, self.target_speed, chk)
+        chk = (self.START_FRAME ^ (self.sent_steer & 0xFFFF) ^ (self.sent_speed & 0xFFFF)) & 0xFFFF
+        cmd_pkt = struct.pack('<HhhH', self.START_FRAME, self.sent_steer, self.sent_speed, chk)
         try:
             self.ser.write(cmd_pkt)
             self.ser.flush()
