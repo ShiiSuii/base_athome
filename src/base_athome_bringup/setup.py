@@ -24,6 +24,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
+            'stepper_controller = base_athome_bringup.stepper_controller:main',
         ],
     },
 )
