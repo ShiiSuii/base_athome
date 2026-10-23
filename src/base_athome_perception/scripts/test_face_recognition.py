@@ -17,6 +17,7 @@ from typing import List, Optional, Tuple
 
 import cv2
 import numpy as np
+import yaml
 
 # Asegurar que el modulo base_athome_perception sea visible
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -153,7 +154,13 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
         self.unknown_face_start_time = None
         self.last_registered_time = 0.0
 
-        # Parametros de Trackeo Facial Lento (Pan-Tilt)
+        # Parametros de Trackeo Facial (Cargados desde tracking_params.yaml)
+        self.tracking_config_path = os.path.join(pkg_root, "config", "tracking_params.yaml")
+        self.last_config_check_time = 0.0
+        self.last_config_mtime = 0.0
+        self.tracking_cfg = {}
+        self.load_tracking_config()
+
         self.tracking_enabled = True
         self.target_pan_deg = 0.0
         self.target_tilt_deg = 0.0
@@ -161,6 +168,49 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
         self.tracked_bbox: Optional[Tuple[int, int, int, int]] = None
         self.filtered_face_cx: Optional[float] = None
         self.filtered_face_cy: Optional[float] = None
+
+    def load_tracking_config(self):
+        """Carga parametros de calibracion desde tracking_params.yaml."""
+        defaults = {
+            "kp_pan": 0.025,
+            "kp_tilt": 0.018,
+            "max_pan_step": 1.2,
+            "max_tilt_step": 0.8,
+            "deadband_x": 25.0,
+            "deadband_y": 25.0,
+            "invert_pan": True,
+            "invert_tilt": False,
+            "filter_alpha": 0.45,
+            "max_pan_limit": 50.0,
+            "max_tilt_limit": 22.0,
+            "min_tilt_limit": -18.0,
+        }
+        if os.path.exists(self.tracking_config_path):
+            try:
+                with open(self.tracking_config_path, "r") as f:
+                    data = yaml.safe_load(f)
+                    t = data.get("tracking", {})
+                    defaults.update(t)
+                self.last_config_mtime = os.path.getmtime(self.tracking_config_path)
+            except Exception as e:
+                if hasattr(self, "get_logger"):
+                    self.get_logger().warn(f"Error cargando tracking_params.yaml: {e}")
+        self.tracking_cfg = defaults
+
+    def check_config_reload(self, now: float):
+        """Verifica cada 1.5s si el archivo de calibracion fue actualizado para recargarlo en caliente."""
+        if now - self.last_config_check_time < 1.5:
+            return
+        self.last_config_check_time = now
+
+        if os.path.exists(self.tracking_config_path):
+            try:
+                mtime = os.path.getmtime(self.tracking_config_path)
+                if mtime > self.last_config_mtime:
+                    self.load_tracking_config()
+                    print("\n[+] [FaceTracking] ¡Parametros actualizados en caliente desde tracking_params.yaml!")
+            except Exception:
+                pass
 
     def image_callback(self, msg: Image):
         try:
@@ -180,7 +230,7 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
         self.voice_status = msg.data.strip()
 
     def update_face_tracking(self, results: list, now: float):
-        """Calcula y envia comandos ultra suaves al cabezal para centrar el rostro."""
+        """Calcula y envia comandos reactivos al cabezal usando los parametros calibrados."""
         if not self.tracking_enabled or not results or self.pub_pantilt is None:
             self.tracked_bbox = None
             self.filtered_face_cx = None
@@ -196,41 +246,41 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
         raw_cx = x + bw / 2.0
         raw_cy = y + bh / 2.0
 
-        # Filtro pasa-bajos reactivo (ALPHA = 0.45 para respuesta rapida sin retardo)
+        alpha = float(self.tracking_cfg.get("filter_alpha", 0.45))
         if self.filtered_face_cx is None:
             self.filtered_face_cx = raw_cx
             self.filtered_face_cy = raw_cy
         else:
-            ALPHA = 0.45
-            self.filtered_face_cx = (1.0 - ALPHA) * self.filtered_face_cx + ALPHA * raw_cx
-            self.filtered_face_cy = (1.0 - ALPHA) * self.filtered_face_cy + ALPHA * raw_cy
+            self.filtered_face_cx = (1.0 - alpha) * self.filtered_face_cx + alpha * raw_cx
+            self.filtered_face_cy = (1.0 - alpha) * self.filtered_face_cy + alpha * raw_cy
 
         # Error respecto al centro del cuadro (640x480)
         err_x = self.filtered_face_cx - 320.0
         err_y = self.filtered_face_cy - 240.0
 
-        # Zona muerta reducida para respuesta inmediata
-        DEAD_X = 25.0
-        DEAD_Y = 25.0
+        db_x = float(self.tracking_cfg.get("deadband_x", 25.0))
+        db_y = float(self.tracking_cfg.get("deadband_y", 25.0))
+        kp_p = float(self.tracking_cfg.get("kp_pan", 0.025))
+        kp_t = float(self.tracking_cfg.get("kp_tilt", 0.018))
+        max_p_step = float(self.tracking_cfg.get("max_pan_step", 1.2))
+        max_t_step = float(self.tracking_cfg.get("max_tilt_step", 0.8))
+        inv_p = bool(self.tracking_cfg.get("invert_pan", True))
+        inv_t = bool(self.tracking_cfg.get("invert_tilt", False))
 
-        # Ganancias rapidas y pasos dinamicos para seguimiento veloz
-        KP_PAN = 0.025
-        KP_TILT = 0.018
-        MAX_PAN_STEP = 1.0    # Hasta 1.0 deg por ciclo (~20 deg/s a 20 Hz)
-        MAX_TILT_STEP = 0.7   # Hasta 0.7 deg por ciclo (~14 deg/s a 20 Hz)
+        if abs(err_x) > db_x:
+            step_pan = np.clip(err_x * kp_p, -max_p_step, max_p_step)
+            self.target_pan_deg += (-step_pan if inv_p else step_pan)
 
-        if abs(err_x) > DEAD_X:
-            # Sentido horizontal corregido (invertido segun geometria del cabezal)
-            delta_pan = -np.clip(err_x * KP_PAN, -MAX_PAN_STEP, MAX_PAN_STEP)
-            self.target_pan_deg += delta_pan
+        if abs(err_y) > db_y:
+            step_tilt = np.clip(err_y * kp_t, -max_t_step, max_t_step)
+            self.target_tilt_deg += (step_tilt if inv_t else -step_tilt)
 
-        if abs(err_y) > DEAD_Y:
-            delta_tilt = -np.clip(err_y * KP_TILT, -MAX_TILT_STEP, MAX_TILT_STEP)
-            self.target_tilt_deg += delta_tilt
+        p_lim = float(self.tracking_cfg.get("max_pan_limit", 50.0))
+        t_max = float(self.tracking_cfg.get("max_tilt_limit", 22.0))
+        t_min = float(self.tracking_cfg.get("min_tilt_limit", -18.0))
 
-        # Limites angulares seguros del cabezal
-        self.target_pan_deg = float(np.clip(self.target_pan_deg, -50.0, 50.0))
-        self.target_tilt_deg = float(np.clip(self.target_tilt_deg, -18.0, 22.0))
+        self.target_pan_deg = float(np.clip(self.target_pan_deg, -p_lim, p_lim))
+        self.target_tilt_deg = float(np.clip(self.target_tilt_deg, t_min, t_max))
 
         # Publicar comando a 20 Hz (cada 50 ms) para seguimiento fluido y reactivo
         if now - self.last_track_time >= 0.05:
@@ -240,6 +290,7 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
             msg.y = self.target_tilt_deg
             msg.z = 0.0
             self.pub_pantilt.publish(msg)
+
 
 
 
@@ -334,7 +385,7 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
                 pulse = int(abs(np.sin(now * 4)) * 50)
                 b_color = (0, 160 + pulse, 240)
                 elapsed = now - self.state_start_time
-                remaining = max(0, int(15.0 - elapsed))
+                remaining = max(0, int(6.0 - elapsed))
                 icon_txt = f"[LISTENING MIC - {remaining}s]"
                 if self.voice_status == "LISTENING":
                     msg_txt = "Voice detected! Transcribing..."
@@ -462,10 +513,13 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
 
             now = time.time()
 
+            # Recarga en caliente si tracking_params.yaml fue editado con el calibrador
+            self.check_config_reload(now)
+
             # Inferencia y Deteccion Facial
             results = self.recognizer.detect_and_recognize(frame)
 
-            # Actualizar trackeo lento del rostro con el cabezal Pan-Tilt
+            # Actualizar trackeo del rostro con el cabezal Pan-Tilt
             self.update_face_tracking(results, now)
 
             # Acumular embeddings del rostro mas grande si estamos en proceso de registro
@@ -481,26 +535,26 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
             if self.state == self.STATE_IDLE:
                 # Comprobar si hay una persona desconocida presente
                 has_unknown = any(r["name"] == "Desconocido" for r in results)
-                if has_unknown and self.auto_prompt_enabled and (now - self.last_registered_time > 14.0):
+                if has_unknown and self.auto_prompt_enabled and (now - self.last_registered_time > 12.0):
                     if self.unknown_face_start_time is None:
                         self.unknown_face_start_time = now
-                    elif now - self.unknown_face_start_time >= 2.0:
-                        # Ha permanecido frente a la camara por 2 segundos -> Auto-iniciar saludo
+                    elif now - self.unknown_face_start_time >= 1.8:
+                        # Permanecio frente a la camara por ~1.8s -> Auto-iniciar saludo
                         self.unknown_face_start_time = None
                         self.start_voice_registration(reason="auto-deteccion")
                 else:
                     self.unknown_face_start_time = None
 
             elif self.state == self.STATE_PROMPT_NAME:
-                # Esperar a que el robot termine de hablar la explicacion inicial
-                if not self.speaker.is_speaking and (now - self.state_start_time > 1.5):
+                # Transicion inmediata apenas el robot termine de hablar
+                if not self.speaker.is_speaking and (now - self.state_start_time > 0.2):
                     self.state = self.STATE_WAIT_NAME
                     self.state_start_time = now
                     self.voice_text = None
                     print("[Robot]: Escuchando respuesta del usuario en el microfono RØDE...")
 
             elif self.state == self.STATE_WAIT_NAME:
-                # Esperar transcripcion de Whisper o timeout
+                # Esperar transcripcion de Whisper o timeout reducido (6.0s maximo)
                 if self.voice_text:
                     user_speech = self.voice_text
                     self.voice_text = None
@@ -524,22 +578,25 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
                     else:
                         print("[ASR]: No se pudo extraer un nombre valido. Reintentando...")
                         prompt_retry = "I didn't catch your name. Please say: My name is, followed by your name."
+                        self.current_banner_text = prompt_retry
                         self.speaker.speak(prompt_retry)
+                        self.state = self.STATE_PROMPT_NAME
                         self.state_start_time = now
 
-                elif now - self.state_start_time > 16.0:
-                    print("[ASR]: Tiempo de espera agotado sin respuesta.")
+                elif now - self.state_start_time > 6.0:
+                    print("[ASR]: Tiempo de espera finalizado (sin respuesta).")
                     self.speaker.speak("I did not hear you. Let's try again later.")
                     self.state = self.STATE_IDLE
                     self.last_registered_time = now
 
             elif self.state == self.STATE_CONFIRM_NAME:
-                # Esperar a que termine la frase de confirmacion
-                if not self.speaker.is_speaking and (now - self.state_start_time > 1.5):
+                # Transicion de retorno inmediata apenas termine de hablar la bienvenida
+                if not self.speaker.is_speaking and (now - self.state_start_time > 0.3):
                     self.state = self.STATE_IDLE
                     self.last_registered_time = now
                     self.pending_name = ""
                     self.collected_features = []
+
 
             # Calculo de FPS
             fps_counter += 1
