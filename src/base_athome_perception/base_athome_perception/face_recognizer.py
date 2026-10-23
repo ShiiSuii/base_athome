@@ -189,6 +189,16 @@ class FaceRecognizer:
         print(f"[FaceRecognizer] ¡Rostro registrado exitosamente para: '{name}'!")
         return True
 
+    def enroll_feature(self, feature: np.ndarray, name: str) -> bool:
+        """Registra directamente un vector de caracteristicas para un nombre."""
+        if feature is None:
+            return False
+        if name not in self.known_faces:
+            self.known_faces[name] = []
+        self.known_faces[name].append(feature)
+        self.save_database()
+        return True
+
     def clear_database(self) -> None:
         """Borra todos los rostros guardados."""
         self.known_faces = {}
