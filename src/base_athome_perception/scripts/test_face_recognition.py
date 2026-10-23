@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 # ==============================================================================
-# Base@Home - Sistema Interactivo de Reconocimiento Facial y Registro por Voz
+# Base@Home - Reconocimiento Facial, Registro por Voz y Trackeo Lento del Rostro
 # RoboCup @Home - Interaccion Natural por Audio (Piper TTS EN + Whisper ASR EN)
-# Audio Output: Parlante Bluetooth (PipeWire / PulseAudio)
+# Audio Output: Parlante Bluetooth PPA 205 (Intel NUC PipeWire)
 # Audio Input: Microfono Direccional RØDE VideoMic GO II (Jetson Orin Nano)
+# Hardware Cabezal: Pan-Tilt Dynamixel (Servos ID 1 y 2)
 # ==============================================================================
 
 import argparse
@@ -12,7 +13,7 @@ import re
 import sys
 import threading
 import time
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -30,6 +31,7 @@ try:
     from rclpy.qos import QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
     from sensor_msgs.msg import Image
     from std_msgs.msg import String
+    from geometry_msgs.msg import Vector3
     from cv_bridge import CvBridge
     ROS2_AVAILABLE = True
 except ImportError:
@@ -72,7 +74,7 @@ def extract_person_name(text: str) -> str:
 
 
 class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
-    """Nodo interactivo de reconocimiento facial y registro por voz para RoboCup @Home."""
+    """Nodo interactivo de reconocimiento facial, registro por voz y trackeo suave para RoboCup @Home."""
 
     STATE_IDLE = 0
     STATE_PROMPT_NAME = 1
@@ -108,8 +110,12 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
             self.sub_voice_status = self.create_subscription(
                 String, "/voice/status", self.voice_status_callback, 10
             )
+
+            # Publicador para trackeo del Pan-Tilt (Dynamixel)
+            self.pub_pantilt = self.create_publisher(Vector3, "/pan_tilt/target_degrees", 10)
         else:
             self.sub = None
+            self.pub_pantilt = None
 
         self.use_camera_id = use_camera_id
         self.cap = None
@@ -147,6 +153,13 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
         self.unknown_face_start_time = None
         self.last_registered_time = 0.0
 
+        # Parametros de Trackeo Facial Lento (Pan-Tilt)
+        self.tracking_enabled = True
+        self.target_pan_deg = 0.0
+        self.target_tilt_deg = 0.0
+        self.last_track_time = 0.0
+        self.tracked_bbox: Optional[Tuple[int, int, int, int]] = None
+
     def image_callback(self, msg: Image):
         try:
             self.latest_frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
@@ -164,6 +177,56 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
     def voice_status_callback(self, msg: String):
         self.voice_status = msg.data.strip()
 
+    def update_face_tracking(self, results: list, now: float):
+        """Calcula y envia comandos lentos y suaves al cabezal para centrar el rostro."""
+        if not self.tracking_enabled or not results or self.pub_pantilt is None:
+            self.tracked_bbox = None
+            return
+
+        # Seleccionar el rostro mas grande (mas cercano)
+        target = max(results, key=lambda r: r["bbox"][2] * r["bbox"][3])
+        x, y, bw, bh = target["bbox"]
+        self.tracked_bbox = (x, y, bw, bh)
+
+        # Centro del rostro vs Centro de la imagen (640x480)
+        face_cx = x + bw / 2.0
+        face_cy = y + bh / 2.0
+        err_x = face_cx - 320.0
+        err_y = face_cy - 240.0
+
+        # Zona muerta (Deadband) para evitar micro-oscilaciones o temblores
+        DEAD_X = 35.0
+        DEAD_Y = 30.0
+
+        # Ganancias suaves y limites de paso por frame (control suave y lento)
+        KP_PAN = 0.015
+        KP_TILT = 0.012
+        MAX_PAN_STEP = 0.55   # Grados maximos por ciclo (~6 deg/s a 10 Hz)
+        MAX_TILT_STEP = 0.35  # Grados maximos por ciclo (~4 deg/s a 10 Hz)
+
+        if abs(err_x) > DEAD_X:
+            # Si el rostro esta a la derecha (+err_x), rotar a la derecha (-pan)
+            delta_pan = -np.clip(err_x * KP_PAN, -MAX_PAN_STEP, MAX_PAN_STEP)
+            self.target_pan_deg += delta_pan
+
+        if abs(err_y) > DEAD_Y:
+            # Si el rostro esta abajo (+err_y), inclinar hacia abajo (-tilt)
+            delta_tilt = -np.clip(err_y * KP_TILT, -MAX_TILT_STEP, MAX_TILT_STEP)
+            self.target_tilt_deg += delta_tilt
+
+        # Limites angulares seguros del cabezal
+        self.target_pan_deg = float(np.clip(self.target_pan_deg, -45.0, 45.0))
+        self.target_tilt_deg = float(np.clip(self.target_tilt_deg, -15.0, 20.0))
+
+        # Publicar comando a 10 Hz
+        if now - self.last_track_time >= 0.10:
+            self.last_track_time = now
+            msg = Vector3()
+            msg.x = self.target_pan_deg
+            msg.y = self.target_tilt_deg
+            msg.z = 0.0
+            self.pub_pantilt.publish(msg)
+
     def start_voice_registration(self, reason: str = "manual"):
         """Inicia el protocolo RoboCup @Home para registrar a una nueva persona hablando."""
         if self.state != self.STATE_IDLE:
@@ -174,13 +237,14 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
         self.collected_features = []
         self.voice_text = None
         self.pending_name = ""
-        self.current_banner_text = "Hello! Please look at the camera. What is your name?"
+        # Instruccion clara y amigable
+        self.current_banner_text = "Hello! What is your name? Please say: My name is, followed by your name."
         print(f"\n[RoboCup @Home] Iniciando registro por voz ({reason})...")
         print(f"[Robot]: \"{self.current_banner_text}\"")
         self.speaker.speak(self.current_banner_text)
 
     def draw_hud(self, frame: np.ndarray, results: list) -> np.ndarray:
-        """Dibuja interfaz grafica profesional sobre la imagen con soporte interactivo de voz."""
+        """Dibuja interfaz grafica profesional sobre la imagen con soporte interactivo de voz y tracking."""
         h, w = frame.shape[:2]
         vis = frame.copy()
         now = time.time()
@@ -190,7 +254,7 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
         cv2.rectangle(overlay, (0, 0), (w, 55), (20, 24, 30), -1)
         cv2.addWeighted(overlay, 0.8, vis, 0.2, 0, vis)
 
-        cv2.putText(vis, "BASE@HOME - RECONOCIMIENTO Y REGISTRO POR VOZ", (15, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.60, (255, 255, 255), 2)
+        cv2.putText(vis, "BASE@HOME - RECONOCIMIENTO, VOZ Y TRACKEO FACIAL", (15, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (255, 255, 255), 2)
         cv2.circle(vis, (w - 140, 20), 6, (0, 255, 0), -1)
         cv2.putText(vis, "EN VIVO", (w - 125, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (0, 255, 0), 2)
         cv2.putText(vis, f"FPS: {self.fps:.1f}", (w - 230, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (200, 200, 200), 1)
@@ -199,11 +263,13 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
         known_str = f"Rostros ({len(known_list)}): " + (", ".join(known_list[:5]) + ("..." if len(known_list) > 5 else "") if known_list else "Ninguno")
         cv2.putText(vis, known_str, (15, 46), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (180, 205, 225), 1)
 
-        # 2. Bounding boxes y etiquetas de rostros
+        # 2. Bounding boxes, etiquetas y reticulo de tracking
         for res in results:
             x, y, bw, bh = res["bbox"]
             name = res["name"]
             sim = res["similarity"]
+
+            is_tracked = (self.tracked_bbox is not None and (x, y, bw, bh) == self.tracked_bbox and self.tracking_enabled)
 
             if name != "Desconocido":
                 color = (0, 230, 70)  # Verde
@@ -224,37 +290,43 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
             cv2.line(vis, (x + bw, y + bh), (x + bw - line_len, y + bh), color, thick + 1)
             cv2.line(vis, (x + bw, y + bh), (x + bw, y + bh - line_len), color, thick + 1)
 
+            # Etiqueta sobre el rostro
             (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1)
             lbl_y = max(y - 8, th + 8)
             cv2.rectangle(vis, (x, lbl_y - th - 6), (x + tw + 10, lbl_y + 2), color, -1)
             cv2.putText(vis, label, (x + 5, lbl_y - 2), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (10, 15, 20), 2)
 
-        # 3. Banner interactivo de Estado de Voz (RoboCup @Home)
+            # Indicador de tracking activo sobre el rostro objetivo
+            if is_tracked:
+                cx, cy = int(x + bw / 2), int(y + bh / 2)
+                cv2.circle(vis, (cx, cy), 12, (0, 240, 255), 1)
+                cv2.line(vis, (cx - 16, cy), (cx + 16, cy), (0, 240, 255), 1)
+                cv2.line(vis, (cx, cy - 16), (cx, cy + 16), (0, 240, 255), 1)
+                cv2.putText(vis, "[TRACKING]", (x, y + bh + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 240, 255), 1)
+
+        # 3. Banner superior interactivo de Estado de Voz
         if self.state != self.STATE_IDLE:
             banner_h = 45
             banner_y = 65
             banner_bg = vis.copy()
 
             if self.state == self.STATE_PROMPT_NAME:
-                # Robot hablando (Cyan)
                 b_color = (180, 120, 20)
                 icon_txt = "[ROBOT TALKING]"
                 msg_txt = self.current_banner_text
             elif self.state == self.STATE_WAIT_NAME:
-                # Robot escuchando el microfono (Amarillo/Dorado con parpadeo)
                 pulse = int(abs(np.sin(now * 4)) * 50)
                 b_color = (0, 160 + pulse, 240)
                 elapsed = now - self.state_start_time
                 remaining = max(0, int(15.0 - elapsed))
                 icon_txt = f"[LISTENING MIC - {remaining}s]"
                 if self.voice_status == "LISTENING":
-                    msg_txt = "Detecting voice... Speak your name clearly!"
+                    msg_txt = "Voice detected! Transcribing..."
                 elif self.voice_status == "PROCESSING":
                     msg_txt = "Transcribing with Whisper AI..."
                 else:
-                    msg_txt = "Say: 'My name is [Your Name]'"
+                    msg_txt = "Speak clearly: 'My name is [Your Name]'"
             elif self.state == self.STATE_CONFIRM_NAME:
-                # Confirmacion exitosa (Verde esmeralda)
                 b_color = (20, 160, 40)
                 icon_txt = "[SUCCESS]"
                 msg_txt = self.current_banner_text
@@ -262,18 +334,31 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
             cv2.rectangle(banner_bg, (15, banner_y), (w - 15, banner_y + banner_h), b_color, -1)
             cv2.addWeighted(banner_bg, 0.85, vis, 0.15, 0, vis)
             cv2.rectangle(vis, (15, banner_y), (w - 15, banner_y + banner_h), (255, 255, 255), 1)
-
             cv2.putText(vis, icon_txt, (25, banner_y + 28), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
-            cv2.putText(vis, msg_txt, (210, banner_y + 28), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 1)
+            cv2.putText(vis, msg_txt, (210, banner_y + 28), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (255, 255, 255), 1)
 
-        # 4. Barra inferior de atajos y configuracion
+            # 4. Tarjeta Guiada de Instruccion de Respuesta (Explicacion visual al usuario)
+            if self.state in [self.STATE_PROMPT_NAME, self.STATE_WAIT_NAME]:
+                card_w, card_h = 610, 60
+                card_x = (w - card_w) // 2
+                card_y = h - 110
+                card_bg = vis.copy()
+                cv2.rectangle(card_bg, (card_x, card_y), (card_x + card_w, card_y + card_h), (35, 28, 15), -1)
+                cv2.addWeighted(card_bg, 0.85, vis, 0.15, 0, vis)
+                cv2.rectangle(vis, (card_x, card_y), (card_x + card_w, card_y + card_h), (0, 200, 255), 2)
+
+                cv2.putText(vis, "COMO RESPONDER AL ROBOT (Speak into the RØDE microphone):", (card_x + 12, card_y + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 220, 255), 2)
+                cv2.putText(vis, '>>>  "My name is [Your Name]"   (Ejemplo: "My name is John")  <<<', (card_x + 12, card_y + 46), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (255, 255, 255), 2)
+
+        # 5. Barra inferior de atajos y estado del hardware
         overlay_bot = vis.copy()
         cv2.rectangle(overlay_bot, (0, h - 38), (w, h), (20, 24, 30), -1)
         cv2.addWeighted(overlay_bot, 0.85, vis, 0.15, 0, vis)
 
-        auto_str = "[A] Auto-Voz: ON" if self.auto_prompt_enabled else "[A] Auto-Voz: OFF"
-        shortcuts = f"[V / ESPACIO] Registro por Voz | [T] Escribir | {auto_str} | [C] Borrar DB | [Q] Salir"
-        cv2.putText(vis, shortcuts, (15, h - 14), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (220, 220, 220), 1)
+        auto_str = "Auto-Voz: ON" if self.auto_prompt_enabled else "Auto-Voz: OFF"
+        track_str = f"[H] Track: ON ({self.target_pan_deg:+.1f} deg)" if self.tracking_enabled else "[H] Track: OFF"
+        shortcuts = f"[V / ESPACIO] Registro | [T] Escribir | {track_str} | [A] {auto_str} | [C] Borrar | [Q] Salir"
+        cv2.putText(vis, shortcuts, (15, h - 14), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (220, 220, 220), 1)
 
         return vis
 
@@ -306,19 +391,20 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
         print("--------------------------------------------------\n")
 
     def run(self):
-        window_name = "Base@Home - Reconocimiento Facial y Registro por Voz"
+        window_name = "Base@Home - Reconocimiento Facial, Voz y Trackeo"
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
         cv2.resizeWindow(window_name, 960, 720)
 
         print("==================================================")
-        print("  Base@Home - Sistema de Reconocimiento y Voz")
+        print("  Base@Home - Reconocimiento, Voz y Trackeo Suave")
         print("  - Voz Neuronal: Piper TTS (en_US-lessac-medium)")
-        print("  - Salida de Audio: Parlante Bluetooth (PPA 205)")
-        print("  - Entrada de Audio: RØDE VideoMic + Whisper AI")
+        print("  - Microfono: RØDE VideoMic GO II (+20 dB Calibrado)")
+        print("  - Cabezal: Pan-Tilt Dynamixel (Trackeo Lento Activo)")
         print("--------------------------------------------------")
         print("  [V] o [ESPACIO] : Iniciar registro oral por voz")
-        print("  [T]             : Registro manual por teclado")
+        print("  [H]             : Activar/desactivar trackeo del rostro")
         print("  [A]             : Activar/desactivar auto-registro")
+        print("  [T]             : Registro manual por teclado")
         print("  [C]             : Limpiar base de datos de rostros")
         print("  [Q]             : Salir")
         print("==================================================")
@@ -363,6 +449,9 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
             # Inferencia y Deteccion Facial
             results = self.recognizer.detect_and_recognize(frame)
 
+            # Actualizar trackeo lento del rostro con el cabezal Pan-Tilt
+            self.update_face_tracking(results, now)
+
             # Acumular embeddings del rostro mas grande si estamos en proceso de registro
             if self.state in [self.STATE_PROMPT_NAME, self.STATE_WAIT_NAME]:
                 if results and len(self.collected_features) < 10:
@@ -376,7 +465,7 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
             if self.state == self.STATE_IDLE:
                 # Comprobar si hay una persona desconocida presente
                 has_unknown = any(r["name"] == "Desconocido" for r in results)
-                if has_unknown and self.auto_prompt_enabled and (now - self.last_registered_time > 12.0):
+                if has_unknown and self.auto_prompt_enabled and (now - self.last_registered_time > 14.0):
                     if self.unknown_face_start_time is None:
                         self.unknown_face_start_time = now
                     elif now - self.unknown_face_start_time >= 2.0:
@@ -387,12 +476,12 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
                     self.unknown_face_start_time = None
 
             elif self.state == self.STATE_PROMPT_NAME:
-                # Esperar a que el robot termine de hablar la pregunta inicial
-                if not self.speaker.is_speaking and (now - self.state_start_time > 1.2):
+                # Esperar a que el robot termine de hablar la explicacion inicial
+                if not self.speaker.is_speaking and (now - self.state_start_time > 1.5):
                     self.state = self.STATE_WAIT_NAME
                     self.state_start_time = now
                     self.voice_text = None
-                    print("[Robot]: Escuchando respuesta del usuario en el microfono...")
+                    print("[Robot]: Escuchando respuesta del usuario en el microfono RØDE...")
 
             elif self.state == self.STATE_WAIT_NAME:
                 # Esperar transcripcion de Whisper o timeout
@@ -418,10 +507,11 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
                         self.state_start_time = now
                     else:
                         print("[ASR]: No se pudo extraer un nombre valido. Reintentando...")
-                        self.speaker.speak("I didn't catch your name. What is your name?")
+                        prompt_retry = "I didn't catch your name. Please say: My name is, followed by your name."
+                        self.speaker.speak(prompt_retry)
                         self.state_start_time = now
 
-                elif now - self.state_start_time > 15.0:
+                elif now - self.state_start_time > 16.0:
                     print("[ASR]: Tiempo de espera agotado sin respuesta.")
                     self.speaker.speak("I did not hear you. Let's try again later.")
                     self.state = self.STATE_IDLE
@@ -453,6 +543,10 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
                 break
             elif key in [ord("v"), ord("V"), 32]:  # V o ESPACIO
                 self.start_voice_registration(reason="tecla manual")
+            elif key in [ord("h"), ord("H")]:
+                self.tracking_enabled = not self.tracking_enabled
+                state_str = "ACTIVADO" if self.tracking_enabled else "DESACTIVADO"
+                print(f"[*] Trackeo Facial Pan-Tilt: {state_str}")
             elif key in [ord("t"), ord("T")]:
                 self.enroll_by_typing(frame, results)
             elif key in [ord("a"), ord("A")]:
@@ -470,7 +564,7 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Reconocimiento Facial y Registro por Voz para RoboCup @Home")
+    parser = argparse.ArgumentParser(description="Reconocimiento Facial, Voz y Trackeo para RoboCup @Home")
     parser.add_argument("--topic", default="/camera/camera/color/image_raw", help="Topico ROS 2 de imagen RGB")
     parser.add_argument("--webcam", type=int, default=-1, help="Usar camara USB local /dev/videoX en lugar de ROS 2")
     args = parser.parse_args()
