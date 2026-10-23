@@ -196,12 +196,12 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
         raw_cx = x + bw / 2.0
         raw_cy = y + bh / 2.0
 
-        # Filtro pasa-bajos exponencial para eliminar jitter del detector de rostros
+        # Filtro pasa-bajos reactivo (ALPHA = 0.45 para respuesta rapida sin retardo)
         if self.filtered_face_cx is None:
             self.filtered_face_cx = raw_cx
             self.filtered_face_cy = raw_cy
         else:
-            ALPHA = 0.20  # 80% historia, 20% nueva medicion -> ultra suave
+            ALPHA = 0.45
             self.filtered_face_cx = (1.0 - ALPHA) * self.filtered_face_cx + ALPHA * raw_cx
             self.filtered_face_cy = (1.0 - ALPHA) * self.filtered_face_cy + ALPHA * raw_cy
 
@@ -209,40 +209,38 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
         err_x = self.filtered_face_cx - 320.0
         err_y = self.filtered_face_cy - 240.0
 
-        # Zona muerta amplia para evitar cualquier movimiento brusco o temblor
-        DEAD_X = 50.0
-        DEAD_Y = 40.0
+        # Zona muerta reducida para respuesta inmediata
+        DEAD_X = 25.0
+        DEAD_Y = 25.0
 
-        # Ganancias suaves y pasos maximos reducidos (movimiento lento y cinematografico)
-        KP_PAN = 0.007
-        KP_TILT = 0.006
-        MAX_PAN_STEP = 0.25   # Max 0.25 deg por ciclo (~2.5 deg/s)
-        MAX_TILT_STEP = 0.18  # Max 0.18 deg por ciclo (~1.8 deg/s)
+        # Ganancias rapidas y pasos dinamicos para seguimiento veloz
+        KP_PAN = 0.025
+        KP_TILT = 0.018
+        MAX_PAN_STEP = 1.0    # Hasta 1.0 deg por ciclo (~20 deg/s a 20 Hz)
+        MAX_TILT_STEP = 0.7   # Hasta 0.7 deg por ciclo (~14 deg/s a 20 Hz)
 
         if abs(err_x) > DEAD_X:
-            # CORREGIDO: Invertido el signo de Pan.
-            # En este robot, rotar a la derecha requiere angulo POSITIVO (+pan).
-            # Si el rostro esta a la derecha (+err_x), sumamos +delta_pan hacia la derecha.
-            delta_pan = np.clip(err_x * KP_PAN, -MAX_PAN_STEP, MAX_PAN_STEP)
+            # Sentido horizontal corregido (invertido segun geometria del cabezal)
+            delta_pan = -np.clip(err_x * KP_PAN, -MAX_PAN_STEP, MAX_PAN_STEP)
             self.target_pan_deg += delta_pan
 
         if abs(err_y) > DEAD_Y:
-            # Si el rostro esta abajo (+err_y), inclinar hacia abajo (-tilt).
             delta_tilt = -np.clip(err_y * KP_TILT, -MAX_TILT_STEP, MAX_TILT_STEP)
             self.target_tilt_deg += delta_tilt
 
         # Limites angulares seguros del cabezal
-        self.target_pan_deg = float(np.clip(self.target_pan_deg, -45.0, 45.0))
-        self.target_tilt_deg = float(np.clip(self.target_tilt_deg, -15.0, 20.0))
+        self.target_pan_deg = float(np.clip(self.target_pan_deg, -50.0, 50.0))
+        self.target_tilt_deg = float(np.clip(self.target_tilt_deg, -18.0, 22.0))
 
-        # Publicar comando a 10 Hz
-        if now - self.last_track_time >= 0.10:
+        # Publicar comando a 20 Hz (cada 50 ms) para seguimiento fluido y reactivo
+        if now - self.last_track_time >= 0.05:
             self.last_track_time = now
             msg = Vector3()
             msg.x = self.target_pan_deg
             msg.y = self.target_tilt_deg
             msg.z = 0.0
             self.pub_pantilt.publish(msg)
+
 
 
     def start_voice_registration(self, reason: str = "manual"):
