@@ -22,8 +22,19 @@ except ImportError:
 
 
 def find_arduino_port():
-    """Auto-detect connected USB serial port for Arduino Nano, safely ignoring Hoverboard."""
-    # 1. Chequeo directo por ID persistente de udev para el chip CH340 de Arduino Nano
+    """Auto-detect connected USB serial port for ESP32 / Arduino Nano, safely ignoring Hoverboard."""
+    # 1. Chequeo por ID persistente de udev para el ESP32-S3 (CH343 / CDC-ACM)
+    by_id_esp32 = "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5CBD013609-if00"
+    if os.path.exists(by_id_esp32):
+        return by_id_esp32
+
+    # 2. Otros posibles nombres persistentes para ESP32
+    if os.path.exists("/dev/serial/by-id"):
+        for fname in os.listdir("/dev/serial/by-id"):
+            if "Single_Serial" in fname or "esp32" in fname.lower() or "ch343" in fname.lower():
+                return os.path.join("/dev/serial/by-id", fname)
+
+    # 3. Chequeo por ID persistente para el chip CH340 del Arduino Nano anterior
     by_id_nano = "/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0"
     if os.path.exists(by_id_nano):
         return by_id_nano
@@ -39,9 +50,13 @@ def find_arduino_port():
         if "0403:6001" in hwid or "ft232r" in desc or (port_name == "/dev/ttyUSB0" and "ftdi" in desc):
             continue
 
-        # Identificar chip CH340 / CH341 / QinHeng / Arduino Nano / ACM
-        if "1a86" in hwid or "ch340" in desc or "ch341" in desc or "arduino" in desc or "acm" in port_name.lower():
+        # Identificar ESP32 o ACM
+        if "acm" in port_name.lower() or "55d3" in hwid:
             return port_name
+
+        # Identificar chip CH340 / CH341 / QinHeng / Arduino Nano
+        if "1a86" in hwid or "ch340" in desc or "ch341" in desc or "arduino" in desc:
+            candidates.append(port_name)
 
         if "usb" in port_name.lower() and port_name != "/dev/ttyUSB0":
             candidates.append(port_name)
@@ -50,7 +65,7 @@ def find_arduino_port():
         return candidates[0]
 
     # Fallback seguro evitando /dev/ttyUSB0
-    for dev in ["/dev/ttyUSB1", "/dev/ttyACM0", "/dev/ttyACM1", "/dev/ttyUSB2"]:
+    for dev in ["/dev/ttyACM0", "/dev/ttyUSB1", "/dev/ttyACM1", "/dev/ttyUSB2"]:
         if os.path.exists(dev):
             return dev
     return None
@@ -98,7 +113,7 @@ class StepperController:
             self.ser = None
             return False
 
-    def send_cmd(self, command: str, print_response=True):
+    def send_cmd(self, command: str, print_response=True, wait_done=False, timeout=90.0):
         if not self.ser or not self.ser.is_open:
             print("[!] Serial port is not connected.")
             return False
@@ -107,8 +122,10 @@ class StepperController:
             full_cmd = command.strip() + "\n"
             self.ser.write(full_cmd.encode('utf-8'))
             self.ser.flush()
-            if print_response:
-                time.sleep(0.1)
+            if wait_done:
+                self.wait_for_motion_done(max_timeout=timeout)
+            elif print_response:
+                time.sleep(0.08)
                 self.read_responses()
             return True
         except Exception as e:
@@ -123,13 +140,31 @@ class StepperController:
             if self.ser.in_waiting > 0:
                 line = self.ser.readline().decode('utf-8', errors='replace').strip()
                 if line:
-                    print(f"  [Arduino] {line}")
+                    print(f"  [ESP32] {line}")
             else:
                 time.sleep(0.02)
 
-    def close(self):
+    def wait_for_motion_done(self, max_timeout=90.0):
+        if not self.ser:
+            return
+        start = time.time()
+        while time.time() - start < max_timeout:
+            if self.ser.in_waiting > 0:
+                line = self.ser.readline().decode('utf-8', errors='replace').strip()
+                if line:
+                    print(f"  [ESP32] {line}")
+                    if "finalizado" in line or "[✓]" in line or "Posicion cero establecida" in line:
+                        return
+                    if "[X]" in line or "DETENCION" in line:
+                        return
+            else:
+                time.sleep(0.01)
+        print(f"  [!] Tiempo maximo de espera alcanzado ({max_timeout}s).")
+
+    def close(self, stop_motor=False):
         if self.ser and self.ser.is_open:
-            self.send_cmd("S", print_response=False)
+            if stop_motor:
+                self.send_cmd("S", print_response=False)
             self.ser.close()
             print("[*] Serial port closed.")
 
@@ -207,12 +242,21 @@ def print_help_menu():
 ============================================================
               NEMA23 STEPPER TERMINAL COMMANDS
 ============================================================
+  calibrate / cal     : Rutina completa de calibracion (detecta BOT, mide TOP y posiciona arriba)
+  home / h            : Rutina de calibracion / referencia
+  top                 : Ir al tope superior de trabajo (requiere calibracion previa)
+  bottom / bot        : Ir al fondo de trabajo (requiere calibracion previa)
+  invert_dir          : Invertir sentido (SUBIR/BAJAR)
   forward / f         : Rotate forward continuous (CW)
   reverse / r         : Rotate reverse continuous (CCW)
   stop / s            : Emergency stop motor
   +                   : Increase speed (faster)
   -                   : Decrease speed (slower)
-  speed <us> / v <us> : Set step pulse delay in microseconds (e.g. speed 400)
+  speed <us> / v <us> : Set step pulse delay in microseconds (e.g. speed 100, speed 200)
+  rpm <val>           : Set speed directly in RPM (e.g. rpm 180, rpm 300)
+  turbo / fast        : Quick speed presets (turbo=50us, fast=100us)
+  normal / slow       : Quick speed presets (normal=250us, slow=600us)
+  ramp <steps>        : Set acceleration ramp length in steps (e.g. ramp 300)
   move <steps> / m    : Move relative steps (e.g. move 400 or move -200)
   angle <deg> / a     : Move relative angle (e.g. angle 90 or angle -45)
   keys / k            : Enter Live Arrow-Keys Control Mode
@@ -239,8 +283,16 @@ def interactive_cli_menu(controller: StepperController):
             if cmd_name in ["exit", "quit"]:
                 print("[*] Goodbye!")
                 break
-            elif cmd_name in ["help", "h"]:
+            elif cmd_name in ["help", "h"] and len(parts) == 1 and parts[0] == "help":
                 print_help_menu()
+            elif cmd_name in ["calibrate", "cal", "home", "h"]:
+                controller.send_cmd("CALIBRATE", wait_done=True, timeout=120.0)
+            elif cmd_name in ["top", "arriba"]:
+                controller.send_cmd("TOP", wait_done=True, timeout=60.0)
+            elif cmd_name in ["bottom", "bot", "abajo"]:
+                controller.send_cmd("BOT", wait_done=True, timeout=60.0)
+            elif cmd_name in ["invert_dir"]:
+                controller.send_cmd("INVERT_DIR")
             elif cmd_name in ["forward", "f"]:
                 controller.send_cmd("F")
             elif cmd_name in ["reverse", "r"]:
@@ -251,6 +303,18 @@ def interactive_cli_menu(controller: StepperController):
                 controller.send_cmd("+")
             elif cmd_name == "-":
                 controller.send_cmd("-")
+            elif cmd_name in ["turbo", "fast", "normal", "slow"]:
+                controller.send_cmd(cmd_name.upper())
+            elif cmd_name == "rpm":
+                if len(parts) > 1:
+                    controller.send_cmd(f"RPM {parts[1]}")
+                else:
+                    print("Usage: rpm <val> (e.g., rpm 180)")
+            elif cmd_name == "ramp":
+                if len(parts) > 1:
+                    controller.send_cmd(f"RAMP {parts[1]}")
+                else:
+                    print("Usage: ramp <steps> (e.g., ramp 300)")
             elif cmd_name in ["keys", "k", "keyboard"]:
                 interactive_keyboard_mode(controller)
             elif cmd_name in ["status", "?"]:
@@ -259,7 +323,7 @@ def interactive_cli_menu(controller: StepperController):
                 if len(parts) > 1:
                     controller.send_cmd(f"V {parts[1]}")
                 else:
-                    print("Usage: speed <interval_us> (e.g., speed 300)")
+                    print("Usage: speed <interval_us> (e.g., speed 200)")
             elif cmd_name in ["move", "m"]:
                 if len(parts) > 1:
                     controller.send_cmd(f"M {parts[1]}")
@@ -274,7 +338,7 @@ def interactive_cli_menu(controller: StepperController):
                 target_port = parts[1] if len(parts) > 1 else None
                 controller.connect(target_port)
             else:
-                # Pass raw command directly to Arduino
+                # Pass raw command directly to Arduino / ESP32
                 controller.send_cmd(user_input)
 
         except (KeyboardInterrupt, EOFError):
@@ -283,22 +347,29 @@ def interactive_cli_menu(controller: StepperController):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Terminal Stepper Motor Controller for Arduino Nano")
-    parser.add_argument("--port", "-p", help="Serial port (e.g., /dev/ttyUSB1, /dev/ttyACM0)")
+    parser = argparse.ArgumentParser(description="Terminal Stepper Motor Controller for ESP32-S3 / Arduino Nano")
+    parser.add_argument("--port", "-p", help="Serial port (e.g., /dev/ttyACM0, /dev/ttyUSB1)")
     parser.add_argument("--baud", "-b", type=int, default=115200, help="Baud rate (default: 115200)")
-    parser.add_argument("--action", "-a", choices=["forward", "reverse", "stop", "status", "keys"], help="Direct action to perform")
+    parser.add_argument("--action", "-a", choices=["forward", "reverse", "stop", "status", "keys", "turbo", "fast", "normal", "slow", "home", "calibrate", "cal", "top", "bottom"], help="Direct action to perform")
     parser.add_argument("--move", "-m", type=int, help="Move relative steps (e.g. 400)")
     parser.add_argument("--angle", type=float, help="Move relative angle in degrees (e.g. 90.0)")
-    parser.add_argument("--speed", type=int, help="Set pulse interval in microseconds (e.g. 400)")
+    parser.add_argument("--speed", "-s", type=int, help="Set pulse interval in microseconds (e.g. 100 for fast, 200 for normal, 50 for turbo)")
+    parser.add_argument("--rpm", type=float, help="Set speed directly in RPM (e.g. --rpm 180)")
+    parser.add_argument("--preset", choices=["turbo", "fast", "normal", "slow"], help="Speed preset")
 
     args = parser.parse_args()
 
     controller = StepperController(port=args.port, baudrate=args.baud)
 
     # Direct action mode
-    if args.action or args.move is not None or args.angle is not None or args.speed is not None:
-        if args.speed:
+    if args.action or args.move is not None or args.angle is not None or args.speed is not None or args.rpm is not None or args.preset is not None:
+        if args.preset:
+            controller.send_cmd(args.preset.upper())
+        if args.rpm is not None:
+            controller.send_cmd(f"RPM {args.rpm}")
+        if args.speed is not None:
             controller.send_cmd(f"V {args.speed}")
+
         if args.action == "forward":
             controller.send_cmd("F")
         elif args.action == "reverse":
@@ -307,16 +378,24 @@ def main():
             controller.send_cmd("S")
         elif args.action == "status":
             controller.send_cmd("?")
+        elif args.action in ["turbo", "fast", "normal", "slow"]:
+            controller.send_cmd(args.action.upper())
+        elif args.action in ["home", "calibrate", "cal"]:
+            controller.send_cmd("CALIBRATE", wait_done=True, timeout=120.0)
+        elif args.action == "top":
+            controller.send_cmd("TOP", wait_done=True, timeout=60.0)
+        elif args.action == "bottom":
+            controller.send_cmd("BOT", wait_done=True, timeout=60.0)
         elif args.action == "keys":
             interactive_keyboard_mode(controller)
 
         if args.move is not None:
-            controller.send_cmd(f"M {args.move}")
-        if args.angle is not None:
-            controller.send_cmd(f"A {args.angle}")
+            controller.send_cmd(f"M {args.move}", wait_done=True)
+        elif args.angle is not None:
+            controller.send_cmd(f"A {args.angle}", wait_done=True)
 
-        time.sleep(0.5)
-        controller.close()
+        time.sleep(0.1)
+        controller.close(stop_motor=(args.action == "stop"))
     else:
         # Interactive CLI mode
         try:

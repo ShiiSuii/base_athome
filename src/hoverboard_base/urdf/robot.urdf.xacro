@@ -22,6 +22,12 @@
   <xacro:property name="laser_offset_y" value="0.00"/>
   <xacro:property name="laser_offset_z" value="0.18"/>
 
+  <!-- Sistema de Elevación Torso / Columna (Exactamente en el medio de la base, 1.0 m altura) -->
+  <xacro:property name="column_x"       value="0.0"/>
+  <xacro:property name="column_y"       value="0.0"/>
+  <xacro:property name="column_height"  value="1.0"/>
+  <xacro:property name="column_width"   value="0.06"/>
+
   <!-- ==================== MATERIALES ==================== -->
   <material name="chassis_blue">
     <color rgba="0.15 0.45 0.85 0.95"/>
@@ -34,6 +40,15 @@
   </material>
   <material name="caster_gray">
     <color rgba="0.35 0.35 0.35 1.0"/>
+  </material>
+  <material name="column_aluminum">
+    <color rgba="0.65 0.65 0.70 1.0"/>
+  </material>
+  <material name="pantilt_dark">
+    <color rgba="0.18 0.18 0.18 1.0"/>
+  </material>
+  <material name="realsense_silver">
+    <color rgba="0.75 0.75 0.75 1.0"/>
   </material>
 
   <!-- ==================== BASE FOOTPRINT ==================== -->
@@ -141,5 +156,156 @@
     <child link="laser"/>
     <origin xyz="${laser_offset_x} ${laser_offset_y} ${laser_offset_z}" rpy="0 0 0"/>
   </joint>
+
+  <!-- ==================== SISTEMA DE SUBIR Y BAJAR (TORSO VERTICAL) ==================== -->
+  <!-- Columna estructural fija exactamente en el medio de la base (x=0, y=0) con 1 metro de altura -->
+  <link name="torso_column">
+    <visual>
+      <origin xyz="0 0 ${column_height / 2.0}" rpy="0 0 0"/>
+      <geometry>
+        <box size="${column_width} ${column_width} ${column_height}"/>
+      </geometry>
+      <material name="column_aluminum"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 ${column_height / 2.0}" rpy="0 0 0"/>
+      <geometry>
+        <box size="${column_width} ${column_width} ${column_height}"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <origin xyz="0 0 ${column_height / 2.0}" rpy="0 0 0"/>
+      <mass value="3.5"/>
+      <inertia ixx="0.292" ixy="0.0" ixz="0.0" iyy="0.292" iyz="0.0" izz="0.002"/>
+    </inertial>
+  </link>
+
+  <joint name="torso_column_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="torso_column"/>
+    <origin xyz="${column_x} ${column_y} ${ground_clearance + chassis_height}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Plataforma superior móvil del elevador (a 1.0 m arriba en la parte superior) -->
+  <link name="torso_lift_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.10 0.12 0.02"/>
+      </geometry>
+      <material name="pantilt_dark"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.10 0.12 0.02"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- Joint de elevación / tope superior de columna (fijo a 1.0 m de altura) -->
+  <joint name="torso_lift_joint" type="fixed">
+    <parent link="torso_column"/>
+    <child link="torso_lift_link"/>
+    <origin xyz="0 0 ${column_height}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ==================== SISTEMA PAN-TILT ==================== -->
+  <!-- Base de montaje del Pan-Tilt -->
+  <link name="pan_tilt_base_link">
+    <visual>
+      <origin xyz="0 0 0.015" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.035" length="0.03"/>
+      </geometry>
+      <material name="pantilt_dark"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.015" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.035" length="0.03"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="pan_tilt_base_joint" type="fixed">
+    <parent link="torso_lift_link"/>
+    <child link="pan_tilt_base_link"/>
+    <origin xyz="0 0 0.01" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Motor 1: Pan Joint (Giro Horizontal en Z) -->
+  <link name="pan_link">
+    <visual>
+      <origin xyz="0 0 0.025" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.045 0.045 0.05"/>
+      </geometry>
+      <material name="pantilt_dark"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.025" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.045 0.045 0.05"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="pan_joint" type="revolute">
+    <parent link="pan_tilt_base_link"/>
+    <child link="pan_link"/>
+    <origin xyz="0 0 0.03" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-1.5708" upper="1.5708" effort="2.5" velocity="3.14"/>
+  </joint>
+
+  <!-- Motor 2: Tilt Joint (Inclinación Vertical en Y) -->
+  <link name="tilt_link">
+    <visual>
+      <origin xyz="0.015 0 0.01" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.04 0.10 0.03"/>
+      </geometry>
+      <material name="pantilt_dark"/>
+    </visual>
+    <collision>
+      <origin xyz="0.015 0 0.01" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.04 0.10 0.03"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="tilt_joint" type="revolute">
+    <parent link="pan_link"/>
+    <child link="tilt_link"/>
+    <origin xyz="0 0 0.05" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-0.7854" upper="0.7854" effort="2.5" velocity="3.14"/>
+  </joint>
+
+  <!-- ==================== CÁMARA INTEL REALSENSE D435 ==================== -->
+  <!-- Conexión rígida entre el soporte tilt y el marco base de la RealSense (camera_link) -->
+  <joint name="camera_mount_joint" type="fixed">
+    <parent link="tilt_link"/>
+    <child link="camera_link"/>
+    <origin xyz="0.035 0.0 0.015" rpy="0 0 0"/>
+  </joint>
+
+  <link name="camera_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.025 0.090 0.025"/>
+      </geometry>
+      <material name="realsense_silver"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.025 0.090 0.025"/>
+      </geometry>
+    </collision>
+  </link>
 
 </robot>
