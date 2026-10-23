@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # ==============================================================================
-# Base@Home - Reconocimiento Facial, Registro por Voz y Trackeo Lento del Rostro
+# Base@Home - Reconocimiento Facial, Memoria Biometrica y Trackeo del Rostro
 # RoboCup @Home - Interaccion Natural por Audio (Piper TTS EN + Whisper ASR EN)
 # Audio Output: Parlante Bluetooth PPA 205 (Intel NUC PipeWire)
 # Audio Input: Microfono Direccional RØDE VideoMic GO II (Jetson Orin Nano)
@@ -8,12 +8,13 @@
 # ==============================================================================
 
 import argparse
+import datetime
 import os
 import re
 import sys
 import threading
 import time
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -44,7 +45,7 @@ from base_athome_perception.speaker import RoboCupSpeaker
 
 
 def extract_person_name(text: str) -> str:
-    """Extrae de forma robusta el nombre de una persona a partir de la transcripcion oral en ingles."""
+    """Extrae de forma robusta el nombre de una persona a partir de la transcripcion oral (EN/ES)."""
     text = text.strip().strip(".!?,")
     if not text:
         return ""
@@ -62,7 +63,10 @@ def extract_person_name(text: str) -> str:
         m = re.search(pat, text, re.IGNORECASE)
         if m:
             candidate = m.group(1).strip().title()
-            if candidate.lower() not in ["a", "the", "an", "robot", "ready", "here", "nothing", "yes", "no", "si", "hola", "buenas"]:
+            if candidate.lower() not in [
+                "a", "the", "an", "robot", "ready", "here", "nothing",
+                "yes", "no", "si", "hola", "buenas", "hello", "hi"
+            ]:
                 return candidate
 
     # Si es una respuesta corta (1 o 2 palabras, ej: "David" o "Sarah Connor")
@@ -80,12 +84,13 @@ def extract_person_name(text: str) -> str:
 
 
 class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
-    """Nodo interactivo de reconocimiento facial, registro por voz y trackeo suave para RoboCup @Home."""
+    """Nodo interactivo de reconocimiento facial, memoria biometrica y trackeo para RoboCup @Home."""
 
     STATE_IDLE = 0
     STATE_PROMPT_NAME = 1
     STATE_WAIT_NAME = 2
-    STATE_CONFIRM_NAME = 3
+    STATE_RECORDING_FACE = 3
+    STATE_CONFIRM_NAME = 4
 
     def __init__(
         self,
@@ -133,7 +138,7 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
             print(f"Abriendo camara local /dev/video{use_camera_id}...")
             self.cap = cv2.VideoCapture(self.use_camera_id)
 
-        # Motor de Reconocimiento Facial (ResNet-10 + SFace 128-D)
+        # Motor de Memoria Facial Multi-Persona (ResNet-10 + SFace 128-D)
         self.recognizer = FaceRecognizer(
             caffe_proto_path=caffe_proto,
             caffe_model_path=caffe_model,
@@ -149,14 +154,24 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
         self.fps = 0.0
         self.running = True
 
-        # Estado de interaccion por voz
+        # Maquina de estados de interaccion
         self.state = self.STATE_IDLE
         self.current_banner_text = ""
         self.state_start_time = 0.0
-        self.collected_features: List[np.ndarray] = []
         self.voice_text: Optional[str] = None
         self.voice_status = "IDLE"
         self.pending_name = ""
+
+        # Rutina de grabacion biometrica multi-muestra
+        self.recording_samples: List[np.ndarray] = []
+        self.best_thumbnail_crop: Optional[np.ndarray] = None
+        self.best_sharpness: float = 0.0
+        self.last_sample_time: float = 0.0
+        self.target_sample_count: int = 10
+
+        # Control de saludos y encuentros recurrentes
+        self.greeting_cooldowns: Dict[str, float] = {}
+        self.active_banner_override: Optional[Tuple[str, float]] = None
 
         # Auto-Prompting
         self.auto_prompt_enabled = True
@@ -300,7 +315,7 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
         self.target_pan_deg = float(np.clip(self.target_pan_deg, -p_lim, p_lim))
         self.target_tilt_deg = float(np.clip(self.target_tilt_deg, t_min, t_max))
 
-        # Publicar comando a 20 Hz (cada 50 ms) para seguimiento fluido y reactivo
+        # Publicar comando a 20 Hz (cada 50 ms)
         if now - self.last_track_time >= 0.05:
             self.last_track_time = now
             msg = Vector3()
@@ -309,60 +324,93 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
             msg.z = 0.0
             self.pub_pantilt.publish(msg)
 
-
-
-
     def start_voice_registration(self, reason: str = "manual"):
-        """Inicia el protocolo RoboCup @Home para registrar a una nueva persona hablando."""
+        """Inicia el protocolo interactivo RoboCup @Home para registrar a una nueva persona hablando."""
         if self.state != self.STATE_IDLE:
             return
 
         self.state = self.STATE_PROMPT_NAME
         self.state_start_time = time.time()
-        self.collected_features = []
         self.voice_text = None
         self.pending_name = ""
-        # Instruccion clara y amigable
+        self.recording_samples = []
+        self.best_thumbnail_crop = None
+        self.best_sharpness = 0.0
+
+        # Pregunta clara y amigable
         self.current_banner_text = "Hello! What is your name? Please say: My name is, followed by your name."
-        print(f"\n[RoboCup @Home] Iniciando registro por voz ({reason})...")
+        print(f"\n[RoboCup @Home Memory] Iniciando registro guiado ({reason})...")
         print(f"[Robot]: \"{self.current_banner_text}\"")
         self.speaker.speak(self.current_banner_text)
 
+    def start_biometric_recording(self, name: str):
+        """Inicia la rutina de grabacion biometrica multi-muestra para el nombre recibido."""
+        self.state = self.STATE_RECORDING_FACE
+        self.state_start_time = time.time()
+        self.pending_name = name
+        self.recording_samples = []
+        self.best_thumbnail_crop = None
+        self.best_sharpness = 0.0
+        self.last_sample_time = 0.0
+
+        intro_text = f"Nice to meet you, {name}! Please look at my camera while I record your face."
+        self.current_banner_text = intro_text
+        print(f"[Robot]: \"{intro_text}\"")
+        self.speaker.speak(intro_text)
+
     def draw_hud(self, frame: np.ndarray, results: list) -> np.ndarray:
-        """Dibuja interfaz grafica profesional sobre la imagen con soporte interactivo de voz y tracking."""
+        """Renderiza la interfaz profesional: Camara RealSense (640x480) + Panel de Memoria (240x480)."""
         h, w = frame.shape[:2]
-        vis = frame.copy()
         now = time.time()
 
-        # 1. Barra superior principal
+        # Canvas total: 880x480 (640 para la camara en vivo, 240 para el panel de memoria)
+        sidebar_w = 240
+        canvas = np.zeros((h, w + sidebar_w, 3), dtype=np.uint8)
+
+        # 1. Copiar fotograma de la camara
+        vis = frame.copy()
+
+        # Barra superior de la camara
         overlay = vis.copy()
         cv2.rectangle(overlay, (0, 0), (w, 55), (20, 24, 30), -1)
-        cv2.addWeighted(overlay, 0.8, vis, 0.2, 0, vis)
+        cv2.addWeighted(overlay, 0.82, vis, 0.18, 0, vis)
 
-        cv2.putText(vis, "BASE@HOME - RECONOCIMIENTO, VOZ Y TRACKEO FACIAL", (15, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (255, 255, 255), 2)
-        cv2.circle(vis, (w - 140, 20), 6, (0, 255, 0), -1)
-        cv2.putText(vis, "EN VIVO", (w - 125, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (0, 255, 0), 2)
-        cv2.putText(vis, f"FPS: {self.fps:.1f}", (w - 230, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (200, 200, 200), 1)
+        cv2.putText(vis, "BASE@HOME - RECONOCIMIENTO Y MEMORIA FACIAL", (15, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 2)
+        cv2.circle(vis, (w - 110, 20), 5, (0, 255, 0), -1)
+        cv2.putText(vis, "EN VIVO", (w - 98, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 255, 0), 2)
+        cv2.putText(vis, f"FPS: {self.fps:.1f}", (w - 195, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (200, 200, 200), 1)
 
-        known_list = list(self.recognizer.known_faces.keys())
-        known_str = f"Rostros ({len(known_list)}): " + (", ".join(known_list[:5]) + ("..." if len(known_list) > 5 else "") if known_list else "Ninguno")
-        cv2.putText(vis, known_str, (15, 46), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (180, 205, 225), 1)
+        track_info = f"Head: Pan {self.target_pan_deg:+.1f} deg | Tilt {self.target_tilt_deg:+.1f} deg"
+        cv2.putText(vis, track_info, (15, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (170, 200, 230), 1)
 
-        # 2. Bounding boxes, etiquetas y reticulo de tracking
+        # Nombres de rostros visibles en este fotograma
+        visible_names = set()
+
+        # Bounding boxes y etiquetas biometricas
         for res in results:
             x, y, bw, bh = res["bbox"]
             name = res["name"]
             sim = res["similarity"]
+            q_valid = res.get("quality_valid", True)
+            q_score = res.get("quality_score", 0.0)
+
+            if name != "Desconocido":
+                visible_names.add(name.lower())
 
             is_tracked = (self.tracked_bbox is not None and (x, y, bw, bh) == self.tracked_bbox and self.tracking_enabled)
 
-            if name != "Desconocido":
-                color = (0, 230, 70)  # Verde
+            # Color segun estado
+            if self.state == self.STATE_RECORDING_FACE and is_tracked:
+                color = (0, 240, 255)  # Cyan para grabacion biometrica
+                label = f"GRABANDO: {self.pending_name} [{len(self.recording_samples)}/{self.target_sample_count}]"
+            elif name != "Desconocido":
+                color = (0, 230, 70)  # Verde para conocido
                 label = f"{name} ({int(sim * 100)}%)"
             else:
-                color = (0, 165, 255)  # Naranja
+                color = (0, 165, 255)  # Naranja para desconocido
                 label = f"Desconocido ({int(sim * 100)}%)"
 
+            # Dibujar rectangulo con esquinas reforzadas
             line_len = int(min(bw, bh) * 0.25)
             thick = 2
             cv2.rectangle(vis, (x, y), (x + bw, y + bh), color, 1)
@@ -375,24 +423,45 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
             cv2.line(vis, (x + bw, y + bh), (x + bw - line_len, y + bh), color, thick + 1)
             cv2.line(vis, (x + bw, y + bh), (x + bw, y + bh - line_len), color, thick + 1)
 
+            # Efecto laser animado durante la rutina de grabacion biometrica
+            if self.state == self.STATE_RECORDING_FACE and is_tracked:
+                scan_y = int(y + (np.sin(now * 8.0) * 0.5 + 0.5) * bh)
+                cv2.line(vis, (x, scan_y), (x + bw, scan_y), (0, 240, 255), 2)
+                # Calidad visual
+                q_text = f"Nitidez: {q_score:.0f}"
+                cv2.putText(vis, q_text, (x, y + bh + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 240, 255), 1)
+
             # Etiqueta sobre el rostro
-            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1)
+            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.52, 1)
             lbl_y = max(y - 8, th + 8)
             cv2.rectangle(vis, (x, lbl_y - th - 6), (x + tw + 10, lbl_y + 2), color, -1)
-            cv2.putText(vis, label, (x + 5, lbl_y - 2), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (10, 15, 20), 2)
+            cv2.putText(vis, label, (x + 5, lbl_y - 2), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (10, 15, 20), 2)
 
-            # Indicador de tracking activo sobre el rostro objetivo
-            if is_tracked:
+            # Reticulo de tracking
+            if is_tracked and self.state != self.STATE_RECORDING_FACE:
                 cx, cy = int(x + bw / 2), int(y + bh / 2)
                 cv2.circle(vis, (cx, cy), 12, (0, 240, 255), 1)
                 cv2.line(vis, (cx - 16, cy), (cx + 16, cy), (0, 240, 255), 1)
                 cv2.line(vis, (cx, cy - 16), (cx, cy + 16), (0, 240, 255), 1)
-                cv2.putText(vis, "[TRACKING]", (x, y + bh + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 240, 255), 1)
+                cv2.putText(vis, "[TRACKING]", (x, y + bh + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 240, 255), 1)
 
-        # 3. Banner superior interactivo de Estado de Voz
-        if self.state != self.STATE_IDLE:
-            banner_h = 45
-            banner_y = 65
+        # Banner interactivo de Estado y Dialogo
+        banner_y = 65
+        banner_h = 44
+
+        # Comprobar override de saludo temporal
+        if self.active_banner_override and now < self.active_banner_override[1]:
+            b_color = (0, 180, 80)
+            icon_txt = "[WELCOME]"
+            msg_txt = self.active_banner_override[0]
+            banner_bg = vis.copy()
+            cv2.rectangle(banner_bg, (15, banner_y), (w - 15, banner_y + banner_h), b_color, -1)
+            cv2.addWeighted(banner_bg, 0.85, vis, 0.15, 0, vis)
+            cv2.rectangle(vis, (15, banner_y), (w - 15, banner_y + banner_h), (255, 255, 255), 1)
+            cv2.putText(vis, icon_txt, (25, banner_y + 28), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 2)
+            cv2.putText(vis, msg_txt, (140, banner_y + 28), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 1)
+
+        elif self.state != self.STATE_IDLE:
             banner_bg = vis.copy()
 
             if self.state == self.STATE_PROMPT_NAME:
@@ -410,7 +479,12 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
                 elif self.voice_status == "PROCESSING":
                     msg_txt = "Transcribing with Whisper AI..."
                 else:
-                    msg_txt = "Speak clearly: 'My name is [Name]' / 'Me llamo [Nombre]'"
+                    msg_txt = "Speak: 'My name is [Name]' / 'Me llamo [Nombre]'"
+            elif self.state == self.STATE_RECORDING_FACE:
+                b_color = (0, 140, 200)
+                progress_pct = int((len(self.recording_samples) / max(1, self.target_sample_count)) * 100)
+                icon_txt = f"[RECORDING {progress_pct}%]"
+                msg_txt = f"Capturing biometric samples for {self.pending_name} ({len(self.recording_samples)}/{self.target_sample_count})"
             elif self.state == self.STATE_CONFIRM_NAME:
                 b_color = (20, 160, 40)
                 icon_txt = "[SUCCESS]"
@@ -419,44 +493,163 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
             cv2.rectangle(banner_bg, (15, banner_y), (w - 15, banner_y + banner_h), b_color, -1)
             cv2.addWeighted(banner_bg, 0.85, vis, 0.15, 0, vis)
             cv2.rectangle(vis, (15, banner_y), (w - 15, banner_y + banner_h), (255, 255, 255), 1)
-            cv2.putText(vis, icon_txt, (25, banner_y + 28), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
-            cv2.putText(vis, msg_txt, (210, banner_y + 28), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (255, 255, 255), 1)
+            cv2.putText(vis, icon_txt, (25, banner_y + 28), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 2)
+            cv2.putText(vis, msg_txt, (185, banner_y + 28), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 1)
 
-            # 4. Tarjeta Guiada de Instruccion de Respuesta (Explicacion visual al usuario)
+            # Tarjeta guiada de instruccion para el usuario
             if self.state in [self.STATE_PROMPT_NAME, self.STATE_WAIT_NAME]:
-                card_w, card_h = 640, 60
+                card_w, card_h = 600, 56
                 card_x = (w - card_w) // 2
-                card_y = h - 110
+                card_y = h - 105
                 card_bg = vis.copy()
                 cv2.rectangle(card_bg, (card_x, card_y), (card_x + card_w, card_y + card_h), (35, 28, 15), -1)
                 cv2.addWeighted(card_bg, 0.85, vis, 0.15, 0, vis)
                 cv2.rectangle(vis, (card_x, card_y), (card_x + card_w, card_y + card_h), (0, 200, 255), 2)
 
-                cv2.putText(vis, "COMO RESPONDER AL ROBOT (Speak into the RØDE microphone):", (card_x + 12, card_y + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 220, 255), 2)
-                cv2.putText(vis, '>>> "My name is [Name]" o "Me llamo [Nombre]" (Ej: "My name is John") <<<', (card_x + 12, card_y + 46), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (255, 255, 255), 2)
+                cv2.putText(vis, "COMO RESPONDER (RØDE Directional Microphone):", (card_x + 12, card_y + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (0, 220, 255), 2)
+                cv2.putText(vis, '>>> "My name is [Name]" o "Me llamo [Nombre]" (Ej: "My name is John") <<<', (card_x + 12, card_y + 44), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (255, 255, 255), 1)
 
-        # 5. Barra inferior de atajos y estado del hardware
+            elif self.state == self.STATE_RECORDING_FACE:
+                card_w, card_h = 600, 56
+                card_x = (w - card_w) // 2
+                card_y = h - 105
+                card_bg = vis.copy()
+                cv2.rectangle(card_bg, (card_x, card_y), (card_x + card_w, card_y + card_h), (20, 40, 50), -1)
+                cv2.addWeighted(card_bg, 0.85, vis, 0.15, 0, vis)
+                cv2.rectangle(vis, (card_x, card_y), (card_x + card_w, card_y + card_h), (0, 240, 255), 2)
+
+                # Barra de progreso visual
+                p_width = int((card_w - 24) * (len(self.recording_samples) / max(1, self.target_sample_count)))
+                cv2.rectangle(vis, (card_x + 12, card_y + 26), (card_x + 12 + p_width, card_y + 46), (0, 220, 100), -1)
+                cv2.rectangle(vis, (card_x + 12, card_y + 26), (card_x + card_w - 12, card_y + 46), (150, 150, 150), 1)
+
+                cv2.putText(vis, f"GRABANDO MUESTRAS BIOMETRICAS: {len(self.recording_samples)} / {self.target_sample_count}...", (card_x + 12, card_y + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 240, 255), 2)
+
+        # Barra inferior de atajos de la camara
         overlay_bot = vis.copy()
-        cv2.rectangle(overlay_bot, (0, h - 38), (w, h), (20, 24, 30), -1)
+        cv2.rectangle(overlay_bot, (0, h - 36), (w, h), (20, 24, 30), -1)
         cv2.addWeighted(overlay_bot, 0.85, vis, 0.15, 0, vis)
 
-        auto_str = "Auto-Voz: ON" if self.auto_prompt_enabled else "Auto-Voz: OFF"
-        track_str = f"[H] Track: ON ({self.target_pan_deg:+.1f} deg)" if self.tracking_enabled else "[H] Track: OFF"
+        auto_str = "Auto: ON" if self.auto_prompt_enabled else "Auto: OFF"
+        track_str = "Track: ON" if self.tracking_enabled else "Track: OFF"
         mic_str = f"Mic: {self.voice_status}"
-        shortcuts = f"[V / ESPACIO] Registro | {mic_str} | [T] Escribir | {track_str} | [A] {auto_str} | [C] Borrar | [Q] Salir"
-        cv2.putText(vis, shortcuts, (15, h - 14), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (220, 220, 220), 1)
+        shortcuts = f"[V] Registro | {mic_str} | [T] Teclado | [H] {track_str} | [A] {auto_str} | [C] Borrar BD | [Q] Salir"
+        cv2.putText(vis, shortcuts, (12, h - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (220, 220, 220), 1)
 
-        return vis
+        # Pegar el area de la camara en el canvas
+        canvas[0:h, 0:w] = vis
+
+        # -------------------------------------------------------------
+        # 2. PANEL LATERAL: MEMORIA FACIAL MULTI-PERSONA (RoboCup @Home)
+        # -------------------------------------------------------------
+        side_x = w
+        cv2.rectangle(canvas, (side_x, 0), (side_x + sidebar_w, h), (24, 28, 35), -1)
+        # Linea divisoria vertical
+        cv2.line(canvas, (side_x, 0), (side_x, h), (50, 60, 75), 2)
+
+        # Cabecera de la memoria
+        cv2.rectangle(canvas, (side_x, 0), (side_x + sidebar_w, 55), (32, 38, 48), -1)
+        cv2.putText(canvas, "MEMORIA FACIAL", (side_x + 14, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 2)
+
+        profiles = self.recognizer.get_known_profiles()
+        count_str = f"@Home: {len(profiles)} personas"
+        cv2.putText(canvas, count_str, (side_x + 14, 44), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 220, 255), 1)
+
+        if not profiles:
+            # Estado vacio
+            cv2.rectangle(canvas, (side_x + 15, 120), (side_x + sidebar_w - 15, 240), (30, 35, 44), -1)
+            cv2.rectangle(canvas, (side_x + 15, 120), (side_x + sidebar_w - 15, 240), (45, 55, 70), 1)
+            cv2.putText(canvas, "Memoria Vacia", (side_x + 40, 160), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (180, 190, 205), 1)
+            cv2.putText(canvas, "Hable o presione [V]", (side_x + 28, 190), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (130, 140, 155), 1)
+            cv2.putText(canvas, "para registrar personas.", (side_x + 26, 210), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (130, 140, 155), 1)
+        else:
+            # Ordenar perfiles por ultimo avistamiento descendente
+            sorted_profiles = sorted(profiles, key=lambda p: p["last_seen"], reverse=True)
+            # Mostrar hasta 4 perfiles principales
+            display_count = min(4, len(sorted_profiles))
+
+            for idx in range(display_count):
+                prof = sorted_profiles[idx]
+                card_y = 65 + idx * 95
+                card_h = 86
+                card_x = side_x + 10
+                card_w = sidebar_w - 20
+
+                p_name = prof["name"]
+                is_active = p_name.lower() in visible_names
+
+                # Colores segun presencia activa
+                if is_active:
+                    card_border = (0, 230, 70)
+                    card_bg = (25, 45, 32)
+                    status_lbl = "ACTIVO"
+                    status_col = (0, 230, 70)
+                else:
+                    card_border = (50, 60, 75)
+                    card_bg = (32, 38, 48)
+                    elapsed_s = now - prof["last_seen"]
+                    if elapsed_s < 60:
+                        status_lbl = "Reciente"
+                    elif elapsed_s < 3600:
+                        status_lbl = f"{int(elapsed_s // 60)}m"
+                    else:
+                        status_lbl = f"{int(elapsed_s // 3600)}h"
+                    status_col = (150, 165, 180)
+
+                cv2.rectangle(canvas, (card_x, card_y), (card_x + card_w, card_y + card_h), card_bg, -1)
+                cv2.rectangle(canvas, (card_x, card_y), (card_x + card_w, card_y + card_h), card_border, 1)
+
+                # Miniatura del rostro
+                thumb_box_x = card_x + 8
+                thumb_box_y = card_y + 12
+                thumb_size = 62
+
+                if prof["thumbnail_img"] is not None and prof["thumbnail_img"].size > 0:
+                    try:
+                        th_resized = cv2.resize(prof["thumbnail_img"], (thumb_size, thumb_size))
+                        canvas[thumb_box_y : thumb_box_y + thumb_size, thumb_box_x : thumb_box_x + thumb_size] = th_resized
+                        cv2.rectangle(canvas, (thumb_box_x, thumb_box_y), (thumb_box_x + thumb_size, thumb_box_y + thumb_size), card_border, 1)
+                    except Exception:
+                        pass
+                else:
+                    # Icono / iniciales de respaldo
+                    cv2.rectangle(canvas, (thumb_box_x, thumb_box_y), (thumb_box_x + thumb_size, thumb_box_y + thumb_size), (45, 55, 70), -1)
+                    initials = p_name[:2].upper()
+                    cv2.putText(canvas, initials, (thumb_box_x + 14, thumb_box_y + 38), cv2.FONT_HERSHEY_SIMPLEX, 0.60, (220, 220, 220), 2)
+
+                # Informacion de la persona
+                info_x = thumb_box_x + thumb_size + 10
+                # Nombre
+                display_name = (p_name[:12] + "..") if len(p_name) > 13 else p_name
+                cv2.putText(canvas, display_name, (info_x, card_y + 26), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (255, 255, 255), 2)
+
+                # Badge de estado (Activo / Tiempo)
+                cv2.putText(canvas, status_lbl, (card_x + card_w - 55, card_y + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.38, status_col, 1)
+
+                # Metricas: visitas y muestras
+                cv2.putText(canvas, f"Visitas: {prof['sighting_count']}", (info_x, card_y + 48), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (180, 195, 210), 1)
+                cv2.putText(canvas, f"Muestras: {prof['samples_count']}", (info_x, card_y + 68), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (0, 210, 240), 1)
+
+            # Si hay mas perfiles que los visibles
+            if len(sorted_profiles) > display_count:
+                extra = len(sorted_profiles) - display_count
+                cv2.putText(canvas, f"+ {extra} persona(s) mas en memoria", (side_x + 35, 452), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (140, 155, 175), 1)
+
+        # Pie del panel de memoria
+        cv2.line(canvas, (side_x, h - 28), (side_x + sidebar_w, h - 28), (40, 48, 60), 1)
+        cv2.putText(canvas, "SFace 128-D | RoboCup @Home", (side_x + 18, h - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (130, 145, 160), 1)
+
+        return canvas
 
     def enroll_by_typing(self, current_frame: np.ndarray, results: list):
-        """Metodo de respaldo: Registro manual por teclado."""
+        """Metodo de respaldo: Registro manual por teclado con fotos y biometricos."""
         if not results:
             print("\n[!] No hay ningun rostro detectado frente a la camara.")
             return
 
         print("\n--------------------------------------------------")
-        print(" REGISTRO MANUAL POR TECLADO:")
-        default_name = f"Persona_{len(self.recognizer.known_faces) + 1}"
+        print(" REGISTRO MANUAL POR TECLADO (MEMORIA ROBOCUP @HOME):")
+        default_name = f"Guest_{len(self.recognizer.profiles) + 1}"
         print(f" Ingrese el nombre para esta persona [Enter para '{default_name}']: ", end="", flush=True)
 
         try:
@@ -469,27 +662,26 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
             user_name = input()
 
         name = user_name if user_name else default_name
-        success = self.recognizer.enroll_face(current_frame, name)
-        if success:
-            msg = f"Nice to meet you, {name}!"
-            print(f"[+] Registrado: '{name}'")
-            self.speaker.speak(msg)
+        self.start_biometric_recording(name)
+        print(f"[+] Iniciando grabacion biometrica para '{name}'...")
         print("--------------------------------------------------\n")
 
     def run(self):
-        window_name = "Base@Home - Reconocimiento Facial, Voz y Trackeo"
+        window_name = "Base@Home - Reconocimiento, Memoria Biometrica y Trackeo"
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(window_name, 960, 720)
+        cv2.resizeWindow(window_name, 980, 535)
 
         print("==================================================")
-        print("  Base@Home - Reconocimiento, Voz y Trackeo Suave")
+        print("  Base@Home - Reconocimiento Facial y Memoria Multi-Persona")
+        print("  - Inspirado en RoboCup @Home (Receptionist / Guest)")
+        print("  - Memoria Biometrica: SFace 128-D + Perfiles JSON")
         print("  - Voz Neuronal: Piper TTS (en_US-lessac-medium)")
         print("  - Microfono: RØDE VideoMic GO II (+20 dB Calibrado)")
-        print("  - Cabezal: Pan-Tilt Dynamixel (Trackeo Lento Activo)")
+        print("  - Cabezal: Pan-Tilt Dynamixel (Trackeo Reactivo)")
         print("--------------------------------------------------")
         print("  [V] o [ESPACIO] : Iniciar registro oral por voz")
         print("  [H]             : Activar/desactivar trackeo del rostro")
-        print("  [A]             : Activar/desactivar auto-registro")
+        print("  [A]             : Activar/desactivar auto-saludo y registro")
         print("  [T]             : Registro manual por teclado")
         print("  [C]             : Limpiar base de datos de rostros")
         print("  [Q]             : Salir")
@@ -517,7 +709,7 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
                 wait_screen = np.zeros((480, 640, 3), dtype=np.uint8)
                 cv2.putText(
                     wait_screen,
-                    "Esperando se;al de camara RealSense D435...",
+                    "Esperando senal de camara RealSense D435...",
                     (50, 240),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.65,
@@ -541,31 +733,53 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
             # Actualizar trackeo del rostro con el cabezal Pan-Tilt
             self.update_face_tracking(results, now)
 
-            # Acumular embeddings del rostro mas grande si estamos en proceso de registro
-            if self.state in [self.STATE_PROMPT_NAME, self.STATE_WAIT_NAME]:
-                if results and len(self.collected_features) < 10:
-                    largest = max(results, key=lambda r: r["bbox"][2] * r["bbox"][3])
-                    if largest.get("feature") is not None:
-                        self.collected_features.append(largest["feature"])
-
             # ----------------------------------------------------
-            # MAQUINA DE ESTADOS DE REGISTRO POR VOZ (RoboCup @Home)
+            # MAQUINA DE ESTADOS Y RUTINA DE MEMORIA (RoboCup @Home)
             # ----------------------------------------------------
             if self.state == self.STATE_IDLE:
-                # Comprobar si hay una persona desconocida presente
+                # 1. Reconocimiento de personas conocidas y saludo amigable
+                for res in results:
+                    name = res["name"]
+                    if name != "Desconocido":
+                        # Registrar avistamiento / encuentro
+                        is_new_sighting = self.recognizer.update_sighting(name, min_interval_sec=25.0)
+
+                        # Saludar si no se ha saludado recientemente a esta persona
+                        last_greet = self.greeting_cooldowns.get(name.lower(), 0.0)
+                        if (is_new_sighting or (now - last_greet > 35.0)) and not self.speaker.is_speaking:
+                            self.greeting_cooldowns[name.lower()] = now
+                            # Obtener perfil para personalizar el saludo
+                            prof = None
+                            for p in self.recognizer.profiles.values():
+                                if p.name.lower() == name.lower():
+                                    prof = p
+                                    break
+                            seen_count = prof.sighting_count if prof else 1
+                            if seen_count > 1:
+                                greeting = f"Welcome back, {name}! Good to see you again."
+                            else:
+                                greeting = f"Hello {name}! Nice to see you."
+
+                            print(f"[RoboCup @Home Memory]: \"{greeting}\"")
+                            self.speaker.speak(greeting)
+                            self.active_banner_override = (greeting, now + 3.5)
+                            break
+
+                # 2. Auto-deteccion de personas desconocidas para iniciar registro
                 has_unknown = any(r["name"] == "Desconocido" for r in results)
-                if has_unknown and self.auto_prompt_enabled and (now - self.last_registered_time > 12.0):
+                has_known = any(r["name"] != "Desconocido" for r in results)
+
+                if has_unknown and not has_known and self.auto_prompt_enabled and (now - self.last_registered_time > 12.0):
                     if self.unknown_face_start_time is None:
                         self.unknown_face_start_time = now
                     elif now - self.unknown_face_start_time >= 1.8:
-                        # Permanecio frente a la camara por ~1.8s -> Auto-iniciar saludo
                         self.unknown_face_start_time = None
                         self.start_voice_registration(reason="auto-deteccion")
                 else:
                     self.unknown_face_start_time = None
 
             elif self.state == self.STATE_PROMPT_NAME:
-                # Transicion inmediata apenas el robot termine de hablar
+                # Transicion inmediata apenas el robot termine de hablar la pregunta
                 if not self.speaker.is_speaking and (now - self.state_start_time > 0.2):
                     self.state = self.STATE_WAIT_NAME
                     self.state_start_time = now
@@ -574,7 +788,7 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
                     print("[Robot]: Escuchando respuesta del usuario en el microfono RØDE...")
 
             elif self.state == self.STATE_WAIT_NAME:
-                # Esperar transcripcion de Whisper (hasta 8.0s para permitir responder con calma)
+                # Esperar transcripcion de Whisper (hasta 8.0s)
                 if self.voice_text:
                     user_speech = self.voice_text
                     self.voice_text = None
@@ -583,18 +797,8 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
 
                     if extracted and len(extracted) >= 2:
                         self.pending_name = extracted
-                        # Registrar todas las muestras recolectadas
-                        if self.collected_features:
-                            for feat in self.collected_features:
-                                self.recognizer.enroll_feature(feat, self.pending_name)
-                        else:
-                            self.recognizer.enroll_face(frame, self.pending_name)
-
-                        self.current_banner_text = f"Nice to meet you, {self.pending_name}! I have registered your face."
-                        print(f"[Robot]: \"{self.current_banner_text}\"")
-                        self.speaker.speak(self.current_banner_text)
-                        self.state = self.STATE_CONFIRM_NAME
-                        self.state_start_time = now
+                        # Iniciar la rutina guiada de grabacion biometrica
+                        self.start_biometric_recording(self.pending_name)
                     else:
                         print("[ASR]: No se pudo extraer un nombre valido. Reintentando...")
                         prompt_retry = "I didn't catch your name. Please say: My name is, followed by your name."
@@ -609,14 +813,59 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
                     self.state = self.STATE_IDLE
                     self.last_registered_time = now
 
+            elif self.state == self.STATE_RECORDING_FACE:
+                # RUTINA DE GRABACION BIOMETRICA MULTI-MUESTRA
+                if results:
+                    target = max(results, key=lambda r: r["bbox"][2] * r["bbox"][3])
+                    feat = target.get("feature")
+                    q_valid = target.get("quality_valid", False)
+                    q_score = target.get("quality_score", 0.0)
+
+                    # Capturar muestra a una tasa maxima de ~7 Hz (cada 140ms) para garantizar variabilidad
+                    if feat is not None and q_valid and (now - self.last_sample_time >= 0.14):
+                        self.last_sample_time = now
+                        self.recording_samples.append(feat)
+
+                        # Guardar el recorte mas nitido para la foto de perfil
+                        if q_score > self.best_sharpness or self.best_thumbnail_crop is None:
+                            x, y, bw, bh = target["bbox"]
+                            mx, my = int(bw * 0.12), int(bh * 0.12)
+                            y1, y2 = max(0, y - my), min(frame.shape[0], y + bh + my)
+                            x1, x2 = max(0, x - mx), min(frame.shape[1], x + bw + mx)
+                            self.best_thumbnail_crop = frame[y1:y2, x1:x2].copy()
+                            self.best_sharpness = q_score
+
+                # Verificar condicion de finalizacion
+                elapsed = now - self.state_start_time
+                if len(self.recording_samples) >= self.target_sample_count or (elapsed > 4.5 and len(self.recording_samples) >= 4):
+                    # Persistir en memoria biometrica
+                    pid, is_new = self.recognizer.enroll_person(
+                        name=self.pending_name,
+                        features=self.recording_samples,
+                        thumbnail_img=self.best_thumbnail_crop,
+                        attributes={"role": "guest", "enrolled_via": "voice_interaction"}
+                    )
+                    success_msg = f"Thank you, {self.pending_name}! Your face is now saved in my memory."
+                    print(f"[RoboCup @Home Memory]: Guardado '{self.pending_name}' [ID: {pid}] con {len(self.recording_samples)} muestras.")
+                    self.speaker.speak(success_msg)
+                    self.current_banner_text = success_msg
+                    self.state = self.STATE_CONFIRM_NAME
+                    self.state_start_time = now
+
+                elif elapsed > 6.5 and len(self.recording_samples) < 4:
+                    print("[RoboCup @Home Memory]: Muestras insuficientes o rostro perdido.")
+                    self.speaker.speak("I lost sight of your face. Let's try again.")
+                    self.state = self.STATE_IDLE
+                    self.last_registered_time = now
+
             elif self.state == self.STATE_CONFIRM_NAME:
-                # Transicion de retorno inmediata apenas termine de hablar la bienvenida
-                if not self.speaker.is_speaking and (now - self.state_start_time > 0.3):
+                # Esperar a que el robot termine de hablar el agradecimiento
+                if not self.speaker.is_speaking and (now - self.state_start_time > 0.4):
                     self.state = self.STATE_IDLE
                     self.last_registered_time = now
                     self.pending_name = ""
-                    self.collected_features = []
-
+                    self.recording_samples = []
+                    self.best_thumbnail_crop = None
 
             # Calculo de FPS
             fps_counter += 1
@@ -625,7 +874,7 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
                 fps_counter = 0
                 last_fps_calc = now
 
-            # Dibujar HUD
+            # Dibujar interfaz HUD profesional con panel lateral de memoria
             display_frame = self.draw_hud(frame, results)
             cv2.imshow(window_name, display_frame)
 
@@ -648,7 +897,7 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
                 print(f"[*] Auto-Registro por voz: {state_str}")
             elif key in [ord("c"), ord("C")]:
                 self.recognizer.clear_database()
-                print("[*] Base de datos facial limpiada.")
+                print("[*] Memoria facial borrada por el usuario.")
 
         cv2.destroyAllWindows()
         self.speaker.shutdown()
@@ -657,7 +906,7 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Reconocimiento Facial, Voz y Trackeo para RoboCup @Home")
+    parser = argparse.ArgumentParser(description="Reconocimiento Facial, Memoria Biometrica y Trackeo para RoboCup @Home")
     parser.add_argument("--topic", default="/camera/camera/color/image_raw", help="Topico ROS 2 de imagen RGB")
     parser.add_argument("--webcam", type=int, default=-1, help="Usar camara USB local /dev/videoX en lugar de ROS 2")
     args = parser.parse_args()
@@ -666,7 +915,7 @@ def main():
     caffe_proto = os.path.join(pkg_dir, "models", "deploy.prototxt")
     caffe_model = os.path.join(pkg_dir, "models", "res10_300x300_ssd_iter_140000.caffemodel")
     sface = os.path.join(pkg_dir, "models", "face_recognition_sface_2021dec.onnx")
-    db_path = os.path.join(pkg_dir, "config", "faces_db.pkl")
+    db_path = os.path.join(pkg_dir, "config", "faces_database")
 
     piper_bin = "/home/athome/piper_bin/piper/piper"
     piper_voice = "/home/athome/piper_bin/voices/en/en_US-lessac-medium.onnx"

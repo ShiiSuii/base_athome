@@ -1,12 +1,12 @@
 tracking:
   kp_pan: 0.01
-  kp_tilt: 0.01
+  kp_tilt: 0.004
   max_pan_step: 1.0
   max_tilt_step: 0.7
   deadband_x: 50.0
   deadband_y: 40.0
   invert_pan: true
-  invert_tilt: false
+  invert_tilt: true
   filter_alpha: 0.16
   max_pan_limit: 50.0
   max_tilt_limit: 22.0
