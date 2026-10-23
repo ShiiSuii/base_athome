@@ -11,8 +11,9 @@ Plataforma robotica de servicio para la competencia RoboCup @Home (Open Platform
 3. [Mapeo 2D y 3D](#3-mapeo-2d-y-3d)
 4. [Navegacion Autonoma (Nav2)](#4-navegacion-autonoma-nav2)
 5. [Sistema de Elevacion de Torso](#5-sistema-de-elevacion-de-torso)
-6. [Referencia de Comandos y Alias de Terminal](#6-referencia-de-comandos-y-alias-de-terminal)
-7. [Instalacion y Compilacion](#7-instalacion-y-compilacion)
+6. [Vision Artificial y Percepcion (RoboCup @Home)](#6-vision-artificial-y-percepcion-robocup-home)
+7. [Referencia de Comandos y Alias de Terminal](#7-referencia-de-comandos-y-alias-de-terminal)
+8. [Instalacion y Compilacion](#8-instalacion-y-compilacion)
 
 ---
 
@@ -203,14 +204,51 @@ El mecanismo de subida y bajada del torso esta accionado por un motor paso a pas
   - `turbo` / `fast` / `normal` / `slow`: Perfiles de velocidad preconfigurados.
   - `keys`: Modo interactivo por flechas de teclado.
 
+## 6. Vision Artificial y Percepcion (RoboCup @Home)
+
+El paquete `base_athome_perception` implementa los modulos de percepcion requeridos para las pruebas de servicio del certamen:
+
+### A. Reconocimiento Facial en Tiempo Real
+- **Detector:** Red neuronal convolucional SSD ResNet-10 de OpenCV DNN (`res10_300x300_ssd_iter_140000.caffemodel`), robusto frente a rotaciones, sombras y cambios de escala.
+- **Extractor biometrico:** Red SFace (`face_recognition_sface_2021dec.onnx`), proyecta el rostro a un vector embedding de 128 dimensiones.
+- **Comparador:** Similitud Coseno (`cv2.FaceRecognizerSF_FR_COSINE`, umbral >= 0.363).
+- **Registro dinamico (Enrollment):** Permite registrar personas en vivo presionando `[ESPACIO]` o `[E]` en la ventana visualizadora. La base de datos se guarda en `config/faces_db.pkl`.
+- **Ejecucion directa:**
+  ```bash
+  rostros
+  # o: reconocimiento_facial
+  ```
+
+### B. Deteccion de Poses Humanas y Posturas
+- **Modelo:** YOLOv8-pose (`yolov8n-pose.pt`), 17 keypoints anatomicos COCO a >30 FPS en CPU.
+- **Clasificador cinematico:** Determina automaticamente si la persona observada esta:
+  - `DE PIE (Standing)`
+  - `SENTADO (Sitting)`
+  - `SALUDANDO / SENALANDO (Waving / Pointing)`
+- **Ejecucion directa:**
+  ```bash
+  poses
+  ```
+
+### C. Deteccion de Basura y Contenedores (Tarea "Take Out the Garbage")
+- **Modelo:** YOLOv8 (`yolov8n.pt`), optimizado para residuos domesticos: botellas, vasos, latas, bolsas, restos organicos y contenedores.
+- **Estimacion de distancia:** Proyeccion combinada RGB + Depth para calcular distancia tridimensional en metros al residuo.
+- **Ejecucion directa:**
+  ```bash
+  basura
+  ```
+
 ---
 
-## 6. Referencia de Comandos y Alias de Terminal
+## 7. Referencia de Comandos y Alias de Terminal
 
 Todos los comandos se encuentran configurados en el archivo `~/.bashrc` de la maquina NUC:
 
 | Alias / Comando | Descripcion Tecnica |
 | :--- | :--- |
+| `rostros` / `reconocimiento_facial` | Abre la ventana GUI de reconocimiento facial en tiempo real sobre la pantalla de la NUC |
+| `poses` / `poses_humanas` | Abre la ventana GUI de deteccion de poses y posturas humanas |
+| `basura` / `detectar_basura` | Abre la ventana GUI de deteccion de residuos y contenedores |
 | `mapeo2d` (o `slam`) | Inicia mapeo 2D completo (Base + LiDAR + SLAM Toolbox + Teleop + RViz) |
 | `mapeo3d` | Inicia mapeo 3D completo (Base + LiDAR + RealSense + RTAB-Map 3D + RViz) |
 | `guardarmapa [nombre]` | Guarda mapa 2D en `.yaml` y `.pgm` con respaldo fechado |
@@ -228,7 +266,7 @@ Todos los comandos se encuentran configurados en el archivo `~/.bashrc` de la ma
 
 ---
 
-## 7. Instalacion y Compilacion
+## 8. Instalacion y Compilacion
 
 ### Requisitos del Sistema
 - **Sistema Operativo NUC:** Ubuntu 24.04 LTS con ROS 2 Jazzy Jalisco.
@@ -241,3 +279,4 @@ cd ~/base_athome_ws
 colcon build --symlink-install
 source install/setup.bash
 ```
+

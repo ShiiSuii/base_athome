@@ -26,3 +26,10 @@ venv/
 *.db3
 *.db
 *.pgm
+
+# Large neural network models and binary weights
+*.onnx
+*.caffemodel
+*.pt
+*.pkl
+
