@@ -9,6 +9,7 @@
 
 import argparse
 import datetime
+import json
 import os
 import re
 import sys
@@ -141,10 +142,32 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
 
             # Cliente de servicio para disparo de escucha ASR
             self.cli_trigger = self.create_client(Trigger, "/voice/listen_trigger")
+
+            # --- Interfaces Estandar FBOT@Home HRI ---
+            # Topico de entrada: pedir al robot que diga una frase (TTS Piper)
+            self.sub_say = self.create_subscription(
+                String, "/hri/say_something", self.say_something_callback, 10
+            )
+            # Topico de salida: streaming del HUD grafico para pantallas HDMI / Foxglove / RViz2
+            self.pub_ui_display = self.create_publisher(Image, "/hri/ui_display", 10)
+            # Topico de salida: metadatos JSON de personas detectadas y reconocidas
+            self.pub_detected_persons = self.create_publisher(String, "/hri/detected_persons", 10)
+            # Servicio: reproducir tono de aviso acustico de turn-taking (beep)
+            self.srv_play_beep = self.create_service(Trigger, "/hri/play_beep", self.play_beep_service_callback)
+            # Servicio: iniciar protocolo guiado de introduccion y registro de persona
+            self.srv_introduce = self.create_service(Trigger, "/hri/introduce_person", self.introduce_person_service_callback)
+            # Servicio: limpiar memoria biometrica
+            self.srv_clear_memory = self.create_service(Trigger, "/hri/clear_memory", self.clear_memory_service_callback)
         else:
             self.sub = None
             self.pub_pantilt = None
             self.cli_trigger = None
+            self.sub_say = None
+            self.pub_ui_display = None
+            self.pub_detected_persons = None
+            self.srv_play_beep = None
+            self.srv_introduce = None
+            self.srv_clear_memory = None
 
         self.use_camera_id = use_camera_id
         self.cap = None
@@ -276,6 +299,41 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
         except Exception:
             pass
 
+    # --- Callbacks de Interfaces FBOT@Home HRI ---
+    def say_something_callback(self, msg: String):
+        """Callback de FBOT /hri/say_something: sintetiza voz con Piper TTS y muestra subtitulo."""
+        text = msg.data.strip()
+        if text:
+            if hasattr(self, "get_logger"):
+                self.get_logger().info(f"[HRI Say]: \"{text}\"")
+            self.speaker.speak(text)
+            self.active_banner_override = (text, time.time() + 4.0)
+
+    def play_beep_service_callback(self, request, response):
+        """Servicio /hri/play_beep: reproduce el tono acustico turn-taking."""
+        self.speaker.play_beep(blocking=False)
+        response.success = True
+        response.message = "Turn-taking chime beep played."
+        return response
+
+    def introduce_person_service_callback(self, request, response):
+        """Servicio /hri/introduce_person: inicia la rutina interactiva de presentacion y registro."""
+        if self.state == self.STATE_IDLE:
+            self.start_voice_registration(reason="hri_service")
+            response.success = True
+            response.message = "Face introduction routine started."
+        else:
+            response.success = False
+            response.message = f"Robot is currently busy (state: {self.state})."
+        return response
+
+    def clear_memory_service_callback(self, request, response):
+        """Servicio /hri/clear_memory: borra todos los perfiles de memoria facial."""
+        self.recognizer.clear_database()
+        response.success = True
+        response.message = "Biometric memory cleared."
+        return response
+
     def update_face_tracking(self, results: list, now: float):
         """Calcula y envia comandos reactivos al cabezal usando los parametros calibrados."""
         if not self.tracking_enabled or not results or self.pub_pantilt is None:
@@ -351,8 +409,8 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
         self.best_thumbnail_crop = None
         self.best_sharpness = 0.0
 
-        # Pregunta clara y amigable (sin usar frases confusas como 'followed by')
-        self.current_banner_text = "Hello! What is your name? You can say: My name is, and your name."
+        # Pregunta clara y amigable identificando al robot como "Robot"
+        self.current_banner_text = "Hello! I am Robot. What is your name? You can say: My name is, and your name."
         print(f"\n[RoboCup @Home Memory] Iniciando registro guiado ({reason})...")
         print(f"[Robot]: \"{self.current_banner_text}\"")
         self.speaker.speak(self.current_banner_text)
@@ -367,7 +425,7 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
         self.best_sharpness = 0.0
         self.last_sample_time = 0.0
 
-        intro_text = f"Nice to meet you, {name}! Please look at my camera while I record your face."
+        intro_text = f"Nice to meet you, {name}! I am Robot. Please look at my camera while I record your face."
         self.current_banner_text = intro_text
         print(f"[Robot]: \"{intro_text}\"")
         self.speaker.speak(intro_text)
@@ -389,7 +447,7 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
         cv2.rectangle(overlay, (0, 0), (w, 55), (20, 24, 30), -1)
         cv2.addWeighted(overlay, 0.82, vis, 0.18, 0, vis)
 
-        cv2.putText(vis, "BASE@HOME - RECONOCIMIENTO Y MEMORIA FACIAL", (15, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 2)
+        cv2.putText(vis, "ROBOT @HOME - HRI SYSTEM", (15, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 2)
         cv2.circle(vis, (w - 110, 20), 5, (0, 255, 0), -1)
         cv2.putText(vis, "EN VIVO", (w - 98, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 255, 0), 2)
         cv2.putText(vis, f"FPS: {self.fps:.1f}", (w - 195, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (200, 200, 200), 1)
@@ -651,7 +709,7 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
 
         # Pie del panel de memoria
         cv2.line(canvas, (side_x, h - 28), (side_x + sidebar_w, h - 28), (40, 48, 60), 1)
-        cv2.putText(canvas, "SFace 128-D | RoboCup @Home", (side_x + 18, h - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (130, 145, 160), 1)
+        cv2.putText(canvas, "ROBOT HRI | SFace 128-D | @Home", (side_x + 14, h - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (130, 145, 160), 1)
 
         return canvas
 
@@ -681,7 +739,7 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
         print("--------------------------------------------------\n")
 
     def run(self):
-        window_name = "Base@Home - Reconocimiento, Memoria Biometrica y Trackeo"
+        window_name = "Robot @Home - Human-Robot Interaction (HRI)"
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
         cv2.resizeWindow(window_name, 980, 535)
 
@@ -770,9 +828,9 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
                                     break
                             seen_count = prof.sighting_count if prof else 1
                             if seen_count > 1:
-                                greeting = f"Welcome back, {name}! Good to see you again."
+                                greeting = f"Welcome back, {name}! I am Robot, good to see you again."
                             else:
-                                greeting = f"Hello {name}! Nice to see you."
+                                greeting = f"Hello {name}! I am Robot, nice to see you."
 
                             print(f"[RoboCup @Home Memory]: \"{greeting}\"")
                             self.speaker.speak(greeting)
@@ -795,8 +853,10 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
             elif self.state == self.STATE_PROMPT_NAME:
                 # Transicion inmediata apenas el robot termine de hablar la pregunta
                 if not self.speaker.is_speaking and (now - self.state_start_time > 0.2):
+                    # Tono de aviso acustico de turn-taking (FBOT @Home pattern)
+                    self.speaker.play_beep(blocking=True)
                     self.state = self.STATE_WAIT_NAME
-                    self.state_start_time = now
+                    self.state_start_time = time.time()
                     self.voice_text = None
                     self.trigger_mic_listening()
                     print("[Robot]: Escuchando respuesta del usuario en el microfono RØDE...")
@@ -815,7 +875,7 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
                         self.start_biometric_recording(self.pending_name)
                     else:
                         print("[ASR]: No se pudo extraer un nombre valido. Reintentando...")
-                        prompt_retry = "I didn't catch your name. Please say: My name is, and your name."
+                        prompt_retry = "I am Robot, and I didn't catch your name. Please say: My name is, and your name."
                         self.current_banner_text = prompt_retry
                         self.speaker.speak(prompt_retry)
                         self.state = self.STATE_PROMPT_NAME
@@ -823,7 +883,7 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
 
                 elif now - self.state_start_time > 8.0:
                     print("[ASR]: Tiempo de espera finalizado (sin respuesta).")
-                    self.speaker.speak("I did not hear you. Let's try again later.")
+                    self.speaker.speak("I am Robot. I did not hear you, let's try again later.")
                     self.state = self.STATE_IDLE
                     self.last_registered_time = now
 
@@ -859,7 +919,7 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
                         thumbnail_img=self.best_thumbnail_crop,
                         attributes={"role": "guest", "enrolled_via": "voice_interaction"}
                     )
-                    success_msg = f"Thank you, {self.pending_name}! Your face is now saved in my memory."
+                    success_msg = f"Thank you, {self.pending_name}! I am Robot, and your face is now saved in my memory."
                     print(f"[RoboCup @Home Memory]: Guardado '{self.pending_name}' [ID: {pid}] con {len(self.recording_samples)} muestras.")
                     self.speaker.speak(success_msg)
                     self.current_banner_text = success_msg
@@ -868,7 +928,7 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
 
                 elif elapsed > 6.5 and len(self.recording_samples) < 4:
                     print("[RoboCup @Home Memory]: Muestras insuficientes o rostro perdido.")
-                    self.speaker.speak("I lost sight of your face. Let's try again.")
+                    self.speaker.speak("I am Robot. I lost sight of your face, let's try again.")
                     self.state = self.STATE_IDLE
                     self.last_registered_time = now
 
@@ -891,6 +951,31 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
             # Dibujar interfaz HUD profesional con panel lateral de memoria
             display_frame = self.draw_hud(frame, results)
             cv2.imshow(window_name, display_frame)
+
+            # Publicar HUD grafico en topico ROS 2 (FBOT@Home /hri/ui_display)
+            if ROS2_AVAILABLE and hasattr(self, "pub_ui_display") and self.pub_ui_display is not None:
+                try:
+                    ui_msg = self.bridge.cv2_to_imgmsg(display_frame, encoding="bgr8")
+                    self.pub_ui_display.publish(ui_msg)
+                except Exception:
+                    pass
+
+            # Publicar metadatos JSON de rostros detectados (FBOT@Home /hri/detected_persons)
+            if ROS2_AVAILABLE and hasattr(self, "pub_detected_persons") and self.pub_detected_persons is not None:
+                try:
+                    persons_list = []
+                    for r in results:
+                        persons_list.append({
+                            "name": r["name"],
+                            "similarity": round(float(r["similarity"]), 3),
+                            "bbox": [int(v) for v in r["bbox"]],
+                            "quality_score": round(float(r.get("quality_score", 0.0)), 1),
+                        })
+                    msg_detected = String()
+                    msg_detected.data = json.dumps(persons_list)
+                    self.pub_detected_persons.publish(msg_detected)
+                except Exception:
+                    pass
 
             # Manejo de teclado
             key = cv2.waitKey(1) & 0xFF

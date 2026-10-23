@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 # ==============================================================================
-# Base@Home - Sintesis de Voz Neuronal en Tiempo Real (RoboCup @Home)
+# Base@Home - Sintesis de Voz Neuronal y Audio Player para HRI (RoboCup @Home)
 # Utiliza Piper TTS con modelo neural en ingles (en_US-lessac-medium)
-# Reproduccion de baja latencia a traves del parlante Bluetooth (PipeWire / PulseAudio)
+# Soporte para turn-taking acustico (beep.wav) y reproduccion de audio WAV
+# Reproduccion a traves del parlante Bluetooth (PipeWire / PulseAudio)
 # ==============================================================================
 
 import os
@@ -10,21 +11,29 @@ import queue
 import subprocess
 import threading
 import time
-from typing import Optional, Callable
+from typing import Callable, Optional
 
 
 class RoboCupSpeaker:
-    """Motor de Text-to-Speech neuronal de alta calidad y voz natural en ingles."""
+    """Motor de Text-to-Speech neuronal y reproductor de audio para HRI (RoboCup @Home)."""
 
     def __init__(
         self,
         piper_bin: str = "/home/athome/piper_bin/piper/piper",
         model_path: str = "/home/athome/piper_bin/voices/en/en_US-lessac-medium.onnx",
         sample_rate: int = 22050,
+        beep_path: Optional[str] = None,
     ):
         self.piper_bin = piper_bin
         self.model_path = model_path
         self.sample_rate = sample_rate
+
+        # Ruta predeterminada del tono de aviso acústico (beep de escucha)
+        if beep_path and os.path.exists(beep_path):
+            self.beep_path = beep_path
+        else:
+            pkg_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            self.beep_path = os.path.join(pkg_root, "resources", "beep.wav")
 
         self._queue = queue.Queue()
         self._is_speaking = False
@@ -57,6 +66,29 @@ class RoboCupSpeaker:
 
         if blocking and done_event:
             done_event.wait()
+
+    def play_audio_file(self, wav_path: str, blocking: bool = False) -> None:
+        """Reproduce un archivo WAV directamente al parlante Bluetooth."""
+        if not os.path.exists(wav_path):
+            return
+
+        def _play():
+            try:
+                bt_sink = self.ensure_bluetooth_sink()
+                sink_flag = ["-d", bt_sink] if bt_sink else []
+                subprocess.run(["paplay"] + sink_flag + [wav_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception as e:
+                print(f"[RoboCupSpeaker] Error reproduciendo audio: {e}")
+
+        if blocking:
+            _play()
+        else:
+            threading.Thread(target=_play, daemon=True).start()
+
+    def play_beep(self, blocking: bool = True) -> None:
+        """Reproduce el tono acustico (beep) de turn-taking para avisar al humano que el robot escucha."""
+        if os.path.exists(self.beep_path):
+            self.play_audio_file(self.beep_path, blocking=blocking)
 
     def stop(self) -> None:
         """Detiene inmediatamente cualquier locucion en curso y limpia la cola."""
@@ -97,11 +129,9 @@ class RoboCupSpeaker:
 
             self._is_speaking = True
             try:
-                # Asegurar que siempre se elija el parlante Bluetooth
                 bt_sink = self.ensure_bluetooth_sink()
                 sink_flag = f"-d {bt_sink} " if bt_sink else ""
 
-                # Sanitizar texto para bash
                 clean_text = text.replace('"', '\\"').replace("`", "").replace("$", "")
                 cmd = (
                     f'echo "{clean_text}" | '
