@@ -44,43 +44,57 @@ from base_athome_perception.face_recognizer import FaceRecognizer
 from base_athome_perception.speaker import RoboCupSpeaker
 
 
+STOP_WORDS = {
+    "a", "the", "an", "robot", "ready", "here", "nothing",
+    "yes", "no", "si", "hola", "buenas", "hello", "hi", "hey",
+    "what", "ok", "okay", "please", "say", "followed", "by",
+    "followed by", "name", "your", "my", "is", "am", "me", "llamo",
+    "unknown", "desconocido", "person", "persona", "speak", "clearly",
+    "it", "its", "this", "that", "there", "who", "you", "your name"
+}
+
+
 def extract_person_name(text: str) -> str:
     """Extrae de forma robusta el nombre de una persona a partir de la transcripcion oral (EN/ES)."""
     text = text.strip().strip(".!?,")
     if not text:
         return ""
 
+    # Limpiar saludos iniciales o muletillas conversacionales
+    text_clean = re.sub(
+        r"^(?:hello|hi|hey|hola|buenas|good morning|good afternoon)\b[,\s]*",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    ).strip()
+
     # Patrones comunes de presentacion en RoboCup @Home (Ingles y Espanol)
     patterns = [
-        # Ingles
         r"(?:my name is|i am|i'm|call me|this is|it's|they call me)\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)",
-        r"(?:hello|hi|hey),?\s*(?:my name is|i am|i'm)?\s*([A-Za-z]+(?:\s+[A-Za-z]+)?)",
-        # Espanol
         r"(?:me llamo|mi nombre es|yo soy|soy)\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)",
-        r"(?:hola|buenas),?\s*(?:me llamo|mi nombre es|yo soy|soy)?\s*([A-Za-z]+(?:\s+[A-Za-z]+)?)",
     ]
     for pat in patterns:
-        m = re.search(pat, text, re.IGNORECASE)
+        m = re.search(pat, text_clean, re.IGNORECASE)
         if m:
             candidate = m.group(1).strip().title()
-            if candidate.lower() not in [
-                "a", "the", "an", "robot", "ready", "here", "nothing",
-                "yes", "no", "si", "hola", "buenas", "hello", "hi"
-            ]:
+            # Limpiar prefijo accidental 'Followed By'
+            candidate = re.sub(r"^(?:Followed By|Followed|By)\s*", "", candidate, flags=re.IGNORECASE).strip()
+            if candidate and candidate.lower() not in STOP_WORDS:
                 return candidate
 
-    # Si es una respuesta corta (1 o 2 palabras, ej: "David" o "Sarah Connor")
-    words = [w.strip(".!?,") for w in text.split() if w.strip(".!?,")]
+    # Filtrar palabras residuales y respuestas directas (ej: 'David')
+    cleaned = re.sub(r"^(?:followed by|por favor|please say|say)\s*", "", text_clean, flags=re.IGNORECASE).strip()
+    words = [w.strip(".!?,") for w in cleaned.split() if w.strip(".!?,")]
     if 1 <= len(words) <= 2:
         candidate = " ".join(words).title()
-        if candidate.lower() not in ["yes", "no", "si", "hello", "hi", "hey", "hola", "what", "ok", "okay"]:
+        if candidate.lower() not in STOP_WORDS and len(candidate) >= 3:
             return candidate
 
-    # Respaldo: ultima palabra si es alfabetica
-    if words and words[-1].isalpha():
+    if words and words[-1].isalpha() and words[-1].lower() not in STOP_WORDS and len(words[-1]) >= 3:
         return words[-1].title()
 
-    return text.title()
+    return ""
+
 
 
 class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
@@ -337,8 +351,8 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
         self.best_thumbnail_crop = None
         self.best_sharpness = 0.0
 
-        # Pregunta clara y amigable
-        self.current_banner_text = "Hello! What is your name? Please say: My name is, followed by your name."
+        # Pregunta clara y amigable (sin usar frases confusas como 'followed by')
+        self.current_banner_text = "Hello! What is your name? You can say: My name is, and your name."
         print(f"\n[RoboCup @Home Memory] Iniciando registro guiado ({reason})...")
         print(f"[Robot]: \"{self.current_banner_text}\"")
         self.speaker.speak(self.current_banner_text)
@@ -801,7 +815,7 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
                         self.start_biometric_recording(self.pending_name)
                     else:
                         print("[ASR]: No se pudo extraer un nombre valido. Reintentando...")
-                        prompt_retry = "I didn't catch your name. Please say: My name is, followed by your name."
+                        prompt_retry = "I didn't catch your name. Please say: My name is, and your name."
                         self.current_banner_text = prompt_retry
                         self.speaker.speak(prompt_retry)
                         self.state = self.STATE_PROMPT_NAME

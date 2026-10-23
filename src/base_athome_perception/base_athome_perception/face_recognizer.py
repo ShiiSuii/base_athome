@@ -33,8 +33,22 @@ class PersonProfile:
     samples_count: int = 0
     attributes: Dict[str, Any] = field(default_factory=dict)
     features: List[np.ndarray] = field(default_factory=list, repr=False)
+    centroid: Optional[np.ndarray] = field(default=None, repr=False)
     thumbnail_img: Optional[np.ndarray] = field(default=None, repr=False)
     _last_sighting_recorded: float = field(default=0.0, repr=False)
+
+    def update_centroid(self) -> None:
+        """Calcula el vector biometrico medio (centroide normalizado) de la persona."""
+        if self.features:
+            feats_array = np.array(self.features)
+            mean_vec = np.mean(feats_array, axis=0)
+            norm = np.linalg.norm(mean_vec)
+            if norm > 1e-6:
+                self.centroid = (mean_vec / norm).astype(np.float32)
+            else:
+                self.centroid = self.features[0].copy()
+        else:
+            self.centroid = None
 
     def to_metadata_dict(self) -> Dict[str, Any]:
         return {
@@ -61,12 +75,13 @@ class FaceRecognizer:
         sface_model_path: str,
         db_path: str,
         conf_thresh: float = 0.55,
-        cosine_thresh: float = 0.363,
+        cosine_thresh: float = 0.52,
     ):
         self.caffe_proto_path = caffe_proto_path
         self.caffe_model_path = caffe_model_path
         self.sface_model_path = sface_model_path
         self.conf_thresh = conf_thresh
+        # Umbral robusto contra falsos positivos: 0.52 (evita colisiones inter-persona)
         self.cosine_thresh = cosine_thresh
 
         # Directorio de persistencia de la base de datos de memoria
@@ -138,6 +153,7 @@ class FaceRecognizer:
                         thumbnail_img=thumb_img,
                         _last_sighting_recorded=meta.get("last_seen", time.time()),
                     )
+                    profile.update_centroid()
                     self.profiles[pid] = profile
 
                 total_samples = sum(len(p.features) for p in self.profiles.values())
@@ -157,11 +173,10 @@ class FaceRecognizer:
                     now = time.time()
                     now_str = datetime.datetime.fromtimestamp(now).strftime("%Y-%m-%d %H:%M:%S")
                     for name, feats in legacy_data.items():
-                        # Omitir nombres accidentales o invalidos
-                        if name.lower() in ["desconocido", "unknown", "me llamo"]:
+                        if name.lower() in ["desconocido", "unknown", "me llamo", "followed by"]:
                             continue
                         pid = f"person_{idx:03d}"
-                        self.profiles[pid] = PersonProfile(
+                        prof = PersonProfile(
                             person_id=pid,
                             name=name,
                             enrolled_at=now,
@@ -174,6 +189,8 @@ class FaceRecognizer:
                             features=feats if isinstance(feats, list) else [feats],
                             _last_sighting_recorded=now,
                         )
+                        prof.update_centroid()
+                        self.profiles[pid] = prof
                         idx += 1
                     self.save_database()
                     print(f"[FaceRecognizer] Migracion exitosa a formato RoboCup @Home: {len(self.profiles)} perfiles.")
@@ -244,7 +261,6 @@ class FaceRecognizer:
         gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
         lap_var = float(cv2.Laplacian(gray, cv2.CV_64F).var())
 
-        # Umbral minimo de nitidez para evitar muestras borrosas durante movimiento
         if lap_var < 30.0:
             return False, lap_var, "Muestra borrosa (desenfoque)"
 
@@ -282,29 +298,48 @@ class FaceRecognizer:
         return faces
 
     def extract_feature(self, image: np.ndarray, bbox: Tuple[int, int, int, int]) -> Optional[np.ndarray]:
-        """Recorta y extrae el vector biometrico de 128 caracteristicas con SFace."""
+        """Recorta un cuadrado 1:1 centrado y extrae el vector biometrico de 128-D con SFace sin deformaciones."""
         x, y, w, h = bbox
         img_h, img_w = image.shape[:2]
 
-        # Margen del 10% para contexto facial
-        margin_x = int(w * 0.10)
-        margin_y = int(h * 0.10)
-        x1 = max(0, x - margin_x)
-        y1 = max(0, y - margin_y)
-        x2 = min(img_w, x + w + margin_x)
-        y2 = min(img_h, y + h + margin_y)
+        cx = x + w / 2.0
+        cy = y + h / 2.0
+        # Recorte cuadrado centrado con 12% de margen
+        side = int(max(w, h) * 1.12)
+        half = side // 2
 
-        face_crop = image[y1:y2, x1:x2]
-        if face_crop.size == 0:
+        x1 = int(cx - half)
+        y1 = int(cy - half)
+        x2 = x1 + side
+        y2 = y1 + side
+
+        # Padding seguro para no distorsionar las proporciones faciales
+        pad_left = max(0, -x1)
+        pad_top = max(0, -y1)
+        pad_right = max(0, x2 - img_w)
+        pad_bottom = max(0, y2 - img_h)
+
+        src_x1 = max(0, x1)
+        src_y1 = max(0, y1)
+        src_x2 = min(img_w, x2)
+        src_y2 = min(img_h, y2)
+
+        face_crop = image[src_y1:src_y2, src_x1:src_x2]
+        if pad_left > 0 or pad_top > 0 or pad_right > 0 or pad_bottom > 0:
+            face_crop = cv2.copyMakeBorder(
+                face_crop, pad_top, pad_bottom, pad_left, pad_right, cv2.BORDER_CONSTANT, value=[0, 0, 0]
+            )
+
+        if face_crop.size == 0 or face_crop.shape[0] < 20 or face_crop.shape[1] < 20:
             return None
 
-        # Redimensionar al tamano de entrada de SFace (112x112)
+        # Redimensionar al tamano de entrada de SFace (112x112) preservando 1:1
         face_aligned = cv2.resize(face_crop, (112, 112))
         feature = self.sface.feature(face_aligned)
         return feature
 
     def recognize_face(self, feature: np.ndarray) -> Tuple[str, float, Optional[str]]:
-        """Compara un embedding contra los perfiles guardados usando Similitud Coseno."""
+        """Compara un embedding contra los perfiles guardados usando Similitud Coseno, Top-K y Centroide."""
         if not self.profiles or feature is None:
             return "Desconocido", 0.0, None
 
@@ -314,16 +349,30 @@ class FaceRecognizer:
         for profile in self.profiles.values():
             if not profile.features:
                 continue
-            # Obtener la maxima similitud entre todas las muestras biometricas de la persona
+
+            # 1. Similitudes con todas las muestras biometricas de la persona
             scores = [
                 float(self.sface.match(feature, known_feat, cv2.FaceRecognizerSF_FR_COSINE))
                 for known_feat in profile.features
             ]
-            person_max_score = max(scores) if scores else -1.0
-            if person_max_score > best_score:
-                best_score = person_max_score
+
+            # 2. Promedio robusto de las 2 mejores muestras (elimina falsos positivos por un unico outlier)
+            sorted_scores = sorted(scores, reverse=True)
+            k = min(2, len(sorted_scores))
+            top_k_score = float(np.mean(sorted_scores[:k]))
+
+            # 3. Similitud con el vector centroide del perfil (identidad media)
+            if profile.centroid is not None:
+                centroid_score = float(self.sface.match(feature, profile.centroid, cv2.FaceRecognizerSF_FR_COSINE))
+                composite_score = 0.60 * top_k_score + 0.40 * centroid_score
+            else:
+                composite_score = top_k_score
+
+            if composite_score > best_score:
+                best_score = composite_score
                 best_profile = profile
 
+        # Criterio estricto de identificacion: Similitud compuesta >= 0.52
         if best_profile is not None and best_score >= self.cosine_thresh:
             return best_profile.name, max(0.0, float(best_score)), best_profile.person_id
 
@@ -372,7 +421,6 @@ class FaceRecognizer:
         now = time.time()
         now_str = datetime.datetime.fromtimestamp(now).strftime("%Y-%m-%d %H:%M:%S")
 
-        # Verificar si la persona ya existe en la base de datos (por nombre insensible a mayusculas)
         existing_profile: Optional[PersonProfile] = None
         for p in self.profiles.values():
             if p.name.lower() == name.lower():
@@ -393,6 +441,8 @@ class FaceRecognizer:
                 if len(existing_profile.features) < 15:
                     existing_profile.features.append(feat)
 
+            existing_profile.update_centroid()
+
             if thumbnail_img is not None and thumbnail_img.size > 0:
                 thumb_resized = cv2.resize(thumbnail_img, (140, 140))
                 rel_path = f"thumbnails/{pid}.jpg"
@@ -408,7 +458,6 @@ class FaceRecognizer:
         else:
             # Crear nuevo perfil de persona
             pid = f"person_{len(self.profiles) + 1:03d}"
-            # Asegurar que el ID sea unico
             while pid in self.profiles:
                 next_idx = int(pid.split("_")[1]) + 1
                 pid = f"person_{next_idx:03d}"
@@ -437,6 +486,7 @@ class FaceRecognizer:
                 thumbnail_img=thumb_cache,
                 _last_sighting_recorded=now,
             )
+            profile.update_centroid()
             self.profiles[pid] = profile
             self.save_database()
             print(f"[FaceRecognizer] ¡Nuevo perfil registrado con exito: '{name}' [ID: {pid}]!")
