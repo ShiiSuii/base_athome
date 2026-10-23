@@ -1,14 +1,13 @@
-# Parametros de Calibracion de Trackeo Facial Pan-Tilt (RoboCup @Home)
 tracking:
-  kp_pan: 0.025
-  kp_tilt: 0.018
-  max_pan_step: 1.2
-  max_tilt_step: 0.8
-  deadband_x: 25.0
-  deadband_y: 25.0
+  kp_pan: 0.01
+  kp_tilt: 0.01
+  max_pan_step: 1.0
+  max_tilt_step: 0.7
+  deadband_x: 50.0
+  deadband_y: 40.0
   invert_pan: true
   invert_tilt: false
-  filter_alpha: 0.45
+  filter_alpha: 0.16
   max_pan_limit: 50.0
   max_tilt_limit: 22.0
   min_tilt_limit: -18.0
