@@ -155,12 +155,24 @@ def main():
         viewer = GarbageViewer(topic=args.topic, use_camera_id=-1, model_path=det_model)
         try:
             viewer.run()
+        except KeyboardInterrupt:
+            pass
         finally:
-            viewer.destroy_node()
-            rclpy.shutdown()
+            try:
+                viewer.destroy_node()
+            except Exception:
+                pass
+            if rclpy.ok():
+                try:
+                    rclpy.shutdown()
+                except Exception:
+                    pass
     else:
         viewer = GarbageViewer(use_camera_id=args.webcam if args.webcam >= 0 else 0, model_path=det_model)
-        viewer.run()
+        try:
+            viewer.run()
+        except KeyboardInterrupt:
+            pass
 
 
 if __name__ == "__main__":

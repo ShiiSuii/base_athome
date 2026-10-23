@@ -271,9 +271,18 @@ def main():
         )
         try:
             viewer.run()
+        except KeyboardInterrupt:
+            pass
         finally:
-            viewer.destroy_node()
-            rclpy.shutdown()
+            try:
+                viewer.destroy_node()
+            except Exception:
+                pass
+            if rclpy.ok():
+                try:
+                    rclpy.shutdown()
+                except Exception:
+                    pass
     else:
         viewer = FaceRecognitionViewer(
             use_camera_id=args.webcam if args.webcam >= 0 else 0,
@@ -282,7 +291,10 @@ def main():
             sface_model=sface,
             db_path=db_path,
         )
-        viewer.run()
+        try:
+            viewer.run()
+        except KeyboardInterrupt:
+            pass
 
 
 if __name__ == "__main__":
