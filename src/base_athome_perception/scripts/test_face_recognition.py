@@ -159,6 +159,8 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
         self.target_tilt_deg = 0.0
         self.last_track_time = 0.0
         self.tracked_bbox: Optional[Tuple[int, int, int, int]] = None
+        self.filtered_face_cx: Optional[float] = None
+        self.filtered_face_cy: Optional[float] = None
 
     def image_callback(self, msg: Image):
         try:
@@ -178,9 +180,11 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
         self.voice_status = msg.data.strip()
 
     def update_face_tracking(self, results: list, now: float):
-        """Calcula y envia comandos lentos y suaves al cabezal para centrar el rostro."""
+        """Calcula y envia comandos ultra suaves al cabezal para centrar el rostro."""
         if not self.tracking_enabled or not results or self.pub_pantilt is None:
             self.tracked_bbox = None
+            self.filtered_face_cx = None
+            self.filtered_face_cy = None
             return
 
         # Seleccionar el rostro mas grande (mas cercano)
@@ -188,29 +192,42 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
         x, y, bw, bh = target["bbox"]
         self.tracked_bbox = (x, y, bw, bh)
 
-        # Centro del rostro vs Centro de la imagen (640x480)
-        face_cx = x + bw / 2.0
-        face_cy = y + bh / 2.0
-        err_x = face_cx - 320.0
-        err_y = face_cy - 240.0
+        # Centro instantaneo del rostro
+        raw_cx = x + bw / 2.0
+        raw_cy = y + bh / 2.0
 
-        # Zona muerta (Deadband) para evitar micro-oscilaciones o temblores
-        DEAD_X = 35.0
-        DEAD_Y = 30.0
+        # Filtro pasa-bajos exponencial para eliminar jitter del detector de rostros
+        if self.filtered_face_cx is None:
+            self.filtered_face_cx = raw_cx
+            self.filtered_face_cy = raw_cy
+        else:
+            ALPHA = 0.20  # 80% historia, 20% nueva medicion -> ultra suave
+            self.filtered_face_cx = (1.0 - ALPHA) * self.filtered_face_cx + ALPHA * raw_cx
+            self.filtered_face_cy = (1.0 - ALPHA) * self.filtered_face_cy + ALPHA * raw_cy
 
-        # Ganancias suaves y limites de paso por frame (control suave y lento)
-        KP_PAN = 0.015
-        KP_TILT = 0.012
-        MAX_PAN_STEP = 0.55   # Grados maximos por ciclo (~6 deg/s a 10 Hz)
-        MAX_TILT_STEP = 0.35  # Grados maximos por ciclo (~4 deg/s a 10 Hz)
+        # Error respecto al centro del cuadro (640x480)
+        err_x = self.filtered_face_cx - 320.0
+        err_y = self.filtered_face_cy - 240.0
+
+        # Zona muerta amplia para evitar cualquier movimiento brusco o temblor
+        DEAD_X = 50.0
+        DEAD_Y = 40.0
+
+        # Ganancias suaves y pasos maximos reducidos (movimiento lento y cinematografico)
+        KP_PAN = 0.007
+        KP_TILT = 0.006
+        MAX_PAN_STEP = 0.25   # Max 0.25 deg por ciclo (~2.5 deg/s)
+        MAX_TILT_STEP = 0.18  # Max 0.18 deg por ciclo (~1.8 deg/s)
 
         if abs(err_x) > DEAD_X:
-            # Si el rostro esta a la derecha (+err_x), rotar a la derecha (-pan)
-            delta_pan = -np.clip(err_x * KP_PAN, -MAX_PAN_STEP, MAX_PAN_STEP)
+            # CORREGIDO: Invertido el signo de Pan.
+            # En este robot, rotar a la derecha requiere angulo POSITIVO (+pan).
+            # Si el rostro esta a la derecha (+err_x), sumamos +delta_pan hacia la derecha.
+            delta_pan = np.clip(err_x * KP_PAN, -MAX_PAN_STEP, MAX_PAN_STEP)
             self.target_pan_deg += delta_pan
 
         if abs(err_y) > DEAD_Y:
-            # Si el rostro esta abajo (+err_y), inclinar hacia abajo (-tilt)
+            # Si el rostro esta abajo (+err_y), inclinar hacia abajo (-tilt).
             delta_tilt = -np.clip(err_y * KP_TILT, -MAX_TILT_STEP, MAX_TILT_STEP)
             self.target_tilt_deg += delta_tilt
 
@@ -226,6 +243,7 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
             msg.y = self.target_tilt_deg
             msg.z = 0.0
             self.pub_pantilt.publish(msg)
+
 
     def start_voice_registration(self, reason: str = "manual"):
         """Inicia el protocolo RoboCup @Home para registrar a una nueva persona hablando."""

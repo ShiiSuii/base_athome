@@ -73,6 +73,21 @@ class RoboCupSpeaker:
                 pass
         self._is_speaking = False
 
+    @staticmethod
+    def ensure_bluetooth_sink() -> Optional[str]:
+        """Detecta y activa el parlante Bluetooth como sink predeterminado de audio."""
+        try:
+            res = subprocess.run(["pactl", "list", "sinks", "short"], stdout=subprocess.PIPE, text=True, timeout=1)
+            for line in res.stdout.splitlines():
+                parts = line.split()
+                if len(parts) >= 2 and "bluez_output" in parts[1]:
+                    bt_sink = parts[1]
+                    subprocess.run(["pactl", "set-default-sink", bt_sink], stderr=subprocess.DEVNULL)
+                    return bt_sink
+        except Exception:
+            pass
+        return None
+
     def _worker_loop(self) -> None:
         while self._running:
             try:
@@ -82,12 +97,16 @@ class RoboCupSpeaker:
 
             self._is_speaking = True
             try:
+                # Asegurar que siempre se elija el parlante Bluetooth
+                bt_sink = self.ensure_bluetooth_sink()
+                sink_flag = f"-d {bt_sink} " if bt_sink else ""
+
                 # Sanitizar texto para bash
                 clean_text = text.replace('"', '\\"').replace("`", "").replace("$", "")
                 cmd = (
                     f'echo "{clean_text}" | '
                     f'"{self.piper_bin}" --model "{self.model_path}" --output-raw 2>/dev/null | '
-                    f'paplay --raw --rate {self.sample_rate} --channels 1 --format s16le 2>/dev/null'
+                    f'paplay {sink_flag}--raw --rate {self.sample_rate} --channels 1 --format s16le 2>/dev/null'
                 )
 
                 self._current_process = subprocess.Popen(
@@ -98,6 +117,7 @@ class RoboCupSpeaker:
                 self._current_process.wait()
             except Exception as e:
                 print(f"[RoboCupSpeaker] Error en reproduccion TTS: {e}")
+
             finally:
                 self._is_speaking = False
                 self._current_process = None
