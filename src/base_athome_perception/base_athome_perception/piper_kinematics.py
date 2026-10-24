@@ -35,7 +35,7 @@ CAMERA_LEVER_ARM_M: Tuple[float, float, float] = (0.035, 0.0, 0.015)
 # Límites articulares seguros (en grados) compatibles con las poses reales de Home y Pre-Grasp
 SAFE_JOINT_LIMITS_DEG: Dict[str, Tuple[float, float]] = {
     'joint1': (-154.0, 154.0),
-    'joint2': (0.0, 195.0),
+    'joint2': (0.0, 182.7),
     'joint3': (-175.0, 0.0),
     'joint4': (-110.0, 110.0),
     'joint5': (-80.0, 80.0),
@@ -368,16 +368,15 @@ class PiperKinematicsSolver:
             np.radians([15.0, 155.0, -80.0, 45.0, -50.0, -105.0]),
         ])
 
-        # Ponderación articular: prioriza hombro/codo y mantiene muñeca estable
-        W_inv = np.diag([1.0, 1.0, 1.0, 0.35, 0.65, 0.20])
-        lambda_sq = 15.0 ** 2  # Amortiguamiento en escala de mm
+        # Ponderación articular: prioriza hombro/codo/muñeca pitch y bloquea giro innecesario de J6
+        W_inv = np.diag([1.0, 1.0, 1.0, 0.40, 1.20, 0.0])
+        lambda_sq = 12.0 ** 2  # Amortiguamiento en escala de mm
 
         best_q = None
         best_err = float('inf')
 
         for seed in seeds:
             q = np.clip(seed.copy(), self._q_min, self._q_max)
-            q_ref = q.copy()
 
             for _ in range(max_iterations):
                 cur_pos, _ = self.forward_kinematics(q)
@@ -400,12 +399,8 @@ class PiperKinematicsSolver:
                 JJT = JW @ J.T + lambda_sq * np.eye(3)
                 J_pinv = W_inv @ J.T @ np.linalg.inv(JJT)
 
-                # Proyección en espacio nulo para mantener la muñeca cerca de la semilla Pre-Grasp
-                N = np.eye(6) - J_pinv @ J
-                q_null = -0.05 * (q - q_ref)
-
-                dq = J_pinv @ err + N @ q_null
-                dq = np.clip(dq, -0.12, 0.12)
+                dq = J_pinv @ err
+                dq = np.clip(dq, -0.10, 0.10)
                 q = np.clip(q + dq, self._q_min, self._q_max)
 
         if best_q is not None:

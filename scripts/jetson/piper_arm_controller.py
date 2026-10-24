@@ -284,10 +284,13 @@ class PiperArmController(Node):
             }
 
     def plan_gripper(self, target_gripper_mm: float, duration: float = 1.2):
-        """Mueve solo la pinza suavemente."""
+        """Mueve la pinza suavemente sin sobrescribir ni cancelar trayectorias articulares en curso."""
         with self.lock:
+            if self.active_trajectory is not None:
+                self.active_trajectory['target_gripper'] = float(target_gripper_mm)
+                return
             self.active_trajectory = {
-                'start_deg': list(self.target_joints_deg),
+                'start_deg': list(self.current_joints_deg),
                 'target_deg': list(self.target_joints_deg),
                 'start_gripper': float(self.current_gripper_mm),
                 'target_gripper': float(target_gripper_mm),
@@ -310,7 +313,7 @@ class PiperArmController(Node):
             if len(msg.velocity) > 0 and msg.velocity[0] > 0:
                 duration = max(0.8, min(6.0, msg.velocity[0]))
 
-            self.get_logger().info(f"Recibido joint_cmd: {targets_deg}, duracion: {duration}s")
+            self.get_logger().info(f"Recibido joint_cmd: {[round(v, 2) for v in targets_deg]}, duracion: {duration}s")
             self.plan_trajectory(targets_deg, duration=duration, target_gripper=g_target)
 
     def gripper_cmd_cb(self, msg: Float32):
@@ -329,14 +332,19 @@ class PiperArmController(Node):
                 self.target_joints_deg = list(self.current_joints_deg)
                 self.target_gripper_mm = float(self.current_gripper_mm)
                 self.active_trajectory = None
-                self.piper.EnableArm(7)
+                for _ in range(5):
+                    self.piper.EnableArm(7)
+                    time.sleep(0.02)
                 self.piper.GripperCtrl(0, 1000, 0x03, 0)
-                self.get_logger().info("Brazo HABILITADO y setpoint sincronizado en posicion actual")
+                for _ in range(10):
+                    self.piper.MotionCtrl_2(0x01, 0x01, 35, 0x00)
+                    time.sleep(0.01)
+                self.get_logger().info("Brazo HABILITADO en modo CAN y setpoint sincronizado en posicion actual")
             else:
                 self.active_trajectory = None
                 self.autonomous_sequence = None
                 self.piper.DisableArm(7)
-                self.get_logger().info("Brazo DESHABILITADO (modo manual/enseñanza libre)")
+                self.get_logger().info("Brazo DESHABILITADO (modo manual libre)")
 
     # --- Secuencia Autonoma de Agarre de Pringles ---
     def start_grasp_sequence(self):
