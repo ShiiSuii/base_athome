@@ -26,11 +26,16 @@ import numpy as np
 # Posiciones en torso_lift_link según URDF:
 #   - Eje Tilt del cabezal (pan_tilt_base + pan + tilt): (0.070, 0.000, 0.200) m
 #   - Base del brazo en lado izquierdo del prisma (arm_base_link): (0.155, +0.175, -0.075) m
-# Vector desde el hombro izquierdo (arm_base_link) hasta el eje Tilt del cabezal:
-HEAD_TO_ARM_OFFSET_M: Tuple[float, float, float] = (-0.085, -0.175, 0.275)
+# Vector desde el hombro izquierdo (arm_base_link) hasta el eje Tilt del cabezal,
+# calibrado con compensación de centro volumétrico de botella (+5 cm X) y nivel de mesa (+6 cm Z):
+HEAD_TO_ARM_OFFSET_M: Tuple[float, float, float] = (-0.035, -0.175, 0.335)
 
 # Offset desde el eje Tilt hasta el centro óptico de la RealSense D435 (camera_link):
 CAMERA_LEVER_ARM_M: Tuple[float, float, float] = (0.035, 0.0, 0.015)
+
+# Desfase físico de la cámara del brazo (Orbbec DaBai) hacia la derecha respecto al centro de la pinza (tcp_link):
+# 6 cm (0.060 m) hacia la derecha (-Y en el Marco del Hombro del Robot)
+WRIST_CAMERA_RIGHT_OFFSET_M: float = 0.060
 
 # Límites articulares seguros (en grados) compatibles con las poses reales de Home y Pre-Grasp
 SAFE_JOINT_LIMITS_DEG: Dict[str, Tuple[float, float]] = {
@@ -55,27 +60,27 @@ SAFE_CARTESIAN_BOX_M: Dict[str, Tuple[float, float]] = {
 DEFAULT_NAMED_POSES: Dict[str, Dict[str, object]] = {
     'home': {
         'description': 'Pose de reposo seguro al lateral izquierdo del prisma',
-        'joints_deg': [86.28, 173.91, -164.0, 66.98, 0.69, -146.41],
+        'joints_deg': [72.09, 176.5, -155.15, 102.62, -31.51, -99.91],
         'gripper_mm': 69.5,
     },
     'cube_stow': {
         'description': 'Pose compacta de transporte junto al cubo',
-        'joints_deg': [86.28, 173.91, -164.0, 66.98, 0.69, -146.41],
+        'joints_deg': [72.09, 176.5, -155.15, 102.62, -31.51, -99.91],
         'gripper_mm': 20.0,
     },
     'pre_grasp': {
         'description': 'Pose Pre-Grasp enseñada frente a la mesa con cámara de muñeca nivelada',
-        'joints_deg': [30.96, 182.68, -98.68, 37.3, -75.12, -95.86],
+        'joints_deg': [53.33, 176.38, -79.88, 69.54, -75.36, -89.05],
         'gripper_mm': 69.5,
     },
     'pre_grasp_center': {
         'description': 'Pose de pre-agarre centrada frente al torso',
-        'joints_deg': [30.96, 182.68, -98.68, 37.3, -75.12, -95.86],
+        'joints_deg': [53.33, 176.38, -79.88, 69.54, -75.36, -89.05],
         'gripper_mm': 69.5,
     },
     'pre_grasp_table': {
         'description': 'Pose de aproximación a mesa con pinza abierta',
-        'joints_deg': [30.96, 182.68, -98.68, 37.3, -75.12, -95.86],
+        'joints_deg': [53.33, 176.38, -79.88, 69.54, -75.36, -89.05],
         'gripper_mm': 69.5,
     },
 }

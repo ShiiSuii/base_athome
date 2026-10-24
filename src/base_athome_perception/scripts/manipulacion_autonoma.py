@@ -61,6 +61,7 @@ from base_athome_perception.piper_kinematics import (
     PiperKinematicsSolver,
     SAFE_CARTESIAN_BOX_M,
     SAFE_JOINT_LIMITS_DEG,
+    WRIST_CAMERA_RIGHT_OFFSET_M,
 )
 
 CONFIG_FILE_PATH = "/home/athome/base_athome_ws/src/base_athome_perception/config/arm_poses_and_limits.yaml"
@@ -105,6 +106,7 @@ class ManipulacionAutonomaNode(Node):
         self.get_logger().info("Iniciando Sistema de Manipulacion 3D en RViz + Cinematica Inversa...")
 
         # 1. Cargar Configuración de Poses desde YAML
+        self.wrist_camera_right_offset_m = float(WRIST_CAMERA_RIGHT_OFFSET_M)  # 0.06 m (6 cm a la derecha)
         self.load_configuration()
 
         # 2. Subscripciones a Cámara Principal + Profundidad (RealSense D435)
@@ -202,7 +204,9 @@ class ManipulacionAutonomaNode(Node):
         self.last_marker_pub_time = 0.0
         self.last_out_of_reach_say_time = 0.0
 
-        # Trayectorias articulares calculadas por IK
+        # Trayectorias articulares y avance calculados por IK
+        self.planned_dx_m: float = 0.13
+        self.planned_dy_m: float = -0.06
         self.joints_grasp: Optional[List[float]] = None
         self.joints_lift: Optional[List[float]] = None
 
@@ -213,8 +217,8 @@ class ManipulacionAutonomaNode(Node):
     # --------------------------------------------------------------------------
     def load_configuration(self):
         """Carga o inicializa poses nombradas desde YAML."""
-        self.pose_home = [86.28, 173.91, -164.0, 66.98, 0.69, -146.41]
-        self.pose_pre_grasp = [30.96, 182.68, -98.68, 37.3, -75.12, -95.86]
+        self.pose_home = [72.09, 176.5, -155.15, 102.62, -31.51, -99.91]
+        self.pose_pre_grasp = [53.33, 176.38, -79.88, 69.54, -75.36, -89.05]
         self.gripper_home_mm = 70.0
         self.gripper_pre_grasp_mm = 70.0
 
@@ -222,6 +226,9 @@ class ManipulacionAutonomaNode(Node):
             try:
                 with open(CONFIG_FILE_PATH, "r", encoding="utf-8") as f:
                     data = yaml.safe_load(f) or {}
+                    env = data.get("safety_envelope", {})
+                    if "wrist_camera_right_offset_m" in env:
+                        self.wrist_camera_right_offset_m = float(env["wrist_camera_right_offset_m"])
                     poses = data.get("named_poses", {})
                     if "home" in poses:
                         self.pose_home = list(poses["home"].get("joints_deg", self.pose_home))
@@ -646,20 +653,25 @@ class ManipulacionAutonomaNode(Node):
                     self.last_out_of_reach_say_time = now
                 return
 
-            # Sembrar la Cinemática Inversa en la pose Pre-Grasp enseñada
+            # Calcular el vector de avance desde la pose Pre-Grasp enseñada manteniendo
+            # la altura de mesa enseñada (dz ~ 0) para permitir extensión completa hacia adelante (+12 a +15.5 cm)
             q_pre_rad = [math.radians(d) for d in self.pose_pre_grasp]
-            target_clamped = clamp_to_safe_cartesian_box(x_sh, y_sh, z_sh)
-            j_grasp, ok_grasp = self.kinematics_solver.inverse_kinematics(target_clamped, q_seed_rad=q_pre_rad)
+            pre_x, pre_y, pre_z = self.kinematics_solver.forward_position_m(q_pre_rad)
+
+            # Sumar penetración (+6.5 cm desde la superficie frontal medida por profundidad) para rodear la botella
+            self.planned_dx_m = float(np.clip((x_sh + 0.065) - pre_x, 0.120, 0.155))
+            self.planned_dy_m = float(np.clip(y_sh - pre_y, -0.085, 0.085))
+
+            j_grasp, ok_grasp = self.kinematics_solver.move_tool_line(
+                self.pose_pre_grasp,
+                delta_forward_m=self.planned_dx_m,
+                delta_lateral_m=self.planned_dy_m,
+                delta_up_m=0.0,
+            )
 
             if not ok_grasp:
-                # Si el objetivo está ligeramente al borde, avanzar desde Pre-Grasp hacia la dirección del objeto
-                pre_x, pre_y, pre_z = self.kinematics_solver.forward_position_m(q_pre_rad)
-                dx = float(np.clip(x_sh - pre_x, 0.03, 0.09))
-                dy = float(np.clip(y_sh - pre_y, -0.08, 0.08))
-                dz = float(np.clip(z_sh - pre_z, -0.06, 0.06))
-                j_grasp, ok_grasp = self.kinematics_solver.move_tool_line(
-                    self.pose_pre_grasp, delta_forward_m=dx, delta_lateral_m=dy, delta_up_m=dz
-                )
+                target_clamped = clamp_to_safe_cartesian_box(pre_x + self.planned_dx_m, pre_y + self.planned_dy_m, pre_z)
+                j_grasp, ok_grasp = self.kinematics_solver.inverse_kinematics(target_clamped, q_seed_rad=q_pre_rad)
 
             if ok_grasp:
                 j_lift, ok_lift = self.kinematics_solver.move_tool_line(
@@ -670,6 +682,7 @@ class ManipulacionAutonomaNode(Node):
 
                 self.get_logger().info(
                     f"[Paso A -> B] Objeto 3D en RViz: Hombro=({x_sh:.2f}, {y_sh:.2f}, {z_sh:.2f})m | "
+                    f"Avance planeado desde Pre-Grasp: dX=+{self.planned_dx_m*100:.1f}cm, dY={self.planned_dy_m*100:+.1f}cm | "
                     f"IK Grasp={self.joints_grasp} | Moviendo primero a Pre-Grasp..."
                 )
                 self.say(f"Object locked in RViz at {x_sh:.2f} meters forward. Moving to pre-grasp.")
@@ -688,32 +701,42 @@ class ManipulacionAutonomaNode(Node):
                 self._ik_sent = False
                 self.say("Pre-grasp reached. Moving with inverse kinematics to grasp the object.")
 
-        # PASO C: IR HACIA EL OBJETO CON CINEMÁTICA INVERSA
+        # PASO C: IR HACIA EL OBJETO CON CINEMÁTICA INVERSA (COMPENSANDO +6 CM DERECHA DE CÁMARA DEL BRAZO)
         elif self.auto_state == self.AUTO_PASO_C_IR_CON_CINEMATICA:
             step_elapsed = now - self.step_start_time
             if step_elapsed > 0.6 and not getattr(self, "_ik_sent", False):
                 self._ik_sent = True
-                # Si la cámara de muñeca ve el objeto en Pre-Grasp, refinar suavemente el centrado lateral
-                if self.target_2d_wrist is not None and self.joints_grasp is not None:
-                    y_corr = float(np.clip(-self.wrist_error_u * 0.035, -0.035, 0.035))
-                    z_corr = float(np.clip(-self.wrist_error_v * 0.025, -0.025, 0.025))
-                    if abs(y_corr) > 0.004 or abs(z_corr) > 0.004:
-                        j_ref, ok_ref = self.kinematics_solver.move_tool_line(
-                            self.joints_grasp, delta_forward_m=0.0, delta_lateral_m=y_corr, delta_up_m=z_corr
+                # Si la cámara del brazo ve la botella en Pre-Grasp, calcular el desplazamiento lateral exacto
+                # teniendo en cuenta que la cámara del brazo está desfasada 6 cm (0.06 m) a la DERECHA (-Y) del centro de la pinza:
+                if self.target_2d_wrist is not None:
+                    # En Pre-Grasp, el centro de la lente está a -0.06 m (6 cm a la derecha) respecto a los dedos de la pinza.
+                    # Por tanto, para alinear los DEDOS DE LA PINZA con la botella:
+                    #   dy_wrist = -0.06 m (offset cámara->pinza) - (wrist_error_u * 0.08 m)
+                    dy_wrist = float(np.clip(-self.wrist_camera_right_offset_m - (self.wrist_error_u * 0.08), -0.09, 0.08))
+                    j_ref, ok_ref = self.kinematics_solver.move_tool_line(
+                        self.pose_pre_grasp,
+                        delta_forward_m=self.planned_dx_m,
+                        delta_lateral_m=dy_wrist,
+                        delta_up_m=0.0,
+                    )
+                    if ok_ref:
+                        self.joints_grasp = j_ref
+                        self.get_logger().info(
+                            f"[Paso C - Offset Camara 6cm Der] err_u={self.wrist_error_u:+.2f} -> "
+                            f"Avance IK: dX=+{self.planned_dx_m*100:.1f}cm, dY={dy_wrist*100:+.1f}cm | "
+                            f"Joints={self.joints_grasp}"
                         )
-                        if ok_ref:
-                            self.joints_grasp = j_ref
-                            j_lift_ref, ok_l = self.kinematics_solver.move_tool_line(
-                                self.joints_grasp, delta_forward_m=0.0, delta_lateral_m=0.0, delta_up_m=0.08
-                            )
-                            if ok_l:
-                                self.joints_lift = j_lift_ref
+                        j_lift_ref, ok_l = self.kinematics_solver.move_tool_line(
+                            self.joints_grasp, delta_forward_m=0.0, delta_lateral_m=0.0, delta_up_m=0.08
+                        )
+                        if ok_l:
+                            self.joints_lift = j_lift_ref
 
                 if self.joints_grasp is not None:
                     self.get_logger().info(f"[Paso C] Ejecutando trayectoria IK hacia el objeto: {self.joints_grasp}")
-                    self.send_arm_joint_goal(self.joints_grasp, duration_s=2.0, gripper_mm=70.0)
+                    self.send_arm_joint_goal(self.joints_grasp, duration_s=2.1, gripper_mm=70.0)
 
-            if step_elapsed > 2.9:
+            if step_elapsed > 3.0:
                 self.auto_state = self.AUTO_PASO_D_AGARRE_ELEVACION
                 self.step_start_time = now
                 self._lift_sent = False
@@ -784,28 +807,35 @@ class ManipulacionAutonomaNode(Node):
 
         cv2.putText(canvas, "1. CAMARA PRINCIPAL + PROFUNDIDAD 3D -> PUBLICANDO OBJETO A RVIZ (/arm_camera/object_markers)", (15, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.43, (0, 255, 200), 1)
 
-        # --- PANEL DERECHO: CÁMARA DEL BRAZO (MUÑECA EYE-IN-HAND) ---
+        # --- PANEL DERECHO: CÁMARA DEL BRAZO (CON COMPENSACIÓN DE +6 CM A LA DERECHA) ---
         if self.wrist_color_frame is not None:
             w_img = cv2.resize(self.wrist_color_frame, (feed_w, feed_h))
             orig_h, orig_w = self.wrist_color_frame.shape[:2]
             sx, sy = feed_w / orig_w, feed_h / orig_h
 
+            # Centro óptico de la cámara (amarillo) y Eje Real de la Pinza (-6 cm a la izquierda de la cámara, verde)
             wcx, wcy = int(feed_w / 2), int(feed_h / 2)
-            cv2.drawMarker(w_img, (wcx, wcy), (0, 255, 255), cv2.MARKER_CROSS, 28, 1)
+            gripper_cx = max(25, int(wcx - (self.wrist_camera_right_offset_m / 0.08) * (feed_w / 2)))
+            cv2.drawMarker(w_img, (wcx, wcy), (0, 220, 255), cv2.MARKER_CROSS, 22, 1)
+            cv2.putText(w_img, "Cam", (wcx + 6, wcy - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 220, 255), 1)
+            cv2.line(w_img, (gripper_cx, 25), (gripper_cx, feed_h - 25), (0, 255, 100), 1)
+            cv2.drawMarker(w_img, (gripper_cx, wcy), (0, 255, 100), cv2.MARKER_TILTED_CROSS, 22, 2)
+            cv2.putText(w_img, "EJE PINZA (-6cm)", (max(10, gripper_cx - 48), 20), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 255, 100), 1)
 
             if self.target_2d_wrist is not None:
                 x1, y1, x2, y2 = self.target_2d_wrist
                 bx1, by1 = int(x1 * sx), int(y1 * sy)
                 bx2, by2 = int(x2 * sx), int(y2 * sy)
                 cv2.rectangle(w_img, (bx1, by1), (bx2, by2), (0, 200, 255), 2)
-                cv2.putText(w_img, f"MUNECA err_u={self.wrist_error_u:+.2f}", (bx1, max(20, by1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 200, 255), 1)
+                dy_cm = (-self.wrist_camera_right_offset_m - (self.wrist_error_u * 0.08)) * 100.0
+                cv2.putText(w_img, f"Correccion Pinza dY={dy_cm:+.1f}cm", (bx1, max(20, by1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 255, 150), 2)
 
             canvas[45:45 + feed_h, 645:645 + feed_w] = w_img
         else:
             cv2.rectangle(canvas, (645, 45), (645 + feed_w, 45 + feed_h), (25, 30, 40), -1)
             cv2.putText(canvas, "ESPERANDO STREAM CAMARA DEL BRAZO...", (740, 250), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (120, 140, 160), 1)
 
-        cv2.putText(canvas, "2. CAMARA DEL BRAZO: APOYO DE CENTRADO FINO EN PRE-GRASP", (645, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (230, 240, 255), 1)
+        cv2.putText(canvas, "2. CAMARA DEL BRAZO (+6cm der): ALINEACION CON EJE DE PINZA", (645, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (230, 240, 255), 1)
 
         # --- PANEL INFERIOR: TELEMETRÍA Y ESTADO ---
         bar_y = 485

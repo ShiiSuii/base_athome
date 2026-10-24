@@ -29,9 +29,10 @@ safety_envelope:
     - -0.48
     - 0.35
   head_to_arm_offset_m:
-  - -0.085
+  - -0.035
   - -0.175
-  - 0.275
+  - 0.335
+  wrist_camera_right_offset_m: 0.060
 named_poses:
   home:
     joints_deg:
@@ -45,11 +46,11 @@ named_poses:
     timestamp: '2026-10-24 20:05:10'
   pre_grasp:
     joints_deg:
-    - 65.33
-    - 174.0
-    - -101.21
-    - 81.55
-    - -74.79
-    - -119.9
-    gripper_mm: 69.4
-    timestamp: '2026-10-24 20:24:03'
+    - 53.33
+    - 176.38
+    - -79.88
+    - 69.54
+    - -75.36
+    - -89.05
+    gripper_mm: 55.8
+    timestamp: '2026-10-24 20:47:42'
