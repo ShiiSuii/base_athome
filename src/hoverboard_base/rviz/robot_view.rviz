@@ -80,6 +80,18 @@ Visualization Manager:
         {}
       Update Interval: 0
       Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Objeto Detectado (Camara Brazo)
+      Namespaces:
+        arm_target: true
+      Topic:
+        Depth: 10
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /arm_camera/object_markers
+      Value: true
   Enabled: true
   Global Options:
     Background Color: 30; 34; 42
