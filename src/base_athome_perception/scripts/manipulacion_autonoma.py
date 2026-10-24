@@ -210,8 +210,8 @@ class ManipulacionAutonomaNode(Node):
     # --------------------------------------------------------------------------
     def load_configuration(self):
         """Carga o inicializa poses nombradas y límites seguros desde YAML."""
-        self.pose_home = [89.58, 172.74, -163.98, 84.59, -1.27, -153.97]
-        self.pose_pre_grasp = [0.0, 68.0, -80.0, 0.0, 12.0, 0.0]
+        self.pose_home = [85.56, 170.99, -159.12, 19.29, -5.78, -101.87]
+        self.pose_pre_grasp = [43.43, 182.55, -108.11, 82.3, -49.05, -128.85]
         self.gripper_home_mm = 70.0
         self.gripper_pre_grasp_mm = 70.0
 
@@ -290,8 +290,12 @@ class ManipulacionAutonomaNode(Node):
             data = json.loads(msg.data)
             self.arm_is_moving = bool(data.get("is_moving", False))
             self.gripper_opening_mm = float(data.get("gripper_mm", self.gripper_opening_mm))
-            self.arm_xyz_mm = list(data.get("xyz_mm", self.arm_xyz_mm))
             self.arm_joints_deg = list(data.get("joints_deg", self.arm_joints_deg))
+            if hasattr(self, "kinematics_solver") and len(self.arm_joints_deg) >= 6:
+                xyz_m = self.kinematics_solver.forward_position_m([math.radians(d) for d in self.arm_joints_deg[:6]])
+                self.arm_xyz_mm = [xyz_m[0] * 1000.0, xyz_m[1] * 1000.0, xyz_m[2] * 1000.0]
+            else:
+                self.arm_xyz_mm = list(data.get("xyz_mm", self.arm_xyz_mm))
         except Exception:
             pass
 
@@ -537,7 +541,7 @@ class ManipulacionAutonomaNode(Node):
                     coords_3d = self.calculate_3d_coordinates((x1, y1, x2, y2))
                     if coords_3d:
                         self.target_3d_head = coords_3d
-                        # Transformación 3D del cabezal a la base del brazo Piper
+                        # Transformación 3D del cabezal al Marco del Hombro del Brazo Piper
                         x_arm, y_arm, z_arm = transform_camera_to_arm(
                             coords_3d[0], coords_3d[1], coords_3d[2],
                             pan_rad=self.head_pan_rad,
@@ -545,7 +549,7 @@ class ManipulacionAutonomaNode(Node):
                         )
                         self.target_3d_arm = (x_arm, y_arm, z_arm)
 
-                        # Verificación de área segura
+                        # Verificación de área segura en el Marco del Hombro
                         in_box, reason = is_in_safe_cartesian_box(x_arm, y_arm, z_arm)
                         self.is_in_reach = in_box
 
@@ -556,39 +560,46 @@ class ManipulacionAutonomaNode(Node):
                                 self.last_out_of_reach_say_time = now
                             return
 
-                        # Planificación cinemática de Pre-Grasp, Agarre y Elevación
-                        yaw_base = math.atan2(y_arm, max(0.01, x_arm))
-                        r_xy = math.hypot(x_arm, y_arm)
+                        # Arquitectura CHARMIE @Home:
+                        # 1. Ir primero en espacio articular a la pose PRE-GRASP enseñada por el usuario
+                        self.joints_pre_grasp = list(self.pose_pre_grasp)
+                        q_pre_rad = [math.radians(d) for d in self.pose_pre_grasp]
+                        pre_x, pre_y, pre_z = self.kinematics_solver.forward_position_m(q_pre_rad)
 
-                        # Pose Pre-Grasp orientada hacia el objeto (standoff 8 cm, z elevado +3 cm)
-                        r_app = max(0.32, r_xy - 0.08)
-                        x_app = r_app * math.cos(yaw_base)
-                        y_app = r_app * math.sin(yaw_base)
-                        z_app = z_arm + 0.03
+                        # 2. Pre-calcular el avance relativo hacia la botella acotado alrededor de Pre-Grasp
+                        dx = float(np.clip(x_arm - pre_x, 0.04, 0.11))
+                        dy = float(np.clip(y_arm - pre_y, -0.07, 0.07))
+                        dz = float(np.clip(z_arm - pre_z, -0.05, 0.05))
 
-                        # Pose de Agarre (centrado en la botella)
-                        x_grasp, y_grasp, z_grasp = x_arm, y_arm, z_arm
-
-                        # Pose de Elevación (+8 cm en Z)
-                        x_lift, y_lift, z_lift = x_arm, y_arm, z_arm + 0.08
-
-                        j_app, ok_app = self.kinematics_solver.inverse_kinematics((x_app, y_app, z_app))
-                        j_grasp, ok_grasp = self.kinematics_solver.inverse_kinematics((x_grasp, y_grasp, z_grasp))
-                        j_lift, ok_lift = self.kinematics_solver.inverse_kinematics((x_lift, y_lift, z_lift))
+                        j_grasp, ok_grasp = self.kinematics_solver.move_tool_line(
+                            self.pose_pre_grasp,
+                            delta_forward_m=dx,
+                            delta_lateral_m=dy,
+                            delta_up_m=dz,
+                        )
+                        if not ok_grasp:
+                            j_grasp, ok_grasp = self.kinematics_solver.inverse_kinematics(
+                                (x_arm, y_arm, z_arm), q_seed_rad=q_pre_rad
+                            )
 
                         if ok_grasp:
-                            self.joints_pre_grasp = j_app if ok_app else j_grasp
+                            j_lift, ok_lift = self.kinematics_solver.move_tool_line(
+                                j_grasp, delta_forward_m=0.0, delta_lateral_m=0.0, delta_up_m=0.08
+                            )
                             self.joints_grasp = j_grasp
                             self.joints_lift = j_lift if ok_lift else j_grasp
+                            self.wrist_error_u = 0.0
+                            self.wrist_error_v = 0.0
 
                             self.say(f"Target locked at X {x_arm:.2f}, Y {y_arm:.2f}, Z {z_arm:.2f} meters. Deploying to pre-grasp.")
                             self.auto_state = self.AUTO_PASO_B_MOVER_PREGRASP
                             self.step_start_time = now
+                            self.fase_actual = self.FASE_3_PREGRASP
 
-                            # Ejecutar movimiento a Pre-Grasp con pinza abierta a 70 mm
+                            # Ejecutar movimiento a la pose Pre-Grasp enseñada con pinza abierta a 70 mm
                             self.send_arm_joint_goal(self.joints_pre_grasp, duration_s=2.5, gripper_mm=70.0)
                         else:
-                            self.get_logger().warn("IK falló para el objetivo.")
+                            self.get_logger().warn("IK fuera de límites para el objetivo.")
 
         # PASO B: MOVER A POSICIÓN PRE-GRASP
         elif self.auto_state == self.AUTO_PASO_B_MOVER_PREGRASP:
@@ -602,7 +613,7 @@ class ManipulacionAutonomaNode(Node):
         elif self.auto_state == self.AUTO_PASO_C_GUIADO_FINO:
             step_elapsed = now - self.step_start_time
 
-            # Inspección continua en cámara de muñeca
+            # Inspección continua en cámara de muñeca (Eye-in-Hand)
             if self.wrist_color_frame is not None:
                 det_w = self.detect_object_wrist(self.wrist_color_frame)
                 if det_w:
@@ -614,41 +625,60 @@ class ManipulacionAutonomaNode(Node):
                     self.wrist_error_u = (wcx - 320.0) / 320.0
                     self.wrist_error_v = (wcy - 240.0) / 240.0
 
-            # Tras 1.0s de estabilización visual, avanzar ("ir hacia la botella")
+            # Tras 1.2s de estabilización visual en Pre-Grasp, refinar con cámara de muñeca y avanzar ("ir hacia la botella")
             if step_elapsed > 1.2 and not getattr(self, "_ingress_sent", False):
                 self._ingress_sent = True
-                # Si la cámara de muñeca midió desviación lateral, corregir levemente
-                y_corr = np.clip(self.wrist_error_u * 0.03, -0.04, 0.04)
+                # Corrección fina lateral/vertical medida por la cámara del brazo
+                y_corr = float(np.clip(-self.wrist_error_u * 0.04, -0.04, 0.04))
+                z_corr = float(np.clip(-self.wrist_error_v * 0.03, -0.03, 0.03))
+
+                if abs(y_corr) > 0.003 or abs(z_corr) > 0.003:
+                    base_grasp = self.joints_grasp if self.joints_grasp is not None else self.pose_pre_grasp
+                    j_refined, ok_ref = self.kinematics_solver.move_tool_line(
+                        base_grasp,
+                        delta_forward_m=0.0,
+                        delta_lateral_m=y_corr,
+                        delta_up_m=z_corr,
+                    )
+                    if ok_ref:
+                        self.joints_grasp = j_refined
+                        j_lift_ref, ok_lift = self.kinematics_solver.move_tool_line(
+                            self.joints_grasp, delta_forward_m=0.0, delta_lateral_m=0.0, delta_up_m=0.08
+                        )
+                        if ok_lift:
+                            self.joints_lift = j_lift_ref
+
                 if self.joints_grasp is not None:
-                    # Avanzar pinza sobre la botella
-                    self.get_logger().info(f"[Autónomo] Avanzando pinza sobre la botella (corrección lateral: {y_corr*100:.1f}cm)...")
+                    self.get_logger().info(
+                        f"[Autónomo] Avanzando hacia la botella desde Pre-Grasp (ajuste muñeca dY={y_corr*100:+.1f}cm, dZ={z_corr*100:+.1f}cm)..."
+                    )
                     self.send_arm_joint_goal(self.joints_grasp, duration_s=1.8, gripper_mm=70.0)
 
-            # Tras completar el avance (2.2s), pasar al agarre
+            # Tras completar el avance (2.0s), pasar al agarre
             if step_elapsed > 3.2:
                 self._ingress_sent = False
                 self.auto_state = self.AUTO_PASO_D_AGARRE_ELEVACION
                 self.step_start_time = now
                 self.get_logger().info("[Ciclo Autónomo] Paso D: Cerrando pinza firmemente...")
 
-                # Cerrar pinza a 60 mm con torque para sujetar botella
+                # Cerrar pinza a 55 mm con torque para sujetar botella/pote
                 if self.dry_run:
-                    self.get_logger().info("[DRY-RUN] Simulado: Pinza cerrada a 60 mm.")
+                    self.get_logger().info("[DRY-RUN] Simulado: Pinza cerrada a 55 mm.")
                 else:
                     g_msg = Float32()
-                    g_msg.data = 60.0
+                    g_msg.data = 55.0
                     self.pub_gripper_cmd.publish(g_msg)
 
         # PASO D: AGARRE Y ELEVACIÓN
         elif self.auto_state == self.AUTO_PASO_D_AGARRE_ELEVACION:
             step_elapsed = now - self.step_start_time
 
-            # Tras 1.5s de cierre firme, elevar +8 cm
+            # Tras 1.5s de cierre firme, elevar +8 cm en Z del hombro
             if step_elapsed > 1.5 and not getattr(self, "_lift_sent", False):
                 self._lift_sent = True
                 self.get_logger().info("[Autónomo] Elevando botella +8 cm de la mesa...")
                 if self.joints_lift is not None:
-                    self.send_arm_joint_goal(self.joints_lift, duration_s=1.8, gripper_mm=60.0)
+                    self.send_arm_joint_goal(self.joints_lift, duration_s=1.8, gripper_mm=55.0)
 
             # Tras completar la elevación, iniciar transporte a Home
             if step_elapsed > 3.5:
@@ -656,7 +686,7 @@ class ManipulacionAutonomaNode(Node):
                 self.auto_state = self.AUTO_PASO_E_RETORNO_HOME
                 self.step_start_time = now
                 self.say("Bottle grasped and lifted. Carrying bottle to home position.")
-                # Mover suavemente a la Posición Home manteniendo la pinza firmemente cerrada (60 mm)
+                # Mover suavemente a la Posición Home manteniendo la pinza firmemente cerrada (55 mm)
                 self.mover_a_home(duration_s=2.8, keep_gripper=True)
 
         # PASO E: RETORNO SEGURO A POSICIÓN HOME (Carry to Home)

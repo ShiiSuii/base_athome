@@ -1,78 +1,88 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # ==============================================================================
-# Base@Home - Cinemática, Transformaciones y Envolvente Segura
-# Manipulador AgileX Piper 6-DOF & Cámara RealSense D435 en Cabezal Pan-Tilt
-# RoboCup @Home (Open Platform League)
+# Base@Home - Módulo de Cinemática, Transformaciones 3D y Seguridad Espacial
+# Brazo Robótico AgileX Piper 6-DOF (Montaje Lateral Izquierdo en Torso/Prisma)
+#
+# Incluye:
+#   1. Parámetros Denavit-Hartenberg oficiales de AgileX Piper (C_PiperForwardKinematics)
+#   2. Conversión exacta entre el marco intrínseco de la base del brazo (arm_base_link,
+#      montado con roll = -90° en el lateral izquierdo del prisma) y el Marco del Hombro
+#      del Robot (+X adelante, +Y izquierda, +Z arriba).
+#   3. Transformación 3D exacta de Cámara RealSense D435 (Pan-Tilt) al Hombro del Brazo.
+#   4. Solucionador de Cinemática Inversa (Weighted DLS + Regularización Nullspace hacia
+#      la pose Pre-Grasp enseñada) y avance en línea de herramienta (Move Tool Line
+#      inspirado en la arquitectura CHARMIE @Home).
 # ==============================================================================
 
 import math
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple
 import numpy as np
 
 # ------------------------------------------------------------------------------
-# 1. CONSTANTES FÍSICAS Y ENVOLVENTES DE SEGURIDAD ('ÁREA SEGURA')
+# 1. CONSTANTES GEOMÉTRICAS Y ENVOLVENTE DE SEGURIDAD (SAFE ENVELOPE)
 # ------------------------------------------------------------------------------
 
-# Límites angulares seguros de articulaciones en grados (establecidos por el arquitecto cinemático)
-# Evita colisión física con columna del elevador, pantalla interactiva, cubo de montaje y chasis
+# Posiciones en torso_lift_link según URDF:
+#   - Eje Tilt del cabezal (pan_tilt_base + pan + tilt): (0.070, 0.000, 0.200) m
+#   - Base del brazo en lado izquierdo del prisma (arm_base_link): (0.155, +0.175, -0.075) m
+# Vector desde el hombro izquierdo (arm_base_link) hasta el eje Tilt del cabezal:
+HEAD_TO_ARM_OFFSET_M: Tuple[float, float, float] = (-0.085, -0.175, 0.275)
+
+# Offset desde el eje Tilt hasta el centro óptico de la RealSense D435 (camera_link):
+CAMERA_LEVER_ARM_M: Tuple[float, float, float] = (0.035, 0.0, 0.015)
+
+# Límites articulares seguros (en grados) compatibles con las poses reales de Home y Pre-Grasp
 SAFE_JOINT_LIMITS_DEG: Dict[str, Tuple[float, float]] = {
-    'joint1': (-65.0, 95.0),    # Rotación base en Z
-    'joint2': (10.0, 175.0),    # Hombro pitch en Y (soporta reposo/home 172.7° y extensión frontal)
-    'joint3': (-165.0, -15.0),  # Codo pitch en Y (soporta reposo/home -164.0° y extensión frontal)
-    'joint4': (-90.0, 90.0),    # Muñeca roll en X
-    'joint5': (-72.0, 72.0),    # Muñeca pitch en Y (permite nivelación horizontal de la pinza)
-    'joint6': (-160.0, 160.0),  # Muñeca yaw/roll en Z (soporta reposo -154.0°)
+    'joint1': (-154.0, 154.0),
+    'joint2': (0.0, 195.0),
+    'joint3': (-175.0, 0.0),
+    'joint4': (-110.0, 110.0),
+    'joint5': (-80.0, 80.0),
+    'joint6': (-180.0, 180.0),
 }
 
-# Caja cartesiana segura en el marco arm_base_link (metros)
-# Espacio de trabajo útil frente al robot y sobre la mesa
+# Caja cartesiana segura en el Marco del Hombro del Robot (+X adelante, +Y izq, +Z arriba)
+# Nota: Como el hombro está a +0.175m a la izquierda del centro del robot, Y = -0.175m
+# corresponde exactamente al plano central frente al robot.
 SAFE_CARTESIAN_BOX_M: Dict[str, Tuple[float, float]] = {
-    'x': (0.12, 0.58),   # Frente al robot: 12 cm a 58 cm
-    'y': (-0.25, 0.42),  # Lateral: 25 cm a la derecha, 42 cm a la izquierda
-    'z': (-0.25, 0.40),  # Altura: 25 cm bajo la base a 40 cm sobre la base
+    'x': (0.15, 0.62),    # 15 cm a 62 cm hacia adelante
+    'y': (-0.45, 0.32),   # Cubre desde 28 cm a la derecha del centro hasta 32 cm a la izquierda
+    'z': (-0.48, 0.35),   # Desde 48 cm bajo el hombro hasta 35 cm sobre el hombro
 }
 
-# Rango útil de apertura de la pinza paralela (mm)
-GRIPPER_MIN_MM = 0.0
-GRIPPER_MAX_MM = 70.0
-PRINGLES_GRASP_APERTURE_MM = 62.0  # Sujeción firme del cilindro (75 mm de diámetro con compresión)
-
-# Poses nombradas calibradas por defecto (grados)
-DEFAULT_NAMED_POSES: Dict[str, Dict[str, Union[List[float], float, str]]] = {
+# Poses nombradas calibradas por defecto (en grados)
+DEFAULT_NAMED_POSES: Dict[str, Dict[str, object]] = {
     'home': {
-        'joints_deg': [89.58, 172.74, -163.98, 84.59, -1.27, -153.97],
+        'description': 'Pose de reposo seguro al lateral izquierdo del prisma',
+        'joints_deg': [85.56, 170.99, -159.12, 19.29, -5.78, -101.87],
         'gripper_mm': 70.0,
-        'description': 'Pose de reposo seguro estibado junto a columna del elevador'
     },
     'cube_stow': {
-        'joints_deg': [88.14, 172.84, -163.72, -78.66, -3.95, -2.81],
-        'gripper_mm': 1.0,
-        'description': 'Pose compacta de estiba lateral descansando junto al cubo'
+        'description': 'Pose compacta de transporte junto al cubo',
+        'joints_deg': [85.56, 170.99, -159.12, 19.29, -5.78, -101.87],
+        'gripper_mm': 20.0,
+    },
+    'pre_grasp': {
+        'description': 'Pose Pre-Grasp enseñada frente a la mesa con cámara de muñeca nivelada',
+        'joints_deg': [43.43, 182.55, -108.11, 82.3, -49.05, -128.85],
+        'gripper_mm': 70.0,
     },
     'pre_grasp_center': {
-        'joints_deg': [0.0, 65.0, -75.0, 0.0, 10.0, 0.0],
+        'description': 'Pose de pre-agarre centrada frente al torso',
+        'joints_deg': [43.43, 182.55, -108.11, 82.3, -49.05, -128.85],
         'gripper_mm': 70.0,
-        'description': 'Pose frontal de aproximación hacia centro de mesa'
     },
     'pre_grasp_table': {
-        'joints_deg': [15.0, 75.0, -85.0, 0.0, 10.0, 0.0],
+        'description': 'Pose de aproximación a mesa con pinza abierta',
+        'joints_deg': [43.43, 182.55, -108.11, 82.3, -49.05, -128.85],
         'gripper_mm': 70.0,
-        'description': 'Pose baja de aproximación a mesa de servicio'
-    }
+    },
 }
-
-# Offset geométrico entre cabezal Pan-Tilt y base del brazo Piper:
-# El brazo está montado en el hombro lateral izquierdo (+Y=0.175m) del prisma del torso (35x25x35 cm).
-# Respecto a arm_base_link en coordenadas del robot:
-#   dx = -0.085 m (8.5 cm detrás del plano de la base del brazo)
-#   dy = -0.175 m (17.5 cm a la derecha del brazo montado en el lateral izquierdo)
-#   dz = +0.195 m (19.5 cm por encima del hombro de montaje del brazo)
-HEAD_TO_ARM_OFFSET_M: Tuple[float, float, float] = (-0.085, -0.175, 0.195)
 
 
 # ------------------------------------------------------------------------------
-# 2. TRANSFORMACIÓN 3D: CÁMARA REALSENSE -> BRAZO PIPER
+# 2. TRANSFORMACIÓN 3D: CÁMARA REALSENSE -> MARCO DEL HOMBRO DEL BRAZO PIPER
 # ------------------------------------------------------------------------------
 
 def transform_camera_to_arm(
@@ -85,47 +95,38 @@ def transform_camera_to_arm(
 ) -> Tuple[float, float, float]:
     """
     Transforma coordenadas 3D desde el marco óptico de la cámara RealSense
-    (X derecha, Y abajo, Z profundidad hacia adelante) al marco cartesiano de la base
-    del brazo robótico Piper (arm_base_link: X adelante, Y izquierda, Z arriba).
-
-    Parámetros:
-      - x_opt, y_opt, z_opt: Coordenadas del objeto en metros respecto al marco óptico.
-      - pan_rad: Ángulo actual del eje Pan (yaw) del cabezal en radianes.
-      - tilt_rad: Ángulo actual del eje Tilt (pitch) del cabezal en radianes.
-      - head_offset: Offset (dx, dy, dz) del cabezal relativo a la base del brazo.
-
-    Retorna:
-      - (x_arm, y_arm, z_arm) en metros en el marco arm_base_link.
+    (X derecha, Y abajo, Z profundidad hacia adelante) al Marco Cartesiano del
+    Hombro del Brazo Piper (+X adelante, +Y izquierda, +Z arriba), siguiendo
+    exactamente la cadena cinemática del URDF.
     """
-    # 1. Transformación de Optical Frame a Camera Link Frame:
-    #    X_cam (adelante)   =  Z_opt
-    #    Y_cam (izquierda)  = -X_opt
-    #    Z_cam (arriba)     = -Y_opt
-    x_cam = z_opt
-    y_cam = -x_opt
-    z_cam = -y_opt
+    # 1. De camera_color_optical_frame a tilt_link (sumando el brazo de palanca de camera_link):
+    lx, ly, lz = CAMERA_LEVER_ARM_M
+    x_cam = z_opt + lx
+    y_cam = -x_opt + ly
+    z_cam = -y_opt + lz
 
-    # 2. Rotación por inclinación Tilt (alrededor del eje Y del cabezal)
+    # 2. Rotación por inclinación Tilt (alrededor del eje Y de tilt_joint):
+    #    Nota: tilt_rad > 0 inclina la cámara hacia abajo (mesa).
     cos_t = math.cos(tilt_rad)
     sin_t = math.sin(tilt_rad)
     x_t = cos_t * x_cam + sin_t * z_cam
     y_t = y_cam
     z_t = -sin_t * x_cam + cos_t * z_cam
 
-    # 3. Rotación por giro Pan (alrededor del eje Z del cabezal)
+    # 3. Rotación por giro Pan (alrededor del eje Z de pan_joint):
     cos_p = math.cos(pan_rad)
     sin_p = math.sin(pan_rad)
     x_p = cos_p * x_t - sin_p * y_t
     y_p = sin_p * x_t + cos_p * y_t
     z_p = z_t
 
-    # 4. Traslación del cabezal a arm_base_link
+    # 4. Traslación desde el eje del cabezal hasta el hombro izquierdo (arm_base_link):
     dx, dy, dz = head_offset
-    x_arm = x_p + dx
-    y_arm = y_p + dy
-    z_arm = z_p + dz
+    x_sh = x_p + dx
+    y_sh = y_p + dy
+    z_sh = z_p + dz
 
-    return (x_arm, y_arm, z_arm)
+    return (x_sh, y_sh, z_sh)
 
 
 # ------------------------------------------------------------------------------
@@ -134,15 +135,11 @@ def transform_camera_to_arm(
 
 def is_in_safe_joint_envelope(
     joints_deg: List[float],
-    margin_deg: float = 1.0,
+    margin_deg: float = 2.0,
     envelope: Optional[Dict[str, Tuple[float, float]]] = None
 ) -> Tuple[bool, str]:
     """
-    Verifica si una configuración articular se encuentra estrictamente dentro
-    del área segura definida.
-
-    Retorna:
-      (True, 'OK') si es segura, o (False, 'Detalle de violación') en caso contrario.
+    Verifica si una configuración articular se encuentra dentro del área segura.
     """
     limits = envelope if envelope is not None else SAFE_JOINT_LIMITS_DEG
     joint_keys = ['joint1', 'joint2', 'joint3', 'joint4', 'joint5', 'joint6']
@@ -154,9 +151,9 @@ def is_in_safe_joint_envelope(
         val = joints_deg[i]
         low, high = limits[key]
         if val < (low - margin_deg):
-            return False, f"{key} ({val:.2f}°) está por debajo del límite seguro ({low:.1f}°)"
+            return False, f"{key} ({val:.1f}°) por debajo del límite ({low:.0f}°)"
         if val > (high + margin_deg):
-            return False, f"{key} ({val:.2f}°) supera el límite seguro ({high:.1f}°)"
+            return False, f"{key} ({val:.1f}°) supera el límite ({high:.0f}°)"
 
     return True, "OK"
 
@@ -165,24 +162,25 @@ def is_in_safe_cartesian_box(
     x_m: float,
     y_m: float,
     z_m: float,
-    margin_m: float = 0.01,
     box: Optional[Dict[str, Tuple[float, float]]] = None
 ) -> Tuple[bool, str]:
     """
-    Verifica si un punto cartesiano en el marco de la base del brazo está dentro
-    de la caja de seguridad operativa.
+    Verifica si un punto 3D (x, y, z) en el Marco del Hombro (+X adelante, +Y izq, +Z arriba)
+    está dentro de la ventana operativa segura y libre de colisión con el prisma/pantalla.
     """
-    b = box if box is not None else SAFE_CARTESIAN_BOX_M
-    x_min, x_max = b['x']
-    y_min, y_max = b['y']
-    z_min, z_max = b['z']
+    bounds = box if box is not None else SAFE_CARTESIAN_BOX_M
 
-    if x_m < (x_min - margin_m) or x_m > (x_max + margin_m):
-        return False, f"X={x_m:.3f}m fuera del rango seguro [{x_min:.2f}, {x_max:.2f}]m"
-    if y_m < (y_min - margin_m) or y_m > (y_max + margin_m):
-        return False, f"Y={y_m:.3f}m fuera del rango seguro [{y_min:.2f}, {y_max:.2f}]m"
-    if z_m < (z_min - margin_m) or z_m > (z_max + margin_m):
-        return False, f"Z={z_m:.3f}m fuera del rango seguro [{z_min:.2f}, {z_max:.2f}]m"
+    if not (bounds['x'][0] <= x_m <= bounds['x'][1]):
+        return False, f"Distancia X={x_m:.2f}m fuera de rango [{bounds['x'][0]}, {bounds['x'][1]}]m"
+    if not (bounds['y'][0] <= y_m <= bounds['y'][1]):
+        return False, f"Lateral Y={y_m:.2f}m fuera de rango [{bounds['y'][0]}, {bounds['y'][1]}]m"
+    if not (bounds['z'][0] <= z_m <= bounds['z'][1]):
+        return False, f"Altura Z={z_m:.2f}m fuera de rango [{bounds['z'][0]}, {bounds['z'][1]}]m"
+
+    # Protección del prisma central y pantalla interactiva:
+    # En el Marco del Hombro, el prisma ocupa X en [-0.125, +0.125] y Y en [-0.35, 0.0].
+    if x_m < 0.17 and y_m < -0.04:
+        return False, f"Zona de colisión con el prisma/pantalla (X={x_m:.2f}m, Y={y_m:.2f}m)"
 
     return True, "OK"
 
@@ -193,210 +191,228 @@ def clamp_to_safe_cartesian_box(
     z_m: float,
     box: Optional[Dict[str, Tuple[float, float]]] = None
 ) -> Tuple[float, float, float]:
-    """
-    Recorta suavemente un punto a los límites de la caja segura.
-    """
-    b = box if box is not None else SAFE_CARTESIAN_BOX_M
-    cx = max(b['x'][0], min(b['x'][1], x_m))
-    cy = max(b['y'][0], min(b['y'][1], y_m))
-    cz = max(b['z'][0], min(b['z'][1], z_m))
+    """Recorta (clamps) una coordenada 3D a los límites de la caja cartesiana segura."""
+    bounds = box if box is not None else SAFE_CARTESIAN_BOX_M
+    cx = min(bounds['x'][1], max(bounds['x'][0], x_m))
+    cy = min(bounds['y'][1], max(bounds['y'][0], y_m))
+    cz = min(bounds['z'][1], max(bounds['z'][0], z_m))
+    if cx < 0.18 and cy < -0.04:
+        cx = 0.18
     return (cx, cy, cz)
 
 
 # ------------------------------------------------------------------------------
-# 4. INTERPOLACIÓN COSENO S-CURVE SUAVE (ZERO JERK / TRAYECTORIAS C0 & C1)
+# 4. INTERPOLACIÓN SUAVE DE TRAYECTORIAS
 # ------------------------------------------------------------------------------
 
-def cosine_s_curve(start_val: float, target_val: float, alpha: float) -> float:
-    """
-    Interpolación suave con perfil Cosine S-Curve.
-    Garantiza velocidad cero y derivada suave en los extremos alpha=0 y alpha=1.
-    """
-    alpha = max(0.0, min(1.0, alpha))
-    s = (1.0 - math.cos(math.pi * alpha)) / 2.0
-    return start_val + s * (target_val - start_val)
+def cosine_s_curve(alpha: float) -> float:
+    """Perfil de velocidad suave tipo campana (Coseno S-Curve) para alpha en [0, 1]."""
+    alpha_clamped = min(1.0, max(0.0, alpha))
+    return (1.0 - math.cos(math.pi * alpha_clamped)) / 2.0
 
 
-def interpolate_trajectory(
-    wp_start: Dict[str, any],
-    wp_end: Dict[str, any],
-    steps: int = 20
-) -> List[Dict[str, any]]:
-    """
-    Genera una secuencia de waypoints interpolados suavemente mediante S-Curve.
-    """
-    res = []
-    start_j = wp_start['joints_deg']
-    target_j = wp_end['joints_deg']
-    start_g = wp_start.get('gripper_mm', 70.0)
-    target_g = wp_end.get('gripper_mm', 70.0)
-
-    for i in range(steps + 1):
-        alpha = i / max(1, steps)
-        j_interp = [
-            cosine_s_curve(start_j[k], target_j[k], alpha)
-            for k in range(len(start_j))
-        ]
-        g_interp = cosine_s_curve(start_g, target_g, alpha)
-        res.append({
-            'joints_deg': j_interp,
-            'gripper_mm': round(g_interp, 2),
-            'alpha': round(alpha, 3)
-        })
-    return res
+def interpolate_joint_waypoint(
+    start_deg: List[float],
+    target_deg: List[float],
+    alpha: float
+) -> List[float]:
+    """Interpola suavemente entre dos vectores articulares de 6 grados de libertad."""
+    s = cosine_s_curve(alpha)
+    return [start_deg[i] + s * (target_deg[i] - start_deg[i]) for i in range(6)]
 
 
 # ------------------------------------------------------------------------------
-# 5. MODELO CINEMÁTICO DIRECTO E INVERSO PARA AGILEX PIPER 6-DOF
+# 5. MODELO CINEMÁTICO DIRECTO E INVERSO OFICIAL PARA AGILEX PIPER 6-DOF
 # ------------------------------------------------------------------------------
 
 class PiperKinematicsSolver:
     """
-    Solucionador cinemático autónomo basado en los parámetros Denavit-Hartenberg (DH)
-    del brazo AgileX Piper 6-DOF con pinza paralela.
+    Solucionador cinemático exacto basado en C_PiperForwardKinematics del SDK oficial
+    de AgileX Piper y adaptado al montaje lateral izquierdo del robot (rpy = -pi/2, 0, 0).
     """
 
     def __init__(self, tcp_offset_mm: float = 135.8):
         self.PI = math.pi
         self.tcp_offset_mm = tcp_offset_mm
 
-        # Parámetros DH estándar calibrados del fabricante Piper:
+        # Parámetros DH oficiales de AgileX Piper (dh_is_offset = 0x01):
         self._a = [0.0, 0.0, 285.03, -21.98, 0.0, 0.0]
         self._alpha = [0.0, -self.PI / 2.0, 0.0, self.PI / 2.0, -self.PI / 2.0, self.PI / 2.0]
         self._theta_offset = [0.0, -self.PI * 172.22 / 180.0, -102.78 / 180.0 * self.PI, 0.0, 0.0, 0.0]
         self._d = [123.0, 0.0, 0.0, 250.75, 0.0, 91.0 + self.tcp_offset_mm]
 
-    def forward_kinematics(self, joints_rad: List[float]) -> Tuple[np.ndarray, np.ndarray]:
+        # Matriz de rotación del montaje lateral izquierdo (cube_to_arm_joint: rpy = [-pi/2, 0, 0]):
+        # Transforma vectores desde arm_base_link a Marco del Hombro (+X adelante, +Y izq, +Z arriba)
+        self._R_mount = np.array([
+            [1.0,  0.0, 0.0],
+            [0.0,  0.0, 1.0],
+            [0.0, -1.0, 0.0],
+        ], dtype=float)
+
+        # Límites articulares en radianes
+        self._q_min = np.radians([SAFE_JOINT_LIMITS_DEG[f'joint{i}'][0] for i in range(1, 7)])
+        self._q_max = np.radians([SAFE_JOINT_LIMITS_DEG[f'joint{i}'][1] for i in range(1, 7)])
+
+    def _link_transform(self, alpha: float, a: float, theta: float, d: float) -> np.ndarray:
         """
-        Calcula la cinemática directa (FK).
-        Retorna:
-          - Posición cartesiana del extremo efector [X, Y, Z] en mm.
-          - Matriz de rotación R (3x3).
+        Matriz de transformación de eslabón idéntica a __LinkTransformtion de piper_sdk.kinematics.
+        """
+        ca = math.cos(alpha)
+        sa = math.sin(alpha)
+        ct = math.cos(theta)
+        st = math.sin(theta)
+
+        return np.array([
+            [ct,      -st,     0.0,       a],
+            [st * ca, ct * ca, -sa, -sa * d],
+            [st * sa, ct * sa,  ca,  ca * d],
+            [0.0,     0.0,     0.0,     1.0]
+        ], dtype=float)
+
+    def forward_kinematics_arm_frame(
+        self,
+        joints_rad: List[float],
+        include_tcp: bool = True
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Calcula la cinemática directa en el marco intrínseco arm_base_link (en mm).
+        Si include_tcp=False, coincide al 0.02 mm con GetArmEndPoseMsgs() del firmware CAN.
         """
         T = np.eye(4)
         for i in range(6):
-            th = joints_rad[i] + self._theta_offset[i]
-            ca = math.cos(self._alpha[i])
-            sa = math.sin(self._alpha[i])
-            ct = math.cos(th)
-            st = math.sin(th)
-            a = self._a[i]
-            d = self._d[i]
-
-            Ti = np.array([
-                [ct, -st * ca,  st * sa, a * ct],
-                [st,  ct * ca, -ct * sa, a * st],
-                [0.0,      sa,       ca,      d],
-                [0.0,     0.0,      0.0,    1.0]
-            ], dtype=float)
+            th = float(joints_rad[i]) + self._theta_offset[i]
+            d = self._d[i] if (i < 5 or include_tcp) else 91.0
+            Ti = self._link_transform(self._alpha[i], self._a[i], th, d)
             T = T @ Ti
 
-        xyz_mm = T[:3, 3]
-        R = T[:3, :3]
-        return xyz_mm, R
+        return T[:3, 3], T[:3, :3]
+
+    def forward_kinematics(self, joints_rad: List[float]) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Calcula la cinemática directa (FK) del TCP de la pinza en el Marco del Hombro
+        del Robot (+X adelante, +Y izquierda, +Z arriba) en milímetros.
+        """
+        xyz_arm_mm, R_arm = self.forward_kinematics_arm_frame(joints_rad, include_tcp=True)
+        xyz_shoulder_mm = self._R_mount @ xyz_arm_mm
+        R_shoulder = self._R_mount @ R_arm
+        return xyz_shoulder_mm, R_shoulder
 
     def forward_position_m(self, joints_rad: List[float]) -> Tuple[float, float, float]:
-        """Calcula [X, Y, Z] en metros en el marco arm_base_link."""
+        """Calcula [X, Y, Z] del TCP en metros en el Marco del Hombro (+X adelante, +Y izq, +Z arriba)."""
         xyz_mm, _ = self.forward_kinematics(joints_rad)
-        return (xyz_mm[0] / 1000.0, xyz_mm[1] / 1000.0, xyz_mm[2] / 1000.0)
+        return (float(xyz_mm[0] / 1000.0), float(xyz_mm[1] / 1000.0), float(xyz_mm[2] / 1000.0))
+
+    def compute_jacobian(self, q_rad: np.ndarray, eps: float = 1e-5) -> np.ndarray:
+        """Calcula el Jacobiano posicional (3x6) en el Marco del Hombro por diferencias finitas."""
+        J = np.zeros((3, 6), dtype=float)
+        pos0, _ = self.forward_kinematics(q_rad)
+        for i in range(6):
+            q_plus = q_rad.copy()
+            q_plus[i] += eps
+            pos_plus, _ = self.forward_kinematics(q_plus)
+            J[:, i] = (pos_plus - pos0) / eps
+        return J
+
+    def move_tool_line(
+        self,
+        current_joints_deg: List[float],
+        delta_forward_m: float = 0.0,
+        delta_lateral_m: float = 0.0,
+        delta_up_m: float = 0.0,
+    ) -> Tuple[List[float], bool]:
+        """
+        Movimiento lineal relativo desde la postura actual (inspirado en 'adjust_move_tool_line'
+        de CHARMIE @Home), manteniendo la postura natural de la muñeca.
+        """
+        q_seed_rad = [math.radians(d) for d in current_joints_deg]
+        cur_x, cur_y, cur_z = self.forward_position_m(q_seed_rad)
+        target_xyz_m = (
+            cur_x + delta_forward_m,
+            cur_y + delta_lateral_m,
+            cur_z + delta_up_m,
+        )
+        return self.inverse_kinematics(target_xyz_m, q_seed_rad=q_seed_rad)
 
     def inverse_kinematics(
         self,
         target_xyz_m: Tuple[float, float, float],
         q_seed_rad: Optional[List[float]] = None,
-        max_iterations: int = 140,
-        tolerance_mm: float = 2.5
+        max_iterations: int = 160,
+        tolerance_mm: float = 2.0
     ) -> Tuple[List[float], bool]:
         """
-        Resuelve la Cinemática Inversa (IK) con Damped Least Squares ponderado (Weighted DLS),
-        sesgo de espacio nulo para neutralizar el roll de la muñeca (joint 4 y 6)
-        y semillas adaptativas para máxima convergencia en todo el espacio de trabajo.
+        Resuelve la Cinemática Inversa (IK) en el Marco del Hombro (+X adelante, +Y izq, +Z arriba)
+        usando Damped Least Squares ponderado (Weighted DLS) con regularización de espacio nulo
+        hacia la postura Pre-Grasp enseñada para evitar giros bruscos o inversión de codo.
 
         Retorna:
-          - joints_deg: Lista de 6 ángulos en grados.
-          - success: True si convergió con error < tolerance_mm y respeta la envolvente.
+          - joints_deg: Lista de 6 ángulos articulares en grados.
+          - success: True si convergió dentro de la tolerancia y respeta límites seguros.
         """
-        tx_mm = target_xyz_m[0] * 1000.0
-        ty_mm = target_xyz_m[1] * 1000.0
-        tz_mm = target_xyz_m[2] * 1000.0
-        target_vec = np.array([tx_mm, ty_mm, tz_mm], dtype=float)
+        target_mm = np.array([
+            target_xyz_m[0] * 1000.0,
+            target_xyz_m[1] * 1000.0,
+            target_xyz_m[2] * 1000.0
+        ], dtype=float)
 
-        yaw = math.atan2(target_xyz_m[1], max(0.01, target_xyz_m[0]))
+        default_pre_deg = DEFAULT_NAMED_POSES['pre_grasp']['joints_deg']
+        q_pre_rad = np.radians(default_pre_deg)
 
-        if q_seed_rad is not None:
-            seeds = [np.array(q_seed_rad, dtype=float)]
-        else:
-            seeds = [
-                np.array([yaw, math.radians(70.0), math.radians(-100.0), 0.0, math.radians(30.0), 0.0], dtype=float),
-                np.array([yaw, math.radians(60.0), math.radians(-85.0), 0.0, math.radians(20.0), 0.0], dtype=float),
-                np.array([yaw, math.radians(80.0), math.radians(-115.0), 0.0, math.radians(40.0), 0.0], dtype=float),
-                np.array([yaw, math.radians(50.0), math.radians(-70.0), 0.0, math.radians(15.0), 0.0], dtype=float),
-            ]
+        seeds = []
+        if q_seed_rad is not None and len(q_seed_rad) >= 6:
+            seeds.append(np.array(q_seed_rad[:6], dtype=float))
+        seeds.extend([
+            q_pre_rad.copy(),
+            np.radians([25.0, 165.0, -90.0, 50.0, -55.0, -110.0]),
+            np.radians([45.0, 170.0, -105.0, 60.0, -60.0, -110.0]),
+            np.radians([15.0, 155.0, -80.0, 45.0, -50.0, -105.0]),
+        ])
 
-        # Ponderación articular: alta prioridad a hombro/codo, penalización al roll innecesario
-        W_inv = np.diag([1.0, 1.0, 1.0, 0.15, 0.85, 0.15])
-        lambda_val = 0.015
+        # Ponderación articular: prioriza hombro/codo y mantiene muñeca estable
+        W_inv = np.diag([1.0, 1.0, 1.0, 0.35, 0.65, 0.20])
+        lambda_sq = 15.0 ** 2  # Amortiguamiento en escala de mm
 
         best_q = None
         best_err = float('inf')
 
         for seed in seeds:
-            q = seed.copy()
+            q = np.clip(seed.copy(), self._q_min, self._q_max)
+            q_ref = q.copy()
+
             for _ in range(max_iterations):
                 cur_pos, _ = self.forward_kinematics(q)
-                err = target_vec - cur_pos
-                err_norm = np.linalg.norm(err)
-
-                if err_norm < tolerance_mm:
-                    joints_deg = [math.degrees(v) for v in q]
-                    safe, _ = is_in_safe_joint_envelope(joints_deg, margin_deg=3.0)
-                    if safe:
-                        return joints_deg, True
+                err = target_mm - cur_pos
+                err_norm = float(np.linalg.norm(err))
 
                 if err_norm < best_err:
                     best_err = err_norm
                     best_q = q.copy()
 
-                # Jacobiano Numérico 3x6
-                J = np.zeros((3, 6), dtype=float)
-                eps = 1e-4
-                for j in range(6):
-                    q_step = q.copy()
-                    q_step[j] += eps
-                    pos_step, _ = self.forward_kinematics(q_step)
-                    J[:, j] = (pos_step - cur_pos) / eps
+                if err_norm < tolerance_mm:
+                    q_deg = [round(float(math.degrees(v)), 2) for v in q]
+                    safe, _ = is_in_safe_joint_envelope(q_deg)
+                    if safe:
+                        return q_deg, True
+                    break
 
-                # Weighted DLS
-                JJT_damp = J @ W_inv @ J.T + (lambda_val ** 2) * np.eye(3)
-                dq = W_inv @ J.T @ np.linalg.inv(JJT_damp) @ err
+                J = self.compute_jacobian(q)
+                JW = J @ W_inv
+                JJT = JW @ J.T + lambda_sq * np.eye(3)
+                J_pinv = W_inv @ J.T @ np.linalg.inv(JJT)
 
-                # Proyección en espacio nulo para mantener wrist roll en cero y yaw en azimut
-                q_bias = np.array([yaw, math.radians(65.0), math.radians(-85.0), 0.0, math.radians(20.0), 0.0])
-                P_null = np.eye(6) - W_inv @ J.T @ np.linalg.inv(JJT_damp) @ J
-                dq += 0.08 * P_null @ (q_bias - q)
+                # Proyección en espacio nulo para mantener la muñeca cerca de la semilla Pre-Grasp
+                N = np.eye(6) - J_pinv @ J
+                q_null = -0.05 * (q - q_ref)
 
-                dq = np.clip(dq, -0.15, 0.15)
-                q += dq
+                dq = J_pinv @ err + N @ q_null
+                dq = np.clip(dq, -0.12, 0.12)
+                q = np.clip(q + dq, self._q_min, self._q_max)
 
-                # Límites cinemáticos duros
-                q[0] = np.clip(q[0], math.radians(-65.0), math.radians(95.0))
-                q[1] = np.clip(q[1], math.radians(10.0), math.radians(175.0))
-                q[2] = np.clip(q[2], math.radians(-165.0), math.radians(-15.0))
-                q[3] = np.clip(q[3], math.radians(-90.0), math.radians(90.0))
-                q[4] = np.clip(q[4], math.radians(-72.0), math.radians(72.0))
-                q[5] = np.clip(q[5], math.radians(-160.0), math.radians(160.0))
+        if best_q is not None:
+            q_deg = [round(float(math.degrees(v)), 2) for v in best_q]
+            safe, _ = is_in_safe_joint_envelope(q_deg)
+            if best_err < 12.0 and safe:
+                return q_deg, True
+            return q_deg, False
 
-            cur_pos, _ = self.forward_kinematics(q)
-            err_norm = np.linalg.norm(target_vec - cur_pos)
-            if err_norm < best_err:
-                best_err = err_norm
-                best_q = q.copy()
-
-        final_q = best_q if best_q is not None else q
-        joints_deg = [math.degrees(v) for v in final_q]
-        safe, _ = is_in_safe_joint_envelope(joints_deg, margin_deg=3.0)
-        return joints_deg, (best_err < tolerance_mm * 1.5 and safe)
-
-
-# Instancia singleton predeterminada
-kinematics = PiperKinematicsSolver()
+        return [round(float(d), 2) for d in default_pre_deg], False

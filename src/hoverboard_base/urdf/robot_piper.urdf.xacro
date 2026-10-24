@@ -145,11 +145,10 @@
       </collision>
     </link>
 
-    <joint name="${prefix}_wheel_joint" type="continuous">
+    <joint name="${prefix}_wheel_joint" type="fixed">
       <parent link="base_link"/>
       <child link="${prefix}_wheel"/>
       <origin xyz="${wheel_offset_x} ${y_reflect * track_width / 2.0} ${wheel_radius}" rpy="0 0 0"/>
-      <axis xyz="0 1 0"/>
     </joint>
   </xacro:macro>
 
@@ -510,7 +509,7 @@
     <parent link="arm_base_link" />
     <child link="link1" />
     <axis xyz="0 0 1" />
-    <limit lower="-2.618" upper="2.618" effort="100" velocity="5" />
+    <limit lower="-2.688" upper="2.688" effort="100" velocity="5" />
   </joint>
 
   <!-- Link 2 (Joint 2 - Hombro en Y) -->
@@ -536,19 +535,19 @@
   </link>
 
   <joint name="joint2" type="revolute">
-    <origin xyz="0 0 0" rpy="0.785398 0 0" />
+    <origin xyz="0 0 0" rpy="1.5708 -0.1359 -3.1416" />
     <parent link="link1" />
     <child link="link2" />
-    <axis xyz="0 1 0" />
-    <limit lower="0" upper="3.1416" effort="100" velocity="5" />
+    <axis xyz="0 0 1" />
+    <limit lower="0" upper="3.403" effort="100" velocity="5" />
   </joint>
 
-  <!-- Link 3 (Joint 3 - Codo en Y) -->
+  <!-- Link 3 (Joint 3 - Codo) -->
   <link name="link3">
     <inertial>
-      <origin xyz="0.08882 0.00142 -0.00494" rpy="0 0 0" />
-      <mass value="0.71" />
-      <inertia ixx="0.0003" ixy="0.0" ixz="0.0" iyy="0.011" iyz="0.0" izz="0.011" />
+      <origin xyz="-0.01999 -0.14808 -0.00053" rpy="0 0 0" />
+      <mass value="0.5" />
+      <inertia ixx="0.01347608" ixy="0.00161034" ixz="0.00000066" iyy="0.00046377" iyz="0.00000162" izz="0.01363321" />
     </inertial>
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0" />
@@ -566,19 +565,19 @@
   </link>
 
   <joint name="joint3" type="revolute">
-    <origin xyz="0.265 0 0" rpy="-0.785398 0 0" />
+    <origin xyz="0.28503 0 0" rpy="0 0 -1.7939" />
     <parent link="link2" />
     <child link="link3" />
-    <axis xyz="0 1 0" />
-    <limit lower="-2.967" upper="0" effort="100" velocity="5" />
+    <axis xyz="0 0 1" />
+    <limit lower="-3.054" upper="0" effort="100" velocity="5" />
   </joint>
 
-  <!-- Link 4 (Joint 4 - Giro Muñeca en X) -->
+  <!-- Link 4 (Joint 4 - Muñeca Roll) -->
   <link name="link4">
     <inertial>
-      <origin xyz="-0.00017 -0.00845 0.03859" rpy="0 0 0" />
-      <mass value="0.27" />
-      <inertia ixx="0.0002" ixy="0.0" ixz="0.0" iyy="0.0002" iyz="0.0" izz="0.0001" />
+      <origin xyz="0.00013 -0.00076 -0.00394" rpy="0 0 0" />
+      <mass value="0.38" />
+      <inertia ixx="0.00017844" ixy="0.00000062" ixz="0.00000067" iyy="0.00018914" iyz="0.00000408" izz="0.00014613" />
     </inertial>
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0" />
@@ -596,19 +595,19 @@
   </link>
 
   <joint name="joint4" type="revolute">
-    <origin xyz="0.095 0 0" rpy="0 0 0" />
+    <origin xyz="-0.021984 -0.25075 0" rpy="1.5708 0 0" />
     <parent link="link3" />
     <child link="link4" />
-    <axis xyz="1 0 0" />
-    <limit lower="-1.745" upper="1.745" effort="100" velocity="5" />
+    <axis xyz="0 0 1" />
+    <limit lower="-1.920" upper="1.920" effort="100" velocity="5" />
   </joint>
 
-  <!-- Link 5 (Joint 5 - Cabeceo Muñeca en Y) -->
+  <!-- Link 5 (Joint 5 - Muñeca Pitch) -->
   <link name="link5">
     <inertial>
-      <origin xyz="0.06078 0.00011 0.00015" rpy="0 0 0" />
-      <mass value="0.4" />
-      <inertia ixx="0.0001" ixy="0.0" ixz="0.0" iyy="0.0005" iyz="0.0" izz="0.0005" />
+      <origin xyz="0.00018 -0.06104 -0.00227" rpy="0 0 0" />
+      <mass value="0.383" />
+      <inertia ixx="0.00172318" ixy="0.00000259" ixz="0.00000010" iyy="0.00017936" iyz="0.00000990" izz="0.00171172" />
     </inertial>
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0" />
@@ -626,19 +625,19 @@
   </link>
 
   <joint name="joint5" type="revolute">
-    <origin xyz="0 0 0.123" rpy="0 0 0" />
+    <origin xyz="0 0 0" rpy="-1.5708 0 0" />
     <parent link="link4" />
     <child link="link5" />
-    <axis xyz="0 1 0" />
-    <limit lower="-1.22" upper="1.22" effort="100" velocity="5" />
+    <axis xyz="0 0 1" />
+    <limit lower="-1.396" upper="1.396" effort="100" velocity="5" />
   </joint>
 
-  <!-- Link 6 (Joint 6 - Giro Extremo Muñeca en Z) -->
+  <!-- Link 6 (Joint 6 - Giro Extremo Muñeca) -->
   <link name="link6">
     <inertial>
-      <origin xyz="0.00011 0.00045 0.04022" rpy="0 0 0" />
-      <mass value="0.21" />
-      <inertia ixx="0.0001" ixy="0.0" ixz="0.0" iyy="0.0001" iyz="0.0" izz="0.0001" />
+      <origin xyz="-0.00003 0.00006 0.04618" rpy="0 0 0" />
+      <mass value="0.007" />
+      <inertia ixx="0.00152112" ixy="0.00000202" ixz="0.00000261" iyy="0.00138626" iyz="0.00000002" izz="0.00031152" />
     </inertial>
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0" />
@@ -656,11 +655,19 @@
   </link>
 
   <joint name="joint6" type="revolute">
-    <origin xyz="0.076 0 0" rpy="0 0 0" />
+    <origin xyz="8.8259E-05 -0.091 0" rpy="1.5708 0 0" />
     <parent link="link5" />
     <child link="link6" />
-    <axis xyz="1 0 0" />
-    <limit lower="-2.094" upper="2.094" effort="100" velocity="5" />
+    <axis xyz="0 0 1" />
+    <limit lower="-3.142" upper="3.142" effort="100" velocity="3" />
+  </joint>
+
+  <!-- Punto Central de Herramienta (TCP) entre los dedos de la pinza -->
+  <link name="tcp_link"/>
+  <joint name="link6_to_tcp_joint" type="fixed">
+    <origin xyz="0 0 0.1358" rpy="0 0 0" />
+    <parent link="link6" />
+    <child link="tcp_link" />
   </joint>
 
   <!-- Pinza Paralela: Base de la Pinza -->

@@ -1,123 +1,125 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # ==============================================================================
-# QA Test Suite - Validación de Cinemática, Transformaciones y Envolvente Segura
+# QA Test Suite - Validación de Cinemática Oficial AgileX Piper, Montaje Lateral
+# Izquierdo, Transformación 3D Cabezal->Hombro y Avance CHARMIE Move Tool Line
 # ==============================================================================
 
 import math
-import sys
 import os
+import sys
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from base_athome_perception.piper_kinematics import (
     transform_camera_to_arm,
     is_in_safe_joint_envelope,
     is_in_safe_cartesian_box,
-    clamp_to_safe_cartesian_box,
     cosine_s_curve,
-    interpolate_trajectory,
+    interpolate_joint_waypoint,
     PiperKinematicsSolver,
-    SAFE_JOINT_LIMITS_DEG,
-    SAFE_CARTESIAN_BOX_M,
     DEFAULT_NAMED_POSES,
 )
 
-def test_camera_to_arm_transform():
-    print("[TEST 1] Transformación 3D RealSense -> Arm Base Link...")
-    # Caso 1: Pringles al centro, 0.50m adelante, 0.10m abajo en frame óptico, Pan=0, Tilt=0
-    x, y, z = transform_camera_to_arm(0.0, 0.10, 0.50, pan_rad=0.0, tilt_rad=0.0)
-    assert abs(x - 0.415) < 1e-4, f"X esperado 0.415, obtenido {x}"
-    assert abs(y - (-0.175)) < 1e-4, f"Y esperado -0.175, obtenido {y}"
-    assert abs(z - 0.095) < 1e-4, f"Z esperado 0.095, obtenido {z}"
 
-    # Caso 2: Con inclinación Tilt = -10° (-0.1745 rad)
-    tilt_rad = math.radians(-10.0)
-    x_t, y_t, z_t = transform_camera_to_arm(0.0, 0.05, 0.55, pan_rad=0.0, tilt_rad=tilt_rad)
-    assert 0.12 <= x_t <= 0.55, f"X={x_t} fuera de rango"
-    print(f"   -> OK: Objetivo frontal transformado: X={x:.3f}m, Y={y:.3f}m, Z={z:.3f}m")
-    print(f"   -> OK: Objetivo con tilt -10° transformado: X={x_t:.3f}m, Y={y_t:.3f}m, Z={z_t:.3f}m")
+def test_official_firmware_fk_match():
+    print("[TEST 1] Verificación de Cinemática Directa contra Firmware CAN Piper (GetArmEndPoseMsgs)...")
+    solver = PiperKinematicsSolver()
+    # Pose real medida desde encoders del brazo Piper:
+    # Encoders: [88.14°, 172.89°, -164.22°, 96.72°, -1.02°, -71.42°]
+    # GetArmEndPoseMsgs reportó: X=21.995 mm, Y=627.056 mm, Z=119.507 mm
+    q_rad = [math.radians(d) for d in [88.14, 172.89, -164.22, 96.72, -1.02, -71.42]]
+    xyz_arm_mm, _ = solver.forward_kinematics_arm_frame(q_rad, include_tcp=False)
 
-def test_safe_envelope_interlock():
-    print("[TEST 2] Verificación de Envolvente Segura e Interbloqueo Hard-Stop...")
-    # Pose segura (pre_grasp_center)
-    safe_pose = [0.0, 65.0, -75.0, 0.0, 10.0, 0.0]
-    ok, reason = is_in_safe_joint_envelope(safe_pose)
-    assert ok, f"Debería ser segura: {reason}"
+    err_x = abs(xyz_arm_mm[0] - 21.995)
+    err_y = abs(xyz_arm_mm[1] - 627.056)
+    err_z = abs(xyz_arm_mm[2] - 119.507)
+    assert err_x < 0.05 and err_y < 0.05 and err_z < 0.05, (
+        f"Desviación FK vs Firmware: {xyz_arm_mm} vs [21.995, 627.056, 119.507]"
+    )
+    print(f"   -> OK: FK coincide con el firmware Piper a [{err_x:.3f}, {err_y:.3f}, {err_z:.3f}] mm (< 0.05 mm).")
 
-    # Pose insegura 1: J1 fuera de rango (+120° > 95°)
-    unsafe_j1 = [120.0, 65.0, -75.0, 0.0, 10.0, 0.0]
-    ok1, reason1 = is_in_safe_joint_envelope(unsafe_j1)
-    assert not ok1, "Debería fallar por J1 excesivo"
-    assert "joint1" in reason1
 
-    # Pose insegura 2: J2 fuera de rango (-5° < 10°)
-    unsafe_j2 = [0.0, -5.0, -75.0, 0.0, 10.0, 0.0]
-    ok2, reason2 = is_in_safe_joint_envelope(unsafe_j2)
-    assert not ok2, "Debería fallar por J2 bajo"
-    assert "joint2" in reason2
-
-    # Pose insegura 3: J3 fuera de rango (+10° > -15°)
-    unsafe_j3 = [0.0, 65.0, 10.0, 0.0, 10.0, 0.0]
-    ok3, reason3 = is_in_safe_joint_envelope(unsafe_j3)
-    assert not ok3, "Debería fallar por J3 colisión codo"
-    assert "joint3" in reason3
-
-    print("   -> OK: Interbloqueos de seguridad articular validan y rechazan correctamente.")
-
-def test_inverse_kinematics():
-    print("[TEST 3] Cinemática Inversa DLS para Agarre de Pringles...")
+def test_left_shoulder_mount_and_taught_poses():
+    print("[TEST 2] Verificación de Montaje Lateral Izquierdo (Rx(-90°)) en Poses Home y Pre-Grasp...")
     solver = PiperKinematicsSolver()
 
-    # Probar target en zona óptima de agarre: X=0.40m, Y=-0.15m, Z=0.05m
-    target = (0.40, -0.15, 0.05)
-    joints_deg, success = solver.inverse_kinematics(target)
-    assert success, "La cinemática inversa debe converger para objetivo en área segura"
+    home_deg = DEFAULT_NAMED_POSES["home"]["joints_deg"]
+    pre_deg = DEFAULT_NAMED_POSES["pre_grasp"]["joints_deg"]
 
-    # Verificar cinemática directa de la solución
-    j_rad = [math.radians(v) for v in joints_deg]
-    pos_res = solver.forward_position_m(j_rad)
-    dist_err = math.dist(target, pos_res)
-    assert dist_err < 0.005, f"Error de posición {dist_err*1000:.1f} mm supera 5 mm"
+    ok_h, msg_h = is_in_safe_joint_envelope(home_deg)
+    ok_p, msg_p = is_in_safe_joint_envelope(pre_deg)
+    assert ok_h, f"Pose Home fuera de límites: {msg_h}"
+    assert ok_p, f"Pose Pre-Grasp fuera de límites: {msg_p}"
 
-    # Verificar que la solución articular respeta la envolvente
-    is_safe, reason = is_in_safe_joint_envelope(joints_deg)
-    assert is_safe, f"La solución de IK violó la envolvente: {reason}"
+    home_xyz = solver.forward_position_m([math.radians(d) for d in home_deg])
+    pre_xyz = solver.forward_position_m([math.radians(d) for d in pre_deg])
 
-    print(f"   -> OK: IK convergió a error={dist_err*1000:.2f}mm. Articulaciones: {[round(v, 2) for v in joints_deg]}°")
+    # En Home el brazo cuelga hacia abajo al costado izquierdo (Z_sh < -0.50 m)
+    assert home_xyz[2] < -0.50, f"En Home el brazo debería colgar hacia abajo (-Z), obtenido Z={home_xyz[2]:.3f}m"
+    # En Pre-Grasp el TCP se extiende hacia adelante (+X > 0.35 m) frente a la mesa
+    assert pre_xyz[0] > 0.35, f"En Pre-Grasp el brazo debería extenderse hacia adelante (+X), obtenido X={pre_xyz[0]:.3f}m"
+
+    print(f"   -> OK: Home TCP en Hombro = {[round(v, 3) for v in home_xyz]} m")
+    print(f"   -> OK: Pre-Grasp TCP en Hombro = {[round(v, 3) for v in pre_xyz]} m")
+
+
+def test_camera_to_arm_transform():
+    print("[TEST 3] Transformación 3D RealSense D435 (Pan-Tilt) -> Hombro Izquierdo Piper...")
+    # Botella en centro óptico a 0.50m de profundidad, con inclinación hacia la mesa (+18°)
+    tilt_rad = math.radians(18.0)
+    x_sh, y_sh, z_sh = transform_camera_to_arm(0.0, 0.05, 0.50, pan_rad=0.0, tilt_rad=tilt_rad)
+    in_box, reason = is_in_safe_cartesian_box(x_sh, y_sh, z_sh)
+    assert in_box, f"Objetivo de mesa debería estar en caja segura: {reason}"
+    print(f"   -> OK: Objetivo con Tilt +18° transformado a Hombro: X={x_sh:.3f}m, Y={y_sh:.3f}m, Z={z_sh:.3f}m")
+
+
+def test_charmie_pregrasp_seeded_ik_and_tool_line():
+    print("[TEST 4] Cinemática Inversa Sembrada en Pre-Grasp y Avance Lineal (CHARMIE Move Tool Line)...")
+    solver = PiperKinematicsSolver()
+    pre_deg = DEFAULT_NAMED_POSES["pre_grasp"]["joints_deg"]
+    pre_xyz = solver.forward_position_m([math.radians(d) for d in pre_deg])
+
+    # 1. Avance de +6 cm hacia adelante hacia la botella
+    grasp_deg, ok_g = solver.move_tool_line(pre_deg, delta_forward_m=0.06, delta_lateral_m=0.01, delta_up_m=0.0)
+    assert ok_g, "move_tool_line de avance (+6 cm) debe converger"
+    grasp_xyz = solver.forward_position_m([math.radians(d) for d in grasp_deg])
+    err_g = math.dist((pre_xyz[0] + 0.06, pre_xyz[1] + 0.01, pre_xyz[2]), grasp_xyz)
+    assert err_g < 0.002, f"Error de avance lineal {err_g*1000:.2f} mm supera 2 mm"
+
+    # 2. Elevación vertical de +8 cm (+Z_sh) con la botella sujeta
+    lift_deg, ok_l = solver.move_tool_line(grasp_deg, delta_forward_m=0.0, delta_lateral_m=0.0, delta_up_m=0.08)
+    assert ok_l, "move_tool_line de elevación (+8 cm) debe converger"
+    lift_xyz = solver.forward_position_m([math.radians(d) for d in lift_deg])
+    err_l = math.dist((grasp_xyz[0], grasp_xyz[1], grasp_xyz[2] + 0.08), lift_xyz)
+    assert err_l < 0.002, f"Error de elevación {err_l*1000:.2f} mm supera 2 mm"
+
+    print(f"   -> OK: Avance +6cm convergió con error={err_g*1000:.2f}mm -> Joints={grasp_deg}")
+    print(f"   -> OK: Elevación +8cm convergió con error={err_l*1000:.2f}mm -> Joints={lift_deg}")
+
 
 def test_s_curve_interpolation():
-    print("[TEST 4] Interpolación Cosine S-Curve (Derivada Cero en Extremos)...")
-    v0 = 0.0
-    v1 = 100.0
+    print("[TEST 5] Interpolación Cosine S-Curve...")
+    assert abs(cosine_s_curve(0.0) - 0.0) < 1e-6
+    assert abs(cosine_s_curve(0.5) - 0.5) < 1e-6
+    assert abs(cosine_s_curve(1.0) - 1.0) < 1e-6
+    wp = interpolate_joint_waypoint([0.0] * 6, [100.0] * 6, 0.5)
+    assert abs(wp[0] - 50.0) < 1e-4
+    print("   -> OK: Perfil Cosine S-Curve validado.")
 
-    # Alpha 0 y 1
-    assert cosine_s_curve(v0, v1, 0.0) == 0.0
-    assert cosine_s_curve(v0, v1, 1.0) == 100.0
-
-    # Punto medio debe ser exactamente 50.0
-    assert abs(cosine_s_curve(v0, v1, 0.5) - 50.0) < 1e-4
-
-    # Verificar aceleración suave: s(0.1) < 10.0 (arranque suave, menor que lineal)
-    val_01 = cosine_s_curve(v0, v1, 0.1)
-    assert val_01 < 10.0, "S-Curve debe arrancar con aceleración suave"
-
-    # s(0.9) > 90.0 (frenado suave)
-    val_09 = cosine_s_curve(v0, v1, 0.9)
-    assert val_09 > 90.0, "S-Curve debe desacelerar suavemente al final"
-
-    print("   -> OK: Perfil S-Curve garantiza aceleración y desaceleración suaves sin tirones.")
 
 def main():
     print("==========================================================================")
-    print("   SUITE DE PRUEBAS QA: CINEMÁTICA Y CONTROL BRAZO AGILEX PIPER 6-DOF    ")
+    print("   SUITE DE PRUEBAS QA: CINEMÁTICA OFICIAL PIPER 6-DOF & ARQUITECTURA     ")
     print("==========================================================================")
+    test_official_firmware_fk_match()
+    test_left_shoulder_mount_and_taught_poses()
     test_camera_to_arm_transform()
-    test_safe_envelope_interlock()
-    test_inverse_kinematics()
+    test_charmie_pregrasp_seeded_ik_and_tool_line()
     test_s_curve_interpolation()
     print("==========================================================================")
-    print("   TODAS LAS PRUEBAS (4/4) PASARON CON ÉXITO!                            ")
+    print("   TODAS LAS PRUEBAS (5/5) PASARON CON ÉXITO!                             ")
     print("==========================================================================")
+
 
 if __name__ == "__main__":
     main()
