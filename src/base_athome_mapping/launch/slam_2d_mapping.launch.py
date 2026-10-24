@@ -1,11 +1,21 @@
 import os
+import subprocess
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, ExecuteProcess
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import LifecycleNode, Node
+
+
+def is_proc_running(name):
+    try:
+        res = subprocess.run(['pgrep', '-f', name], capture_output=True, text=True)
+        pids = [p.strip() for p in res.stdout.strip().split('\n') if p.strip() and int(p.strip()) != os.getpid()]
+        return len(pids) > 0
+    except Exception:
+        return False
 
 
 def generate_launch_description():
@@ -17,23 +27,28 @@ def generate_launch_description():
     default_slam_params = os.path.join(pkg_mapping, 'config', 'slam_toolbox.yaml')
     default_rviz_config = os.path.join(pkg_mapping, 'config', 'mapping_slam.rviz')
 
+    # Detección automática: no duplicar drivers si ya están corriendo en segundo plano
+    base_already_running = is_proc_running('hoverboard_driver')
+    lidar_already_running = is_proc_running('urg_node_driver')
+    teleop_already_running = is_proc_running('hoverboard_teleop_joy') or is_proc_running('teleop_twist_joy')
+
     # --- Launch Arguments ---
     launch_base_arg = DeclareLaunchArgument(
         'launch_base',
-        default_value='true',
-        description='Lanzar driver hoverboard y robot_state_publisher'
+        default_value='false' if base_already_running else 'true',
+        description='Lanzar driver hoverboard y robot_state_publisher si no están ya activos'
     )
 
     launch_lidar_arg = DeclareLaunchArgument(
         'launch_lidar',
-        default_value='true',
-        description='Lanzar driver Hokuyo LiDAR (urg_node)'
+        default_value='false' if lidar_already_running else 'true',
+        description='Lanzar driver Hokuyo LiDAR (urg_node) si no está ya activo'
     )
 
     launch_teleop_arg = DeclareLaunchArgument(
         'launch_teleop',
-        default_value='true',
-        description='Lanzar control por joystick PS4'
+        default_value='false' if teleop_already_running else 'true',
+        description='Lanzar control por joystick PS4 si no está ya activo'
     )
 
     launch_rviz_arg = DeclareLaunchArgument(

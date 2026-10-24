@@ -18,9 +18,13 @@ import math
 import time
 import threading
 
+import fcntl
+import sys
+
 from geometry_msgs.msg import Twist, TransformStamped
 from nav_msgs.msg import Odometry
 from std_msgs.msg import Int64
+from std_srvs.srv import Trigger
 from sensor_msgs.msg import BatteryState
 from rcl_interfaces.msg import SetParametersResult
 from tf2_ros import TransformBroadcaster
@@ -108,6 +112,10 @@ class HoverboardDriver(Node):
         self.last_rx_time = 0.0
         self.loop_count = 0
 
+        # --- Protección Singleton contra instancias duplicadas compitiendo por el puerto serial ---
+        self.lock_file = None
+        self._acquire_singleton_lock()
+
         # --- Conexión Serial ---
         self.ser = None
         self.running = True
@@ -126,8 +134,38 @@ class HoverboardDriver(Node):
         self.pub_battery = self.create_publisher(BatteryState, '/hoverboard/battery', 5)
         self.tf_broadcaster = TransformBroadcaster(self)
 
+        # Servicio para reiniciar odometría a (0, 0, 0)
+        self.srv_reset_odom = self.create_service(Trigger, '/hoverboard/reset_odom', self.reset_odom_cb)
+
         # Timer de control y transmisión a 50 Hz (20ms)
         self.timer = self.create_timer(0.02, self.control_loop)
+
+    def _acquire_singleton_lock(self):
+        try:
+            self.lock_file = open('/tmp/hoverboard_driver.lock', 'w')
+            fcntl.flock(self.lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except (IOError, BlockingIOError):
+            self.get_logger().warn(
+                "⚠️ YA EXISTE una instancia activa de hoverboard_driver en ejecución. "
+                "Cerrando este proceso duplicado para evitar colisión en puerto serial y saltos de TF."
+            )
+            sys.exit(0)
+
+    def reset_odom_cb(self, request, response):
+        with self.lock:
+            self.x = 0.0
+            self.y = 0.0
+            self.th = 0.0
+            self.vx = 0.0
+            self.vth = 0.0
+            self.total_ticks_L = 0
+            self.total_ticks_R = 0
+            self.prev_wheelL = None
+            self.prev_wheelR = None
+        self.get_logger().info("🔄 Odometría reiniciada exitosamente a (x=0.0m, y=0.0m, θ=0.0°)")
+        response.success = True
+        response.message = "Odometría reiniciada a (0, 0, 0)"
+        return response
 
     def connect_serial(self):
         try:
@@ -438,6 +476,12 @@ def main(args=None):
                 node.ser.close()
         except Exception:
             pass
+        if hasattr(node, 'lock_file') and node.lock_file:
+            try:
+                fcntl.flock(node.lock_file, fcntl.LOCK_UN)
+                node.lock_file.close()
+            except Exception:
+                pass
         node.destroy_node()
         try:
             rclpy.shutdown()

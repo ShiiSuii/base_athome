@@ -30,27 +30,40 @@ def run_on_jetson(command: str) -> str:
     return res.stdout
 
 
+def detect_active_can() -> str:
+    """Detecta si can0 o can1 está UP en la Jetson."""
+    out0 = run_on_jetson("ip link show can0")
+    if "state UP" in out0 or "<NOARP,UP" in out0:
+        return "can0"
+    out1 = run_on_jetson("ip link show can1")
+    if "state UP" in out1 or "<NOARP,UP" in out1:
+        return "can1"
+    return "can0"
+
+
 def check_can_interface():
-    """Verifica y asegura que la interfaz can1 este levantada a 1 Mbps."""
-    out = run_on_jetson("ip link show can1")
+    """Verifica y asegura que la interfaz CAN activa esté levantada a 1 Mbps."""
+    port = detect_active_can()
+    out = run_on_jetson(f"ip link show {port}")
     if "UP" not in out:
-        print("[*] Levantando interfaz can1 a 1 Mbps...")
-        run_on_jetson("sudo ip link set can1 down 2>/dev/null; sudo ip link set can1 type can bitrate 1000000 && sudo ip link set can1 up")
+        print(f"[*] Levantando interfaz {port} a 1 Mbps...")
+        run_on_jetson(f"sudo ip link set {port} down 2>/dev/null; sudo ip link set {port} type can bitrate 1000000 && sudo ip link set {port} up")
         time.sleep(0.3)
-        out = run_on_jetson("ip link show can1")
-    
+        out = run_on_jetson(f"ip link show {port}")
+
     is_up = "UP" in out
-    print(f"[*] Interfaz can1 (Piper CAN bus @ 1Mbps): {'[ACTIVA / OK]' if is_up else '[ERROR]'}")
+    print(f"[*] Interfaz {port} (Piper CAN bus @ 1Mbps): {'[ACTIVA / OK]' if is_up else '[ERROR]'}")
     return is_up
 
 
 def get_telemetry():
     """Lee y muestra la telemetria completa, cinemática directa y gripper."""
+    port = detect_active_can()
     script = """
 import math, time
 from piper_sdk import C_PiperInterface_V2, C_PiperForwardKinematics
 
-piper = C_PiperInterface_V2('can1')
+piper = C_PiperInterface_V2('PORT_NAME')
 piper.ConnectPort()
 time.sleep(0.4)
 
@@ -79,7 +92,7 @@ print(f'RADS|' + ','.join(f'{r:.4f}' for r in rad_j))
 print(f'FK|' + ','.join(f'{v:.2f}' for v in fk_end))
 print(f'HW|' + ','.join(f'{v:.2f}' for v in hw_xyz_rpy))
 print(f'GRIPPER|{grip_mm:.2f}|{grip_n:.3f}')
-"""
+""".replace('PORT_NAME', port)
     raw = run_on_jetson(f"python3 -c \"{script}\"")
     lines = [line.strip() for line in raw.splitlines() if "|" in line]
     data = {}
@@ -129,12 +142,12 @@ def test_gripper(target_mm: float):
     """Ejecuta una manipulacion segura de la pinza (abrir / cerrar a milimetros dados)."""
     target_mm = max(0.0, min(75.0, target_mm))
     print(f"\n[*] Comandando pinza del Piper a {target_mm:.1f} mm...")
-    
+    port = detect_active_can()
     script = f"""
 import time
 from piper_sdk import C_PiperInterface_V2
 
-piper = C_PiperInterface_V2('can1')
+piper = C_PiperInterface_V2('{port}')
 piper.ConnectPort()
 time.sleep(0.3)
 piper.EnablePiper()
@@ -161,12 +174,12 @@ def test_wrist_jog(delta_deg: float):
     """Mueve suavemente la articulacion 6 (rotacion de la muneca/camara) en delta grados."""
     delta_deg = max(-5.0, min(5.0, delta_deg))  # Limite estricto de seguridad de +/- 5 grados
     print(f"\n[!] Prueba de jog seguro en Joint 6 (Muneca/Camara): {delta_deg:+.1f}°")
-    
+    port = detect_active_can()
     script = f"""
 import time, math
 from piper_sdk import C_PiperInterface_V2
 
-piper = C_PiperInterface_V2('can1')
+piper = C_PiperInterface_V2('{port}')
 piper.ConnectPort()
 time.sleep(0.3)
 

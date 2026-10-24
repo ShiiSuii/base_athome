@@ -13,6 +13,7 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')),
+        (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
         (os.path.join('share', package_name, 'models'), glob('models/*.*')),
         (os.path.join('share', package_name, 'scripts'), glob('scripts/*.py')),
     ],
@@ -28,6 +29,8 @@ setup(
             'face_recognition = scripts.test_face_recognition:main',
             'person_pose = scripts.test_human_pose:main',
             'garbage_detection = scripts.test_garbage_detection:main',
+            'piper_teach_recorder = scripts.piper_teach_recorder:main',
+            'pringles_grasping = scripts.pringles_grasping_node:main',
         ],
     },
 )

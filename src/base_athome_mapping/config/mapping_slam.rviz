@@ -1,142 +1,358 @@
 Panels:
   - Class: rviz_common/Displays
+    Help Height: 70
     Name: Displays
     Property Tree Widget:
       Expanded:
         - /Global Options1
-        - /TF1
         - /RobotModel1
+        - /TF1
         - /Map1
         - /LaserScan1
         - /Odometry1
       Splitter Ratio: 0.5
+    Tree Height: 371
   - Class: rviz_common/Views
+    Expanded:
+      - /Current View1
     Name: Views
-    Property Tree Widget:
-      Expanded:
-        - /Current View1
-      Splitter Ratio: 0.5
-
+    Splitter Ratio: 0.5
 Visualization Manager:
   Class: ""
-  Enabled: true
-
-  Global Options:
-    Background Color: 20; 24; 30
-    Fixed Frame: map
-    Frame Rate: 30
-
   Displays:
-    # === REJILLA DE REFERENCIA ===
-    - Name: Grid
-      Class: rviz_default_plugins/Grid
-      Enabled: true
+    - Alpha: 0.5
       Cell Size: 1
+      Class: rviz_default_plugins/Grid
       Color: 80; 80; 90
+      Enabled: true
+      Line Style:
+        Line Width: 0.029999999329447746
+        Value: Lines
+      Name: Grid
+      Normal Cell Count: 0
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0
       Plane: XY
       Plane Cell Count: 20
       Reference Frame: <Fixed Frame>
-
-    # === MODELO 3D DEL ROBOT ===
-    - Name: RobotModel
+      Value: true
+    - Alpha: 1
       Class: rviz_default_plugins/RobotModel
-      Enabled: true
+      Collision Enabled: false
+      Description File: ""
+      Description Source: Topic
       Description Topic:
         Depth: 5
         Durability Policy: Transient Local
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /robot_description
-      Visual Enabled: true
-      Collision Enabled: false
-      Alpha: 1.0
-
-    # === ÁRBOL TF DE COORDENADAS ===
-    - Name: TF
-      Class: rviz_default_plugins/TF
       Enabled: true
+      Links:
+        All Links Enabled: true
+        Expand Joint Details: false
+        Expand Link Details: false
+        Expand Tree: false
+        Link Tree Style: Links in Alphabetic Order
+        base_footprint:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        base_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        camera_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        laser:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        left_wheel:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        pan_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        pan_tilt_base_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        rear_caster:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        right_wheel:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        tilt_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        torso_column:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        torso_lift_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+      Mass Properties:
+        Inertia: false
+        Mass: false
+      Name: RobotModel
+      TF Prefix: ""
+      Update Interval: 0
+      Value: true
+      Visual Enabled: true
+    - Class: rviz_default_plugins/TF
+      Enabled: true
+      Filter (blacklist): ""
+      Filter (whitelist): ""
+      Frame Timeout: 15
+      Frames:
+        All Enabled: true
+        base_footprint:
+          Value: true
+        base_link:
+          Value: true
+        camera_color_frame:
+          Value: true
+        camera_color_optical_frame:
+          Value: true
+        camera_depth_frame:
+          Value: true
+        camera_depth_optical_frame:
+          Value: true
+        camera_link:
+          Value: true
+        laser:
+          Value: true
+        map:
+          Value: true
+        odom:
+          Value: true
+        pan_link:
+          Value: true
+        pan_tilt_base_link:
+          Value: true
+        rear_caster:
+          Value: true
+        tilt_link:
+          Value: true
+        torso_column:
+          Value: true
+        torso_lift_link:
+          Value: true
+      Marker Scale: 0.25
+      Name: TF
       Show Arrows: true
       Show Axes: true
       Show Names: true
-      Marker Scale: 0.25
-      Update Interval: 0.05
-
-    # === MAPA DE OCUPACIÓN 2D (SLAM TOOLBOX) ===
-    - Name: Map
+      Tree:
+        map:
+          odom:
+            base_footprint:
+              base_link:
+                laser:
+                  {}
+                rear_caster:
+                  {}
+                torso_column:
+                  torso_lift_link:
+                    pan_tilt_base_link:
+                      pan_link:
+                        tilt_link:
+                          camera_link:
+                            camera_color_frame:
+                              camera_color_optical_frame:
+                                {}
+                            camera_depth_frame:
+                              camera_depth_optical_frame:
+                                {}
+      Update Interval: 0.05000000074505806
+      Value: true
+    - Alpha: 0.8500000238418579
+      Binary representation: false
+      Binary threshold: 100
       Class: rviz_default_plugins/Map
+      Color Scheme: map
+      Draw Behind: false
       Enabled: true
+      Name: Map
       Topic:
         Depth: 5
         Durability Policy: Transient Local
+        Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /map
-      Alpha: 0.85
-      Color Scheme: map
-      Draw Behind: false
       Update Topic:
         Depth: 5
         Durability Policy: Transient Local
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: ""
-
-    # === ESCANEO LÁSER HOKUYO (UST-05LX) ===
-    - Name: LaserScan
+      Use Timestamp: false
+      Value: true
+    - Alpha: 1
+      Autocompute Intensity Bounds: true
+      Autocompute Value Bounds:
+        Max Value: 10
+        Min Value: -10
+        Value: true
+      Axis: Z
+      Channel Name: intensity
       Class: rviz_default_plugins/LaserScan
+      Color: 255; 40; 40
+      Color Transformer: FlatColor
+      Decay Time: 0
       Enabled: true
+      Invert Rainbow: false
+      Max Color: 255; 255; 255
+      Max Intensity: 4096
+      Min Color: 0; 0; 0
+      Min Intensity: 0
+      Name: LaserScan
+      Position Transformer: XYZ
+      Selectable: true
+      Size (Pixels): 3
+      Size (m): 0.03999999910593033
+      Style: Flat Squares
       Topic:
         Depth: 10
         Durability Policy: Volatile
+        Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /scan
-      Color Transformer: FlatColor
-      Color: 255; 40; 40
-      Size (m): 0.04
-      Style: Flat Squares
-      Decay Time: 0.0
-
-    # === ODOMETRÍA DE RUEDAS EN VIVO ===
-    - Name: Odometry
+      Use Fixed Frame: true
+      Use rainbow: true
+      Value: true
+    - Angle Tolerance: 0.10000000149011612
       Class: rviz_default_plugins/Odometry
-      Enabled: true
+      Covariance:
+        Orientation:
+          Alpha: 0.5
+          Color: 255; 255; 127
+          Color Style: Unique
+          Frame: Local
+          Offset: 1
+          Scale: 1
+          Value: true
+        Position:
+          Alpha: 0.30000001192092896
+          Color: 204; 51; 204
+          Scale: 1
+          Value: true
+        Value: true
+      Enabled: false
+      Keep: 100
+      Name: Odometry
+      Position Tolerance: 0.10000000149011612
+      Shape:
+        Alpha: 1
+        Axes Length: 1
+        Axes Radius: 0.10000000149011612
+        Color: 255; 25; 0
+        Head Length: 0.30000001192092896
+        Head Radius: 0.10000000149011612
+        Shaft Length: 1
+        Shaft Radius: 0.05000000074505806
+        Value: Arrow
       Topic:
         Depth: 10
         Durability Policy: Volatile
+        Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /odom
-      Shape:
-        Axes:
-          Axes Length: 0.25
-          Axes Radius: 0.02
-        Type: Axes
-      Keep: 100
-
+      Value: false
+  Enabled: true
+  Global Options:
+    Background Color: 20; 24; 30
+    Fixed Frame: map
+    Frame Rate: 30
+  Name: root
   Tools:
     - Class: rviz_default_plugins/Interact
+      Hide Inactive Objects: true
     - Class: rviz_default_plugins/MoveCamera
     - Class: rviz_default_plugins/Select
     - Class: rviz_default_plugins/FocusCamera
     - Class: rviz_default_plugins/Measure
+      Line color: 128; 128; 0
     - Class: rviz_default_plugins/SetInitialPose
+      Covariance x: 0.25
+      Covariance y: 0.25
+      Covariance yaw: 0.06853891909122467
       Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
         Value: /initialpose
     - Class: rviz_default_plugins/SetGoal
       Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
         Value: /goal_pose
-
+  Transformation:
+    Current:
+      Class: rviz_default_plugins/TF
+  Value: true
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 5.5
+      Distance: 7.5
+      Enable Stereo Rendering:
+        Stereo Eye Separation: 0.05999999865889549
+        Stereo Focal Distance: 1
+        Swap Stereo Eyes: false
+        Value: false
       Focal Point:
         X: 0.0
         Y: 0.0
         Z: 0.0
+      Focal Shape Fixed Size: false
+      Focal Shape Size: 0.05000000074505806
+      Invert Z Axis: false
       Name: Current View
-      Pitch: 0.75
-      Target Frame: base_footprint
-      Value: Orbit (rviz)
-      Yaw: 0.5
+      Near Clip Distance: 0.01
+      Pitch: 1.2
+      Target Frame: map
+      Value: Orbit (rviz_default_plugins)
+      Yaw: 0.0
+    Saved: ~
+Window Geometry:
+  Displays:
+    collapsed: false
+  Height: 1011
+  Hide Left Dock: false
+  Hide Right Dock: false
+  QMainWindow State: 000000ff00000000fd00000001000000000000018400000395fc0200000002fb000000100044006900730070006c006100790073010000003f000001f9000000cc00fffffffb0000000a00560069006500770073010000023e00000196000000a900ffffff000005af0000039500000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
+  Views:
+    collapsed: false
+  Width: 1849
+  X: 71
+  Y: 32
