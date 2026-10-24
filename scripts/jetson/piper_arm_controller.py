@@ -38,8 +38,8 @@ GRIPPER_MAX_MM = 70.0
 GRIPPER_MIN_MM = 0.0
 
 # Pose Home/Stow y Pre-Grasp calibradas (grados)
-DEFAULT_HOME_DEG = [85.56, 170.99, -159.12, 19.29, -5.78, -101.87]
-DEFAULT_READY_DEG = [43.43, 182.55, -108.11, 82.30, -49.05, -128.85]
+DEFAULT_HOME_DEG = [86.28, 173.91, -164.0, 66.98, 0.69, -146.41]
+DEFAULT_READY_DEG = [30.96, 182.68, -98.68, 37.30, -75.12, -95.86]
 
 class PiperArmController(Node):
     """Nodo ROS 2 para control continuo y cinematica del brazo Piper."""

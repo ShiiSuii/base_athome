@@ -55,28 +55,28 @@ SAFE_CARTESIAN_BOX_M: Dict[str, Tuple[float, float]] = {
 DEFAULT_NAMED_POSES: Dict[str, Dict[str, object]] = {
     'home': {
         'description': 'Pose de reposo seguro al lateral izquierdo del prisma',
-        'joints_deg': [85.56, 170.99, -159.12, 19.29, -5.78, -101.87],
-        'gripper_mm': 70.0,
+        'joints_deg': [86.28, 173.91, -164.0, 66.98, 0.69, -146.41],
+        'gripper_mm': 69.5,
     },
     'cube_stow': {
         'description': 'Pose compacta de transporte junto al cubo',
-        'joints_deg': [85.56, 170.99, -159.12, 19.29, -5.78, -101.87],
+        'joints_deg': [86.28, 173.91, -164.0, 66.98, 0.69, -146.41],
         'gripper_mm': 20.0,
     },
     'pre_grasp': {
         'description': 'Pose Pre-Grasp enseñada frente a la mesa con cámara de muñeca nivelada',
-        'joints_deg': [43.43, 182.55, -108.11, 82.3, -49.05, -128.85],
-        'gripper_mm': 70.0,
+        'joints_deg': [30.96, 182.68, -98.68, 37.3, -75.12, -95.86],
+        'gripper_mm': 69.5,
     },
     'pre_grasp_center': {
         'description': 'Pose de pre-agarre centrada frente al torso',
-        'joints_deg': [43.43, 182.55, -108.11, 82.3, -49.05, -128.85],
-        'gripper_mm': 70.0,
+        'joints_deg': [30.96, 182.68, -98.68, 37.3, -75.12, -95.86],
+        'gripper_mm': 69.5,
     },
     'pre_grasp_table': {
         'description': 'Pose de aproximación a mesa con pinza abierta',
-        'joints_deg': [43.43, 182.55, -108.11, 82.3, -49.05, -128.85],
-        'gripper_mm': 70.0,
+        'joints_deg': [30.96, 182.68, -98.68, 37.3, -75.12, -95.86],
+        'gripper_mm': 69.5,
     },
 }
 

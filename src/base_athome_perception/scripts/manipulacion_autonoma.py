@@ -210,8 +210,8 @@ class ManipulacionAutonomaNode(Node):
     # --------------------------------------------------------------------------
     def load_configuration(self):
         """Carga o inicializa poses nombradas y límites seguros desde YAML."""
-        self.pose_home = [85.56, 170.99, -159.12, 19.29, -5.78, -101.87]
-        self.pose_pre_grasp = [43.43, 182.55, -108.11, 82.3, -49.05, -128.85]
+        self.pose_home = [86.28, 173.91, -164.0, 66.98, 0.69, -146.41]
+        self.pose_pre_grasp = [30.96, 182.68, -98.68, 37.3, -75.12, -95.86]
         self.gripper_home_mm = 70.0
         self.gripper_pre_grasp_mm = 70.0
 
