@@ -71,30 +71,34 @@ SHOULDER_IN_BASE_LINK_M = np.array([0.155, 0.175, 1.015], dtype=float)
 
 
 class ManipulacionAutonomaNode(Node):
-    """Nodo integrado de detección 3D en RViz, calibración de poses y agarre por Cinemática Inversa."""
+    """Nodo integrado de detección 3D en RViz, calibración en vivo de llegada y agarre por Cinemática Inversa."""
 
-    # Fases de Configuración
+    # Fases de Configuración y Calibración
     FASE_1_RANGO = 1
     FASE_2_HOME = 2
     FASE_3_PREGRASP = 3
+    FASE_4_GRASP = 4
 
-    # Estados del Ciclo Autónomo (RViz 3D Depth -> Pre-Grasp -> IK Grasp -> Lift -> Home)
+    # Estados del Ciclo Autónomo (RViz 3D Depth -> Pre-Grasp -> Alinear -> Avanzar -> Agarre -> Home)
     AUTO_IDLE = 10
-    AUTO_PASO_A_DETECCION_RVIZ = 11     # Detectar 3D con cámara principal y mostrar en RViz
-    AUTO_PASO_B_MOVER_PREGRASP = 12     # Ir primero a la pose Pre-Grasp enseñada
-    AUTO_PASO_C_IR_CON_CINEMATICA = 13  # Ir con Cinemática Inversa desde Pre-Grasp al objeto
-    AUTO_PASO_D_AGARRE_ELEVACION = 14   # Cerrar pinza (55 mm) y elevar +8 cm con IK
-    AUTO_PASO_E_RETORNO_HOME = 15       # Volver a Home con el objeto
-    AUTO_SUCCESS = 16
+    AUTO_PASO_A_DETECCION_RVIZ = 11       # Detectar 3D con cámara principal y mostrar en RViz
+    AUTO_PASO_B_MOVER_PREGRASP = 12       # Ir primero a la pose Pre-Grasp enseñada
+    AUTO_PASO_C1_ALINEAR_CON_OBJETO = 13  # PRIMERO: Alinearse lateralmente con el objeto en Pre-Grasp
+    AUTO_PASO_C2_AVANZAR_AL_OBJETO = 14   # SEGUNDO: Avanzar recto hacia el objeto (grasp_forward_cm)
+    AUTO_PASO_D_AGARRE_ELEVACION = 15     # Cerrar pinza (55 mm) y elevar +8 cm con IK
+    AUTO_PASO_E_RETORNO_HOME = 16         # Volver a Home con el objeto
+    AUTO_SUCCESS = 17
 
     FASE_NAMES = {
         FASE_1_RANGO: "FASE 1: RANGO DE MOVIMIENTOS SEGURO",
         FASE_2_HOME: "FASE 2: POSICION HOME DEL BRAZO",
         FASE_3_PREGRASP: "FASE 3: POSICION PRE-GRASP DEL BRAZO",
-        AUTO_IDLE: "LISTO: OBJETO 3D EN RVIZ (PRESIONE [ESPACIO] O [G] PARA AGARRAR)",
-        AUTO_PASO_A_DETECCION_RVIZ: "PASO A: FIJANDO POSICION 3D EN RVIZ Y CALCULANDO IK",
+        FASE_4_GRASP: "FASE 4: CALIBRANDO LLEGADA AL OBJETO ([+]/[-] Avance, [9]/[0] Der/Izq, [7]/[8] Altura)",
+        AUTO_IDLE: "LISTO: OBJETO 3D EN RVIZ (PRESIONE [ESPACIO] O [G] PARA ALINEAR Y AGARRAR)",
+        AUTO_PASO_A_DETECCION_RVIZ: "PASO A: FIJANDO POSICION 3D EN RVIZ",
         AUTO_PASO_B_MOVER_PREGRASP: "PASO B: YENDO A POSICION PRE-GRASP",
-        AUTO_PASO_C_IR_CON_CINEMATICA: "PASO C: MOVIENDO CON CINEMATICA INVERSA HACIA EL OBJETO",
+        AUTO_PASO_C1_ALINEAR_CON_OBJETO: "PASO C1: ALINEANDOSE CON EL OBJETO ANTES DE AVANZAR",
+        AUTO_PASO_C2_AVANZAR_AL_OBJETO: "PASO C2: AVANZANDO RECTO HACIA EL OBJETO HASTA LLEGAR",
         AUTO_PASO_D_AGARRE_ELEVACION: "PASO D: CERRANDO PINZA Y ELEVANDO CON CINEMATICA",
         AUTO_PASO_E_RETORNO_HOME: "PASO E: LLEVANDO OBJETO A POSICION HOME",
         AUTO_SUCCESS: "CICLO COMPLETADO: OBJETO EN POSICION HOME",
@@ -105,8 +109,11 @@ class ManipulacionAutonomaNode(Node):
         self.dry_run = dry_run
         self.get_logger().info("Iniciando Sistema de Manipulacion 3D en RViz + Cinematica Inversa...")
 
-        # 1. Cargar Configuración de Poses desde YAML
-        self.wrist_camera_right_offset_m = float(WRIST_CAMERA_RIGHT_OFFSET_M)  # 0.06 m (6 cm a la derecha)
+        # 1. Parámetros Calibrables de Llegada al Objeto (cargados y guardados en YAML)
+        self.wrist_camera_right_offset_m: float = float(WRIST_CAMERA_RIGHT_OFFSET_M)  # 0.060 m (6.0 cm derecha)
+        self.grasp_forward_cm: float = 20.0        # Cuántos cm avanza desde Pre-Grasp para llegar al objeto
+        self.grasp_height_offset_cm: float = 0.0   # Ajuste fino de altura (cm) al llegar al objeto
+        self.pose_grasp: Optional[List[float]] = None
         self.load_configuration()
 
         # 2. Subscripciones a Cámara Principal + Profundidad (RealSense D435)
@@ -168,7 +175,7 @@ class ManipulacionAutonomaNode(Node):
 
         # Modo de Enseñanza con la Mano
         self.is_teaching_mode = False
-        self.teaching_target: Optional[str] = None  # 'home' o 'pre_grasp'
+        self.teaching_target: Optional[str] = None  # 'home', 'pre_grasp' o 'grasp'
 
         # Telemetría del brazo Piper
         self.arm_is_moving = False
@@ -201,24 +208,33 @@ class ManipulacionAutonomaNode(Node):
         self.dist_tcp_to_obj_cm = 0.0
         self.is_in_reach = False
         self.last_head_det_time = 0.0
+        self.last_wrist_det_time = 0.0
         self.last_marker_pub_time = 0.0
         self.last_out_of_reach_say_time = 0.0
 
         # Trayectorias articulares y avance calculados por IK
-        self.planned_dx_m: float = 0.13
-        self.planned_dy_m: float = -0.06
+        self.planned_dx_m: float = self.grasp_forward_cm / 100.0
+        self.planned_dy_m: float = -self.wrist_camera_right_offset_m
+        self.joints_aligned: Optional[List[float]] = None
         self.joints_grasp: Optional[List[float]] = None
         self.joints_lift: Optional[List[float]] = None
+        self._align_sent = False
+        self._ik_sent = False
+        self._lift_sent = False
 
-        self.status_message = "Listo. Objeto 3D publicandose en RViz (/arm_camera/object_markers)."
+        self.status_message = (
+            f"Listo. Avance calibrado={self.grasp_forward_cm:.1f}cm ([+]/[-]) | "
+            f"Offset Cam Der={self.wrist_camera_right_offset_m*100:.1f}cm ([9]/[0])"
+        )
 
     # --------------------------------------------------------------------------
     # CONFIGURACIÓN Y PERSISTENCIA (YAML)
     # --------------------------------------------------------------------------
     def load_configuration(self):
-        """Carga o inicializa poses nombradas desde YAML."""
+        """Carga o inicializa poses nombradas y parámetros de llegada desde YAML."""
         self.pose_home = [72.09, 176.5, -155.15, 102.62, -31.51, -99.91]
         self.pose_pre_grasp = [53.33, 176.38, -79.88, 69.54, -75.36, -89.05]
+        self.pose_grasp = None
         self.gripper_home_mm = 70.0
         self.gripper_pre_grasp_mm = 70.0
 
@@ -229,6 +245,10 @@ class ManipulacionAutonomaNode(Node):
                     env = data.get("safety_envelope", {})
                     if "wrist_camera_right_offset_m" in env:
                         self.wrist_camera_right_offset_m = float(env["wrist_camera_right_offset_m"])
+                    if "grasp_forward_cm" in env:
+                        self.grasp_forward_cm = float(env["grasp_forward_cm"])
+                    if "grasp_height_offset_cm" in env:
+                        self.grasp_height_offset_cm = float(env["grasp_height_offset_cm"])
                     poses = data.get("named_poses", {})
                     if "home" in poses:
                         self.pose_home = list(poses["home"].get("joints_deg", self.pose_home))
@@ -236,12 +256,34 @@ class ManipulacionAutonomaNode(Node):
                     if "pre_grasp" in poses:
                         self.pose_pre_grasp = list(poses["pre_grasp"].get("joints_deg", self.pose_pre_grasp))
                         self.gripper_pre_grasp_mm = float(poses["pre_grasp"].get("gripper_mm", 70.0))
-                self.get_logger().info("Configuracion de poses cargada desde YAML.")
+                    if "grasp" in poses and "joints_deg" in poses["grasp"]:
+                        self.pose_grasp = list(poses["grasp"]["joints_deg"])
+                self.get_logger().info("Configuracion de poses y parametros cargada desde YAML.")
             except Exception as e:
                 self.get_logger().warn(f"Error leyendo YAML ({e}), usando valores por defecto.")
 
+    def save_calibration_params(self):
+        """Guarda los parámetros calibrables de llegada al objeto en el archivo YAML."""
+        try:
+            data = {}
+            if os.path.exists(CONFIG_FILE_PATH):
+                with open(CONFIG_FILE_PATH, "r", encoding="utf-8") as f:
+                    data = yaml.safe_load(f) or {}
+
+            if "safety_envelope" not in data:
+                data["safety_envelope"] = {}
+
+            data["safety_envelope"]["wrist_camera_right_offset_m"] = round(float(self.wrist_camera_right_offset_m), 4)
+            data["safety_envelope"]["grasp_forward_cm"] = round(float(self.grasp_forward_cm), 1)
+            data["safety_envelope"]["grasp_height_offset_cm"] = round(float(self.grasp_height_offset_cm), 1)
+
+            with open(CONFIG_FILE_PATH, "w", encoding="utf-8") as f:
+                yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+        except Exception as e:
+            self.get_logger().error(f"Error guardando parametros en YAML: {e}")
+
     def save_named_pose(self, pose_name: str, joints_deg: List[float], gripper_mm: float):
-        """Guarda la pose enseñada en el archivo YAML."""
+        """Guarda la pose enseñada en el archivo YAML y si es 'grasp', calibra automáticamente el avance."""
         try:
             data = {}
             if os.path.exists(CONFIG_FILE_PATH):
@@ -256,6 +298,21 @@ class ManipulacionAutonomaNode(Node):
                 "gripper_mm": round(float(gripper_mm), 1),
                 "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
             }
+
+            # Si el usuario enseñó 'grasp' (cuando de verdad llega al objeto), calcular automáticamente
+            # cuántos cm avanzó respecto a Pre-Grasp y actualizar grasp_forward_cm y grasp_height_offset_cm!
+            if pose_name == "grasp" and hasattr(self, "kinematics_solver"):
+                p_pre = self.kinematics_solver.forward_position_m([math.radians(d) for d in self.pose_pre_grasp])
+                p_g = self.kinematics_solver.forward_position_m([math.radians(d) for d in joints_deg[:6]])
+                dx_cm = round(float((p_g[0] - p_pre[0]) * 100.0), 1)
+                dz_cm = round(float((p_g[2] - p_pre[2]) * 100.0), 1)
+                if dx_cm >= 4.0:
+                    self.grasp_forward_cm = float(np.clip(dx_cm, 5.0, 30.0))
+                self.grasp_height_offset_cm = float(np.clip(dz_cm, -10.0, 10.0))
+                if "safety_envelope" not in data:
+                    data["safety_envelope"] = {}
+                data["safety_envelope"]["grasp_forward_cm"] = self.grasp_forward_cm
+                data["safety_envelope"]["grasp_height_offset_cm"] = self.grasp_height_offset_cm
 
             with open(CONFIG_FILE_PATH, "w", encoding="utf-8") as f:
                 yaml.dump(data, f, default_flow_style=False, sort_keys=False)
@@ -411,18 +468,22 @@ class ManipulacionAutonomaNode(Node):
                 if now - self.last_head_det_time > 1.0:
                     self.target_2d_head = None
 
-        # 2. Cámara de Muñeca (Secundaria para centrado fino en Pre-Grasp)
+        # 2. Cámara de Muñeca (Con persistencia de 2.0s y suavizado EMA para no perder alineación)
         if self.wrist_color_frame is not None:
             det_w = self.detect_object_2d(self.wrist_color_frame)
             if det_w is not None:
                 wx1, wy1, wx2, wy2, _ = det_w
                 self.target_2d_wrist = (wx1, wy1, wx2, wy2)
+                self.last_wrist_det_time = now
                 wcx = (wx1 + wx2) / 2.0
                 wcy = (wy1 + wy2) / 2.0
-                self.wrist_error_u = (wcx - 320.0) / 320.0
-                self.wrist_error_v = (wcy - 240.0) / 240.0
+                raw_u = (wcx - 320.0) / 320.0
+                raw_v = (wcy - 240.0) / 240.0
+                self.wrist_error_u = 0.55 * self.wrist_error_u + 0.45 * raw_u
+                self.wrist_error_v = 0.55 * self.wrist_error_v + 0.45 * raw_v
             else:
-                self.target_2d_wrist = None
+                if now - self.last_wrist_det_time > 2.0:
+                    self.target_2d_wrist = None
 
         # 3. Publicar Marcadores 3D a RViz a 15 Hz
         if now - self.last_marker_pub_time >= 0.065:
@@ -524,7 +585,7 @@ class ManipulacionAutonomaNode(Node):
         txt.color = ColorRGBA(r=1.0, g=1.0, b=1.0, a=1.0)
         txt.text = (
             f"OBJETO 3D | Dist Pinza: {self.dist_tcp_to_obj_cm:.1f} cm | "
-            f"Hombro:[{obj_sh_m[0]:.2f}, {obj_sh_m[1]:.2f}, {obj_sh_m[2]:.2f}]m [{status_tag}]"
+            f"Avance Calibrado: +{self.grasp_forward_cm:.1f} cm [{status_tag}]"
         )
         txt.lifetime = Duration(sec=0, nanosec=500000000)
         ma.markers.append(txt)
@@ -532,7 +593,7 @@ class ManipulacionAutonomaNode(Node):
         self.pub_rviz_markers.publish(ma)
 
     # --------------------------------------------------------------------------
-    # COMANDOS DE ACCIONAMIENTO (CON FIX DE TRAYECTORIA JOINT_CMD)
+    # COMANDOS DE ACCIONAMIENTO Y CALIBRACIÓN EN VIVO DE LLEGADA AL OBJETO
     # --------------------------------------------------------------------------
     def say(self, text: str):
         clean_ascii = text.encode("ascii", "ignore").decode("ascii")
@@ -548,7 +609,7 @@ class ManipulacionAutonomaNode(Node):
         (sin publicar un /arm/gripper_cmd separado que pueda interrumpir la trayectoria).
         """
         clamped_deg = list(joints_deg[:6])
-        clamped_deg[1] = min(clamped_deg[1], 182.7)  # Respetar tope mecánico físico de Joint 2
+        clamped_deg[1] = min(clamped_deg[1], 194.5)  # Permitir extensión completa de Joint 2 según URDF (195°)
 
         safe, reason = is_in_safe_joint_envelope(clamped_deg)
         if not safe:
@@ -586,6 +647,93 @@ class ManipulacionAutonomaNode(Node):
         self.send_arm_joint_goal(self.pose_pre_grasp, duration_s=duration_s, gripper_mm=70.0)
         self.status_message = "Moviendo a Posicion PRE-GRASP (70mm)."
 
+    def compute_aligned_and_grasp_joints(self) -> Tuple[List[float], List[float], float]:
+        """
+        Calcula en 2 etapas claras desde Pre-Grasp:
+          1) joints_aligned: Postura en Pre-Grasp ALINEADA lateralmente y en altura con el objeto
+             (compensando los +6 cm a la derecha de la cámara del brazo) ANTES de avanzar.
+          2) joints_grasp: Postura de LLEGADA AL OBJETO avanzando recto hacia adelante
+             exactamente el parámetro calibrado `grasp_forward_cm`.
+        """
+        dz_m = float(self.grasp_height_offset_cm / 100.0)
+        dx_m = float(self.grasp_forward_cm / 100.0)
+
+        # Determinar alineación lateral (dy_align) respecto al Eje de la Pinza (compensando offset cámara)
+        if self.target_2d_wrist is not None:
+            dy_align = float(np.clip(-self.wrist_camera_right_offset_m - (self.wrist_error_u * 0.08), -0.095, 0.095))
+        elif self.target_3d_arm is not None:
+            q_pre_rad = [math.radians(d) for d in self.pose_pre_grasp]
+            _, pre_y, _ = self.kinematics_solver.forward_position_m(q_pre_rad)
+            dy_align = float(np.clip((self.target_3d_arm[1] - pre_y) - (0.5 * self.wrist_camera_right_offset_m), -0.095, 0.095))
+        else:
+            dy_align = float(-self.wrist_camera_right_offset_m)
+
+        # Etapa 1: Alinear en Pre-Grasp (sin avanzar todavía: delta_forward_m = 0.0)
+        j_aligned, ok_align = self.kinematics_solver.move_tool_line(
+            self.pose_pre_grasp,
+            delta_forward_m=0.0,
+            delta_lateral_m=dy_align,
+            delta_up_m=dz_m,
+        )
+        if not ok_align:
+            j_aligned = list(self.pose_pre_grasp)
+
+        # Etapa 2: Desde la postura YA ALINEADA, avanzar recto hacia el objeto (delta_forward_m = dx_m)
+        j_grasp, ok_grasp = self.kinematics_solver.move_tool_line(
+            j_aligned,
+            delta_forward_m=dx_m,
+            delta_lateral_m=0.0,
+            delta_up_m=0.0,
+        )
+        if not ok_grasp and self.pose_grasp is not None:
+            # Si el usuario enseñó una pose_grasp manual con [K], aplicarle el delta de alineación lateral
+            delta_align = [j_aligned[i] - self.pose_pre_grasp[i] for i in range(6)]
+            j_grasp = [round(self.pose_grasp[i] + delta_align[i], 2) for i in range(6)]
+
+        return j_aligned, j_grasp, dy_align
+
+    def mover_a_calibracion_grasp(self, duration_s: float = 1.2):
+        """
+        Mueve el brazo en vivo al punto de llegada al objeto (FASE 4) usando los parámetros actuales
+        (`grasp_forward_cm`, `wrist_camera_right_offset_m`, `grasp_height_offset_cm`) para que el
+        usuario pueda calibrar en tiempo real cuándo llega de verdad a rodear la botella.
+        """
+        if self.is_teaching_mode:
+            self.cancel_teaching_mode()
+        self.fase_actual = self.FASE_4_GRASP
+        _, j_grasp, dy_align = self.compute_aligned_and_grasp_joints()
+        self.send_arm_joint_goal(j_grasp, duration_s=duration_s, gripper_mm=70.0)
+        self.status_message = (
+            f"CALIBRANDO LLEGADA: Avance=+{self.grasp_forward_cm:.1f}cm ([+]/[-]) | "
+            f"OffsetDer={self.wrist_camera_right_offset_m*100:.1f}cm ([9]/[0]) | "
+            f"Altura={self.grasp_height_offset_cm:+.1f}cm ([7]/[8]) | dY={dy_align*100:+.1f}cm"
+        )
+
+    def adjust_calibration_param(self, d_forward_cm: float = 0.0, d_right_cm: float = 0.0, d_height_cm: float = 0.0, window_name: Optional[str] = None):
+        """Ajusta en vivo los parámetros de llegada al objeto, actualiza barras y guarda en YAML."""
+        self.grasp_forward_cm = float(np.clip(self.grasp_forward_cm + d_forward_cm, 5.0, 30.0))
+        self.wrist_camera_right_offset_m = float(np.clip(self.wrist_camera_right_offset_m + (d_right_cm / 100.0), -0.15, 0.15))
+        self.grasp_height_offset_cm = float(np.clip(self.grasp_height_offset_cm + d_height_cm, -10.0, 10.0))
+        self.save_calibration_params()
+
+        if window_name is not None:
+            try:
+                cv2.setTrackbarPos("Avance_cm", window_name, int(round(self.grasp_forward_cm)))
+                cv2.setTrackbarPos("Offset_Der_mm", window_name, int(round(150 + self.wrist_camera_right_offset_m * 1000.0)))
+                cv2.setTrackbarPos("Altura_mm", window_name, int(round(100 + self.grasp_height_offset_cm * 10.0)))
+            except Exception:
+                pass
+
+        # Si estamos en FASE 4 (Calibrando llegada al objeto), mover el brazo en tiempo real!
+        if self.fase_actual == self.FASE_4_GRASP and self.auto_state == self.AUTO_IDLE:
+            self.mover_a_calibracion_grasp(duration_s=0.65)
+        else:
+            self.status_message = (
+                f"GUARDADO EN YAML -> Avance: +{self.grasp_forward_cm:.1f}cm | "
+                f"Offset Cam Der: {self.wrist_camera_right_offset_m*100:.1f}cm | "
+                f"Altura: {self.grasp_height_offset_cm:+.1f}cm (Presione [4] para probar en vivo)"
+            )
+
     def set_arm_torque(self, enable: bool):
         msg = Bool()
         msg.data = bool(enable)
@@ -596,7 +744,7 @@ class ManipulacionAutonomaNode(Node):
             self.is_teaching_mode = True
             self.teaching_target = target_pose
             self.set_arm_torque(False)
-            self.status_message = f"MODO ENSENANZA [{target_pose.upper()}]: Mueva el brazo con la mano y presione [ENTER] o [E] para guardar."
+            self.status_message = f"MODO ENSENANZA [{target_pose.upper()}]: Mueva el brazo con la mano hasta el punto y presione [ENTER] para guardar."
             self.say(f"Teach mode for {target_pose} activated. Move the arm with your hand and press Enter to save.")
         else:
             save_target = self.teaching_target or target_pose
@@ -604,7 +752,10 @@ class ManipulacionAutonomaNode(Node):
             self.is_teaching_mode = False
             self.save_named_pose(save_target, self.arm_joints_deg, self.gripper_opening_mm)
             self.teaching_target = None
-            self.status_message = f"Pose {save_target.upper()} guardada: {[round(v, 1) for v in self.arm_joints_deg]}."
+            self.status_message = (
+                f"Pose {save_target.upper()} guardada! Avance={self.grasp_forward_cm:.1f}cm, "
+                f"Altura={self.grasp_height_offset_cm:+.1f}cm."
+            )
 
     def cancel_teaching_mode(self):
         if self.is_teaching_mode:
@@ -621,122 +772,92 @@ class ManipulacionAutonomaNode(Node):
         self.pub_pan_tilt_cmd.publish(v)
 
     # --------------------------------------------------------------------------
-    # MÁQUINA DE ESTADOS: OBJETO 3D EN RVIZ -> PRE-GRASP -> CINEMÁTICA INVERSA
+    # MÁQUINA DE ESTADOS: RVIZ 3D -> PRE-GRASP -> ALINEAR -> AVANZAR -> AGARRAR
     # --------------------------------------------------------------------------
     def start_autonomous_grasp(self):
-        """Inicia la secuencia: Detectar 3D en RViz -> Pre-Grasp -> IK Grasp -> Lift -> Home."""
+        """Inicia la secuencia: Detectar 3D en RViz -> Pre-Grasp -> Alinear -> Avanzar -> Lift -> Home."""
         self.auto_state = self.AUTO_PASO_A_DETECCION_RVIZ
         self.step_start_time = time.time()
+        self._align_sent = False
         self._ik_sent = False
         self._lift_sent = False
-        self.say("Starting 3D depth detection and inverse kinematics grasping sequence.")
+        self.say("Starting 3D detection, alignment and grasping sequence.")
 
     def update_autonomous_state_machine(self, now: float):
         if self.auto_state == self.AUTO_IDLE:
             return
 
-        # PASO A: DETECCIÓN 3D POR PROFUNDIDAD DE CÁMARA PRINCIPAL Y CÁLCULO DE IK
+        # PASO A: DETECCIÓN 3D POR PROFUNDIDAD DE CÁMARA PRINCIPAL Y ENVÍO A PRE-GRASP
         if self.auto_state == self.AUTO_PASO_A_DETECCION_RVIZ:
-            if self.target_3d_arm is None:
-                self.status_message = "Esperando deteccion 3D de la botella en la camara principal..."
+            if self.target_3d_arm is None and self.target_2d_wrist is None:
+                self.status_message = "Esperando deteccion de la botella en camara principal o camara del brazo..."
                 if now - self.step_start_time > 8.0:
-                    self.say("Could not detect bottle 3D depth. Returning to idle.")
+                    self.say("Could not detect bottle. Returning to idle.")
                     self.auto_state = self.AUTO_IDLE
                 return
 
-            x_sh, y_sh, z_sh = self.target_3d_arm
-            in_box, reason = is_in_safe_cartesian_box(x_sh, y_sh, z_sh)
-            if not in_box:
-                self.status_message = f"Objeto en RViz fuera de alcance: {reason}"
-                if now - self.last_out_of_reach_say_time > 4.5:
-                    self.say("Bottle detected in RViz, but it is outside my safe reach.")
-                    self.last_out_of_reach_say_time = now
-                return
-
-            # Calcular el vector de avance desde la pose Pre-Grasp enseñada manteniendo
-            # la altura de mesa enseñada (dz ~ 0) para permitir extensión completa hacia adelante (+12 a +15.5 cm)
-            q_pre_rad = [math.radians(d) for d in self.pose_pre_grasp]
-            pre_x, pre_y, pre_z = self.kinematics_solver.forward_position_m(q_pre_rad)
-
-            # Sumar penetración (+6.5 cm desde la superficie frontal medida por profundidad) para rodear la botella
-            self.planned_dx_m = float(np.clip((x_sh + 0.065) - pre_x, 0.120, 0.155))
-            self.planned_dy_m = float(np.clip(y_sh - pre_y, -0.085, 0.085))
-
-            j_grasp, ok_grasp = self.kinematics_solver.move_tool_line(
-                self.pose_pre_grasp,
-                delta_forward_m=self.planned_dx_m,
-                delta_lateral_m=self.planned_dy_m,
-                delta_up_m=0.0,
-            )
-
-            if not ok_grasp:
-                target_clamped = clamp_to_safe_cartesian_box(pre_x + self.planned_dx_m, pre_y + self.planned_dy_m, pre_z)
-                j_grasp, ok_grasp = self.kinematics_solver.inverse_kinematics(target_clamped, q_seed_rad=q_pre_rad)
-
-            if ok_grasp:
-                j_lift, ok_lift = self.kinematics_solver.move_tool_line(
-                    j_grasp, delta_forward_m=0.0, delta_lateral_m=0.0, delta_up_m=0.08
-                )
-                self.joints_grasp = j_grasp
-                self.joints_lift = j_lift if ok_lift else j_grasp
-
+            if self.target_3d_arm is not None:
+                x_sh, y_sh, z_sh = self.target_3d_arm
                 self.get_logger().info(
                     f"[Paso A -> B] Objeto 3D en RViz: Hombro=({x_sh:.2f}, {y_sh:.2f}, {z_sh:.2f})m | "
-                    f"Avance planeado desde Pre-Grasp: dX=+{self.planned_dx_m*100:.1f}cm, dY={self.planned_dy_m*100:+.1f}cm | "
-                    f"IK Grasp={self.joints_grasp} | Moviendo primero a Pre-Grasp..."
+                    f"Moviendo primero a Pre-Grasp..."
                 )
-                self.say(f"Object locked in RViz at {x_sh:.2f} meters forward. Moving to pre-grasp.")
-                self.auto_state = self.AUTO_PASO_B_MOVER_PREGRASP
-                self.step_start_time = now
-                self.fase_actual = self.FASE_3_PREGRASP
-                self.send_arm_joint_goal(self.pose_pre_grasp, duration_s=2.5, gripper_mm=70.0)
-            else:
-                self.get_logger().warn("Cinematica Inversa no convergio para el punto actual.")
+            self.say("Object detected. Moving to pre-grasp position.")
+            self.auto_state = self.AUTO_PASO_B_MOVER_PREGRASP
+            self.step_start_time = now
+            self.fase_actual = self.FASE_3_PREGRASP
+            self.send_arm_joint_goal(self.pose_pre_grasp, duration_s=2.4, gripper_mm=70.0)
 
         # PASO B: LLEGAR A LA POSICIÓN PRE-GRASP
         elif self.auto_state == self.AUTO_PASO_B_MOVER_PREGRASP:
-            if now - self.step_start_time > 2.7:
-                self.auto_state = self.AUTO_PASO_C_IR_CON_CINEMATICA
+            if now - self.step_start_time > 2.6:
+                self.auto_state = self.AUTO_PASO_C1_ALINEAR_CON_OBJETO
+                self.step_start_time = now
+                self._align_sent = False
+                self.say("Pre-grasp reached. Aligning gripper with the bottle first.")
+
+        # PASO C1: PRIMERO ALINEARSE CON EL OBJETO EN PRE-GRASP (ANTES DE IR HACIA ÉL)
+        elif self.auto_state == self.AUTO_PASO_C1_ALINEAR_CON_OBJETO:
+            step_elapsed = now - self.step_start_time
+            if step_elapsed > 0.45 and not self._align_sent:
+                self._align_sent = True
+                j_aligned, j_grasp, dy_align = self.compute_aligned_and_grasp_joints()
+                self.joints_aligned = j_aligned
+                self.joints_grasp = j_grasp
+
+                j_lift, ok_lift = self.kinematics_solver.move_tool_line(
+                    self.joints_grasp, delta_forward_m=0.0, delta_lateral_m=0.0, delta_up_m=0.08
+                )
+                self.joints_lift = j_lift if ok_lift else self.joints_grasp
+
+                self.get_logger().info(
+                    f"[Paso C1 - ALINEAR PRIMERO] dY_align={dy_align*100:+.1f}cm (OffsetCamDer={self.wrist_camera_right_offset_m*100:.1f}cm) | "
+                    f"Joints Aligned={self.joints_aligned}"
+                )
+                self.status_message = f"PASO C1: Alineando pinza con la botella (dY={dy_align*100:+.1f}cm) antes de avanzar..."
+                self.send_arm_joint_goal(self.joints_aligned, duration_s=1.4, gripper_mm=70.0)
+
+            # Una vez terminada la alineación lateral en Pre-Grasp, pasar a avanzar recto hacia el objeto
+            if step_elapsed > 2.1:
+                self.auto_state = self.AUTO_PASO_C2_AVANZAR_AL_OBJETO
                 self.step_start_time = now
                 self._ik_sent = False
-                self.say("Pre-grasp reached. Moving with inverse kinematics to grasp the object.")
+                self.say(f"Aligned. Advancing {int(round(self.grasp_forward_cm))} centimeters to grasp the bottle.")
 
-        # PASO C: IR HACIA EL OBJETO CON CINEMÁTICA INVERSA (COMPENSANDO +6 CM DERECHA DE CÁMARA DEL BRAZO)
-        elif self.auto_state == self.AUTO_PASO_C_IR_CON_CINEMATICA:
+        # PASO C2: AVANZAR RECTO HACIA EL OBJETO HASTA LLEGAR POR COMPLETO (`grasp_forward_cm`)
+        elif self.auto_state == self.AUTO_PASO_C2_AVANZAR_AL_OBJETO:
             step_elapsed = now - self.step_start_time
-            if step_elapsed > 0.6 and not getattr(self, "_ik_sent", False):
+            if not self._ik_sent:
                 self._ik_sent = True
-                # Si la cámara del brazo ve la botella en Pre-Grasp, calcular el desplazamiento lateral exacto
-                # teniendo en cuenta que la cámara del brazo está desfasada 6 cm (0.06 m) a la DERECHA (-Y) del centro de la pinza:
-                if self.target_2d_wrist is not None:
-                    # En Pre-Grasp, el centro de la lente está a -0.06 m (6 cm a la derecha) respecto a los dedos de la pinza.
-                    # Por tanto, para alinear los DEDOS DE LA PINZA con la botella:
-                    #   dy_wrist = -0.06 m (offset cámara->pinza) - (wrist_error_u * 0.08 m)
-                    dy_wrist = float(np.clip(-self.wrist_camera_right_offset_m - (self.wrist_error_u * 0.08), -0.09, 0.08))
-                    j_ref, ok_ref = self.kinematics_solver.move_tool_line(
-                        self.pose_pre_grasp,
-                        delta_forward_m=self.planned_dx_m,
-                        delta_lateral_m=dy_wrist,
-                        delta_up_m=0.0,
-                    )
-                    if ok_ref:
-                        self.joints_grasp = j_ref
-                        self.get_logger().info(
-                            f"[Paso C - Offset Camara 6cm Der] err_u={self.wrist_error_u:+.2f} -> "
-                            f"Avance IK: dX=+{self.planned_dx_m*100:.1f}cm, dY={dy_wrist*100:+.1f}cm | "
-                            f"Joints={self.joints_grasp}"
-                        )
-                        j_lift_ref, ok_l = self.kinematics_solver.move_tool_line(
-                            self.joints_grasp, delta_forward_m=0.0, delta_lateral_m=0.0, delta_up_m=0.08
-                        )
-                        if ok_l:
-                            self.joints_lift = j_lift_ref
-
                 if self.joints_grasp is not None:
-                    self.get_logger().info(f"[Paso C] Ejecutando trayectoria IK hacia el objeto: {self.joints_grasp}")
+                    self.get_logger().info(
+                        f"[Paso C2 - AVANZAR AL OBJETO] Avance=+{self.grasp_forward_cm:.1f}cm | "
+                        f"Joints Grasp={self.joints_grasp}"
+                    )
+                    self.status_message = f"PASO C2: Avanzando recto +{self.grasp_forward_cm:.1f} cm hacia la botella..."
                     self.send_arm_joint_goal(self.joints_grasp, duration_s=2.1, gripper_mm=70.0)
 
-            if step_elapsed > 3.0:
+            if step_elapsed > 2.4:
                 self.auto_state = self.AUTO_PASO_D_AGARRE_ELEVACION
                 self.step_start_time = now
                 self._lift_sent = False
@@ -749,7 +870,7 @@ class ManipulacionAutonomaNode(Node):
         # PASO D: CERRAR PINZA Y ELEVAR +8 CM CON CINEMÁTICA INVERSA
         elif self.auto_state == self.AUTO_PASO_D_AGARRE_ELEVACION:
             step_elapsed = now - self.step_start_time
-            if step_elapsed > 1.5 and not getattr(self, "_lift_sent", False):
+            if step_elapsed > 1.5 and not self._lift_sent:
                 self._lift_sent = True
                 if self.joints_lift is not None:
                     self.get_logger().info(f"[Paso D] Elevando objeto +8 cm con IK: {self.joints_lift}")
@@ -778,7 +899,7 @@ class ManipulacionAutonomaNode(Node):
     def draw_hud(self) -> np.ndarray:
         canvas_w, canvas_h = 1280, 640
         canvas = np.zeros((canvas_h, canvas_w, 3), dtype=np.uint8)
-        feed_w, feed_h = 620, 430
+        feed_w, feed_h = 620, 420
 
         # --- PANEL IZQUIERDO: CÁMARA PRINCIPAL + PROFUNDIDAD 3D (PUBLICANDO A RVIZ) ---
         if self.head_color_frame is not None:
@@ -800,27 +921,35 @@ class ManipulacionAutonomaNode(Node):
                     cv2.putText(h_img, tag1, (bx1, max(22, by1 - 24)), cv2.FONT_HERSHEY_SIMPLEX, 0.50, box_col, 2)
                     cv2.putText(h_img, tag2, (bx1, max(40, by1 - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 1)
 
-            canvas[45:45 + feed_h, 15:15 + feed_w] = h_img
+            canvas[40:40 + feed_h, 15:15 + feed_w] = h_img
         else:
-            cv2.rectangle(canvas, (15, 45), (15 + feed_w, 45 + feed_h), (25, 30, 40), -1)
-            cv2.putText(canvas, "ESPERANDO STREAM CAMARA PRINCIPAL (REALSENSE D435)...", (55, 250), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (120, 140, 160), 1)
+            cv2.rectangle(canvas, (15, 40), (15 + feed_w, 40 + feed_h), (25, 30, 40), -1)
+            cv2.putText(canvas, "ESPERANDO STREAM CAMARA PRINCIPAL (REALSENSE D435)...", (55, 240), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (120, 140, 160), 1)
 
-        cv2.putText(canvas, "1. CAMARA PRINCIPAL + PROFUNDIDAD 3D -> PUBLICANDO OBJETO A RVIZ (/arm_camera/object_markers)", (15, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.43, (0, 255, 200), 1)
+        cv2.putText(canvas, "1. CAMARA PRINCIPAL + PROFUNDIDAD 3D -> PUBLICANDO OBJETO A RVIZ (/arm_camera/object_markers)", (15, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.43, (0, 255, 200), 1)
 
-        # --- PANEL DERECHO: CÁMARA DEL BRAZO (CON COMPENSACIÓN DE +6 CM A LA DERECHA) ---
+        # --- PANEL DERECHO: CÁMARA DEL BRAZO (CON COMPENSACIÓN CALIBRABLE DE +6 CM A LA DERECHA) ---
         if self.wrist_color_frame is not None:
             w_img = cv2.resize(self.wrist_color_frame, (feed_w, feed_h))
             orig_h, orig_w = self.wrist_color_frame.shape[:2]
             sx, sy = feed_w / orig_w, feed_h / orig_h
 
-            # Centro óptico de la cámara (amarillo) y Eje Real de la Pinza (-6 cm a la izquierda de la cámara, verde)
+            # Centro óptico de la cámara (amarillo) y Eje Real de la Pinza (verde, desplazado según offset_der)
             wcx, wcy = int(feed_w / 2), int(feed_h / 2)
-            gripper_cx = max(25, int(wcx - (self.wrist_camera_right_offset_m / 0.08) * (feed_w / 2)))
+            gripper_cx = int(np.clip(wcx - (self.wrist_camera_right_offset_m / 0.08) * (feed_w / 2), 20, feed_w - 20))
             cv2.drawMarker(w_img, (wcx, wcy), (0, 220, 255), cv2.MARKER_CROSS, 22, 1)
             cv2.putText(w_img, "Cam", (wcx + 6, wcy - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 220, 255), 1)
-            cv2.line(w_img, (gripper_cx, 25), (gripper_cx, feed_h - 25), (0, 255, 100), 1)
+            cv2.line(w_img, (gripper_cx, 25), (gripper_cx, feed_h - 25), (0, 255, 100), 2)
             cv2.drawMarker(w_img, (gripper_cx, wcy), (0, 255, 100), cv2.MARKER_TILTED_CROSS, 22, 2)
-            cv2.putText(w_img, "EJE PINZA (-6cm)", (max(10, gripper_cx - 48), 20), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 255, 100), 1)
+            cv2.putText(
+                w_img,
+                f"EJE PINZA ({-self.wrist_camera_right_offset_m*100:+.1f}cm)",
+                (max(10, gripper_cx - 60), 20),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.40,
+                (0, 255, 100),
+                1,
+            )
 
             if self.target_2d_wrist is not None:
                 x1, y1, x2, y2 = self.target_2d_wrist
@@ -828,72 +957,120 @@ class ManipulacionAutonomaNode(Node):
                 bx2, by2 = int(x2 * sx), int(y2 * sy)
                 cv2.rectangle(w_img, (bx1, by1), (bx2, by2), (0, 200, 255), 2)
                 dy_cm = (-self.wrist_camera_right_offset_m - (self.wrist_error_u * 0.08)) * 100.0
-                cv2.putText(w_img, f"Correccion Pinza dY={dy_cm:+.1f}cm", (bx1, max(20, by1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 255, 150), 2)
+                cv2.putText(w_img, f"Alinear Pinza dY={dy_cm:+.1f}cm", (bx1, max(20, by1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 255, 150), 2)
 
-            canvas[45:45 + feed_h, 645:645 + feed_w] = w_img
+            canvas[40:40 + feed_h, 645:645 + feed_w] = w_img
         else:
-            cv2.rectangle(canvas, (645, 45), (645 + feed_w, 45 + feed_h), (25, 30, 40), -1)
-            cv2.putText(canvas, "ESPERANDO STREAM CAMARA DEL BRAZO...", (740, 250), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (120, 140, 160), 1)
+            cv2.rectangle(canvas, (645, 40), (645 + feed_w, 40 + feed_h), (25, 30, 40), -1)
+            cv2.putText(canvas, "ESPERANDO STREAM CAMARA DEL BRAZO...", (740, 240), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (120, 140, 160), 1)
 
-        cv2.putText(canvas, "2. CAMARA DEL BRAZO (+6cm der): ALINEACION CON EJE DE PINZA", (645, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (230, 240, 255), 1)
+        cv2.putText(
+            canvas,
+            f"2. CAMARA DEL BRAZO (Offset Der={self.wrist_camera_right_offset_m*100:.1f}cm): ALINEACION PREVIA AL AVANCE",
+            (645, 28),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.43,
+            (230, 240, 255),
+            1,
+        )
 
-        # --- PANEL INFERIOR: TELEMETRÍA Y ESTADO ---
-        bar_y = 485
+        # --- PANEL INFERIOR: PARÁMETROS CALIBRABLES Y TELEMETRÍA ---
+        bar_y = 468
         cv2.rectangle(canvas, (0, bar_y), (canvas_w, canvas_h), (12, 16, 24), -1)
         cv2.line(canvas, (0, bar_y), (canvas_w, bar_y), (60, 80, 110), 1)
 
-        state_str = self.FASE_NAMES.get(self.auto_state, "LISTO")
-        cv2.putText(canvas, f"ESTADO: {state_str}", (20, bar_y + 25), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 255, 255), 2)
+        state_Key = self.auto_state if self.auto_state != self.AUTO_IDLE else self.fase_actual
+        state_str = self.FASE_NAMES.get(state_Key, "LISTO")
+        cv2.putText(canvas, f"ESTADO: {state_str}", (20, bar_y + 24), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 255, 255), 2)
+
+        # Línea destacada de Parámetros Calibrables de Llegada al Objeto
+        calib_line = (
+            f"PARAMETROS DE LLEGADA AL OBJETO (Guardado auto en YAML):  "
+            f"1) Avance Frontal = +{self.grasp_forward_cm:.1f} cm (Teclas [+]/[-])  |  "
+            f"2) Offset Cam Der = {self.wrist_camera_right_offset_m*100:.1f} cm (Teclas [9]/[0])  |  "
+            f"3) Altura = {self.grasp_height_offset_cm:+.1f} cm (Teclas [7]/[8])"
+        )
+        cv2.putText(canvas, calib_line, (20, bar_y + 52), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (80, 255, 120), 1)
 
         obj_str = (
-            f"[{self.target_3d_arm[0]:.2f}, {self.target_3d_arm[1]:.2f}, {self.target_3d_arm[2]:.2f}]m (Dist Pinza: {self.dist_tcp_to_obj_cm:.1f}cm)"
+            f"[{self.target_3d_arm[0]:.2f}, {self.target_3d_arm[1]:.2f}, {self.target_3d_arm[2]:.2f}]m (Dist: {self.dist_tcp_to_obj_cm:.1f}cm)"
             if self.target_3d_arm is not None else "BUSCANDO..."
         )
-        reach_badge = "ALCANCE IK: OK" if self.is_in_reach else "FUERA DE RANGO"
         joints_str = ", ".join([f"{v:+.1f}" for v in self.arm_joints_deg[:6]])
-
-        telemetry_line1 = f"Objeto 3D en RViz: {obj_str} | {reach_badge} | Pinza: {self.gripper_opening_mm:.1f} mm"
-        telemetry_line2 = f"Joints [J1..J6]: [{joints_str}] deg | {self.status_message}"
-
-        cv2.putText(canvas, telemetry_line1, (20, bar_y + 56), cv2.FONT_HERSHEY_SIMPLEX, 0.43, (0, 255, 180), 1)
-        cv2.putText(canvas, telemetry_line2, (20, bar_y + 82), cv2.FONT_HERSHEY_SIMPLEX, 0.41, (200, 220, 240), 1)
+        telemetry_line = f"RViz 3D: {obj_str} | Pinza: {self.gripper_opening_mm:.1f}mm | Joints: [{joints_str}] | {self.status_message}"
+        cv2.putText(canvas, telemetry_line, (20, bar_y + 80), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (200, 220, 240), 1)
 
         if self.is_teaching_mode:
-            cv2.rectangle(canvas, (15, 370), (canvas_w - 15, 470), (0, 180, 255), -1)
-            cv2.rectangle(canvas, (15, 370), (canvas_w - 15, 470), (255, 255, 255), 2)
+            cv2.rectangle(canvas, (15, 355), (canvas_w - 15, 455), (0, 180, 255), -1)
+            cv2.rectangle(canvas, (15, 355), (canvas_w - 15, 455), (255, 255, 255), 2)
             t_name = (self.teaching_target or "pose").upper()
-            cv2.putText(canvas, f">>> MODO ENSENANZA [{t_name}] ACTIVO (BRAZO LIBERADO) <<<", (180, 412), cv2.FONT_HERSHEY_SIMPLEX, 0.70, (0, 0, 0), 2)
-            cv2.putText(canvas, "Mueva el brazo con la mano y presione [ENTER] o [E] para GUARDAR | [C] Cancelar", (140, 448), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (15, 15, 15), 2)
+            cv2.putText(canvas, f">>> MODO ENSENANZA [{t_name}] ACTIVO (BRAZO LIBERADO) <<<", (180, 397), cv2.FONT_HERSHEY_SIMPLEX, 0.70, (0, 0, 0), 2)
+            cv2.putText(canvas, "Lleve el brazo con la mano al punto y presione [ENTER] para GUARDAR | [C] Cancelar", (140, 433), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (15, 15, 15), 2)
 
-        shortcuts = "[2]/[h] Home (Shift+H Ensenar) | [3]/[p] Pre-Grasp ([E] Ensenar) | [ESPACIO]/[G] Ir a Pre-Grasp y Agarrar con IK | [W/S/A/D] Cabezal | [R] Abrir Pinza"
-        cv2.putText(canvas, shortcuts, (20, bar_y + 115), cv2.FONT_HERSHEY_SIMPLEX, 0.39, (255, 205, 50), 1)
+        shortcuts1 = "[2]/[h] Home (Shift+H Ensenar) | [3]/[p] Pre-Grasp ([E] Ensenar) | [4] Probar Llegada al Objeto ([K] Ensenar Llegada con Mano)"
+        shortcuts2 = "[ESPACIO]/[G] Secuencia Completa (Pre-Grasp -> ALINEAR -> AVANZAR -> Agarrar) | [+]/[-] Calibrar Avance cm | [9]/[0] Offset Der cm | [7]/[8] Altura cm"
+        cv2.putText(canvas, shortcuts1, (20, bar_y + 112), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (255, 215, 60), 1)
+        cv2.putText(canvas, shortcuts2, (20, bar_y + 138), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 230, 255), 1)
 
         return canvas
 
     # --------------------------------------------------------------------------
-    # BUCLE PRINCIPAL INTERACTIVO
+    # BUCLE PRINCIPAL INTERACTIVO (CON SLIDERS Y TECLAS DE CALIBRACIÓN EN VIVO)
     # --------------------------------------------------------------------------
     def run(self):
         window_name = "Robot @Home - Manipulacion 3D en RViz + Cinematica Inversa"
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(window_name, 1280, 640)
+        cv2.resizeWindow(window_name, 1280, 720)
+
+        # Crear barras deslizantes (Sliders) en la ventana para calibrar la llegada al objeto
+        def on_avance_slider(val: int):
+            new_cm = float(max(5, val))
+            if abs(new_cm - self.grasp_forward_cm) >= 0.5:
+                self.grasp_forward_cm = new_cm
+                self.save_calibration_params()
+                if self.fase_actual == self.FASE_4_GRASP and self.auto_state == self.AUTO_IDLE:
+                    self.mover_a_calibracion_grasp(duration_s=0.6)
+
+        def on_offset_der_slider(val: int):
+            new_m = float(val - 150) / 1000.0
+            if abs(new_m - self.wrist_camera_right_offset_m) >= 0.004:
+                self.wrist_camera_right_offset_m = new_m
+                self.save_calibration_params()
+                if self.fase_actual == self.FASE_4_GRASP and self.auto_state == self.AUTO_IDLE:
+                    self.mover_a_calibracion_grasp(duration_s=0.6)
+
+        def on_altura_slider(val: int):
+            new_h_cm = float(val - 100) / 10.0
+            if abs(new_h_cm - self.grasp_height_offset_cm) >= 0.4:
+                self.grasp_height_offset_cm = new_h_cm
+                self.save_calibration_params()
+                if self.fase_actual == self.FASE_4_GRASP and self.auto_state == self.AUTO_IDLE:
+                    self.mover_a_calibracion_grasp(duration_s=0.6)
+
+        cv2.createTrackbar("Avance_cm", window_name, int(round(self.grasp_forward_cm)), 30, on_avance_slider)
+        cv2.createTrackbar("Offset_Der_mm", window_name, int(round(150 + self.wrist_camera_right_offset_m * 1000.0)), 300, on_offset_der_slider)
+        cv2.createTrackbar("Altura_mm", window_name, int(round(100 + self.grasp_height_offset_cm * 10.0)), 200, on_altura_slider)
 
         print("==========================================================================")
-        print("   ROBOT @HOME - OBJETO 3D EN RVIZ (PROFUNDIDAD) + PRE-GRASP + IK         ")
+        print("   ROBOT @HOME - OBJETO 3D EN RVIZ + ALINEACION PREVIA + CALIBRACION      ")
         print("--------------------------------------------------------------------------")
-        print("   * En RViz (/arm_camera/object_markers) se muestra el cilindro 3D del   ")
-        print("     objeto medido por la profundidad de la camara principal y la flecha  ")
-        print("     desde la pinza hasta el objeto.                                      ")
+        print("   COMO CALIBRAR CUANDO DE VERDAD LLEGA AL OBJETO:                        ")
+        print("   * Opcion 1 (En vivo con teclas o Sliders):                             ")
+        print("     - Presione [4] para que el brazo vaya al punto de llegada al objeto. ")
+        print("     - Use [+] / [-] para aumentar o reducir el AVANCE FRONTAL (cm)       ")
+        print("       en tiempo real hasta que la pinza rodee la botella!                ")
+        print("     - Use [9] / [0] para calibrar el OFFSET DERECHA de la camara (cm).   ")
+        print("     - Use [7] / [8] para calibrar la ALTURA (cm).                        ")
+        print("   * Opcion 2 (Con la mano):                                              ")
+        print("     - Presione [K], lleve el brazo con la mano hasta la botella y        ")
+        print("       presione [ENTER] para guardar el alcance real automaticamente.     ")
         print("--------------------------------------------------------------------------")
-        print("   [2] o [h]       : Mover a Posicion HOME      | [Shift+H] : Ensenar HOME")
-        print("   [3] o [p]       : Mover a Posicion PRE-GRASP | [E]       : Ensenar PRE-GRASP")
         print("   [ESPACIO] o [G] : EJECUTAR SECUENCIA COMPLETA:                         ")
         print("                     1) Fija posicion 3D del objeto en RViz               ")
-        print("                     2) El brazo va a la posicion PRE-GRASP               ")
-        print("                     3) Con Cinematica Inversa va hacia el objeto y agarra")
-        print("                     4) Eleva +8 cm y regresa a HOME                      ")
-        print("   [W]/[S]/[A]/[D] : Mover cabezal Pan-Tilt     | [T] : Mirar a la mesa   ")
-        print("   [R] / [O]       : Abrir pinza (70 mm)        | [C] : Cerrar (55 mm)    ")
+        print("                     2) El brazo va a PRE-GRASP                           ")
+        print("                     3) PRIMERO se ALINEA con la botella en Pre-Grasp     ")
+        print("                     4) LUEGO AVANZA recto (+Avance_cm) hasta agarrarla   ")
+        print("                     5) Cierra pinza, eleva +8 cm y regresa a HOME        ")
         print("==========================================================================")
 
         while rclpy.ok():
@@ -936,11 +1113,39 @@ class ManipulacionAutonomaNode(Node):
                     self.auto_state = self.AUTO_IDLE
                     self.mover_a_pre_grasp()
 
-            elif key in [ord("e"), ord("E"), ord("P"), 13]:
+            elif key in [ord("e"), ord("E"), ord("P")]:
                 if self.is_teaching_mode:
                     self.toggle_teaching_pose(self.teaching_target or "pre_grasp")
                 else:
                     self.toggle_teaching_pose("pre_grasp")
+
+            elif key == 13:  # ENTER guarda cualquier pose que se esté enseñando (home, pre_grasp o grasp)
+                if self.is_teaching_mode:
+                    self.toggle_teaching_pose(self.teaching_target or "pre_grasp")
+
+            elif key in [ord("4"), ord("v"), ord("V")]:
+                self.auto_state = self.AUTO_IDLE
+                self.mover_a_calibracion_grasp(duration_s=1.8)
+
+            elif key in [ord("k"), ord("K")]:
+                if self.is_teaching_mode:
+                    self.toggle_teaching_pose(self.teaching_target or "grasp")
+                else:
+                    self.toggle_teaching_pose("grasp")
+
+            # Teclas de calibración en tiempo real del punto de llegada al objeto
+            elif key in [ord("+"), ord("=")]:
+                self.adjust_calibration_param(d_forward_cm=+1.0, window_name=window_name)
+            elif key in [ord("-"), ord("_")]:
+                self.adjust_calibration_param(d_forward_cm=-1.0, window_name=window_name)
+            elif key == ord("0"):
+                self.adjust_calibration_param(d_right_cm=+0.5, window_name=window_name)
+            elif key == ord("9"):
+                self.adjust_calibration_param(d_right_cm=-0.5, window_name=window_name)
+            elif key == ord("8"):
+                self.adjust_calibration_param(d_height_cm=+0.5, window_name=window_name)
+            elif key == ord("7"):
+                self.adjust_calibration_param(d_height_cm=-0.5, window_name=window_name)
 
             elif key in [ord("g"), ord("G"), 32]:
                 if self.is_teaching_mode:

@@ -21,10 +21,10 @@ safety_envelope:
   cartesian_limits_m:
     x:
     - 0.15
-    - 0.62
+    - 0.72
     y:
-    - -0.45
-    - 0.32
+    - -0.48
+    - 0.35
     z:
     - -0.48
     - 0.35
@@ -33,6 +33,8 @@ safety_envelope:
   - -0.175
   - 0.335
   wrist_camera_right_offset_m: 0.060
+  grasp_forward_cm: 20.0
+  grasp_height_offset_cm: 0.0
 named_poses:
   home:
     joints_deg:

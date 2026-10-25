@@ -37,13 +37,13 @@ CAMERA_LEVER_ARM_M: Tuple[float, float, float] = (0.035, 0.0, 0.015)
 # 6 cm (0.060 m) hacia la derecha (-Y en el Marco del Hombro del Robot)
 WRIST_CAMERA_RIGHT_OFFSET_M: float = 0.060
 
-# Límites articulares seguros (en grados) compatibles con las poses reales de Home y Pre-Grasp
+# Límites articulares seguros (en grados) compatibles con el URDF y las poses de Home, Pre-Grasp y Grasp
 SAFE_JOINT_LIMITS_DEG: Dict[str, Tuple[float, float]] = {
     'joint1': (-154.0, 154.0),
-    'joint2': (0.0, 182.7),
+    'joint2': (0.0, 195.0),
     'joint3': (-175.0, 0.0),
     'joint4': (-110.0, 110.0),
-    'joint5': (-80.0, 80.0),
+    'joint5': (-85.0, 85.0),
     'joint6': (-180.0, 180.0),
 }
 
@@ -51,8 +51,8 @@ SAFE_JOINT_LIMITS_DEG: Dict[str, Tuple[float, float]] = {
 # Nota: Como el hombro está a +0.175m a la izquierda del centro del robot, Y = -0.175m
 # corresponde exactamente al plano central frente al robot.
 SAFE_CARTESIAN_BOX_M: Dict[str, Tuple[float, float]] = {
-    'x': (0.15, 0.62),    # 15 cm a 62 cm hacia adelante
-    'y': (-0.45, 0.32),   # Cubre desde 28 cm a la derecha del centro hasta 32 cm a la izquierda
+    'x': (0.15, 0.72),    # 15 cm a 72 cm hacia adelante (permite extensión completa de agarre)
+    'y': (-0.48, 0.35),   # Cubre desde 31 cm a la derecha del centro hasta 35 cm a la izquierda
     'z': (-0.48, 0.35),   # Desde 48 cm bajo el hombro hasta 35 cm sobre el hombro
 }
 
