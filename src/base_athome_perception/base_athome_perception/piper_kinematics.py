@@ -317,25 +317,123 @@ class PiperKinematicsSolver:
             J[:, i] = (pos_plus - pos0) / eps
         return J
 
+    def compute_jacobian_6d(self, q_rad: np.ndarray, eps: float = 1e-4, rot_scale: float = 220.0) -> np.ndarray:
+        """
+        Calcula el Jacobiano geométrico completo (6x6: 3D traslación en mm + 3D orientación)
+        para mantener los dedos de la pinza nivelados y paralelos al avanzar o alinear.
+        """
+        J = np.zeros((6, 6), dtype=float)
+        pos0, R0 = self.forward_kinematics(q_rad)
+        for i in range(6):
+            q_plus = q_rad.copy()
+            q_plus[i] += eps
+            pos_p, R_p = self.forward_kinematics(q_plus)
+            J[:3, i] = (pos_p - pos0) / eps
+            dR = R_p @ R0.T
+            rot_vec = np.array([
+                dR[2, 1] - dR[1, 2],
+                dR[0, 2] - dR[2, 0],
+                dR[1, 0] - dR[0, 1],
+            ], dtype=float) * 0.5
+            J[3:, i] = (rot_vec / eps) * rot_scale
+        return J
+
+    def solve_ik_oriented(
+        self,
+        target_pos_mm: np.ndarray,
+        target_R: np.ndarray,
+        q_seed_rad: np.ndarray,
+        max_iterations: int = 120,
+        rot_scale: float = 220.0,
+    ) -> Tuple[List[float], bool]:
+        """
+        Resuelve Cinemática Inversa 6-DOF conservando la orientación 3D de la pinza (target_R)
+        para que al avanzar hacia el objeto los dedos nunca giren de costado ni golpeen el objeto.
+        """
+        q = np.clip(np.array(q_seed_rad[:6], dtype=float), self._q_min, self._q_max)
+        W_inv = np.diag([1.0, 1.0, 1.0, 0.85, 0.85, 0.35])
+        lambda_sq = 10.0 ** 2
+
+        best_q = q.copy()
+        best_pos_err = float("inf")
+
+        for _ in range(max_iterations):
+            cur_pos, cur_R = self.forward_kinematics(q)
+            pos_err = target_pos_mm - cur_pos
+            pos_err_norm = float(np.linalg.norm(pos_err))
+
+            dR = target_R @ cur_R.T
+            rot_err = np.array([
+                dR[2, 1] - dR[1, 2],
+                dR[0, 2] - dR[2, 0],
+                dR[1, 0] - dR[0, 1],
+            ], dtype=float) * 0.5 * rot_scale
+
+            if pos_err_norm < best_pos_err:
+                best_pos_err = pos_err_norm
+                best_q = q.copy()
+
+            if pos_err_norm < 1.5 and float(np.linalg.norm(rot_err)) < 6.0:
+                q_deg = [round(float(math.degrees(v)), 2) for v in q]
+                safe, _ = is_in_safe_joint_envelope(q_deg)
+                return q_deg, safe
+
+            err6 = np.concatenate([pos_err, rot_err])
+            J = self.compute_jacobian_6d(q, rot_scale=rot_scale)
+            JW = J @ W_inv
+            J_pinv = W_inv @ J.T @ np.linalg.inv(JW @ J.T + lambda_sq * np.eye(6))
+
+            dq = np.clip(J_pinv @ err6, -0.08, 0.08)
+            q = np.clip(q + dq, self._q_min, self._q_max)
+
+        q_deg = [round(float(math.degrees(v)), 2) for v in best_q]
+        safe, _ = is_in_safe_joint_envelope(q_deg)
+        return q_deg, (best_pos_err < 12.0 and safe)
+
     def move_tool_line(
         self,
         current_joints_deg: List[float],
         delta_forward_m: float = 0.0,
         delta_lateral_m: float = 0.0,
         delta_up_m: float = 0.0,
+        reference_joints_deg: Optional[List[float]] = None,
     ) -> Tuple[List[float], bool]:
         """
-        Movimiento lineal relativo desde la postura actual (inspirado en 'adjust_move_tool_line'
-        de CHARMIE @Home), manteniendo la postura natural de la muñeca.
+        Movimiento lineal relativo guiado por los ejes horizontales de la cámara/pinza (Orbbec DaBai)
+        conservando la orientación 3D de la pinza:
+          - delta_forward_m: avance recto en la dirección horizontal hacia donde apuntan los dedos/cámara.
+          - delta_lateral_m: desplazamiento lateral perpendicular a la línea de visión (+ izquierda, - derecha).
+          - delta_up_m: desplazamiento vertical puro (+ arriba, - abajo).
         """
-        q_seed_rad = [math.radians(d) for d in current_joints_deg]
-        cur_x, cur_y, cur_z = self.forward_position_m(q_seed_rad)
-        target_xyz_m = (
-            cur_x + delta_forward_m,
-            cur_y + delta_lateral_m,
-            cur_z + delta_up_m,
+        q_seed_rad = np.array([math.radians(d) for d in current_joints_deg[:6]], dtype=float)
+        cur_pos_mm, cur_R = self.forward_kinematics(q_seed_rad)
+
+        if reference_joints_deg is not None and len(reference_joints_deg) >= 6:
+            q_ref_rad = np.array([math.radians(d) for d in reference_joints_deg[:6]], dtype=float)
+            _, ref_R = self.forward_kinematics(q_ref_rad)
+        else:
+            ref_R = cur_R
+
+        # Vector de avance horizontal alineado con la dirección hacia donde apunta la cámara/pinza (tool_Z proyectado en XY)
+        tool_z = ref_R[:, 2]
+        fwd_xy = np.array([tool_z[0], tool_z[1], 0.0], dtype=float)
+        fwd_norm = float(np.linalg.norm(fwd_xy))
+        if fwd_norm > 1e-4:
+            fwd_unit = fwd_xy / fwd_norm
+        else:
+            fwd_unit = np.array([1.0, 0.0, 0.0], dtype=float)
+
+        # Vector lateral izquierdo en el plano horizontal (perpendicular a la visión de la cámara DaBai: +izquierda, -derecha)
+        left_unit = np.array([-fwd_unit[1], fwd_unit[0], 0.0], dtype=float)
+        up_unit = np.array([0.0, 0.0, 1.0], dtype=float)
+
+        delta_mm = (
+            (delta_forward_m * 1000.0) * fwd_unit
+            + (delta_lateral_m * 1000.0) * left_unit
+            + (delta_up_m * 1000.0) * up_unit
         )
-        return self.inverse_kinematics(target_xyz_m, q_seed_rad=q_seed_rad)
+        target_pos_mm = cur_pos_mm + delta_mm
+        return self.solve_ik_oriented(target_pos_mm, ref_R, q_seed_rad)
 
     def inverse_kinematics(
         self,
