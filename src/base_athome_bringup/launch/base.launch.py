@@ -2,9 +2,23 @@ from launch import LaunchDescription
 from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
 import os
+import subprocess
+import time
 
 
 def generate_launch_description():
+    try:
+        cur_utc = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+        subprocess.Popen(
+            f"ssh -o ConnectTimeout=2 -o StrictHostKeyChecking=no ubuntu@10.42.0.12 "
+            f"\"echo ubuntu | sudo -S date -u -s '{cur_utc}' >/dev/null 2>&1 || true\"",
+            shell=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        pass
+
     pkg_bringup = get_package_share_directory('base_athome_bringup')
     pkg_hoverboard = get_package_share_directory('hoverboard_base')
 
