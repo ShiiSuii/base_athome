@@ -236,12 +236,14 @@ class ManipulacionAutonomaNode(Node):
         self.advance_steps_count: int = 0
         self.last_valid_bw: float = 0.0
 
+        self._final_push_sent = False
         self._lift_sent = False
         self._retract_line_sent = False
         self._retract_pregrasp_sent = False
+        self._window_name = "Robot @Home - Manipulacion Guiada por Camara Orbbec DaBai"
 
         self.status_message = (
-            "Guiado por Camara DaBai | [3] Pre-Grasp (105mm) | [ESPACIO]/[G] Alinear, Avanzar y Agarrar"
+            f"Guiado por Camara DaBai | Avance Extra Final: +{self.extra_advance_cm:.1f} cm | [ESPACIO]/[G] Agarrar"
         )
 
         # Lanzar hilo dedicado de ROS 2 spin y hilo dedicado de inferencia de cámara DaBai
@@ -270,25 +272,51 @@ class ManipulacionAutonomaNode(Node):
         return bool(self.arm_is_moving or move_Busy)
 
     # --------------------------------------------------------------------------
-    # CONFIGURACIÓN DE POSES (HOME Y PRE-GRASP)
+    # CONFIGURACIÓN DE POSES Y PARÁMETRO DE AVANCE EXTRA FINAL
     # --------------------------------------------------------------------------
     def load_configuration(self):
-        """Carga las poses Home y Pre-Grasp desde YAML."""
+        """Carga las poses Home, Pre-Grasp y el parámetro dabai_extra_advance_cm desde YAML."""
         self.pose_home = [72.09, 176.5, -155.15, 102.62, -31.51, -99.91]
         self.pose_pre_grasp = [42.9, 180.83, -89.01, 60.57, -74.02, -96.89]
+        self.extra_advance_cm: float = 5.0  # +5.0 cm por defecto para insertar el tubo dentro de los dedos
 
         if os.path.exists(CONFIG_FILE_PATH):
             try:
                 with open(CONFIG_FILE_PATH, "r", encoding="utf-8") as f:
                     data = yaml.safe_load(f) or {}
+                    env = data.get("safety_envelope", {})
+                    if "dabai_extra_advance_cm" in env:
+                        self.extra_advance_cm = float(env["dabai_extra_advance_cm"])
                     poses = data.get("named_poses", {})
                     if "home" in poses:
                         self.pose_home = list(poses["home"].get("joints_deg", self.pose_home))
                     if "pre_grasp" in poses:
                         self.pose_pre_grasp = list(poses["pre_grasp"].get("joints_deg", self.pose_pre_grasp))
-                self.get_logger().info(f"Poses cargadas desde YAML. Pre-Grasp: {self.pose_pre_grasp}")
+                self.get_logger().info(
+                    f"Poses cargadas desde YAML. Pre-Grasp: {self.pose_pre_grasp}, "
+                    f"Avance Extra Final: +{self.extra_advance_cm:.1f} cm"
+                )
             except Exception as e:
                 self.get_logger().warn(f"Error leyendo YAML ({e}), usando poses por defecto.")
+
+    def save_extra_advance_config(self):
+        """Guarda el parámetro dabai_extra_advance_cm actual en YAML."""
+        try:
+            data = {}
+            if os.path.exists(CONFIG_FILE_PATH):
+                with open(CONFIG_FILE_PATH, "r", encoding="utf-8") as f:
+                    data = yaml.safe_load(f) or {}
+            if "safety_envelope" not in data:
+                data["safety_envelope"] = {}
+            data["safety_envelope"]["dabai_extra_advance_cm"] = round(float(self.extra_advance_cm), 2)
+            with open(CONFIG_FILE_PATH, "w", encoding="utf-8") as f:
+                yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+            self.get_logger().info(
+                f"Parametro dabai_extra_advance_cm={self.extra_advance_cm:.1f} cm guardado en {CONFIG_FILE_PATH}"
+            )
+            self.status_message = f"GUARDADO EN YAML: Avance Extra Final = +{self.extra_advance_cm:.1f} cm ({self.extra_advance_cm*10:.0f} mm)"
+        except Exception as e:
+            self.get_logger().error(f"Error guardando dabai_extra_advance_cm: {e}")
 
     def save_named_pose(self, pose_name: str, joints_deg: List[float], gripper_mm: float):
         """Guarda la pose enseñada (home o pre_grasp) en YAML."""
@@ -712,6 +740,7 @@ class ManipulacionAutonomaNode(Node):
         self.advance_steps_count = 0
         self.total_forward_advanced_m = 0.0
         self.last_valid_bw = 0.0
+        self._final_push_sent = False
         self._lift_sent = False
         self._retract_line_sent = False
         self._retract_pregrasp_sent = False
@@ -730,6 +759,37 @@ class ManipulacionAutonomaNode(Node):
             self.fase_actual = self.FASE_3_PREGRASP
             self.send_arm_joint_goal(self.pose_pre_grasp, duration_s=2.2, gripper_mm=GRIPPER_MAX_OPEN_MM)
             self.say("Moving to pre-grasp with maximum gripper opening.")
+
+    def _execute_final_push_or_grasp(self, now: float):
+        """
+        Cuando la cámara DaBai confirma que llegó frente al tubo, aplica el avance extra
+        calibrable (+extra_advance_cm, por defecto +5.0 cm) para introducir el tubo
+        completamente dentro de la pinza antes de cerrar el gripper.
+        """
+        extra_m = max(0.0, float(self.extra_advance_cm) / 100.0)
+        if extra_m > 0.002 and not self._final_push_sent:
+            self._final_push_sent = True
+            j_push, _ = self.kinematics_solver.move_tool_line(
+                self.servo_joints,
+                delta_forward_m=extra_m,
+                delta_lateral_m=0.0,
+                delta_up_m=0.0,
+                reference_joints_deg=self.pose_pre_grasp,
+            )
+            self.servo_joints = j_push
+            self.total_forward_advanced_m += extra_m
+            self.last_servo_step_time = now
+            self.get_logger().info(
+                f"[DaBai EMPUJE FINAL DE AGARRE] Avanzando +{self.extra_advance_cm:.1f} cm extra "
+                f"(Total={self.total_forward_advanced_m*100:.1f} cm) para meter el tubo dentro de los dedos..."
+            )
+            self.status_message = (
+                f"AVANCE EXTRA FINAL: Avanzando +{self.extra_advance_cm:.1f} cm adicionales para abrazar el tubo..."
+            )
+            self.send_arm_joint_goal(j_push, duration_s=1.20, gripper_mm=GRIPPER_MAX_OPEN_MM)
+            return
+
+        self.ejecutar_rutina_post_grasping()
 
     def ejecutar_rutina_post_grasping(self):
         """
@@ -801,12 +861,10 @@ class ManipulacionAutonomaNode(Node):
 
         # PASO 2 (CÁMARA DABAI): CENTRAR EL OBJETO ENTRE LOS DOS DEDOS (x = 275 px) ESPERANDO PARADA EN CADA PASO
         elif self.auto_state == self.AUTO_PASO_C1_ALINEAR_DABAI:
-            # 1) Esperar a que el brazo esté 100% detenido tras el paso anterior
             if self.is_arm_settling(now):
                 self.status_message = "PASO 2 (DABAI): Esperando que el brazo termine de moverse y estabilice imagen..."
                 return
 
-            # 2) Esperar al menos 2 detecciones limpias capturadas DESPUÉS de que el brazo se detuvo
             if self.fresh_post_stop_dets < 2:
                 self.status_message = f"PASO 2 (DABAI): Leyendo frame estatico post-movimiento ({self.fresh_post_stop_dets}/2)..."
                 if now - self.step_start_time > 7.0 and self.target_2d_wrist is None:
@@ -821,7 +879,6 @@ class ManipulacionAutonomaNode(Node):
             wx1, _, wx2, _, _ = (*self.target_2d_wrist, 0.0)
             is_clipped_edge = (wx1 <= 5 and self.dabai_err_px < 0) or (wx2 >= 634 and self.dabai_err_px > 0)
 
-            # Verificar si el objeto ya está centrado en el hueco entre los dos dedos (|err_px| <= 24 px)
             if (abs(self.dabai_err_px) <= 24.0 and not is_clipped_edge) or (
                 self.align_steps_count >= 8 and abs(self.dabai_err_px) <= 48.0
             ):
@@ -830,6 +887,7 @@ class ManipulacionAutonomaNode(Node):
                 self.step_start_time = now
                 self.last_servo_step_time = now
                 self.advance_steps_count = 0
+                self._final_push_sent = False
                 self.get_logger().info(
                     f"[DaBai ALINEADO] Objeto centrado entre los dedos (wcx={self.dabai_wcx:.0f}px, err={self.dabai_err_px:+.0f}px). Iniciando avance..."
                 )
@@ -841,7 +899,6 @@ class ManipulacionAutonomaNode(Node):
                 self.auto_state = self.AUTO_IDLE
                 return
 
-            # Paso lateral pausado y suave (máx 4.0 cm por paso, duración 1.20 s)
             step_left_m = float(np.clip(0.65 * self.wrist_dy_m, -0.040, 0.040))
             if abs(step_left_m) < 0.008:
                 step_left_m = math.copysign(0.008, self.wrist_dy_m)
@@ -865,18 +922,29 @@ class ManipulacionAutonomaNode(Node):
             )
             self.send_arm_joint_goal(j_next, duration_s=1.20, gripper_mm=GRIPPER_MAX_OPEN_MM)
 
-        # PASO 3 (CÁMARA DABAI): AVANZAR PAUSADO PASO A PASO HASTA QUE EL OBJETO ENTRE EN LA PINZA
+        # PASO 3 (CÁMARA DABAI): AVANZAR PAUSADO PASO A PASO + AVANCE EXTRA FINAL DE AGARRE
         elif self.auto_state == self.AUTO_PASO_C2_AVANZAR_DABAI:
             # 1) Esperar a que el brazo termine de moverse por completo
             if self.is_arm_settling(now):
-                self.status_message = "PASO 3 (DABAI): Esperando parada del brazo para medir distancia restante..."
+                if self._final_push_sent:
+                    self.status_message = f"PASO 3 (DABAI): Completando avance extra final (+{self.extra_advance_cm:.1f} cm)..."
+                else:
+                    self.status_message = "PASO 3 (DABAI): Esperando parada del brazo para medir distancia restante..."
                 return
 
-            # 2) Si ya avanzó bastante y el objeto llenó la vista de cerca, agarrar
+            # Si ya se ejecutó el empuje final (+extra_advance_cm) y el brazo ya paró, cerrar el gripper!
+            if self._final_push_sent:
+                self.get_logger().info(
+                    f"[DaBai EMPUJE FINAL COMPLETADO] +{self.extra_advance_cm:.1f} cm completados -> CERRANDO GRIPPER!"
+                )
+                self.ejecutar_rutina_post_grasping()
+                return
+
+            # 2) Si ya avanzó bastante y el objeto llenó la vista de cerca, ejecutar empuje final y agarrar
             if self.target_2d_wrist is None:
                 if self.total_forward_advanced_m >= 0.07 and self.last_valid_bw >= 145.0:
-                    self.get_logger().info("[DaBai LLEGADA] Objeto dentro de la pinza. Ejecutando agarre!")
-                    self.ejecutar_rutina_post_grasping()
+                    self.get_logger().info("[DaBai LLEGADA] Objeto en zona de pinza. Aplicando avance extra final y agarrando!")
+                    self._execute_final_push_or_grasp(now)
                     return
                 if now - self.last_wrist_det_time > 2.5:
                     self.say("Lost sight of object during approach. Stopping safely.")
@@ -888,8 +956,6 @@ class ManipulacionAutonomaNode(Node):
                 return
 
             # CONDICIÓN DE LLEGADA VISUAL EN LA CÁMARA DABAI:
-            # Solo confirmar llegada después de haber avanzado al menos 1 paso (>= 3.0 cm)
-            # (salvo que la botella ya esté literalmente pegada a los dedos con bw >= 195 px).
             has_advanced = self.total_forward_advanced_m >= 0.030
             arrived_by_width = (has_advanced and self.dabai_bw >= DABAI_ARRIVAL_WIDTH_PX) or (self.dabai_bw >= 195.0)
             arrived_by_dist = has_advanced and (self.wrist_dfwd_m <= 0.015)
@@ -897,10 +963,10 @@ class ManipulacionAutonomaNode(Node):
 
             if arrived_by_width or arrived_by_dist or reached_max_steps:
                 self.get_logger().info(
-                    f"[DaBai LLEGADA CONFIRMADA] bw={self.dabai_bw:.0f}px, faltan={self.wrist_dfwd_m*100:.1f}cm, "
-                    f"avance_total={self.total_forward_advanced_m*100:.1f}cm -> AGARRANDO SIN GOLPEAR!"
+                    f"[DaBai LLEGADA VISUAL] bw={self.dabai_bw:.0f}px, faltan={self.wrist_dfwd_m*100:.1f}cm, "
+                    f"avance_visual={self.total_forward_advanced_m*100:.1f}cm -> Aplicando +{self.extra_advance_cm:.1f}cm extra!"
                 )
-                self.ejecutar_rutina_post_grasping()
+                self._execute_final_push_or_grasp(now)
                 return
 
             # Avance corto y pausado (3.5 cm a 4.5 cm por paso, duración 1.20 s) manteniendo centrado entre dedos
@@ -1025,9 +1091,9 @@ class ManipulacionAutonomaNode(Node):
                 cv2.line(w_img, (obj_cx, obj_cy), (gap_cx, obj_cy), (0, 255, 255), 2)
                 cv2.circle(w_img, (obj_cx, obj_cy), 5, box_col, -1)
 
-                tag_top = f"dLeft={self.wrist_dy_m*100:+.1f}cm | Faltan={self.wrist_dfwd_m*100:.1f}cm"
+                tag_top = f"dLeft={self.wrist_dy_m*100:+.1f}cm | Faltan={self.wrist_dfwd_m*100:.1f}cm (+{self.extra_advance_cm:.1f}cm extra)"
                 tag_bot = f"Ancho={self.dabai_bw:.0f}/{DABAI_ARRIVAL_WIDTH_PX:.0f}px ({'CENTRADO OK' if centered_ok else 'ALINEANDO'})"
-                cv2.putText(w_img, tag_top, (max(8, bx1), max(22, by1 - 24)), cv2.FONT_HERSHEY_SIMPLEX, 0.48, box_col, 2)
+                cv2.putText(w_img, tag_top, (max(8, bx1), max(22, by1 - 24)), cv2.FONT_HERSHEY_SIMPLEX, 0.46, box_col, 2)
                 cv2.putText(w_img, tag_bot, (max(8, bx1), max(40, by1 - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (255, 255, 255), 1)
 
             canvas[40:40 + feed_h, 645:645 + feed_w] = w_img
@@ -1037,7 +1103,7 @@ class ManipulacionAutonomaNode(Node):
 
         cv2.putText(
             canvas,
-            "2. CAMARA ORBBEC DABAI (17 FPS DEDICADO - PAUSA Y ESTABILIZA EN CADA PASO)",
+            f"2. CAMARA ORBBEC DABAI (AVANCE EXTRA FINAL = +{self.extra_advance_cm:.1f} cm / {self.extra_advance_cm*10:.0f} mm)",
             (645, 28),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.42,
@@ -1045,7 +1111,7 @@ class ManipulacionAutonomaNode(Node):
             1,
         )
 
-        # --- PANEL INFERIOR: ESTADO Y CONTROLES SIMPLES ---
+        # --- PANEL INFERIOR: ESTADO Y CONTROLES ---
         bar_y = 468
         cv2.rectangle(canvas, (0, bar_y), (canvas_w, canvas_h), (12, 16, 24), -1)
         cv2.line(canvas, (0, bar_y), (canvas_w, bar_y), (60, 80, 110), 1)
@@ -1055,38 +1121,50 @@ class ManipulacionAutonomaNode(Node):
         cv2.putText(canvas, f"ESTADO: {state_str}", (20, bar_y + 26), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 255, 255), 2)
 
         dabai_str = (
-            f"DaBai ({self.det_fps:.0f}FPS): Faltan {self.wrist_dfwd_m*100:.1f}cm, dLeft={self.wrist_dy_m*100:+.1f}cm, Ancho={self.dabai_bw:.0f}px"
-            if self.target_2d_wrist is not None else f"DaBai ({self.det_fps:.0f}FPS): BUSCANDO OBJETO..."
+            f"DaBai ({self.det_fps:.0f}FPS): Faltan {self.wrist_dfwd_m*100:.1f}cm, dLeft={self.wrist_dy_m*100:+.1f}cm, "
+            f"Extra=+{self.extra_advance_cm:.1f}cm"
+            if self.target_2d_wrist is not None
+            else f"DaBai ({self.det_fps:.0f}FPS): BUSCANDO OBJETO... (Extra=+{self.extra_advance_cm:.1f}cm)"
         )
         joints_str = ", ".join([f"{v:+.1f}" for v in self.arm_joints_deg[:6]])
         telemetry_line = f"{dabai_str} | Pinza: {self.gripper_opening_mm:.0f}mm | Joints: [{joints_str}] | {self.status_message}"
         cv2.putText(canvas, telemetry_line, (20, bar_y + 56), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (200, 220, 240), 1)
 
-        shortcuts1 = "[3]/[p] Modo Pre-Grasp (Gripper Abierto al Maximo 105mm) | [ESPACIO]/[G] Agarrar Guiado por Camara DaBai"
+        shortcuts1 = (
+            f"[3]/[p] Pre-Grasp (105mm) | [ESPACIO]/[G] Agarrar | "
+            f"Slider 'Avance_Extra_mm' o [+]/[-]: +{self.extra_advance_cm:.1f} cm ({self.extra_advance_cm*10:.0f} mm) | [K] Guardar"
+        )
         shortcuts2 = "[5]/[B] Rutina Post-Grasping (Cerrar y Volver Recto Atras a Pre-Grasp) | [2]/[h] Home | [R] Abrir 105mm | [C] Cerrar 50mm"
-        cv2.putText(canvas, shortcuts1, (20, bar_y + 88), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (80, 255, 140), 1)
+        cv2.putText(canvas, shortcuts1, (20, bar_y + 88), cv2.FONT_HERSHEY_SIMPLEX, 0.41, (80, 255, 140), 1)
         cv2.putText(canvas, shortcuts2, (20, bar_y + 114), cv2.FONT_HERSHEY_SIMPLEX, 0.41, (0, 230, 255), 1)
 
         return canvas
+
+    def _on_extra_slider(self, val_mm: int):
+        self.extra_advance_cm = float(val_mm) / 10.0
 
     # --------------------------------------------------------------------------
     # BUCLE PRINCIPAL INTERACTIVO
     # --------------------------------------------------------------------------
     def run(self):
-        window_name = "Robot @Home - Manipulacion Guiada por Camara Orbbec DaBai"
+        window_name = self._window_name
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(window_name, 1280, 620)
+        cv2.resizeWindow(window_name, 1280, 650)
+        cv2.createTrackbar(
+            "Avance_Extra_mm",
+            window_name,
+            int(round(self.extra_advance_cm * 10.0)),
+            120,
+            self._on_extra_slider,
+        )
 
         print("==========================================================================")
         print("   ROBOT @HOME - CINEMATICA INVERSA GUIADA POR CAMARA ORBBEC DABAI        ")
         print("--------------------------------------------------------------------------")
         print("   * [3] o [p]       : Ir a PRE-GRASP con GRIPPER AL MAXIMO (105 mm)      ")
-        print("   * [ESPACIO] o [G] : Agarrar guiado 100% por la camara Orbbec DaBai:    ")
-        print("                       1) Centra el objeto pausando en cada paso          ")
-        print("                       2) Avanza suave esperando imagen estable post-paso ")
-        print("                       3) Se detiene en cuanto el objeto entra en la pinza")
-        print("                       4) Cierra el gripper (50 mm) y vuelve recto atras  ")
-        print("                          a la posicion de PRE-GRASP                      ")
+        print("   * [ESPACIO] o [G] : Agarrar guiado por la camara Orbbec DaBai          ")
+        print(f"   * Avance_Extra_mm : +{self.extra_advance_cm:.1f} cm ({self.extra_advance_cm*10:.0f} mm) [Slider o teclas + / -]")
+        print("   * [K]             : Guardar Avance_Extra_mm en YAML                    ")
         print("   * [5] o [B]       : Ejecutar Rutina Post-Grasping manualmente          ")
         print("   * [2] o [h]       : Ir a posicion HOME                                 ")
         print("==========================================================================")
@@ -1108,6 +1186,19 @@ class ManipulacionAutonomaNode(Node):
                 if self.is_teaching_mode:
                     self.set_arm_torque(True)
                 break
+
+            elif key in [ord("+"), ord("=")]:
+                self.extra_advance_cm = min(12.0, round(self.extra_advance_cm + 0.5, 1))
+                cv2.setTrackbarPos("Avance_Extra_mm", window_name, int(round(self.extra_advance_cm * 10.0)))
+                self.status_message = f"Avance Extra Final ajustado a +{self.extra_advance_cm:.1f} cm ({self.extra_advance_cm*10:.0f} mm) | [K] para guardar"
+
+            elif key in [ord("-"), ord("_")]:
+                self.extra_advance_cm = max(0.0, round(self.extra_advance_cm - 0.5, 1))
+                cv2.setTrackbarPos("Avance_Extra_mm", window_name, int(round(self.extra_advance_cm * 10.0)))
+                self.status_message = f"Avance Extra Final ajustado a +{self.extra_advance_cm:.1f} cm ({self.extra_advance_cm*10:.0f} mm) | [K] para guardar"
+
+            elif key in [ord("k"), ord("K")]:
+                self.save_extra_advance_config()
 
             elif key == ord("1"):
                 self.fase_actual = self.FASE_1_RANGO
