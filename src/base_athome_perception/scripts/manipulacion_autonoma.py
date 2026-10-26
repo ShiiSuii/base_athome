@@ -671,22 +671,23 @@ class ManipulacionAutonomaNode(Node):
 
     def compute_aligned_and_grasp_joints(self) -> Tuple[List[float], List[float], float]:
         """
-        Calcula en 2 etapas claras desde Pre-Grasp:
+        Calcula en 2 etapas claras desde Pre-Grasp (con cámara de muñeca centrada, offset=0.0):
           1) joints_aligned: Postura en Pre-Grasp ALINEADA lateralmente y en altura con el objeto
-             (compensando el desfase a la derecha de la cámara del brazo) ANTES de avanzar.
+             (centrando el objeto en la cámara del brazo) ANTES de avanzar.
           2) joints_grasp: Postura de LLEGADA AL OBJETO avanzando recto hacia adelante
              exactamente el parámetro calibrado `grasp_forward_cm`.
         """
         dz_m = float(self.grasp_height_offset_cm / 100.0)
         dx_m = float(self.grasp_forward_cm / 100.0)
 
-        # Determinar alineación lateral (dy_align) respecto al Eje de la Pinza (compensando offset cámara)
+        # Con la cámara del brazo centrada (wrist_camera_right_offset_m = 0.0):
+        # el centro de la imagen de la cámara del brazo ES el centro de la pinza.
         if self.target_2d_wrist is not None:
             dy_align = float(np.clip(-self.wrist_camera_right_offset_m - (self.wrist_error_u * 0.08), -0.095, 0.095))
         elif self.target_3d_arm is not None:
             q_pre_rad = [math.radians(d) for d in self.pose_pre_grasp]
             _, pre_y, _ = self.kinematics_solver.forward_position_m(q_pre_rad)
-            dy_align = float(np.clip((self.target_3d_arm[1] - pre_y) - (0.5 * self.wrist_camera_right_offset_m), -0.095, 0.095))
+            dy_align = float(np.clip((self.target_3d_arm[1] - pre_y) - self.wrist_camera_right_offset_m, -0.095, 0.095))
         else:
             dy_align = float(-self.wrist_camera_right_offset_m)
 
@@ -728,12 +729,12 @@ class ManipulacionAutonomaNode(Node):
         self.send_arm_joint_goal(j_grasp, duration_s=duration_s, gripper_mm=GRIPPER_MAX_OPEN_MM)
         self.status_message = (
             f"CALIBRANDO LLEGADA (Gripper {GRIPPER_MAX_OPEN_MM:.0f}mm): Avance=+{self.grasp_forward_cm:.1f}cm ([+]/[-]) | "
-            f"OffsetDer={self.wrist_camera_right_offset_m*100:.1f}cm ([9]/[0]) | Presione [5]/[B] para Agarrar y Volver Recto Atras"
+            f"Cam Centrada ({self.wrist_camera_right_offset_m*100:.1f}cm) | [5]/[B] Agarrar y Volver Recto Atras"
         )
 
     def adjust_calibration_param(self, d_forward_cm: float = 0.0, d_right_cm: float = 0.0, d_height_cm: float = 0.0, window_name: Optional[str] = None):
         """Ajusta en vivo los parámetros de llegada al objeto, actualiza barras y guarda en YAML."""
-        self.grasp_forward_cm = float(np.clip(self.grasp_forward_cm + d_forward_cm, 5.0, 30.0))
+        self.grasp_forward_cm = float(np.clip(self.grasp_forward_cm + d_forward_cm, 5.0, 40.0))
         self.wrist_camera_right_offset_m = float(np.clip(self.wrist_camera_right_offset_m + (d_right_cm / 100.0), -0.15, 0.15))
         self.grasp_height_offset_cm = float(np.clip(self.grasp_height_offset_cm + d_height_cm, -10.0, 10.0))
         self.save_calibration_params()
@@ -752,7 +753,7 @@ class ManipulacionAutonomaNode(Node):
         else:
             self.status_message = (
                 f"GUARDADO EN YAML -> Avance: +{self.grasp_forward_cm:.1f}cm | "
-                f"Offset Cam Der: {self.wrist_camera_right_offset_m*100:.1f}cm | "
+                f"Offset Cam: {self.wrist_camera_right_offset_m*100:.1f}cm | "
                 f"Altura: {self.grasp_height_offset_cm:+.1f}cm (Presione [4] para probar en vivo)"
             )
 
@@ -1156,7 +1157,7 @@ class ManipulacionAutonomaNode(Node):
                 if self.fase_actual == self.FASE_4_GRASP and self.auto_state == self.AUTO_IDLE:
                     self.mover_a_calibracion_grasp(duration_s=0.6)
 
-        cv2.createTrackbar("Avance_cm", window_name, int(round(self.grasp_forward_cm)), 30, on_avance_slider)
+        cv2.createTrackbar("Avance_cm", window_name, int(round(self.grasp_forward_cm)), 40, on_avance_slider)
         cv2.createTrackbar("Offset_Der_mm", window_name, int(round(150 + self.wrist_camera_right_offset_m * 1000.0)), 300, on_offset_der_slider)
         cv2.createTrackbar("Altura_mm", window_name, int(round(100 + self.grasp_height_offset_cm * 10.0)), 200, on_altura_slider)
 

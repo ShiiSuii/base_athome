@@ -725,7 +725,7 @@
     <parent link="gripper_base" />
     <child link="link7" />
     <axis xyz="0 0 1" />
-    <limit lower="0" upper="0.035" effort="10" velocity="1" />
+    <limit lower="0" upper="0.0525" effort="10" velocity="1" />
   </joint>
 
   <!-- Dedo Derecho Pinza (Joint 8 - Prismático) -->
@@ -755,7 +755,7 @@
     <parent link="gripper_base" />
     <child link="link8" />
     <axis xyz="0 0 -1" />
-    <limit lower="-0.035" upper="0" effort="10" velocity="1" />
+    <limit lower="-0.0525" upper="0" effort="10" velocity="1" />
   </joint>
 
   <!-- Cámara de Muñeca Orbbec DaBai DC1 (Eye-in-Hand) -->
@@ -783,8 +783,8 @@
   <joint name="arm_camera_mount_joint" type="fixed">
     <parent link="gripper_base"/>
     <child link="arm_camera_link"/>
-    <!-- Camara del brazo desfasada 6 cm a la derecha (-0.06 m en eje Y) respecto al centro de la pinza -->
-    <origin xyz="0.025 -0.060 0.08" rpy="0 0 0"/>
+    <!-- Camara del brazo centrada (0.0 m en eje Y) respecto al centro de la pinza -->
+    <origin xyz="0.025 0.0 0.08" rpy="0 0 0"/>
   </joint>
 
   <!-- Marco Óptico Orbbec DaBai (Estándar ROS: Z adelante, X derecha, Y abajo) -->
