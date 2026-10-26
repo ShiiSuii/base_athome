@@ -33,8 +33,8 @@ M_TO_MM0001 = 1e6
 MM_TO_MM0001 = 1000.0
 MM0001_TO_MM = 1.0 / 1000.0
 
-# Limites de Pinza Piper (0 a 70 mm)
-GRIPPER_MAX_MM = 70.0
+# Limites de Pinza Piper (0 a 105 mm - apertura fisica maxima real)
+GRIPPER_MAX_MM = 105.0
 GRIPPER_MIN_MM = 0.0
 
 # Pose Home/Stow y Pre-Grasp calibradas (grados)

@@ -33,7 +33,7 @@ safety_envelope:
   - -0.175
   - 0.335
   wrist_camera_right_offset_m: 0.096
-  grasp_forward_cm: 25.0
+  grasp_forward_cm: 26.0
   grasp_height_offset_cm: 4.2
 named_poses:
   home:
@@ -44,7 +44,7 @@ named_poses:
     - 102.62
     - -31.51
     - -99.91
-    gripper_mm: 69.5
+    gripper_mm: 105.0
     timestamp: '2026-10-24 20:05:10'
   pre_grasp:
     joints_deg:
@@ -54,5 +54,5 @@ named_poses:
     - 69.54
     - -75.36
     - -89.05
-    gripper_mm: 55.8
+    gripper_mm: 105.0
     timestamp: '2026-10-24 20:47:42'
