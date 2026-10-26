@@ -110,9 +110,9 @@ class ManipulacionAutonomaNode(Node):
         self.get_logger().info("Iniciando Sistema de Manipulacion 3D en RViz + Cinematica Inversa...")
 
         # 1. Parámetros Calibrables de Llegada al Objeto (cargados y guardados en YAML)
-        self.wrist_camera_right_offset_m: float = float(WRIST_CAMERA_RIGHT_OFFSET_M)  # 0.060 m (6.0 cm derecha)
-        self.grasp_forward_cm: float = 20.0        # Cuántos cm avanza desde Pre-Grasp para llegar al objeto
-        self.grasp_height_offset_cm: float = 0.0   # Ajuste fino de altura (cm) al llegar al objeto
+        self.wrist_camera_right_offset_m: float = float(WRIST_CAMERA_RIGHT_OFFSET_M)  # 0.096 m (9.6 cm derecha)
+        self.grasp_forward_cm: float = 25.0        # Cuántos cm avanza desde Pre-Grasp para llegar al objeto
+        self.grasp_height_offset_cm: float = 4.2   # Ajuste fino de altura (cm) al llegar al objeto
         self.pose_grasp: Optional[List[float]] = None
         self.load_configuration()
 

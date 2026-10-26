@@ -33,9 +33,8 @@ HEAD_TO_ARM_OFFSET_M: Tuple[float, float, float] = (-0.035, -0.175, 0.335)
 # Offset desde el eje Tilt hasta el centro óptico de la RealSense D435 (camera_link):
 CAMERA_LEVER_ARM_M: Tuple[float, float, float] = (0.035, 0.0, 0.015)
 
-# Desfase físico de la cámara del brazo (Orbbec DaBai) hacia la derecha respecto al centro de la pinza (tcp_link):
-# 6 cm (0.060 m) hacia la derecha (-Y en el Marco del Hombro del Robot)
-WRIST_CAMERA_RIGHT_OFFSET_M: float = 0.060
+# Desfase físico calibrado de la cámara del brazo (Orbbec DaBai) hacia la derecha respecto al centro de la pinza (tcp_link):
+WRIST_CAMERA_RIGHT_OFFSET_M: float = 0.096
 
 # Límites articulares seguros (en grados) compatibles con el URDF y las poses de Home, Pre-Grasp y Grasp
 SAFE_JOINT_LIMITS_DEG: Dict[str, Tuple[float, float]] = {
