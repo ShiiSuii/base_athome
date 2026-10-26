@@ -255,7 +255,7 @@ class PiperArmController(Node):
                         # Si está en movimiento: transmitir a 50 Hz cada ciclo
                         # Si está en reposo (hold): transmitir MotionCtrl cada 2 ciclos (25Hz) y JointCtrl cada 5 ciclos (10Hz)
                         if is_moving or (self.tick_counter % 2 == 0):
-                            spd = 35 if is_moving else 10
+                            spd = 24 if is_moving else 10
                             self.piper.MotionCtrl_2(0x01, 0x01, spd, 0x00)
 
                         if is_moving or (self.tick_counter % 5 == 0):
@@ -311,7 +311,7 @@ class PiperArmController(Node):
 
             duration = 2.5
             if len(msg.velocity) > 0 and msg.velocity[0] > 0:
-                duration = max(0.8, min(6.0, msg.velocity[0]))
+                duration = max(0.6, min(10.0, msg.velocity[0]))
 
             self.get_logger().info(f"Recibido joint_cmd: {[round(v, 2) for v in targets_deg]}, duracion: {duration}s")
             self.plan_trajectory(targets_deg, duration=duration, target_gripper=g_target)
