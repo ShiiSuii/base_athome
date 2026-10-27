@@ -31,6 +31,10 @@ setup(
             'garbage_detection = scripts.test_garbage_detection:main',
             'piper_teach_recorder = scripts.piper_teach_recorder:main',
             'pringles_grasping = scripts.pringles_grasping_node:main',
+            'manipulacion_autonoma = scripts.manipulacion_autonoma:main',
+            'manipulacion_autonoma.py = scripts.manipulacion_autonoma:main',
+            'calibrar_aruco_manipulacion = scripts.calibrar_aruco_manipulacion:main',
+            'calibrar_aruco_manipulacion.py = scripts.calibrar_aruco_manipulacion:main',
         ],
     },
 )
