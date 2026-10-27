@@ -20,6 +20,18 @@ def generate_launch_description():
             description='Use sim time if true'
         ),
 
+        # Publicador de articulaciones por defecto (garantiza que torso y brazo tengan TFs en RViz)
+        Node(
+            package='joint_state_publisher',
+            executable='joint_state_publisher',
+            name='joint_state_publisher',
+            output='screen',
+            parameters=[{
+                'use_sim_time': LaunchConfiguration('use_sim_time')
+            }],
+            arguments=[urdf_file]
+        ),
+
         # Publicador de Estado del Robot (convierte /joint_states a TFs del URDF completo)
         Node(
             package='robot_state_publisher',

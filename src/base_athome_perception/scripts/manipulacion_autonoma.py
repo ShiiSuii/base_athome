@@ -164,6 +164,8 @@ class ManipulacionAutonomaNode(Node):
         self.pub_pan_tilt_cmd = self.create_publisher(Vector3, "/pan_tilt/target_degrees", 5)
         self.pub_enable = self.create_publisher(Bool, "/arm/enable", 5)
         self.pub_rviz_markers = self.create_publisher(MarkerArray, "/arm_camera/object_markers", 10)
+        self.pub_joint_states = self.create_publisher(JointState, "/joint_states", 10)
+        self.timer_joint_states = self.create_timer(0.04, self._publish_joint_states)
 
         # Buffers de imágenes
         self.frame_lock = threading.Lock()
@@ -237,12 +239,58 @@ class ManipulacionAutonomaNode(Node):
         self._window_name = "Robot @Home - Manipulacion Simplificada (Camara 8cm Atras)"
         self.status_message = f"Listo | Distancia Extra: +{self.distancia_gripper_cm:.1f}cm | [ESPACIO]/[G] Agarrar"
 
+        # Proceso robot_state_publisher para visualización completa del URDF en RViz
+        self._rsp_proc: Optional[subprocess.Popen] = None
+        self._ensure_robot_state_publisher()
+
         # Lanzar hilos de ROS 2 y Visión
         self._running = True
         self._ros_spin_thread = threading.Thread(target=self._ros_spin_worker, daemon=True)
         self._ros_spin_thread.start()
         self._vision_thread = threading.Thread(target=self._vision_worker, daemon=True)
         self._vision_thread.start()
+
+    def _ensure_robot_state_publisher(self):
+        """Asegura que robot_state_publisher esté activo para publicar los TFs del robot en RViz."""
+        try:
+            res = subprocess.run(["pgrep", "-f", "robot_state_publisher"], capture_output=True, text=True)
+            if res.returncode != 0 or not res.stdout.strip():
+                urdf_path = "/home/athome/base_athome_ws/src/hoverboard_base/urdf/robot.urdf"
+                if os.path.exists(urdf_path):
+                    self.get_logger().info("Iniciando robot_state_publisher para visualizacion del URDF en RViz...")
+                    self._rsp_proc = subprocess.Popen(
+                        ["ros2", "run", "robot_state_publisher", "robot_state_publisher", urdf_path],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+        except Exception as e:
+            self.get_logger().warn(f"No se pudo verificar/iniciar robot_state_publisher: {e}")
+
+    def _publish_joint_states(self):
+        """Publica el estado actual de todas las articulaciones (torso + brazo 6-DOF + pinza) a /joint_states."""
+        js = JointState()
+        js.header.stamp = self.get_clock().now().to_msg()
+        js.name = [
+            "torso_lift_joint",
+            "joint1", "joint2", "joint3", "joint4", "joint5", "joint6",
+            "joint7", "joint8"
+        ]
+        joints = self.arm_joints_deg if (self.arm_joints_deg and len(self.arm_joints_deg) >= 6) else self.pose_pre_grasp
+        q_rad = [math.radians(float(d)) for d in joints[:6]]
+        finger_m = max(0.0, min(0.0525, (float(self.gripper_opening_mm) / 1000.0) / 2.0))
+        # torso_lift_joint en 0.0 (fin de carrera superior); dedos simétricos
+        js.position = [0.0] + q_rad + [finger_m, -finger_m]
+        js.velocity = [0.0] * 9
+        js.effort = [0.0] * 9
+        self.pub_joint_states.publish(js)
+
+    def destroy_node(self):
+        if hasattr(self, "_rsp_proc") and self._rsp_proc is not None:
+            try:
+                self._rsp_proc.terminate()
+            except Exception:
+                pass
+        super().destroy_node()
 
     def _ros_spin_worker(self):
         while self._running and rclpy.ok():
