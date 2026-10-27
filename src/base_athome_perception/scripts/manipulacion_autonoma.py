@@ -194,13 +194,19 @@ class ManipulacionAutonomaNode(Node):
         # Solucionador cinemático 6-DOF oficial del brazo Piper
         self.kinematics_solver = PiperKinematicsSolver()
 
-        # Modelo YOLO rápido (imgsz=320 en hilo dedicado para ~17 FPS sin bloquear ROS ni GUI)
-        self.get_logger().info("Cargando modelo YOLO rapido para hilo dedicado de camara DaBai...")
+        # Modelo YOLOv8-Seg para Detección + Auto-Segmentación de Instancia (~19 FPS)
+        self.get_logger().info("Cargando modelo YOLOv8-Seg de Auto-Segmentacion para camara DaBai...")
         try:
-            self.yolo_model = YOLO("yolov8s-worldv2.pt")
-            self.yolo_model.set_classes(["bottle", "pringles can", "can", "cup", "cylinder"])
-        except Exception:
-            self.yolo_model = YOLO("yolov8n.pt")
+            self.yolo_model = YOLO("yolov8n-seg.pt")
+        except Exception as e:
+            self.get_logger().warn(f"Error cargando yolov8n-seg.pt ({e}), usando yolov8n.pt...")
+            try:
+                self.yolo_model = YOLO("yolov8n.pt")
+            except Exception:
+                self.yolo_model = None
+
+        self.segmented_mask: Optional[np.ndarray] = None
+        self.is_segmented: bool = False
 
         # Estado y mediciones en vivo de la Cámara Orbbec DaBai
         self.fase_actual = self.FASE_2_HOME
@@ -410,56 +416,119 @@ class ManipulacionAutonomaNode(Node):
     # --------------------------------------------------------------------------
     # HILO DEDICADO DE DETECCIÓN RÁPIDA EN CÁMARA ORBBEC DABAI (~17 FPS)
     # --------------------------------------------------------------------------
-    def detect_object_in_dabai(self, frame: np.ndarray) -> Optional[Tuple[int, int, int, int, float]]:
+    def detect_object_in_dabai(self, frame: np.ndarray) -> Optional[dict]:
         """
-        Detecta la botella o tubo Pringles en la imagen de la cámara Orbbec DaBai (640x480)
-        usando imgsz=320 para máxima velocidad (~55 ms en CPU), descartando los dedos negros abajo.
+        Detección + Auto-Segmentación de la lata de Pringles / botella en la cámara DaBai.
+        1. Detecta la lata de Pringles usando YOLOv8-seg (clases bottle, cup, vase).
+        2. Auto-segmenta el contorno exacto de la superficie cilíndrica de la lata.
+        3. Excluye interferencias del fondo, sombras de la mesa y los dedos negros de la pinza.
+        4. Calcula el eje central medial (cx) y el ancho real (width) a partir de las paredes
+           del cilindro. ¡Esto evita que el brazo se desplace a la derecha o izquierda cuando
+           se acerca al objeto!
         """
-        results = self.yolo_model(frame, verbose=False, conf=0.14, imgsz=320)
-        candidates = []
+        H, W = frame.shape[:2]
+        best_mask = None
+        best_bbox = None
+        best_score = 0.0
 
-        for r in results:
-            for box in r.boxes:
-                cls_id = int(box.cls[0])
-                cls_name = self.yolo_model.names.get(cls_id, "").lower()
-                conf = float(box.conf[0])
-                x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
-                bw, bh = max(1, x2 - x1), max(1, y2 - y1)
-                aspect = bh / bw
+        # 1. Detección y Máscara de Segmentación con YOLOv8-seg
+        if self.yolo_model is not None:
+            try:
+                results = self.yolo_model(frame, verbose=False, conf=0.14, imgsz=320, classes=[39, 41, 75])
+                if len(results) > 0:
+                    r = results[0]
+                    if hasattr(r, 'masks') and r.masks is not None and len(r.masks) > 0:
+                        for i, box in enumerate(r.boxes):
+                            conf = float(box.conf[0])
+                            x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
+                            bw, bh = max(1, x2 - x1), max(1, y2 - y1)
+                            if y1 > 285 or bw < 25 or bh < 50:
+                                continue
+                            m_raw = r.masks.data[i].cpu().numpy()
+                            m_resized = cv2.resize((m_raw > 0.5).astype(np.uint8) * 255, (W, H), interpolation=cv2.INTER_NEAREST)
+                            score = conf * (1.3 if (bh / bw) > 1.1 else 1.0)
+                            if score > best_score:
+                                best_score = score
+                                best_mask = m_resized
+                                best_bbox = (x1, y1, x2, y2)
+                    elif len(r.boxes) > 0:
+                        for box in r.boxes:
+                            conf = float(box.conf[0])
+                            x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
+                            bw, bh = max(1, x2 - x1), max(1, y2 - y1)
+                            if y1 > 285 or bw < 25 or bh < 50:
+                                continue
+                            score = conf * (1.3 if (bh / bw) > 1.1 else 1.0)
+                            if score > best_score:
+                                best_score = score
+                                best_bbox = (x1, y1, x2, y2)
+            except Exception:
+                pass
 
-                # Ignorar cajas que estén únicamente en la zona inferior de los dedos negros (y1 > 285)
-                if y1 > 285:
-                    continue
-                if bw < 28 or bh < 60:
-                    continue
-
-                if any(k in cls_name for k in ["bottle", "pringles", "can", "cup", "cylinder"]):
-                    score = conf * (1.3 if aspect > 1.1 else 1.0)
-                    candidates.append((x1, y1, x2, y2, score))
-
-        if candidates:
-            return max(candidates, key=lambda c: c[4])
-
-        # Respaldo rápido por color (rojo / morado de Pringles) ignorando la franja inferior de los dedos
+        # 2. Auto-segmentación cromática de respaldo o refinación (lata de Pringles roja/morada/amarilla)
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        mask_red1 = cv2.inRange(hsv, np.array([0, 95, 60]), np.array([12, 255, 255]))
-        mask_red2 = cv2.inRange(hsv, np.array([165, 95, 60]), np.array([180, 255, 255]))
-        mask_purple = cv2.inRange(hsv, np.array([115, 65, 55]), np.array([164, 255, 255]))
-        mask = mask_red1 | mask_red2 | mask_purple
-        mask[330:, :] = 0
+        m_red1 = cv2.inRange(hsv, np.array([0, 85, 55]), np.array([12, 255, 255]))
+        m_red2 = cv2.inRange(hsv, np.array([165, 85, 55]), np.array([180, 255, 255]))
+        m_purp = cv2.inRange(hsv, np.array([115, 60, 50]), np.array([164, 255, 255]))
+        m_gold = cv2.inRange(hsv, np.array([15, 90, 70]), np.array([32, 255, 255]))
+        color_mask = m_red1 | m_red2 | m_purp | m_gold
+        # Excluir dedos de la pinza (zona inferior)
+        color_mask[320:, :] = 0
 
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        best_cnt = None
-        best_area = 0.0
-        for cnt in contours:
-            area = cv2.contourArea(cnt)
-            if area > 1400:
-                x, y, w, h = cv2.boundingRect(cnt)
-                if y < 265 and 1.05 <= (h / max(1, w)) <= 4.8 and area > best_area:
-                    best_area = area
-                    best_cnt = (x, y, x + w, y + h, 0.55)
+        final_mask = None
+        if best_mask is not None:
+            best_mask[320:, :] = 0
+            final_mask = best_mask
+        else:
+            cnts, _ = cv2.findContours(color_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            for cnt in cnts:
+                area = cv2.contourArea(cnt)
+                if area > 1200:
+                    x, y, w, h = cv2.boundingRect(cnt)
+                    if y < 270 and 1.05 <= (h / max(1, w)) <= 5.0 and area > best_score * 1000:
+                        final_mask = np.zeros((H, W), dtype=np.uint8)
+                        cv2.drawContours(final_mask, [cnt], -1, 255, -1)
+                        best_bbox = (x, y, x + w, y + h)
+                        best_score = 0.65
+                        break
 
-        return best_cnt
+        if best_bbox is None:
+            return None
+
+        # 3. AUTO-SEGMENTACIÓN: Extraer eje central medial y ancho exacto escaneando las filas del cilindro
+        cx, cy, cw = None, None, None
+        if final_mask is not None and cv2.countNonZero(final_mask) > 350:
+            ys, xs = np.where(final_mask > 0)
+            centers = []
+            widths = []
+            for y in np.unique(ys):
+                if y > 295:  # Descartar interferencia de dedos en la parte baja
+                    continue
+                row_xs = xs[ys == y]
+                if len(row_xs) >= 20:
+                    centers.append((np.min(row_xs) + np.max(row_xs)) / 2.0)
+                    widths.append(np.max(row_xs) - np.min(row_xs))
+
+            if len(centers) >= 8:
+                cx = float(np.median(centers))
+                cy = float(np.median(ys))
+                cw = float(np.median(widths))
+
+        if cx is None:
+            bx1, by1, bx2, by2 = best_bbox
+            cx = (bx1 + bx2) / 2.0
+            cy = (by1 + by2) / 2.0
+            cw = float(max(28, bx2 - bx1))
+
+        return {
+            "bbox": best_bbox,
+            "cx": cx,
+            "cy": cy,
+            "width": cw,
+            "mask": final_mask,
+            "score": best_score,
+            "is_segmented": (final_mask is not None)
+        }
 
     def _vision_worker(self):
         """
@@ -490,13 +559,17 @@ class ManipulacionAutonomaNode(Node):
             captured_after_stop = frame_ts > (self.last_cmd_sent_time + self.current_move_duration_s + 0.25)
 
             if det_w is not None:
-                wx1, wy1, wx2, wy2, _ = det_w
+                wx1, wy1, wx2, wy2 = det_w["bbox"]
                 self.target_2d_wrist = (wx1, wy1, wx2, wy2)
                 self.last_wrist_det_time = now
+                self.segmented_mask = det_w.get("mask", None)
+                self.is_segmented = bool(det_w.get("is_segmented", False))
 
-                raw_wcx = (wx1 + wx2) / 2.0
-                raw_wcy = (wy1 + wy2) / 2.0
-                raw_bw = float(max(30, wx2 - wx1))
+                # AUTO-SEGMENTACIÓN: El centroide 'raw_wcx' proviene del eje medial de las paredes
+                # del cilindro, inmune a sombras o interferencias de los dedos!
+                raw_wcx = float(det_w["cx"])
+                raw_wcy = float(det_w["cy"])
+                raw_bw = float(max(28.0, det_w["width"]))
                 self.dabai_y2 = float(wy2)
 
                 # Si es el primer frame limpio tras terminar un movimiento, tomar la lectura directa
@@ -1128,6 +1201,15 @@ class ManipulacionAutonomaNode(Node):
                 1,
             )
 
+            # Dibujar máscara de Auto-Segmentación translúcida
+            if self.segmented_mask is not None:
+                mask_resized = cv2.resize(self.segmented_mask, (feed_w, feed_h), interpolation=cv2.INTER_NEAREST)
+                overlay = w_img.copy()
+                overlay[mask_resized > 0] = [0, 220, 110]  # Verde esmeralda para la superficie de la lata
+                w_img = cv2.addWeighted(w_img, 0.74, overlay, 0.26, 0)
+                cnts, _ = cv2.findContours(mask_resized, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                cv2.drawContours(w_img, cnts, -1, (0, 255, 180), 2)
+
             if self.target_2d_wrist is not None:
                 x1, y1, x2, y2 = self.target_2d_wrist
                 bx1, by1 = int(x1 * sx), int(y1 * sy)
@@ -1136,17 +1218,24 @@ class ManipulacionAutonomaNode(Node):
                 box_col = (0, 255, 80) if centered_ok else (0, 180, 255)
                 cv2.rectangle(w_img, (bx1, by1), (bx2, by2), box_col, 2)
 
-                obj_cx = int(((x1 + x2) / 2.0) * sx)
-                obj_cy = int(((y1 + y2) / 2.0) * sy)
-                cv2.line(w_img, (obj_cx, obj_cy), (gap_cx, obj_cy), (0, 255, 255), 2)
-                cv2.circle(w_img, (obj_cx, obj_cy), 6, box_col, -1)
+                # Eje central medial real del cilindro (cx de autosegmentación)
+                obj_cx = int(self.dabai_wcx * sx)
+                obj_cy = int(self.dabai_wcy * sy)
 
+                # Línea vertical amarilla del eje de la lata de Pringles
+                cv2.line(w_img, (obj_cx, max(0, by1)), (obj_cx, min(feed_h, by2)), (0, 255, 255), 2)
+                cv2.circle(w_img, (obj_cx, obj_cy), 6, (0, 255, 0), -1)
+                cv2.line(w_img, (obj_cx, obj_cy), (gap_cx, obj_cy), (0, 255, 255), 2)
+
+                seg_tag = "AUTOSEGMENTADO" if self.is_segmented else "YOLO"
+                lat_disp = f"dLeft={self.wrist_dy_m*100:+.1f}cm" if self.wrist_dy_m >= 0 else f"dRight={-self.wrist_dy_m*100:.1f}cm"
+                off_disp = f"Offset:{self.lateral_offset_mm:+.0f}mm(Izq)" if self.lateral_offset_mm >= 0 else f"Offset:{self.lateral_offset_mm:.0f}mm(Der)"
                 tag_top = (
-                    f"dLeft={self.wrist_dy_m*100:+.1f}cm (Offset:{self.lateral_offset_mm:+.0f}mm) | "
+                    f"[{seg_tag}] {lat_disp} ({off_disp}) | "
                     f"Faltan={self.wrist_dfwd_m*100:.1f}cm (+{self.extra_advance_cm:.1f}cm)"
                 )
                 tag_bot = (
-                    f"Ancho={self.dabai_bw:.0f}/{DABAI_ARRIVAL_WIDTH_PX:.0f}px "
+                    f"Lata Pringles: Ancho={self.dabai_bw:.0f}/{DABAI_ARRIVAL_WIDTH_PX:.0f}px "
                     f"({'ZONA CENTRO OK (AVANCE RECTO)' if centered_ok else 'ALINEANDO'})"
                 )
                 cv2.putText(w_img, tag_top, (max(8, bx1), max(22, by1 - 24)), cv2.FONT_HERSHEY_SIMPLEX, 0.42, box_col, 2)
@@ -1176,11 +1265,13 @@ class ManipulacionAutonomaNode(Node):
         state_str = self.FASE_NAMES.get(state_key, "LISTO")
         cv2.putText(canvas, f"ESTADO: {state_str}", (20, bar_y + 26), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 255, 255), 2)
 
+        lat_telemetry = f"dLeft={self.wrist_dy_m*100:+.1f}cm" if self.wrist_dy_m >= 0 else f"dRight={-self.wrist_dy_m*100:.1f}cm"
+        off_telemetry = f"Offset={self.lateral_offset_mm:+.0f}mm(Izq)" if self.lateral_offset_mm >= 0 else f"Offset={self.lateral_offset_mm:.0f}mm(Der)"
         dabai_str = (
-            f"DaBai ({self.det_fps:.0f}FPS): dLeft={self.wrist_dy_m*100:+.1f}cm (Offset:{self.lateral_offset_mm:+.0f}mm), "
+            f"DaBai ({self.det_fps:.0f}FPS): {lat_telemetry} ({off_telemetry}), "
             f"Faltan {self.wrist_dfwd_m*100:.1f}cm, Extra=+{self.extra_advance_cm:.1f}cm, Vel={self.arm_speed_pct}%"
             if self.target_2d_wrist is not None
-            else f"DaBai ({self.det_fps:.0f}FPS): BUSCANDO... | Offset={self.lateral_offset_mm:+.0f}mm | Vel={self.arm_speed_pct}%"
+            else f"DaBai ({self.det_fps:.0f}FPS): BUSCANDO... | {off_telemetry} | Vel={self.arm_speed_pct}%"
         )
         joints_str = ", ".join([f"{v:+.1f}" for v in self.arm_joints_deg[:6]])
         telemetry_line = f"{dabai_str} | Pinza: {self.gripper_opening_mm:.0f}mm | Joints: [{joints_str}] | {self.status_message}"
@@ -1190,7 +1281,7 @@ class ManipulacionAutonomaNode(Node):
             f"[ESPACIO]/[G] Agarrar | [3] Pre-Grasp (105mm) | [2] Home | [5] Rutina Post-Grasping | [K] GUARDAR EN YAML\n"
         )
         shortcuts2 = (
-            f"SLIDERS: Avance (+{self.extra_advance_cm:.1f}cm) | Offset_dLeft ({self.lateral_offset_mm:+.0f}mm [ [ / ] ]) | "
+            f"SLIDERS: Avance (+{self.extra_advance_cm:.1f}cm) | Offset_dLeft_dRight ({self.lateral_offset_mm:+.0f}mm [ [ / ] ]) | "
             f"Zona_Centro (+-{self.center_zone_px:.0f}px [ , / . ]) | Velocidad ({self.arm_speed_pct}% [ 9 / 0 ])"
         )
         cv2.putText(canvas, shortcuts1, (20, bar_y + 86), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (80, 255, 140), 1)
@@ -1202,7 +1293,8 @@ class ManipulacionAutonomaNode(Node):
         self.extra_advance_cm = float(val_mm) / 10.0
 
     def _on_offset_slider(self, val: int):
-        self.lateral_offset_mm = float(val - 60)
+        # Slider de 0 a 160: 80 = 0mm, <80 = dRight (negativo), >80 = dLeft (positivo)
+        self.lateral_offset_mm = float(val - 80)
 
     def _on_zone_slider(self, val_px: int):
         self.center_zone_px = float(max(15, val_px))
@@ -1225,10 +1317,10 @@ class ManipulacionAutonomaNode(Node):
             self._on_extra_slider,
         )
         cv2.createTrackbar(
-            "Offset_dLeft_mm",
+            "Offset_Lateral_mm",
             window_name,
-            int(round(self.lateral_offset_mm + 60)),
-            120,
+            int(round(self.lateral_offset_mm + 80)),
+            160,
             self._on_offset_slider,
         )
         cv2.createTrackbar(
