@@ -69,7 +69,7 @@ GRIPPER_CLOSE_GRASP_MM = 50.0
 DABAI_CENTER_X_PX = 320.0          # Centro óptico horizontal
 DABAI_FOCAL_PX = 485.0             # Longitud focal en píxeles
 OBJECT_DIAMETER_M = 0.075          # Diámetro de la lata de Pringles (7.5 cm)
-DABAI_GRASP_ZONE_DIST_M = 0.270    # Distancia lente -> centro de los dedos (27.0 cm con los 8cm extra)
+DABAI_GRASP_ZONE_DIST_M = 0.088    # Distancia lente -> centro de los dedos cuando el tubo esta en la pinza (8.8 cm)
 
 
 def sync_jetson_clock():
@@ -328,24 +328,79 @@ class ManipulacionAutonomaNode(Node):
         pass
 
     # --------------------------------------------------------------------------
-    # DETECCIÓN SIMPLE Y ROBUSTA DEL OBJETO
+    # DETECCIÓN DE LA LATA DE PRINGLES (FILTRADO CROMÁTICO + GEOMÉTRICO + YOLO)
     # --------------------------------------------------------------------------
     def detect_object_in_dabai(self, frame: np.ndarray) -> Optional[dict]:
         """
-        Detección rápida y limpia de la lata/botella usando YOLOv8 o color HSV.
-        Retorna el bounding box, centroide y ancho del cilindro.
+        Detección robusta de la lata de Pringles (Púrpura o Roja) con cero falsos positivos.
+        Utiliza firma cromática del cilindro (púrpura/rojo) con cierre morfológico a través
+        del logo blanco facial, verificando proporciones cilíndricas y descartando fondo.
         """
         fh, fw = frame.shape[:2]
-        best_bbox = None
-        best_score = 0.0
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
-        # 1. Inferencia YOLOv8
+        # 1. Máscaras de color específicas para el tubo de Pringles:
+        # A) Púrpura (Pringles Morada / Crema y Cebolla / Paprika)
+        m_purple = cv2.inRange(hsv, np.array([115, 45, 35]), np.array([162, 255, 255]))
+
+        # B) Rojo (Pringles Roja Original)
+        m_red1 = cv2.inRange(hsv, np.array([0, 80, 50]), np.array([12, 255, 255]))
+        m_red2 = cv2.inRange(hsv, np.array([168, 80, 50]), np.array([180, 255, 255]))
+        m_red = cv2.bitwise_or(m_red1, m_red2)
+
+        # Cuerpo del tubo
+        can_body = cv2.bitwise_or(m_purple, m_red)
+
+        # Limpieza morfológica: unir bloques del cilindro alrededor del logo blanco
+        k_close = cv2.getStructuringElement(cv2.MORPH_RECT, (21, 21))
+        can_closed = cv2.morphologyEx(can_body, cv2.MORPH_CLOSE, k_close)
+
+        cnts, _ = cv2.findContours(can_closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        candidates = []
+
+        for c in cnts:
+            area = cv2.contourArea(c)
+            if area < 1200:
+                continue
+            bx, by, bw, bh = cv2.boundingRect(c)
+
+            # Descartar elementos que no tengan proporción de lata
+            # Una lata o bien es vertical (bh >= 0.7 * bw) o está muy cerca y llena el plano horizontal (bw > 200)
+            if bw < 25 or bh < 30:
+                continue
+            if bh < 0.65 * bw and bw < 200:
+                continue
+
+            # Medir densidad de color púrpura/rojo en el recuadro
+            crop_body = can_body[by:by+bh, bx:bx+bw]
+            color_fill = cv2.countNonZero(crop_body) / max(1, bw * bh)
+            if color_fill < 0.08:
+                continue
+
+            # Priorizar objetos cercanos al eje central de agarre (x = 320 px)
+            cx = bx + bw / 2.0
+            center_dist = abs(cx - DABAI_CENTER_X_PX) / DABAI_CENTER_X_PX
+            score = area * (1.0 + 2.0 * color_fill) * (1.0 - 0.25 * center_dist)
+            candidates.append((score, (bx, by, bx + bw, by + bh), cx, by + bh / 2.0, bw))
+
+        if candidates:
+            candidates.sort(key=lambda item: item[0], reverse=True)
+            best = candidates[0]
+            return {
+                "bbox": best[1],
+                "cx": float(best[2]),
+                "cy": float(best[3]),
+                "width": float(best[4]),
+                "score": float(best[0]),
+            }
+
+        # 2. Verificación YOLOv8 (solo si hay detección que contenga color de la lata)
         if self.yolo_model is not None:
             try:
                 results = self.yolo_model.predict(
                     source=frame,
                     imgsz=320,
-                    conf=0.28,
+                    conf=0.35,
                     classes=[39, 41, 75],  # bottle, cup, vase
                     verbose=False,
                     device="cpu",
@@ -355,54 +410,24 @@ class ManipulacionAutonomaNode(Node):
                     if boxes is None or len(boxes) == 0:
                         continue
                     for box in boxes:
-                        score = float(box.conf[0])
                         xyxy = box.xyxy[0].cpu().numpy()
                         bx1, by1, bx2, by2 = int(xyxy[0]), int(xyxy[1]), int(xyxy[2]), int(xyxy[3])
                         bw = bx2 - bx1
                         bh = by2 - by1
                         if bw >= 25 and bh >= 40:
-                            if score > best_score:
-                                best_score = score
-                                best_bbox = (bx1, by1, bx2, by2)
+                            # Verificar que tenga al menos un 6% de color de la lata para descartar falsos positivos de fondo
+                            crop = can_body[by1:by2, bx1:bx2]
+                            if crop.size > 0 and (cv2.countNonZero(crop) / crop.size) >= 0.06:
+                                return {
+                                    "bbox": (bx1, by1, bx2, by2),
+                                    "cx": (bx1 + bx2) / 2.0,
+                                    "cy": (by1 + by2) / 2.0,
+                                    "width": float(bw),
+                                }
             except Exception:
                 pass
 
-        # 2. Detección Fallback por Color HSV (si YOLO no lo ve o no está cargado)
-        if best_bbox is None:
-            try:
-                hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-                # Máscara para colores de tubo de Pringles (rojo / naranja / púrpura / dorado)
-                m1 = cv2.inRange(hsv, np.array([0, 80, 70]), np.array([12, 255, 255]))
-                m2 = cv2.inRange(hsv, np.array([168, 80, 70]), np.array([180, 255, 255]))
-                m3 = cv2.inRange(hsv, np.array([125, 70, 70]), np.array([160, 255, 255]))
-                mask = cv2.bitwise_or(m1, m2)
-                mask = cv2.bitwise_or(mask, m3)
-                # Descartar zona de los dedos en la parte baja
-                mask[380:, :] = 0
-                kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-                mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-                cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                for c in cnts:
-                    area = cv2.contourArea(c)
-                    if area > 800:
-                        x, y, w, h = cv2.boundingRect(c)
-                        if w >= 25 and h >= 35:
-                            score = area / (fw * fh)
-                            if score > best_score:
-                                best_score = score
-                                best_bbox = (x, y, x + w, y + h)
-            except Exception:
-                pass
-
-        if best_bbox is None:
-            return None
-
-        bx1, by1, bx2, by2 = best_bbox
-        cx = (bx1 + bx2) / 2.0
-        cy = (by1 + by2) / 2.0
-        cw = float(max(25, bx2 - bx1))
-
-        return {"bbox": best_bbox, "cx": cx, "cy": cy, "width": cw}
+        return None
 
     def _vision_worker(self):
         """Hilo dedicado para procesar la visión sin retrasar el control ROS."""
@@ -448,16 +473,16 @@ class ManipulacionAutonomaNode(Node):
                     self.dabai_cy = float(det["cy"])
                     self.dabai_width_px = float(det["width"])
 
-                # Distancia estimada desde la lente de la DaBai hasta la lata
+                # Distancia estimada desde la lente de la DaBai hasta la lata (unclamped desde 4 cm)
                 self.dist_to_can_m = float(
-                    np.clip((OBJECT_DIAMETER_M * DABAI_FOCAL_PX) / self.dabai_width_px, 0.15, 0.65)
+                    np.clip((OBJECT_DIAMETER_M * DABAI_FOCAL_PX) / self.dabai_width_px, 0.04, 0.85)
                 )
 
                 # Error lateral respecto al centro óptico exacto (320 px)
                 err_px = self.dabai_cx - DABAI_CENTER_X_PX
                 self.lateral_err_m = -float((err_px / DABAI_FOCAL_PX) * self.dist_to_can_m)
 
-                # Distancia restante para que la lata quede entre los dedos
+                # Distancia restante para que la lata quede en el centro de agarre del gripper
                 self.dist_fwd_remaining_m = float(max(0.0, self.dist_to_can_m - DABAI_GRASP_ZONE_DIST_M))
 
                 # Posición 3D del objeto (frame hombro) para RViz: solo se recalcula con el brazo QUIETO,
@@ -556,10 +581,10 @@ class ManipulacionAutonomaNode(Node):
         txt.pose.position.y = float(obj_base[1])
         txt.pose.position.z = float(obj_base[2] + 0.16)
         txt.pose.orientation.w = 1.0
-        txt.scale.z = 0.045
-        txt.color = ColorRGBA(r=1.0, g=1.0, b=1.0, a=1.0)
+        faltan_val = self.dist_fwd_remaining_m * 100.0
+        faltan_str = "0.0 cm (En Pinza)" if faltan_val <= 1.5 else f"{faltan_val:.1f} cm"
         alcance = "" if self.is_in_reach else " | FUERA DE ALCANCE"
-        txt.text = f"Lata | Faltan {self.dist_fwd_remaining_m*100:.1f} cm | dY {self.lateral_err_m*100:+.1f} cm{alcance}"
+        txt.text = f"Lata | Faltan: {faltan_str} | dY: {self.lateral_err_m*100:+.1f} cm{alcance}"
         txt.lifetime = life
         ma.markers.append(txt)
 
@@ -844,9 +869,15 @@ class ManipulacionAutonomaNode(Node):
                 if is_centered:
                     lat_text = "CENTRADO OK"
 
+                faltan_val = self.dist_fwd_remaining_m * 100.0
+                faltan_str = "0.0 cm [EN PINZA]" if faltan_val <= 1.5 else f"{faltan_val:.1f} cm"
+
+                tag_top = f"Lata Pringles: {lat_text} | Faltan: {faltan_str}"
+                tag_bot = f"Lente: {self.dist_to_can_m*100:.1f}cm | +Extra={self.distancia_gripper_cm:.1f}cm | Pinza={self.gripper_opening_mm:.0f}mm"
+
                 cv2.putText(
                     w_img,
-                    f"Lata Pringles: {lat_text} | Dist={self.dist_to_can_m*100:.1f}cm",
+                    tag_top,
                     (max(8, bx1), max(22, by1 - 10)),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.44,
@@ -855,7 +886,7 @@ class ManipulacionAutonomaNode(Node):
                 )
                 cv2.putText(
                     w_img,
-                    f"Faltan={self.dist_fwd_remaining_m*100:.1f}cm + Extra={self.distancia_gripper_cm:.1f}cm",
+                    tag_bot,
                     (max(8, bx1), min(feed_h - 10, by2 + 18)),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.40,
@@ -887,10 +918,11 @@ class ManipulacionAutonomaNode(Node):
         state_str = self.FASE_NAMES.get(state_key, "LISTO")
         cv2.putText(canvas, f"ESTADO: {state_str}", (20, bar_y + 26), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 255, 255), 2)
 
+        faltan_val = self.dist_fwd_remaining_m * 100.0
+        faltan_str = "0.0 cm [EN PINZA]" if faltan_val <= 1.5 else f"{faltan_val:.1f} cm"
         telemetry = (
-            f"DaBai ({self.det_fps:.0f}FPS) | Distancia={self.dist_to_can_m*100:.1f}cm | "
-            f"Faltan={self.dist_fwd_remaining_m*100:.1f}cm (+{self.distancia_gripper_cm:.1f}cm) | "
-            f"Pinza={self.gripper_opening_mm:.0f}mm | {self.status_message}"
+            f"DaBai ({self.det_fps:.0f}FPS) | Faltan: {faltan_str} | Lente: {self.dist_to_can_m*100:.1f}cm "
+            f"(+Extra={self.distancia_gripper_cm:.1f}cm) | Pinza={self.gripper_opening_mm:.0f}mm | {self.status_message}"
         )
         cv2.putText(canvas, telemetry, (20, bar_y + 56), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (200, 220, 240), 1)
 
