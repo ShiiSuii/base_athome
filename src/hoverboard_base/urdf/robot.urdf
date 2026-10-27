@@ -415,11 +415,11 @@
       </geometry>
     </collision>
   </link>
-  <!-- Montaje sobre el lado lateral izquierdo del prisma del torso, retrasado 15 cm hacia atrás -->
+  <!-- Montaje sobre el lado lateral izquierdo del prisma del torso, retrasado 15 cm hacia atrás y calibrado a 85 cm de altura del gripper -->
   <joint name="cube_to_arm_joint" type="fixed">
     <parent link="mounting_cube_link"/>
     <child link="arm_base_link"/>
-    <origin rpy="-1.5707963 0 0" xyz="-0.15 0.175 0.10"/>
+    <origin rpy="-1.5707963 0 0" xyz="-0.15 0.175 -0.11"/>
   </joint>
   <!-- Link 1 (Joint 1 - Rotación en Z) -->
   <link name="link1">

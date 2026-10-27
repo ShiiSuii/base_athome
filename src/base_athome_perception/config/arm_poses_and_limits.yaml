@@ -57,14 +57,14 @@ named_poses:
     timestamp: '2026-10-24 20:05:10'
   pre_grasp:
     joints_deg:
-    - 42.9
-    - 180.83
-    - -89.01
-    - 60.57
-    - -74.02
-    - -96.89
+    - 49.65
+    - 187.99
+    - -82.38
+    - 51.12
+    - -75.38
+    - -77.77
     gripper_mm: 105.0
-    timestamp: '2026-10-26 17:43:10'
+    timestamp: '2026-10-27 14:20:16'
   post_grasp:
     joints_deg:
     - 42.9
@@ -75,4 +75,3 @@ named_poses:
     - -96.89
     gripper_mm: 50.0
     timestamp: '2026-10-27 14:00:00'
-

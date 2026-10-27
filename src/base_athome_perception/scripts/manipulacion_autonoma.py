@@ -57,8 +57,8 @@ from base_athome_perception.piper_kinematics import (
 
 CONFIG_FILE_PATH = "/home/athome/base_athome_ws/src/base_athome_perception/config/arm_poses_and_limits.yaml"
 
-# Posición del hombro respecto a base_link en el URDF (retrasado 15 cm hacia atrás, Z=1.275m en fin de carrera superior)
-SHOULDER_IN_BASE_LINK_M = np.array([0.005, 0.175, 1.275], dtype=float)
+# Posición del hombro respecto a base_link en el URDF (retrasado 15 cm hacia atrás, Z=1.065m en fin de carrera superior)
+SHOULDER_IN_BASE_LINK_M = np.array([0.005, 0.175, 1.065], dtype=float)
 
 # Parámetros físicos del Gripper Piper
 GRIPPER_MAX_OPEN_MM = 105.0
@@ -633,6 +633,13 @@ class ManipulacionAutonomaNode(Node):
                         left = np.array([-fwd[1], fwd[0], 0.0], dtype=float)
                         obj_m = (np.asarray(tcp_mm, dtype=float) / 1000.0) \
                             + self.dist_fwd_remaining_m * fwd + self.lateral_err_m * left
+
+                        # Anclar la altura Z del objeto a la mesa física (76 cm + 10.5 cm mitad de lata = 86.5 cm desde el piso)
+                        # En frame hombro (Z hombro = 1.065 m), Z_obj = 0.865 - 1.065 = -0.200 m
+                        TABLE_HEIGHT_M = 0.76
+                        CAN_HEIGHT_M = 0.21
+                        obj_m[2] = (TABLE_HEIGHT_M + CAN_HEIGHT_M / 2.0) - SHOULDER_IN_BASE_LINK_M[2]
+
                         self.target_3d_arm = (float(obj_m[0]), float(obj_m[1]), float(obj_m[2]))
                         self.is_in_reach, _ = is_in_safe_cartesian_box(*self.target_3d_arm)
                     except Exception as e:
@@ -651,7 +658,7 @@ class ManipulacionAutonomaNode(Node):
         stamp = self.get_clock().now().to_msg()
 
         if self.target_3d_arm is None:
-            for mid in (0, 1, 2):
+            for mid in (0, 1, 2, 3):
                 m = Marker()
                 m.header.frame_id = "base_link"
                 m.header.stamp = stamp
@@ -662,7 +669,17 @@ class ManipulacionAutonomaNode(Node):
             self.pub_rviz_markers.publish(ma)
             return
 
-        obj_base = SHOULDER_IN_BASE_LINK_M + np.array(self.target_3d_arm, dtype=float)
+        TABLE_HEIGHT_M = 0.76
+        CAN_HEIGHT_M = 0.21
+        CAN_CENTER_Z_M = TABLE_HEIGHT_M + CAN_HEIGHT_M / 2.0  # 0.865 m
+
+        # Posición del centro de la lata en base_link (apoyada sobre la mesa física a 76 cm)
+        obj_base = np.array([
+            SHOULDER_IN_BASE_LINK_M[0] + float(self.target_3d_arm[0]),
+            SHOULDER_IN_BASE_LINK_M[1] + float(self.target_3d_arm[1]),
+            CAN_CENTER_Z_M
+        ], dtype=float)
+
         try:
             tcp_mm, _ = self.kinematics_solver.forward_kinematics(
                 np.array([math.radians(d) for d in self.arm_joints_deg[:6]], dtype=float)
@@ -674,6 +691,7 @@ class ManipulacionAutonomaNode(Node):
         life = Duration(sec=0, nanosec=500_000_000)
         col = ColorRGBA(r=0.10, g=0.95, b=0.30, a=0.90) if self.is_in_reach else ColorRGBA(r=1.0, g=0.25, b=0.15, a=0.90)
 
+        # 0. Cilindro Pringles (base a 0.76m, centro a 0.865m, altura 0.21m)
         cyl = Marker()
         cyl.header.frame_id = "base_link"
         cyl.header.stamp = stamp
@@ -684,11 +702,12 @@ class ManipulacionAutonomaNode(Node):
         cyl.pose.position.x, cyl.pose.position.y, cyl.pose.position.z = map(float, obj_base)
         cyl.pose.orientation.w = 1.0
         cyl.scale.x = cyl.scale.y = OBJECT_DIAMETER_M
-        cyl.scale.z = 0.21
+        cyl.scale.z = CAN_HEIGHT_M
         cyl.color = col
         cyl.lifetime = life
         ma.markers.append(cyl)
 
+        # 1. Flecha TCP -> Lata
         arr = Marker()
         arr.header.frame_id = "base_link"
         arr.header.stamp = stamp
@@ -705,6 +724,7 @@ class ManipulacionAutonomaNode(Node):
         arr.lifetime = life
         ma.markers.append(arr)
 
+        # 2. Texto con métricas encima de la lata
         txt = Marker()
         txt.header.frame_id = "base_link"
         txt.header.stamp = stamp
@@ -714,7 +734,7 @@ class ManipulacionAutonomaNode(Node):
         txt.action = Marker.ADD
         txt.pose.position.x = float(obj_base[0])
         txt.pose.position.y = float(obj_base[1])
-        txt.pose.position.z = float(obj_base[2] + 0.16)
+        txt.pose.position.z = float(obj_base[2] + CAN_HEIGHT_M / 2.0 + 0.06)
         txt.pose.orientation.w = 1.0
         txt.scale.z = 0.045
         txt.color = ColorRGBA(r=1.0, g=1.0, b=1.0, a=1.0)
@@ -723,6 +743,25 @@ class ManipulacionAutonomaNode(Node):
         txt.text = f"{label} | Faltan {self.dist_fwd_remaining_m*100:.1f} cm | dY {self.lateral_err_m*100:+.1f} cm{alcance}"
         txt.lifetime = life
         ma.markers.append(txt)
+
+        # 3. Mesa física de soporte (tablero de 60x60 cm a 0.76m de altura)
+        tbl = Marker()
+        tbl.header.frame_id = "base_link"
+        tbl.header.stamp = stamp
+        tbl.ns = "arm_target"
+        tbl.id = 3
+        tbl.type = Marker.CUBE
+        tbl.action = Marker.ADD
+        tbl.pose.position.x = float(obj_base[0])
+        tbl.pose.position.y = float(obj_base[1])
+        tbl.pose.position.z = float(TABLE_HEIGHT_M - 0.015)
+        tbl.pose.orientation.w = 1.0
+        tbl.scale.x = 0.60
+        tbl.scale.y = 0.60
+        tbl.scale.z = 0.03
+        tbl.color = ColorRGBA(r=0.55, g=0.35, b=0.20, a=0.50)
+        tbl.lifetime = life
+        ma.markers.append(tbl)
 
         self.pub_rviz_markers.publish(ma)
 
