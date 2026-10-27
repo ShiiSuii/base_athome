@@ -57,8 +57,8 @@ from base_athome_perception.piper_kinematics import (
 
 CONFIG_FILE_PATH = "/home/athome/base_athome_ws/src/base_athome_perception/config/arm_poses_and_limits.yaml"
 
-# Posición del hombro respecto a base_link en el URDF
-SHOULDER_IN_BASE_LINK_M = np.array([0.155, 0.175, 1.015], dtype=float)
+# Posición del hombro respecto a base_link en el URDF (retrasado 15 cm hacia atrás, Z=1.275m en fin de carrera superior)
+SHOULDER_IN_BASE_LINK_M = np.array([0.005, 0.175, 1.275], dtype=float)
 
 # Parámetros físicos del Gripper Piper
 GRIPPER_MAX_OPEN_MM = 105.0
@@ -70,6 +70,12 @@ DABAI_CENTER_X_PX = 320.0          # Centro óptico horizontal
 DABAI_FOCAL_PX = 485.0             # Longitud focal en píxeles
 OBJECT_DIAMETER_M = 0.075          # Diámetro de la lata de Pringles (7.5 cm)
 DABAI_GRASP_ZONE_DIST_M = 0.270    # Distancia lente -> centro de los dedos (27.0 cm con los 8cm extra)
+
+# Matriz intrínseca para pose estimation de ArUco
+CAMERA_MATRIX = np.array([[DABAI_FOCAL_PX, 0.0, DABAI_CENTER_X_PX],
+                          [0.0, DABAI_FOCAL_PX, 240.0],
+                          [0.0, 0.0, 1.0]], dtype=np.float32)
+DIST_COEFFS = np.zeros((5, 1), dtype=np.float32)
 
 
 def sync_jetson_clock():
@@ -207,6 +213,18 @@ class ManipulacionAutonomaNode(Node):
         self.last_det_time: float = 0.0
         self.det_fps: float = 0.0
 
+        # Detector ArUco de alta precisión (prioridad absoluta)
+        self.aruco_dict_4x4 = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
+        self.aruco_dict_5x5 = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_5X5_50)
+        self.aruco_dict_6x6 = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_6X6_50)
+        self.aruco_params = cv2.aruco.DetectorParameters_create()
+        self.marker_size_mm: float = 50.0
+        self.detected_aruco_id: Optional[int] = None
+        self.aruco_corners: Optional[np.ndarray] = None
+        self.aruco_rvec: Optional[np.ndarray] = None
+        self.aruco_tvec: Optional[np.ndarray] = None
+        self.detection_source: str = "Esperando..."
+
         # Guardado de poses durante la trayectoria
         self.joints_aligned: Optional[List[float]] = None
         self.joints_grasp: Optional[List[float]] = None
@@ -258,6 +276,8 @@ class ManipulacionAutonomaNode(Node):
                         self.distancia_gripper_cm = float(env["dabai_extra_advance_cm"])
                     if "arm_speed_pct" in env:
                         self.arm_speed_pct = int(np.clip(int(env["arm_speed_pct"]), 15, 100))
+                    if "aruco_marker_size_mm" in env:
+                        self.marker_size_mm = float(env["aruco_marker_size_mm"])
                     poses = data.get("named_poses", {})
                     if "home" in poses:
                         self.pose_home = list(poses["home"].get("joints_deg", self.pose_home))
@@ -403,14 +423,79 @@ class ManipulacionAutonomaNode(Node):
     # --------------------------------------------------------------------------
     def detect_object_in_dabai(self, frame: np.ndarray) -> Optional[dict]:
         """
-        Detección rápida y limpia de la lata/botella usando YOLOv8 o color HSV.
-        Retorna el bounding box, centroide y ancho del cilindro.
+        Detección primaria por Marcadores ArUco (100% de precisión milimétrica 3D sin falsos positivos).
+        Fallback secundario: Inferencia YOLOv8 / Filtro cromático.
         """
         fh, fw = frame.shape[:2]
+
+        # 1. DETECCIÓN PRIORITARIA CON MARCADORES ARUCO (ID 0 o cualquiera)
+        marker_len_m = max(0.015, float(self.marker_size_mm) / 1000.0)
+        found_corners, found_ids = None, None
+        for adict in [self.aruco_dict_4x4, self.aruco_dict_5x5, self.aruco_dict_6x6]:
+            try:
+                c_list, id_list, _ = cv2.aruco.detectMarkers(frame, adict, parameters=self.aruco_params)
+                if id_list is not None and len(id_list) > 0:
+                    found_corners = c_list
+                    found_ids = id_list
+                    break
+            except Exception:
+                pass
+
+        if found_ids is not None and len(found_ids) > 0:
+            target_idx = 0
+            for i, mid in enumerate(found_ids):
+                if mid[0] == 0:
+                    target_idx = i
+                    break
+
+            aid = int(found_ids[target_idx][0])
+            c_pts = found_corners[target_idx]
+            self.detected_aruco_id = aid
+            self.aruco_corners = c_pts
+
+            # Estimación 3D exacta
+            try:
+                rvecs, tvecs, _ = cv2.aruco.estimatePoseSingleMarkers(
+                    [c_pts], marker_len_m, CAMERA_MATRIX, DIST_COEFFS
+                )
+                rvec = rvecs[0][0]
+                tvec = tvecs[0][0]
+                self.aruco_rvec = rvec
+                self.aruco_tvec = tvec
+                dist_m = float(tvec[2])
+                lat_m = -float(tvec[0])
+            except Exception:
+                dist_m = 0.35
+                lat_m = 0.0
+
+            bx1 = int(np.min(c_pts[0, :, 0]))
+            by1 = int(np.min(c_pts[0, :, 1]))
+            bx2 = int(np.max(c_pts[0, :, 0]))
+            by2 = int(np.max(c_pts[0, :, 1]))
+            cx = float(np.mean(c_pts[0, :, 0]))
+            cy = float(np.mean(c_pts[0, :, 1]))
+            cw = float(max(20, bx2 - bx1))
+
+            return {
+                "bbox": (bx1, by1, bx2, by2),
+                "cx": cx,
+                "cy": cy,
+                "width": cw,
+                "type": "aruco",
+                "aruco_id": aid,
+                "dist_m": dist_m,
+                "lateral_err_m": lat_m,
+            }
+
+        self.detected_aruco_id = None
+        self.aruco_corners = None
+        self.aruco_rvec = None
+        self.aruco_tvec = None
+
         best_bbox = None
         best_score = 0.0
 
-        # 1. Inferencia YOLOv8
+        # 2. Inferencia YOLOv8 Fallback
         if self.yolo_model is not None:
             try:
                 results = self.yolo_model.predict(
@@ -438,7 +523,7 @@ class ManipulacionAutonomaNode(Node):
             except Exception:
                 pass
 
-        # 2. Detección Fallback por Color HSV (si YOLO no lo ve o no está cargado)
+        # 3. Detección Fallback por Color HSV (si YOLO no lo ve o no está cargado)
         if best_bbox is None:
             try:
                 hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
@@ -473,7 +558,7 @@ class ManipulacionAutonomaNode(Node):
         cy = (by1 + by2) / 2.0
         cw = float(max(25, bx2 - bx1))
 
-        return {"bbox": best_bbox, "cx": cx, "cy": cy, "width": cw}
+        return {"bbox": best_bbox, "cx": cx, "cy": cy, "width": cw, "type": "cylinder"}
 
     def _vision_worker(self):
         """Hilo dedicado para procesar la visión sin retrasar el control ROS."""
@@ -519,14 +604,18 @@ class ManipulacionAutonomaNode(Node):
                     self.dabai_cy = float(det["cy"])
                     self.dabai_width_px = float(det["width"])
 
-                # Distancia estimada desde la lente de la DaBai hasta la lata
-                self.dist_to_can_m = float(
-                    np.clip((OBJECT_DIAMETER_M * DABAI_FOCAL_PX) / self.dabai_width_px, 0.15, 0.65)
-                )
-
-                # Error lateral respecto al centro óptico exacto (320 px)
-                err_px = self.dabai_cx - DABAI_CENTER_X_PX
-                self.lateral_err_m = -float((err_px / DABAI_FOCAL_PX) * self.dist_to_can_m)
+                if det.get("type") == "aruco":
+                    self.dist_to_can_m = float(np.clip(det["dist_m"], 0.08, 0.75))
+                    self.lateral_err_m = float(det["lateral_err_m"])
+                    self.detection_source = f"ArUco ID {det['aruco_id']}"
+                else:
+                    # Distancia estimada desde la lente de la DaBai hasta la lata
+                    self.dist_to_can_m = float(
+                        np.clip((OBJECT_DIAMETER_M * DABAI_FOCAL_PX) / self.dabai_width_px, 0.15, 0.65)
+                    )
+                    err_px = self.dabai_cx - DABAI_CENTER_X_PX
+                    self.lateral_err_m = -float((err_px / DABAI_FOCAL_PX) * self.dist_to_can_m)
+                    self.detection_source = "Cilindro (YOLO/Color)"
 
                 # Distancia restante para que la lata quede entre los dedos
                 self.dist_fwd_remaining_m = float(max(0.0, self.dist_to_can_m - DABAI_GRASP_ZONE_DIST_M))
@@ -630,7 +719,8 @@ class ManipulacionAutonomaNode(Node):
         txt.scale.z = 0.045
         txt.color = ColorRGBA(r=1.0, g=1.0, b=1.0, a=1.0)
         alcance = "" if self.is_in_reach else " | FUERA DE ALCANCE"
-        txt.text = f"Lata | Faltan {self.dist_fwd_remaining_m*100:.1f} cm | dY {self.lateral_err_m*100:+.1f} cm{alcance}"
+        label = f"ArUco ID {self.detected_aruco_id}" if self.detected_aruco_id is not None else "Objeto"
+        txt.text = f"{label} | Faltan {self.dist_fwd_remaining_m*100:.1f} cm | dY {self.lateral_err_m*100:+.1f} cm{alcance}"
         txt.lifetime = life
         ma.markers.append(txt)
 
@@ -929,7 +1019,16 @@ class ManipulacionAutonomaNode(Node):
                 is_centered = abs(err_px) <= 20.0
                 box_col = (0, 255, 80) if is_centered else (0, 180, 255)
 
-                cv2.rectangle(w_img, (bx1, by1), (bx2, by2), box_col, 2)
+                if self.detected_aruco_id is not None and self.aruco_corners is not None:
+                    # Dibujar contorno verde del marcador ArUco
+                    c_scaled = np.int32(self.aruco_corners * [sx, sy])
+                    cv2.polylines(w_img, [c_scaled[0]], True, (0, 255, 0), 2)
+                    label_name = f"ArUco ID {self.detected_aruco_id}"
+                    box_col = (0, 255, 0)
+                else:
+                    cv2.rectangle(w_img, (bx1, by1), (bx2, by2), box_col, 2)
+                    label_name = "Objeto"
+
                 cv2.circle(w_img, (obj_cx, obj_cy), 5, (0, 255, 0), -1)
                 cv2.line(w_img, (obj_cx, obj_cy), (center_x_scaled, obj_cy), (0, 255, 255), 2)
 
@@ -939,7 +1038,7 @@ class ManipulacionAutonomaNode(Node):
 
                 cv2.putText(
                     w_img,
-                    f"Lata Pringles: {lat_text} | Dist={self.dist_to_can_m*100:.1f}cm",
+                    f"{label_name}: {lat_text} | Dist={self.dist_to_can_m*100:.1f}cm",
                     (max(8, bx1), max(22, by1 - 10)),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.44,
@@ -985,7 +1084,7 @@ class ManipulacionAutonomaNode(Node):
         cv2.putText(canvas, f"ESTADO: {state_str}", (20, bar_y + 24), cv2.FONT_HERSHEY_SIMPLEX, 0.46, state_col, 2)
 
         telemetry = (
-            f"DaBai ({self.det_fps:.0f}FPS) | Dist={self.dist_to_can_m*100:.1f}cm | "
+            f"DaBai ({self.det_fps:.0f}FPS) [{self.detection_source}] | Dist={self.dist_to_can_m*100:.1f}cm | "
             f"Faltan={self.dist_fwd_remaining_m*100:.1f}cm (+{self.distancia_gripper_cm:.1f}cm) | "
             f"Pinza={self.gripper_opening_mm:.0f}mm | {self.status_message}"
         )

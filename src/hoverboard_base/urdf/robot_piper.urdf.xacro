@@ -22,10 +22,10 @@
   <xacro:property name="laser_offset_y" value="0.00"/>
   <xacro:property name="laser_offset_z" value="0.18"/>
 
-  <!-- Sistema de Elevación Torso / Columna (Exactamente en el medio de la base, 1.0 m altura) -->
+  <!-- Sistema de Elevación Torso / Columna (Exactamente en el medio de la base, 1.30 m altura) -->
   <xacro:property name="column_x"               value="0.0"/>
   <xacro:property name="column_y"               value="0.0"/>
-  <xacro:property name="column_height"          value="1.0"/>
+  <xacro:property name="column_height"          value="1.30"/>
   <xacro:property name="column_width"           value="0.06"/>
   <xacro:property name="column_collision_width" value="0.08"/>
 
@@ -33,6 +33,14 @@
   <xacro:property name="carriage_length"        value="0.22"/>
   <xacro:property name="carriage_width"         value="0.38"/>
   <xacro:property name="carriage_height"        value="0.02"/>
+
+  <!-- Parámetros del Eje Z (Motor NEMA 23 y fines de carrera) -->
+  <!-- Fin de carrera superior: cara inferior del cubo a exactamente 1.00 m del piso -->
+  <!-- Fin de carrera inferior: cara inferior del cubo a exactamente 0.40 m del piso (carrera de trabajo: 0.60 m) -->
+  <!-- Carrera mecánica máxima hasta el piso: ~0.75 m -->
+  <xacro:property name="torso_lift_top_z"       value="1.26"/>
+  <xacro:property name="torso_switch_stroke"    value="0.60"/>
+  <xacro:property name="torso_floor_stroke"     value="0.75"/>
 
   <!-- Prisma Estructural del Torso de Subir y Bajar (35 cm ancho x 25 cm profundidad x 35 cm alto) -->
   <xacro:property name="prism_size_x"           value="0.25"/> <!-- 25 cm hacia adelante desde la pared frontal del elevador -->
@@ -253,10 +261,17 @@
     </inertial>
   </link>
 
-  <joint name="torso_lift_joint" type="fixed">
+  <!-- Articulación prismática de elevación del torso controlada por NEMA 23 -->
+  <!-- Posición 0.0 m = Fin de carrera superior (cara inferior del cubo a exactamente 1.00 m del piso) -->
+  <!-- Posición -0.60 m = Fin de carrera inferior (cara inferior del cubo a exactamente 0.40 m del piso) -->
+  <!-- Posición -0.75 m = Descenso máximo hacia el piso (~75 cm) para manipular objetos en el suelo -->
+  <joint name="torso_lift_joint" type="prismatic">
     <parent link="torso_column"/>
     <child link="torso_lift_link"/>
-    <origin xyz="0 0 ${column_height}" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <origin xyz="0 0 ${torso_lift_top_z}" rpy="0 0 0"/>
+    <limit lower="-${torso_floor_stroke}" upper="0.0" effort="500.0" velocity="0.10"/>
+    <dynamics damping="10.0" friction="5.0"/>
   </joint>
 
   <!-- ==================== PRISMA ESTRUCTURAL DEL TORSO (SUBIR Y BAJAR) ==================== -->
@@ -475,11 +490,11 @@
     </collision>
   </link>
 
-  <!-- Montaje sobre el lado lateral izquierdo del prisma del torso, como un brazo humano en el hombro -->
+  <!-- Montaje sobre el lado lateral izquierdo del prisma del torso, retrasado 15 cm hacia atrás -->
   <joint name="cube_to_arm_joint" type="fixed">
     <parent link="mounting_cube_link"/>
     <child link="arm_base_link"/>
-    <origin xyz="0.0 ${prism_size_y / 2.0} 0.10" rpy="-1.5707963 0 0"/>
+    <origin xyz="-0.15 ${prism_size_y / 2.0} 0.10" rpy="-1.5707963 0 0"/>
   </joint>
 
   <!-- Link 1 (Joint 1 - Rotación en Z) -->
