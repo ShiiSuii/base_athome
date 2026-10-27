@@ -783,8 +783,8 @@
   <joint name="arm_camera_mount_joint" type="fixed">
     <parent link="gripper_base"/>
     <child link="arm_camera_link"/>
-    <!-- Camara del brazo centrada (0.0 m en eje Y) respecto al centro de la pinza -->
-    <origin xyz="0.025 0.0 0.08" rpy="0 0 0"/>
+    <!-- Camara del brazo montada 8cm hacia atras y perfectamente centrada (y=0.0) -->
+    <origin xyz="0.025 0.0 0.00" rpy="0 0 0"/>
   </joint>
 
   <!-- Marco Óptico Orbbec DaBai (Estándar ROS: Z adelante, X derecha, Y abajo) -->
