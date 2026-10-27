@@ -1344,7 +1344,7 @@ class ManipulacionAutonomaNode(Node):
         print("   * [3] o [p]       : Ir a PRE-GRASP con GRIPPER AL MAXIMO (105 mm)      ")
         print("   * [ESPACIO] o [G] : Agarrar guiado por la camara Orbbec DaBai          ")
         print(f"   * Avance_Extra_mm : +{self.extra_advance_cm:.1f} cm ({self.extra_advance_cm*10:.0f} mm) [Slider o teclas + / -]")
-        print(f"   * Offset_dLeft_mm : {self.lateral_offset_mm:+.0f} mm (corrige +3cm sensor RGB) [Slider o teclas [ / ]]")
+        print(f"   * Offset_Lateral_mm: {self.lateral_offset_mm:+.0f} mm ({'Izq' if self.lateral_offset_mm >= 0 else 'Der'}, -80 a +80mm) [Slider o teclas [ / ]]")
         print(f"   * Zona_Centro_px  : +-{self.center_zone_px:.0f} px (ancho corredor central) [Slider o teclas , / .]")
         print(f"   * Velocidad_%     : {self.arm_speed_pct}% (velocidad suave del brazo) [Slider o teclas 9 / 0]")
         print("   * [K]             : Guardar TODOS los parametros en YAML               ")
@@ -1381,14 +1381,16 @@ class ManipulacionAutonomaNode(Node):
                 self.status_message = f"Avance Extra = +{self.extra_advance_cm:.1f} cm ({self.extra_advance_cm*10:.0f} mm) | [K] Guardar"
 
             elif key == ord("["):
-                self.lateral_offset_mm = max(-60.0, round(self.lateral_offset_mm - 2.0, 1))
-                cv2.setTrackbarPos("Offset_dLeft_mm", window_name, int(round(self.lateral_offset_mm + 60)))
-                self.status_message = f"Offset dLeft = {self.lateral_offset_mm:+.1f} mm | [K] Guardar"
+                self.lateral_offset_mm = max(-80.0, round(self.lateral_offset_mm - 2.0, 1))
+                cv2.setTrackbarPos("Offset_Lateral_mm", window_name, int(round(self.lateral_offset_mm + 80)))
+                side_str = "Izq" if self.lateral_offset_mm >= 0 else "Der"
+                self.status_message = f"Offset Lateral = {self.lateral_offset_mm:+.1f} mm ({side_str}) | [K] Guardar"
 
             elif key == ord("]"):
-                self.lateral_offset_mm = min(60.0, round(self.lateral_offset_mm + 2.0, 1))
-                cv2.setTrackbarPos("Offset_dLeft_mm", window_name, int(round(self.lateral_offset_mm + 60)))
-                self.status_message = f"Offset dLeft = {self.lateral_offset_mm:+.1f} mm | [K] Guardar"
+                self.lateral_offset_mm = min(80.0, round(self.lateral_offset_mm + 2.0, 1))
+                cv2.setTrackbarPos("Offset_Lateral_mm", window_name, int(round(self.lateral_offset_mm + 80)))
+                side_str = "Izq" if self.lateral_offset_mm >= 0 else "Der"
+                self.status_message = f"Offset Lateral = {self.lateral_offset_mm:+.1f} mm ({side_str}) | [K] Guardar"
 
             elif key in [ord(","), ord("<")]:
                 self.center_zone_px = max(15.0, round(self.center_zone_px - 5.0))
