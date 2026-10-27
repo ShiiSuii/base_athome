@@ -92,6 +92,7 @@ class ManipulacionAutonomaNode(Node):
     FASE_MANUAL = 1
     FASE_HOME = 2
     FASE_PREGRASP = 3
+    FASE_POSTGRASP = 4
 
     # Estados de la Máquina de Agarre Autónomo
     AUTO_IDLE = 10
@@ -99,20 +100,21 @@ class ManipulacionAutonomaNode(Node):
     AUTO_PASO_2_ALINEAR_LATERAL = 12     # Centrar la lata en el eje X de la cámara
     AUTO_PASO_3_AVANZAR_RECTO = 13       # Avance lineal recto hacia adelante
     AUTO_PASO_4_CERRAR_PINZA = 14        # Cerrar pinza y despegar de la mesa
-    AUTO_PASO_5_RETRAER_PREGRASP = 15    # Retroceso en línea recta a Pre-Grasp
+    AUTO_PASO_5_RETRAER_PREGRASP = 15    # Retroceso en línea recta a Post-Grasp
     AUTO_SUCCESS = 16
 
     FASE_NAMES = {
         FASE_MANUAL: "MODO MANUAL / MONITOREO",
         FASE_HOME: "POSICION HOME",
         FASE_PREGRASP: "PRE-GRASP (CAMARA DABAI LISTA)",
+        FASE_POSTGRASP: "POST-GRASP (OBJETO SOSTENIDO)",
         AUTO_IDLE: "LISTO: PRESIONE [ESPACIO] O [G] PARA AGARRAR",
         AUTO_PASO_1_MOVER_PREGRASP: "PASO 1: YENDO A PRE-GRASP (PINZA 105 MM)",
         AUTO_PASO_2_ALINEAR_LATERAL: "PASO 2: ALINEANDO PINZA CON EL CENTRO DEL OBJETO",
         AUTO_PASO_3_AVANZAR_RECTO: "PASO 3: AVANZANDO EN LINEA RECTA AL OBJETO",
         AUTO_PASO_4_CERRAR_PINZA: "PASO 4: CERRANDO PINZA Y DESPEGANDO DE LA MESA",
-        AUTO_PASO_5_RETRAER_PREGRASP: "PASO 5: RETROCEDIENDO A PRE-GRASP CON EL OBJETO",
-        AUTO_SUCCESS: "EXITO: OBJETO AGARRADO Y SOSTENIDO EN PRE-GRASP",
+        AUTO_PASO_5_RETRAER_PREGRASP: "PASO 5: RETROCEDIENDO A POST-GRASP CON EL OBJETO",
+        AUTO_SUCCESS: "EXITO: OBJETO AGARRADO Y SOSTENIDO EN POST-GRASP",
     }
 
     def __init__(self, dry_run: bool = False):
@@ -171,6 +173,10 @@ class ManipulacionAutonomaNode(Node):
         self.last_cmd_sent_time: float = 0.0
         self.current_move_duration_s: float = 0.0
         self.fresh_post_stop_dets: int = 0
+
+        # Modo de Enseñanza con la Mano
+        self.is_teaching_mode = False
+        self.teaching_target: Optional[str] = None
 
         # Solucionador cinemático oficial
         self.kinematics_solver = PiperKinematicsSolver()
@@ -239,6 +245,7 @@ class ManipulacionAutonomaNode(Node):
         """Carga la configuración y las poses desde el archivo YAML."""
         self.pose_home = [72.09, 176.5, -155.15, 102.62, -31.51, -99.91]
         self.pose_pre_grasp = [42.9, 180.83, -89.01, 60.57, -74.02, -96.89]
+        self.pose_post_grasp = list(self.pose_pre_grasp)
         self.distancia_gripper_cm: float = 5.0    # Ajuste de avance extra del gripper hacia el objeto
         self.arm_speed_pct: int = 40              # Velocidad suave del brazo (40%)
 
@@ -256,8 +263,11 @@ class ManipulacionAutonomaNode(Node):
                         self.pose_home = list(poses["home"].get("joints_deg", self.pose_home))
                     if "pre_grasp" in poses:
                         self.pose_pre_grasp = list(poses["pre_grasp"].get("joints_deg", self.pose_pre_grasp))
+                    if "post_grasp" in poses:
+                        self.pose_post_grasp = list(poses["post_grasp"].get("joints_deg", self.pose_post_grasp))
                 self.get_logger().info(
-                    f"Configuracion cargada: DistanciaGripper=+{self.distancia_gripper_cm:.1f}cm | Vel={self.arm_speed_pct}%"
+                    f"Configuracion cargada: PreGrasp={self.pose_pre_grasp} | PostGrasp={self.pose_post_grasp} | "
+                    f"DistanciaGripper=+{self.distancia_gripper_cm:.1f}cm | Vel={self.arm_speed_pct}%"
                 )
             except Exception as e:
                 self.get_logger().warn(f"Aviso leyendo YAML ({e}), usando valores predeterminados.")
@@ -279,6 +289,67 @@ class ManipulacionAutonomaNode(Node):
             self.status_message = f"GUARDADO EN YAML: Distancia Extra=+{self.distancia_gripper_cm:.1f}cm | Vel={self.arm_speed_pct}%"
         except Exception as e:
             self.get_logger().error(f"Error guardando en YAML: {e}")
+
+    def save_named_pose(self, pose_name: str, joints_deg: List[float], gripper_mm: float):
+        """Guarda la pose enseñada ('home', 'pre_grasp', 'post_grasp') en YAML."""
+        try:
+            data = {}
+            if os.path.exists(CONFIG_FILE_PATH):
+                with open(CONFIG_FILE_PATH, "r", encoding="utf-8") as f:
+                    data = yaml.safe_load(f) or {}
+
+            if "named_poses" not in data:
+                data["named_poses"] = {}
+
+            if pose_name == "pre_grasp":
+                saved_gripper_mm = GRIPPER_MAX_OPEN_MM
+            elif pose_name == "post_grasp":
+                saved_gripper_mm = min(float(gripper_mm), GRIPPER_CLOSE_GRASP_MM) if gripper_mm > 0 else GRIPPER_CLOSE_GRASP_MM
+            else:
+                saved_gripper_mm = float(gripper_mm)
+            data["named_poses"][pose_name] = {
+                "joints_deg": [round(float(v), 2) for v in joints_deg[:6]],
+                "gripper_mm": round(saved_gripper_mm, 1),
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            }
+
+            with open(CONFIG_FILE_PATH, "w", encoding="utf-8") as f:
+                yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+
+            self.get_logger().info(f"Pose '{pose_name}' guardada exitosamente en {CONFIG_FILE_PATH}")
+            self.say(f"Pose {pose_name} guardada exitosamente.")
+            self.status_message = f"POSE '{pose_name.upper()}' GUARDADA EN YAML: {[round(v, 1) for v in joints_deg[:6]]}"
+            self.load_configuration()
+        except Exception as e:
+            self.get_logger().error(f"Error guardando pose en YAML: {e}")
+
+    def toggle_teaching_pose(self, target_pose: str):
+        """
+        Activa/confirma el modo de enseñanza con la mano para una pose ('home', 'pre_grasp', 'post_grasp').
+        Al activar: desactiva el torque de los motores (/arm/enable -> False) para moverlo con la mano.
+        Al confirmar: lee las articulaciones actuales, las guarda en YAML y reactiva el torque.
+        """
+        if not self.is_teaching_mode:
+            self.is_teaching_mode = True
+            self.teaching_target = target_pose
+            self.set_arm_torque(False)
+            self.status_message = f"MODO ENSENANZA [{target_pose.upper()}]: Mueva el brazo con la mano y presione [ENTER] para guardar (o [ESC] cancelar)."
+            self.say(f"Teach mode for {target_pose} activated. Move the arm and press Enter to save.")
+        else:
+            save_target = self.teaching_target or target_pose
+            self.set_arm_torque(True)
+            self.is_teaching_mode = False
+            self.save_named_pose(save_target, self.arm_joints_deg, self.gripper_opening_mm)
+            self.teaching_target = None
+
+    def cancel_teaching_mode(self):
+        """Cancela el modo de enseñanza reactivando el torque sin guardar."""
+        if self.is_teaching_mode:
+            self.set_arm_torque(True)
+            self.is_teaching_mode = False
+            self.teaching_target = None
+            self.status_message = "Modo ensenanza cancelado. Motores reactivados."
+            self.say("Teach mode cancelled. Arm torque restored.")
 
     # --------------------------------------------------------------------------
     # CALLBACKS DE SENSORES
@@ -608,15 +679,30 @@ class ManipulacionAutonomaNode(Node):
         self.pub_joint_cmd.publish(js)
         return True
 
-    def mover_a_home(self):
+    def mover_a_home(self, keep_gripper: bool = False):
+        if self.is_teaching_mode:
+            self.cancel_teaching_mode()
         self.fase_actual = self.FASE_HOME
-        self.send_arm_joint_goal(self.pose_home, duration_s=2.5, gripper_mm=GRIPPER_MAX_OPEN_MM)
+        holding_object = self.gripper_opening_mm < 65.0
+        g_mm = self.gripper_opening_mm if (keep_gripper or holding_object) else GRIPPER_MAX_OPEN_MM
+        self.send_arm_joint_goal(self.pose_home, duration_s=2.5, gripper_mm=g_mm)
         self.say("Moving to Home position.")
 
-    def mover_a_pre_grasp(self):
+    def mover_a_pre_grasp(self, keep_gripper: bool = False):
+        if self.is_teaching_mode:
+            self.cancel_teaching_mode()
         self.fase_actual = self.FASE_PREGRASP
-        self.send_arm_joint_goal(self.pose_pre_grasp, duration_s=2.2, gripper_mm=GRIPPER_MAX_OPEN_MM)
+        g_mm = min(self.gripper_opening_mm, GRIPPER_CLOSE_GRASP_MM) if keep_gripper else GRIPPER_MAX_OPEN_MM
+        self.send_arm_joint_goal(self.pose_pre_grasp, duration_s=2.2, gripper_mm=g_mm)
         self.say("Moving to Pre-grasp with gripper fully open.")
+
+    def mover_a_post_grasp(self, keep_gripper: bool = True):
+        if self.is_teaching_mode:
+            self.cancel_teaching_mode()
+        self.fase_actual = self.FASE_POSTGRASP
+        g_mm = self.gripper_opening_mm if keep_gripper else GRIPPER_MAX_OPEN_MM
+        self.send_arm_joint_goal(self.pose_post_grasp, duration_s=2.2, gripper_mm=g_mm)
+        self.say("Moving to Post-grasp position.")
 
     def set_arm_torque(self, enable: bool):
         msg = Bool()
@@ -756,20 +842,20 @@ class ManipulacionAutonomaNode(Node):
 
                 self.auto_state = self.AUTO_PASO_5_RETRAER_PREGRASP
                 self.step_start_time = now
-                self.say("Object grasped. Retracting back to pre-grasp.")
+                self.say("Object grasped. Retracting back to post-grasp.")
 
-        # PASO 5: RETROCESO EN LÍNEA RECTA A PRE-GRASP
+        # PASO 5: RETROCESO EN LÍNEA RECTA A POST-GRASP
         elif self.auto_state == self.AUTO_PASO_5_RETRAER_PREGRASP:
             if self.is_arm_settling(now):
-                self.status_message = "PASO 5: Despegando y retrayendo..."
+                self.status_message = "PASO 5: Despegando y retrayendo a Post-Grasp..."
                 return
 
             if now - self.step_start_time > 1.2:
-                # Volver suavemente a la pose Pre-Grasp sosteniendo la lata
-                self.send_arm_joint_goal(self.pose_pre_grasp, duration_s=1.8, gripper_mm=GRIPPER_CLOSE_GRASP_MM)
+                # Volver suavemente a la pose Post-Grasp sosteniendo la lata
+                self.send_arm_joint_goal(self.pose_post_grasp, duration_s=1.8, gripper_mm=GRIPPER_CLOSE_GRASP_MM)
                 self.auto_state = self.AUTO_SUCCESS
                 self.step_start_time = now
-                self.say("Grasp complete! Object safely held.")
+                self.say("Grasp complete! Object safely held in post-grasp.")
 
         elif self.auto_state == self.AUTO_SUCCESS:
             if now - self.step_start_time > 3.0:
@@ -779,13 +865,20 @@ class ManipulacionAutonomaNode(Node):
     # RENDERIZADO VISUAL DEL HUD
     # --------------------------------------------------------------------------
     def draw_hud(self) -> np.ndarray:
-        canvas_w, canvas_h = 1280, 600
+        canvas_w, canvas_h = 1280, 620
         canvas = np.zeros((canvas_h, canvas_w, 3), dtype=np.uint8)
         feed_w, feed_h = 620, 420
 
         with self.frame_lock:
             h_raw = self.head_color_frame.copy() if self.head_color_frame is not None else None
             w_raw = self.wrist_color_frame.copy() if self.wrist_color_frame is not None else None
+
+        # Banner de Modo Enseñanza en la parte superior
+        if self.is_teaching_mode:
+            target_str = (self.teaching_target or "POSE").upper()
+            cv2.rectangle(canvas, (0, 0), (canvas_w, 36), (0, 140, 255), -1)
+            banner_txt = f"*** MODO ENSENANZA [{target_str}] *** Mueva con la mano | [ENTER] Guardar en YAML | [ESC] Cancelar"
+            cv2.putText(canvas, banner_txt, (20, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (0, 0, 0), 2)
 
         # PANEL IZQUIERDO: Cámara Principal (RealSense D435)
         if h_raw is not None:
@@ -885,24 +978,31 @@ class ManipulacionAutonomaNode(Node):
 
         state_key = self.auto_state if self.auto_state != self.AUTO_IDLE else self.fase_actual
         state_str = self.FASE_NAMES.get(state_key, "LISTO")
-        cv2.putText(canvas, f"ESTADO: {state_str}", (20, bar_y + 26), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 255, 255), 2)
+        state_col = (0, 255, 255)
+        if self.is_teaching_mode:
+            state_str = f"ENSENANZA [{self.teaching_target.upper() if self.teaching_target else ''}]: Mueva brazo con la mano | [ENTER] Guardar en YAML | [ESC] Cancelar"
+            state_col = (0, 165, 255)
+        cv2.putText(canvas, f"ESTADO: {state_str}", (20, bar_y + 24), cv2.FONT_HERSHEY_SIMPLEX, 0.46, state_col, 2)
 
         telemetry = (
-            f"DaBai ({self.det_fps:.0f}FPS) | Distancia={self.dist_to_can_m*100:.1f}cm | "
+            f"DaBai ({self.det_fps:.0f}FPS) | Dist={self.dist_to_can_m*100:.1f}cm | "
             f"Faltan={self.dist_fwd_remaining_m*100:.1f}cm (+{self.distancia_gripper_cm:.1f}cm) | "
             f"Pinza={self.gripper_opening_mm:.0f}mm | {self.status_message}"
         )
-        cv2.putText(canvas, telemetry, (20, bar_y + 56), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (200, 220, 240), 1)
+        cv2.putText(canvas, telemetry, (20, bar_y + 48), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (200, 220, 240), 1)
 
         shortcuts1 = (
-            f"[ESPACIO]/[G] AGARRAR | [3] Pre-Grasp (105 mm) | [2] Home | [O] Abrir Pinza | [C] Cerrar Pinza | [K] GUARDAR"
+            "[ESPACIO]/[G] AGARRAR | [2]/[h] Home | [3]/[p] Pre-Grasp (105mm) | [4]/[b] Post-Grasp | [O] Abrir | [C] Cerrar"
         )
         shortcuts2 = (
-            f"AJUSTES: Distancia Gripper: +{self.distancia_gripper_cm:.1f}cm (Teclas + / -) | "
-            f"Velocidad: {self.arm_speed_pct}% (Teclas 9 / 0) | [Q] Salir"
+            "ENSENANZA CON LA MANO: [H] Ensenar Home | [P] Ensenar Pre-Grasp | [B] Ensenar Post-Grasp | [ENTER] Guardar | [ESC] Cancelar"
         )
-        cv2.putText(canvas, shortcuts1, (20, bar_y + 86), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (80, 255, 140), 1)
-        cv2.putText(canvas, shortcuts2, (20, bar_y + 112), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 230, 255), 1)
+        shortcuts3 = (
+            f"AJUSTES: Distancia Gripper: +{self.distancia_gripper_cm:.1f}cm (+ / -) | Velocidad: {self.arm_speed_pct}% (9 / 0) | [K] Guardar YAML | [Q] Salir"
+        )
+        cv2.putText(canvas, shortcuts1, (20, bar_y + 72), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (80, 255, 140), 1)
+        cv2.putText(canvas, shortcuts2, (20, bar_y + 96), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 180, 255), 1)
+        cv2.putText(canvas, shortcuts3, (20, bar_y + 120), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 230, 255), 1)
 
         return canvas
 
@@ -942,13 +1042,23 @@ class ManipulacionAutonomaNode(Node):
         print("==========================================================================")
         print("   ROBOT @HOME - MANIPULACION AUTONOMA SIMPLIFICADA (CAMARA 8CM ATRAS)    ")
         print("--------------------------------------------------------------------------")
-        print("   * [3] o [p]       : Ir a PRE-GRASP con pinza abierta al maximo (105 mm)")
+        print("   MOVIMIENTOS:")
+        print("   * [2] o [h]       : Ir a posicion HOME                                 ")
+        print("   * [3] o [p]       : Ir a PRE-GRASP con pinza abierta (105 mm)          ")
+        print("   * [4] o [b]       : Ir a POST-GRASP con pinza sosteniendo el objeto    ")
         print("   * [ESPACIO] o [G] : Agarre autonomo en linea recta hacia la lata       ")
+        print("--------------------------------------------------------------------------")
+        print("   MODO ENSENANZA CON LA MANO (Desactiva torque para mover con la mano):  ")
+        print("   * [H] (Shift+H)   : Enseñar posicion HOME                              ")
+        print("   * [P] (Shift+P)   : Enseñar posicion PRE-GRASP                         ")
+        print("   * [B] (Shift+B)   : Enseñar posicion POST-GRASP                        ")
+        print("   * [ENTER]         : Guardar posicion ensenada en YAML y activar torque ")
+        print("   * [ESC]           : Cancelar modo ensenanza y reactivar torque         ")
+        print("--------------------------------------------------------------------------")
         print(f"   * Distancia_Extra : +{self.distancia_gripper_cm:.1f} cm [Slider o teclas + / -]    ")
         print(f"   * Velocidad_%     : {self.arm_speed_pct}% [Slider o teclas 9 / 0]                 ")
         print("   * [O] / [C]       : Abrir (105 mm) / Cerrar (50 mm) pinza              ")
-        print("   * [K]             : Guardar configuracion en archivo YAML              ")
-        print("   * [2] o [h]       : Ir a posicion HOME                                 ")
+        print("   * [K]             : Guardar parametros en archivo YAML                 ")
         print("   * [Q]             : Salir                                              ")
         print("==========================================================================")
 
@@ -963,9 +1073,22 @@ class ManipulacionAutonomaNode(Node):
             cv2.imshow(window_name, canvas)
 
             key = cv2.waitKey(25) & 0xFF
-            if key in [ord("q"), ord("Q"), 27]:
+            if key in [ord("q"), ord("Q")]:
+                if self.is_teaching_mode:
+                    self.cancel_teaching_mode()
                 self._running = False
                 break
+
+            elif key == 27:  # ESC
+                if self.is_teaching_mode:
+                    self.cancel_teaching_mode()
+                else:
+                    self._running = False
+                    break
+
+            elif key == 13:  # ENTER: Guardar pose que se esté enseñando
+                if self.is_teaching_mode:
+                    self.toggle_teaching_pose(self.teaching_target or "pre_grasp")
 
             elif key in [ord("+"), ord("=")]:
                 self.distancia_gripper_cm = min(15.0, round(self.distancia_gripper_cm + 0.5, 1))
@@ -990,13 +1113,37 @@ class ManipulacionAutonomaNode(Node):
             elif key in [ord("k"), ord("K")]:
                 self.save_configuration()
 
+            # Mover a posiciones guardadas
             elif key in [ord("2"), ord("h")]:
-                self.auto_state = self.AUTO_IDLE
-                self.mover_a_home()
+                if self.is_teaching_mode:
+                    self.toggle_teaching_pose("home")
+                else:
+                    self.auto_state = self.AUTO_IDLE
+                    self.mover_a_home()
 
             elif key in [ord("3"), ord("p")]:
-                self.auto_state = self.AUTO_IDLE
-                self.mover_a_pre_grasp()
+                if self.is_teaching_mode:
+                    self.toggle_teaching_pose("pre_grasp")
+                else:
+                    self.auto_state = self.AUTO_IDLE
+                    self.mover_a_pre_grasp()
+
+            elif key in [ord("4"), ord("b")]:
+                if self.is_teaching_mode:
+                    self.toggle_teaching_pose("post_grasp")
+                else:
+                    self.auto_state = self.AUTO_IDLE
+                    self.mover_a_post_grasp()
+
+            # Activar Modo Enseñanza con la mano (Shift o teclas dedicadas)
+            elif key == ord("H"):
+                self.toggle_teaching_pose("home")
+
+            elif key in [ord("P"), ord("E"), ord("e")]:
+                self.toggle_teaching_pose("pre_grasp")
+
+            elif key in [ord("B"), ord("Y"), ord("y")]:
+                self.toggle_teaching_pose("post_grasp")
 
             elif key in [ord("o"), ord("O")]:
                 g_msg = Float32()
@@ -1005,13 +1152,19 @@ class ManipulacionAutonomaNode(Node):
                 self.status_message = f"Pinza ABIERTA al maximo ({GRIPPER_MAX_OPEN_MM:.0f} mm)."
 
             elif key in [ord("c"), ord("C")]:
-                g_msg = Float32()
-                g_msg.data = float(GRIPPER_CLOSE_GRASP_MM)
-                self.pub_gripper_cmd.publish(g_msg)
-                self.status_message = f"Pinza CERRADA a {GRIPPER_CLOSE_GRASP_MM:.0f} mm."
+                if self.is_teaching_mode:
+                    self.cancel_teaching_mode()
+                else:
+                    g_msg = Float32()
+                    g_msg.data = float(GRIPPER_CLOSE_GRASP_MM)
+                    self.pub_gripper_cmd.publish(g_msg)
+                    self.status_message = f"Pinza CERRADA a {GRIPPER_CLOSE_GRASP_MM:.0f} mm."
 
             elif key in [ord(" "), ord("g"), ord("G")]:
-                self.start_autonomous_grasp()
+                if self.is_teaching_mode:
+                    self.toggle_teaching_pose(self.teaching_target or "pre_grasp")
+                else:
+                    self.start_autonomous_grasp()
 
         cv2.destroyAllWindows()
 

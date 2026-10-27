@@ -35,10 +35,15 @@ safety_envelope:
   wrist_camera_right_offset_m: 0.008
   grasp_forward_cm: 35.0
   grasp_height_offset_cm: 7.7
-  dabai_extra_advance_cm: 10.5
+  dabai_extra_advance_cm: 11.6
   dabai_center_zone_px: 80
   arm_speed_pct: 30
-  dabai_lateral_offset_mm: -30.0
+  dabai_lateral_offset_mm: 14.4
+  aruco_marker_size_mm: 30.0
+  aruco_target_grasp_cm:
+    x: -1.44
+    y: 0.34
+    z: 7.14
 named_poses:
   home:
     joints_deg:
@@ -60,3 +65,14 @@ named_poses:
     - -96.89
     gripper_mm: 105.0
     timestamp: '2026-10-26 17:43:10'
+  post_grasp:
+    joints_deg:
+    - 42.9
+    - 180.83
+    - -89.01
+    - 60.57
+    - -74.02
+    - -96.89
+    gripper_mm: 50.0
+    timestamp: '2026-10-27 14:00:00'
+
