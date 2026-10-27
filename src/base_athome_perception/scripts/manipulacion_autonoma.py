@@ -16,6 +16,7 @@
 # ==============================================================================
 
 import argparse
+import json
 import math
 import os
 import subprocess
@@ -188,6 +189,9 @@ class ManipulacionAutonomaNode(Node):
         self.step_start_time = time.time()
 
         self.target_2d_wrist: Optional[Tuple[int, int, int, int]] = None
+        self.target_3d_arm: Optional[Tuple[float, float, float]] = None  # Objeto en frame hombro (m)
+        self.is_in_reach: bool = True
+        self.last_marker_pub_time: float = 0.0
         self.dabai_cx: float = DABAI_CENTER_X_PX
         self.dabai_cy: float = 240.0
         self.dabai_width_px: float = 0.0
@@ -204,6 +208,7 @@ class ManipulacionAutonomaNode(Node):
         self.joints_retract: Optional[List[float]] = None
         self.total_forward_advanced_m: float = 0.0
         self.align_attempts: int = 0
+        self._gripper_close_time: Optional[float] = None
 
         self._window_name = "Robot @Home - Manipulacion Simplificada (Camara 8cm Atras)"
         self.status_message = f"Listo | Distancia Extra: +{self.distancia_gripper_cm:.1f}cm | [ESPACIO]/[G] Agarrar"
@@ -312,12 +317,12 @@ class ManipulacionAutonomaNode(Node):
         try:
             payload = json.loads(msg.data)
             self.arm_is_moving = bool(payload.get("is_moving", False))
-            self.gripper_opening_mm = float(payload.get("gripper_opening_mm", self.gripper_opening_mm))
-            joints = payload.get("joint_positions_deg", [])
+            self.gripper_opening_mm = float(payload.get("gripper_mm", self.gripper_opening_mm))
+            joints = payload.get("joints_deg", [])
             if len(joints) >= 6:
                 self.arm_joints_deg = [float(v) for v in joints[:6]]
-        except Exception:
-            pass
+        except Exception as e:
+            self.get_logger().warn(f"Error leyendo /arm/status: {e}", throttle_duration_sec=5.0)
 
     def pan_tilt_callback(self, msg: JointState):
         pass
@@ -407,6 +412,7 @@ class ManipulacionAutonomaNode(Node):
                 frame = self.wrist_color_frame.copy() if self.wrist_color_frame is not None else None
                 seq = self.wrist_frame_seq
                 frame_ts = self.wrist_frame_timestamp
+                joints_at_capture = list(self.arm_joints_deg[:6])
 
             if frame is None or seq == last_seq:
                 time.sleep(0.01)
@@ -453,10 +459,111 @@ class ManipulacionAutonomaNode(Node):
 
                 # Distancia restante para que la lata quede entre los dedos
                 self.dist_fwd_remaining_m = float(max(0.0, self.dist_to_can_m - DABAI_GRASP_ZONE_DIST_M))
+
+                # Posición 3D del objeto (frame hombro) para RViz: solo se recalcula con el brazo QUIETO,
+                # así la lata queda fija sobre la mesa en RViz mientras el brazo se mueve.
+                if (captured_after_stop and not settling) or self.target_3d_arm is None:
+                    try:
+                        q_rad = np.array([math.radians(d) for d in joints_at_capture[:6]], dtype=float)
+                        tcp_mm, R = self.kinematics_solver.forward_kinematics(q_rad)
+                        tool_z = R[:, 2]
+                        fwd = np.array([tool_z[0], tool_z[1], 0.0], dtype=float)
+                        n = float(np.linalg.norm(fwd))
+                        fwd = fwd / n if n > 1e-4 else np.array([1.0, 0.0, 0.0])
+                        left = np.array([-fwd[1], fwd[0], 0.0], dtype=float)
+                        obj_m = (np.asarray(tcp_mm, dtype=float) / 1000.0) \
+                            + self.dist_fwd_remaining_m * fwd + self.lateral_err_m * left
+                        self.target_3d_arm = (float(obj_m[0]), float(obj_m[1]), float(obj_m[2]))
+                        self.is_in_reach, _ = is_in_safe_cartesian_box(*self.target_3d_arm)
+                    except Exception as e:
+                        self.get_logger().warn(f"Error calculando posicion 3D: {e}", throttle_duration_sec=5.0)
             else:
                 if now - self.last_det_time > 1.5:
                     self.target_2d_wrist = None
                     self.dabai_width_px = 0.0
+                    self.target_3d_arm = None
+
+    # --------------------------------------------------------------------------
+    # MARCADORES 3D EN RVIZ (/arm_camera/object_markers, frame base_link)
+    # --------------------------------------------------------------------------
+    def publish_rviz_3d_markers(self):
+        ma = MarkerArray()
+        stamp = self.get_clock().now().to_msg()
+
+        if self.target_3d_arm is None:
+            for mid in (0, 1, 2):
+                m = Marker()
+                m.header.frame_id = "base_link"
+                m.header.stamp = stamp
+                m.ns = "arm_target"
+                m.id = mid
+                m.action = Marker.DELETE
+                ma.markers.append(m)
+            self.pub_rviz_markers.publish(ma)
+            return
+
+        obj_base = SHOULDER_IN_BASE_LINK_M + np.array(self.target_3d_arm, dtype=float)
+        try:
+            tcp_mm, _ = self.kinematics_solver.forward_kinematics(
+                np.array([math.radians(d) for d in self.arm_joints_deg[:6]], dtype=float)
+            )
+            tcp_base = SHOULDER_IN_BASE_LINK_M + np.asarray(tcp_mm, dtype=float) / 1000.0
+        except Exception:
+            tcp_base = obj_base
+
+        life = Duration(sec=0, nanosec=500_000_000)
+        col = ColorRGBA(r=0.10, g=0.95, b=0.30, a=0.90) if self.is_in_reach else ColorRGBA(r=1.0, g=0.25, b=0.15, a=0.90)
+
+        cyl = Marker()
+        cyl.header.frame_id = "base_link"
+        cyl.header.stamp = stamp
+        cyl.ns = "arm_target"
+        cyl.id = 0
+        cyl.type = Marker.CYLINDER
+        cyl.action = Marker.ADD
+        cyl.pose.position.x, cyl.pose.position.y, cyl.pose.position.z = map(float, obj_base)
+        cyl.pose.orientation.w = 1.0
+        cyl.scale.x = cyl.scale.y = OBJECT_DIAMETER_M
+        cyl.scale.z = 0.21
+        cyl.color = col
+        cyl.lifetime = life
+        ma.markers.append(cyl)
+
+        arr = Marker()
+        arr.header.frame_id = "base_link"
+        arr.header.stamp = stamp
+        arr.ns = "arm_target"
+        arr.id = 1
+        arr.type = Marker.ARROW
+        arr.action = Marker.ADD
+        arr.points = [
+            Point(x=float(tcp_base[0]), y=float(tcp_base[1]), z=float(tcp_base[2])),
+            Point(x=float(obj_base[0]), y=float(obj_base[1]), z=float(obj_base[2])),
+        ]
+        arr.scale.x, arr.scale.y, arr.scale.z = 0.012, 0.024, 0.030
+        arr.color = ColorRGBA(r=0.0, g=0.88, b=1.0, a=0.95)
+        arr.lifetime = life
+        ma.markers.append(arr)
+
+        txt = Marker()
+        txt.header.frame_id = "base_link"
+        txt.header.stamp = stamp
+        txt.ns = "arm_target"
+        txt.id = 2
+        txt.type = Marker.TEXT_VIEW_FACING
+        txt.action = Marker.ADD
+        txt.pose.position.x = float(obj_base[0])
+        txt.pose.position.y = float(obj_base[1])
+        txt.pose.position.z = float(obj_base[2] + 0.16)
+        txt.pose.orientation.w = 1.0
+        txt.scale.z = 0.045
+        txt.color = ColorRGBA(r=1.0, g=1.0, b=1.0, a=1.0)
+        alcance = "" if self.is_in_reach else " | FUERA DE ALCANCE"
+        txt.text = f"Lata | Faltan {self.dist_fwd_remaining_m*100:.1f} cm | dY {self.lateral_err_m*100:+.1f} cm{alcance}"
+        txt.lifetime = life
+        ma.markers.append(txt)
+
+        self.pub_rviz_markers.publish(ma)
 
     # --------------------------------------------------------------------------
     # COMANDOS DE MOVIMIENTO DEL BRAZO
@@ -611,6 +718,7 @@ class ManipulacionAutonomaNode(Node):
                 self.total_forward_advanced_m = fwd_clamped_m
                 self.auto_state = self.AUTO_PASO_4_CERRAR_PINZA
                 self.step_start_time = now
+                self._gripper_close_time = None
                 self.send_arm_joint_goal(j_fwd, duration_s=1.8, gripper_mm=GRIPPER_MAX_OPEN_MM)
                 self.status_message = f"PASO 3: Avanzando +{fwd_clamped_m*100:.1f}cm directo a la lata..."
             else:
@@ -623,17 +731,18 @@ class ManipulacionAutonomaNode(Node):
                 self.status_message = "PASO 4: Llegando a posicion de agarre..."
                 return
 
-            elapsed = now - self.step_start_time
-            if elapsed < 1.0:
-                # 1. Enviar comando de cierre de pinza a 50 mm
+            # 1. Brazo detenido en posición de agarre -> cerrar pinza UNA vez y empezar a contar
+            if self._gripper_close_time is None:
                 g_msg = Float32()
                 g_msg.data = float(GRIPPER_CLOSE_GRASP_MM)
-                self.pub_gripper_cmd.publish(g_msg)
+                if not self.dry_run:
+                    self.pub_gripper_cmd.publish(g_msg)
+                self._gripper_close_time = now
                 self.status_message = "PASO 4: Cerrando pinza sobre la lata..."
                 return
 
-            if elapsed >= 1.4:
-                # 2. Despegar la lata +3.0 cm de la mesa
+            # 2. Esperar 1.2 s a que la pinza cierre por completo antes de levantar
+            if now - self._gripper_close_time >= 1.2:
                 current_joints = list(self.arm_joints_deg[:6])
                 j_lift, ok_lift = self.kinematics_solver.move_tool_line(
                     current_joints,
@@ -731,7 +840,7 @@ class ManipulacionAutonomaNode(Node):
                 cv2.circle(w_img, (obj_cx, obj_cy), 5, (0, 255, 0), -1)
                 cv2.line(w_img, (obj_cx, obj_cy), (center_x_scaled, obj_cy), (0, 255, 255), 2)
 
-                lat_text = f"dLeft={-self.lateral_err_m*100:.1f}cm" if self.lateral_err_m < 0 else f"dRight={self.lateral_err_m*100:.1f}cm"
+                lat_text = f"dLeft={self.lateral_err_m*100:.1f}cm" if self.lateral_err_m >= 0 else f"dRight={-self.lateral_err_m*100:.1f}cm"
                 if is_centered:
                     lat_text = "CENTRADO OK"
 
@@ -845,6 +954,9 @@ class ManipulacionAutonomaNode(Node):
 
         while rclpy.ok():
             now = time.time()
+            if now - self.last_marker_pub_time >= 0.065:
+                self.last_marker_pub_time = now
+                self.publish_rviz_3d_markers()
             self.update_autonomous_state_machine(now)
 
             canvas = self.draw_hud()
