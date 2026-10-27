@@ -35,9 +35,9 @@ safety_envelope:
   wrist_camera_right_offset_m: 0.008
   grasp_forward_cm: 35.0
   grasp_height_offset_cm: 7.7
-  dabai_extra_advance_cm: 5.0
-  dabai_center_zone_px: 55
-  arm_speed_pct: 45
+  dabai_extra_advance_cm: 10.5
+  dabai_center_zone_px: 80
+  arm_speed_pct: 30
   dabai_lateral_offset_mm: -30.0
 named_poses:
   home:
