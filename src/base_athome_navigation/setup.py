@@ -26,6 +26,7 @@ setup(
     entry_points={
         'console_scripts': [
             'waypoint_navigator = base_athome_navigation.waypoint_navigator:main',
+            'map_zone_editor = base_athome_navigation.map_zone_editor:main',
         ],
     },
 )

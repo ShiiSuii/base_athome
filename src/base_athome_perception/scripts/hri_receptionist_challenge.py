@@ -396,22 +396,53 @@ class HriReceptionistChallengeNode(Node):
     # --------------------------------------------------------------------------
 
     def _load_waypoints(self) -> Dict[str, Dict]:
-        """Carga waypoints desde waypoints.yaml."""
+        """Carga waypoints, zonas y asientos desde semantic_map.yaml o waypoints.yaml."""
+        semantic_path = os.path.join(
+            self.pkg_dir, "..", "base_athome_navigation", "config", "semantic_map.yaml"
+        )
         wp_path = os.path.join(
             self.pkg_dir, "..", "base_athome_navigation", "config", "waypoints.yaml"
         )
         if not os.path.exists(wp_path):
             wp_path = os.path.expanduser("~/waypoints_base_athome.yaml")
 
-        if os.path.exists(wp_path):
+        self.zones = {}
+        self.seats = {}
+        waypoints = {}
+
+        if os.path.exists(semantic_path):
+            try:
+                with open(semantic_path, "r") as f:
+                    data = yaml.safe_load(f) or {}
+                    waypoints = data.get("waypoints", {})
+                    self.zones = data.get("zones", {})
+                    self.seats = data.get("seats", {})
+                    self.get_logger().info(
+                        f"Mapa Semántico cargado: {len(self.zones)} zonas, {len(waypoints)} waypoints, {len(self.seats)} asientos."
+                    )
+            except Exception as e:
+                self.get_logger().warn(f"Error cargando semantic_map.yaml: {e}")
+
+        if not waypoints and os.path.exists(wp_path):
             try:
                 with open(wp_path, "r") as f:
-                    data = yaml.safe_load(f)
+                    data = yaml.safe_load(f) or {}
                     if data and "waypoints" in data:
-                        return data["waypoints"]
+                        waypoints = data["waypoints"]
             except Exception as e:
                 self.get_logger().warn(f"Error cargando waypoints: {e}")
-        return {}
+
+        # Aliasing para máxima compatibilidad (A <-> door, B <-> living_room)
+        if "door" in waypoints and "A" not in waypoints:
+            waypoints["A"] = waypoints["door"]
+        if "A" in waypoints and "door" not in waypoints:
+            waypoints["door"] = waypoints["A"]
+        if "living_room" in waypoints and "B" not in waypoints:
+            waypoints["B"] = waypoints["living_room"]
+        if "B" in waypoints and "living_room" not in waypoints:
+            waypoints["living_room"] = waypoints["B"]
+
+        return waypoints
 
     def _ensure_host_registered(self) -> None:
         """Asegura que el perfil del anfitrión ('Charlie') exista en la memoria."""
@@ -859,10 +890,15 @@ class HriReceptionistChallengeNode(Node):
 
         elif self.state == self.STATE_DETECT_AND_OFFER_SEAT:
             # Inspección de asientos y gesto de señalamiento con el brazo Piper
-            seat_target = "couch" if self.guest_index == 1 else "chair"
-            pose_gesture = "point_couch" if seat_target == "couch" else "point_chair"
+            seat_keys = list(self.seats.keys()) if self.seats else ["couch", "chair"]
+            seat_idx = min(self.guest_index - 1, len(seat_keys) - 1)
+            seat_target = seat_keys[seat_idx] if seat_keys else "couch"
 
-            offer_msg = f"{self.current_name}, please have a seat right here on the {seat_target}."
+            seat_info = self.seats.get(seat_target, {}) if self.seats else {}
+            pose_gesture = seat_info.get("arm_gesture", "point_couch" if seat_target == "couch" else "point_chair")
+            seat_label = seat_info.get("name", "couch" if seat_target == "couch" else "chair")
+
+            offer_msg = f"{self.current_name}, please have a seat right here on the {seat_label}."
             self.say(offer_msg, emotion="happy", blocking=False)
 
             # Ejecutar gesto físico de señalamiento con el brazo
