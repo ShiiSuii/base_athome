@@ -1,0 +1,170 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- ==================== SISTEMA PAN-TILT ==================== -->
+  <link name="pan_tilt_base_link">
+    <visual>
+      <origin xyz="0 0 0.015" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.035" length="0.03"/>
+      </geometry>
+      <material name="pantilt_dark"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.015" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.035" length="0.03"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <origin xyz="0 0 0.015" rpy="0 0 0"/>
+      <mass value="0.25"/>
+      <inertia ixx="0.0001" ixy="0.0" ixz="0.0" iyy="0.0001" iyz="0.0" izz="0.0001"/>
+    </inertial>
+  </link>
+
+  <joint name="pan_tilt_base_joint" type="fixed">
+    <parent link="torso_lift_link"/>
+    <child link="pan_tilt_base_link"/>
+    <origin xyz="${head_base_x} ${head_base_y} ${head_base_z}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Motor 1: Pan Joint (Giro Horizontal en Z) -->
+  <link name="pan_link">
+    <visual>
+      <origin xyz="0 0 0.025" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.045 0.045 0.05"/>
+      </geometry>
+      <material name="pantilt_dark"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.025" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.045 0.045 0.05"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <origin xyz="0 0 0.025" rpy="0 0 0"/>
+      <mass value="0.15"/>
+      <inertia ixx="0.00005" ixy="0.0" ixz="0.0" iyy="0.00005" iyz="0.0" izz="0.00005"/>
+    </inertial>
+  </link>
+
+  <joint name="pan_joint" type="revolute">
+    <parent link="pan_tilt_base_link"/>
+    <child link="pan_link"/>
+    <origin xyz="0 0 0.03" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-1.5708" upper="1.5708" effort="2.5" velocity="3.14"/>
+  </joint>
+
+  <!-- Motor 2: Tilt Joint (Inclinación Vertical en Y) -->
+  <link name="tilt_link">
+    <visual>
+      <origin xyz="0.015 0 0.01" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.04 0.10 0.03"/>
+      </geometry>
+      <material name="pantilt_dark"/>
+    </visual>
+    <collision>
+      <origin xyz="0.015 0 0.01" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.04 0.10 0.03"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <origin xyz="0.015 0 0.01" rpy="0 0 0"/>
+      <mass value="0.15"/>
+      <inertia ixx="0.00005" ixy="0.0" ixz="0.0" iyy="0.00005" iyz="0.0" izz="0.00005"/>
+    </inertial>
+  </link>
+
+  <joint name="tilt_joint" type="revolute">
+    <parent link="pan_link"/>
+    <child link="tilt_link"/>
+    <origin xyz="0 0 0.05" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-0.7854" upper="0.7854" effort="2.5" velocity="3.14"/>
+  </joint>
+
+
+  <!-- ==================== CAMARA INTEL REALSENSE D435 ==================== -->
+  <!-- Macro con los nombres EXACTOS de frames del driver realsense2_camera. En la Jetson el driver
+       se lanza con publish_tf:=false, por lo que este URDF es el unico dueno de estos TF.
+       Geometria: 25 mm (X) x 90 mm (Y) x 25 mm (Z), ~72 g.
+       Frames:
+         camera_link -> camera_depth_frame -> camera_depth_optical_frame
+         camera_link -> camera_color_frame -> camera_color_optical_frame
+       Optico: Z adelante, X derecha, Y abajo (convencion REP-103 para frames opticos). -->
+  <xacro:macro name="realsense_d435" params="parent mount_xyz mount_rpy:='0 0 0'">
+
+    <joint name="camera_mount_joint" type="fixed">
+      <parent link="${parent}"/>
+      <child link="camera_link"/>
+      <origin xyz="${mount_xyz}" rpy="${mount_rpy}"/>
+    </joint>
+
+    <!-- Cuerpo de la camara (frame base del driver) -->
+    <link name="camera_link">
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <box size="0.025 0.090 0.025"/>
+        </geometry>
+        <material name="realsense_silver"/>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <box size="0.025 0.090 0.025"/>
+        </geometry>
+      </collision>
+      <inertial>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <mass value="0.072"/>
+        <!-- Caja solida: m/12*(b^2+c^2) para cada eje -->
+        <inertia ixx="5.235e-05" ixy="0.0" ixz="0.0" iyy="7.5e-06" iyz="0.0" izz="5.235e-05"/>
+      </inertial>
+    </link>
+
+    <!-- Sensor de profundidad (identidad respecto a camera_link) -->
+    <link name="camera_depth_frame"/>
+    <joint name="camera_depth_joint" type="fixed">
+      <parent link="camera_link"/>
+      <child link="camera_depth_frame"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </joint>
+
+    <link name="camera_depth_optical_frame"/>
+    <joint name="camera_depth_optical_joint" type="fixed">
+      <parent link="camera_depth_frame"/>
+      <child link="camera_depth_optical_frame"/>
+      <origin xyz="0 0 0" rpy="-1.5707963 0 -1.5707963"/>
+    </joint>
+
+    <!-- Sensor de color: medido del driver, queda a +15 mm en Y respecto a camera_link,
+         con una pequena rotacion de calibracion de fabrica
+         (quaternion x=0.008089 y=0.001344 z=-0.003693 w=0.999960 -> rpy aprox 0.016168 0.002748 -0.007364 rad) -->
+    <link name="camera_color_frame"/>
+    <joint name="camera_color_joint" type="fixed">
+      <parent link="camera_link"/>
+      <child link="camera_color_frame"/>
+      <origin xyz="1.4876e-05 0.015106 -9.367e-05" rpy="0.016168 0.002748 -0.007364"/>
+    </joint>
+
+    <!-- Marco optico de color: es el frame_id de /camera/camera/color/image_raw -->
+    <link name="camera_color_optical_frame"/>
+    <joint name="camera_color_optical_joint" type="fixed">
+      <parent link="camera_color_frame"/>
+      <child link="camera_color_optical_frame"/>
+      <origin xyz="0 0 0" rpy="-1.5707963 0 -1.5707963"/>
+    </joint>
+
+  </xacro:macro>
+
+  <!-- Montaje en el cabezal pan-tilt (tilt_link), desplazada 10 cm adicionales hacia adelante respecto al anclaje anterior (x = 0.135 m) -->
+  <xacro:realsense_d435 parent="tilt_link" mount_xyz="0.135 0.0 0.015" mount_rpy="0 0 0"/>
+
+</robot>

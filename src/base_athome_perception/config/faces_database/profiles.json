@@ -14,5 +14,22 @@
       "favorite_drink": "Water",
       "seat": "sofa_left"
     }
+  },
+  "person_002": {
+    "person_id": "person_002",
+    "name": "Guest 1",
+    "enrolled_at": 1793302427.4114988,
+    "enrolled_date": "2026-10-29 16:33:47",
+    "last_seen": 1793302427.4114988,
+    "last_seen_date": "2026-10-29 16:33:47",
+    "sighting_count": 1,
+    "thumbnail_file": "thumbnails/person_002.jpg",
+    "samples_count": 1,
+    "attributes": {
+      "role": "guest_1",
+      "favorite_drink": "Water",
+      "seat": "sof_principal",
+      "guest_index": 1
+    }
   }
 }

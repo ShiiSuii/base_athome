@@ -1,0 +1,15 @@
+pan_tilt_node:
+  ros__parameters:
+    baudrate: 1000000
+    device_name: /dev/ttyU2D2
+    pan_center_tick: 2059
+    pan_id: 1
+    pan_max_rad: 1.5493
+    pan_min_rad: -1.6567
+    protocol_version: 2.0
+    publish_rate_hz: 20.0
+    ticks_per_rad: 651.8986
+    tilt_center_tick: 2048
+    tilt_id: 2
+    tilt_max_rad: 0.6150
+    tilt_min_rad: -0.4878

@@ -1,0 +1,71 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- Propiedades xacro del robot_athome. Se incluye PRIMERO para que sean visibles en el resto de modulos. -->
+
+  <!-- ==================== PROPIEDADES CONFIGURABLES ==================== -->
+  <xacro:property name="chassis_length" value="0.48"/>
+  <xacro:property name="chassis_width"  value="0.48"/>
+  <xacro:property name="chassis_height" value="0.05"/>
+  <xacro:property name="ground_clearance" value="0.04"/>
+
+  <!-- Distancia efectiva calibrada entre ruedas: 56.20 cm -> offset Y = +/- 0.281m -->
+  <xacro:property name="track_width"    value="0.5620"/>
+  <xacro:property name="wheel_radius"   value="0.0853"/>
+  <xacro:property name="wheel_width"    value="0.055"/>
+  <xacro:property name="wheel_offset_x" value="0.095"/>
+
+  <!-- Rueda loca trasera -->
+  <xacro:property name="caster_offset_x" value="-0.20"/>
+  <xacro:property name="caster_radius"   value="0.04"/>
+
+  <!-- Sensor LiDAR Hokuyo -->
+  <xacro:property name="laser_offset_x" value="0.22"/>
+  <xacro:property name="laser_offset_y" value="0.00"/>
+  <xacro:property name="laser_offset_z" value="0.18"/>
+
+  <!-- Sistema de Elevación Torso / Columna (Exactamente en el medio de la base, 1.30 m altura) -->
+  <xacro:property name="column_x"               value="0.0"/>
+  <xacro:property name="column_y"               value="0.0"/>
+  <xacro:property name="column_height"          value="1.30"/>
+  <xacro:property name="column_width"           value="0.06"/>
+  <xacro:property name="column_collision_width" value="0.08"/>
+
+  <!-- Plataforma de Elevación (Carriage / torso_lift_link) -->
+  <xacro:property name="carriage_length"        value="0.22"/>
+  <xacro:property name="carriage_width"         value="0.38"/>
+  <xacro:property name="carriage_height"        value="0.02"/>
+
+  <!-- Parámetros del Eje Z (Motor NEMA 23 y fines de carrera) -->
+  <!-- Fin de carrera superior: cara inferior del cubo a exactamente 1.00 m del piso -->
+  <!-- Fin de carrera inferior: cara inferior del cubo a exactamente 0.40 m del piso (carrera de trabajo: 0.60 m) -->
+  <!-- Carrera mecánica máxima hasta el piso: ~0.75 m -->
+  <xacro:property name="torso_lift_top_z"       value="1.26"/>
+  <xacro:property name="torso_switch_stroke"    value="0.60"/>
+  <xacro:property name="torso_floor_stroke"     value="0.75"/>
+
+  <!-- Prisma Estructural del Torso de Subir y Bajar (35 cm ancho x 25 cm profundidad x 35 cm alto) -->
+  <xacro:property name="prism_size_x"           value="0.25"/> <!-- 25 cm hacia adelante desde la pared frontal del elevador -->
+  <xacro:property name="prism_size_y"           value="0.35"/> <!-- 35 cm horizontal transversal contra el elevador -->
+  <xacro:property name="prism_size_z"           value="0.35"/> <!-- 35 cm altura del prisma (cubo de 35 cm de ancho y alto) -->
+  <xacro:property name="prism_gap_to_pantilt"   value="0.12"/> <!-- 12 cm hacia abajo de la base del pan-tilt -->
+  
+  <!-- Base del Cabezal Pan-Tilt (Sobre el elevador, referencia superior) -->
+  <xacro:property name="head_base_x"            value="${column_width / 2.0 + 0.04}"/>
+  <xacro:property name="head_base_y"            value="0.0"/>
+  <xacro:property name="head_base_z"            value="0.12"/>
+
+  <!-- Posicion del Prisma respecto a torso_lift_link -->
+  <xacro:property name="prism_offset_x"         value="${column_width / 2.0 + prism_size_x / 2.0}"/>
+  <xacro:property name="prism_offset_y"         value="0.0"/>
+  <xacro:property name="prism_offset_z"         value="${head_base_z - prism_gap_to_pantilt - prism_size_z / 2.0}"/>
+
+  <!-- Pantalla interactiva / Tablet HRI de expresión facial (Montada en el centro frontal del prisma) -->
+  <xacro:property name="screen_depth"           value="0.04"/>
+  <xacro:property name="screen_width"           value="0.26"/>
+  <xacro:property name="screen_height"          value="0.18"/>
+  <xacro:property name="screen_offset_x"        value="${column_width / 2.0 + prism_size_x + screen_depth / 2.0}"/>
+  <xacro:property name="screen_offset_y"        value="0.0"/>
+  <xacro:property name="screen_offset_z"        value="${prism_offset_z}"/>
+
+</robot>

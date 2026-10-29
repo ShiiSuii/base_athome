@@ -103,9 +103,9 @@ waypoints:
   living_room:
     name: living_room
     zone: living_room
-    x: 2.7714
-    y: -7.325
-    yaw_deg: -4
+    x: 1.8054
+    y: -7.3838
+    yaw_deg: -2
 seats:
   sof_principal:
     name: Sofá Principal

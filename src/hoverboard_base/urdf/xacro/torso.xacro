@@ -1,0 +1,140 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- Torso: columna, elevador prismatico (torso_lift_joint), prisma estructural y pantalla HRI. -->
+
+  <!-- ==================== SISTEMA DE SUBIR Y BAJAR (TORSO VERTICAL) ==================== -->
+  <link name="torso_column">
+    <visual>
+      <origin xyz="0 0 ${column_height / 2.0}" rpy="0 0 0"/>
+      <geometry>
+        <box size="${column_width} ${column_width} ${column_height}"/>
+      </geometry>
+      <material name="column_aluminum"/>
+    </visual>
+    <!-- Envolvente de colisión completa de la columna vertical central para MoveIt -->
+    <collision>
+      <origin xyz="0 0 ${column_height / 2.0}" rpy="0 0 0"/>
+      <geometry>
+        <box size="${column_collision_width} ${column_collision_width} ${column_height}"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <origin xyz="0 0 ${column_height / 2.0}" rpy="0 0 0"/>
+      <mass value="3.5"/>
+      <inertia ixx="0.292" ixy="0.0" ixz="0.0" iyy="0.292" iyz="0.0" izz="0.002"/>
+    </inertial>
+  </link>
+
+  <joint name="torso_column_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="torso_column"/>
+    <origin xyz="${column_x} ${column_y} ${ground_clearance + chassis_height}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Plataforma superior móvil del elevador (Carriage) -->
+  <link name="torso_lift_link">
+    <visual>
+      <origin xyz="0.03 0.06 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="${carriage_length} ${carriage_width} ${carriage_height}"/>
+      </geometry>
+      <material name="pantilt_dark"/>
+    </visual>
+    <!-- Geometría de colisión de la plataforma del elevador para MoveIt -->
+    <collision>
+      <origin xyz="0.03 0.06 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="${carriage_length} ${carriage_width} ${carriage_height}"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <origin xyz="0.03 0.06 0" rpy="0 0 0"/>
+      <mass value="1.8"/>
+      <inertia ixx="0.021" ixy="0.0" ixz="0.0" iyy="0.007" iyz="0.0" izz="0.028"/>
+    </inertial>
+  </link>
+
+  <!-- Articulación prismática de elevación del torso controlada por NEMA 23 -->
+  <!-- Posición 0.0 m = Fin de carrera superior (cara inferior del cubo a exactamente 1.00 m del piso) -->
+  <!-- Posición -0.60 m = Fin de carrera inferior (cara inferior del cubo a exactamente 0.40 m del piso) -->
+  <!-- Posición -0.75 m = Descenso máximo hacia el piso (~75 cm) para manipular objetos en el suelo -->
+  <joint name="torso_lift_joint" type="prismatic">
+    <parent link="torso_column"/>
+    <child link="torso_lift_link"/>
+    <axis xyz="0 0 1"/>
+    <origin xyz="0 0 ${torso_lift_top_z}" rpy="0 0 0"/>
+    <limit lower="-${torso_floor_stroke}" upper="0.0" effort="500.0" velocity="0.10"/>
+    <dynamics damping="10.0" friction="5.0"/>
+  </joint>
+
+  <!-- ==================== PRISMA ESTRUCTURAL DEL TORSO (SUBIR Y BAJAR) ==================== -->
+  <!-- Prisma de 35 cm ancho (Y) x 25 cm profundidad hacia adelante (X) x 35 cm alto (Z) -->
+  <link name="mounting_cube_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="${prism_size_x} ${prism_size_y} ${prism_size_z}"/>
+      </geometry>
+      <material name="cube_metallic"/>
+    </visual>
+    <!-- Geometría de colisión volumétrica completa del torso para MoveIt -->
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="${prism_size_x} ${prism_size_y} ${prism_size_z}"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="4.0"/>
+      <inertia ixx="0.081" ixy="0.0" ixz="0.0" iyy="0.061" iyz="0.0" izz="0.061"/>
+    </inertial>
+  </link>
+
+  <joint name="torso_lift_to_cube_joint" type="fixed">
+    <parent link="torso_lift_link"/>
+    <child link="mounting_cube_link"/>
+    <origin xyz="${prism_offset_x} ${prism_offset_y} ${prism_offset_z}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ==================== PANTALLA INTERACTIVA HRI (ROSTRO ANIMADO) ==================== -->
+  <!-- Pantalla ubicada en el centro frontal del elevador, mostrando la cara interactiva -->
+  <link name="screen_link">
+    <visual>
+      <!-- Marco / Bisel exterior de la pantalla -->
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="${screen_depth} ${screen_width} ${screen_height}"/>
+      </geometry>
+      <material name="screen_black"/>
+    </visual>
+    <visual>
+      <!-- Superficie del display emisor (rostro cyan OLED) -->
+      <origin xyz="${screen_depth / 2.0 + 0.001} 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.002 ${screen_width - 0.02} ${screen_height - 0.02}"/>
+      </geometry>
+      <material name="screen_cyan"/>
+    </visual>
+    <!-- Envolvente de colisión completa de la pantalla para MoveIt -->
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="${screen_depth + 0.01} ${screen_width + 0.01} ${screen_height + 0.01}"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="1.2"/>
+      <inertia ixx="0.009" ixy="0.0" ixz="0.0" iyy="0.003" iyz="0.0" izz="0.011"/>
+    </inertial>
+  </link>
+
+  <joint name="torso_lift_to_screen_joint" type="fixed">
+    <parent link="torso_lift_link"/>
+    <child link="screen_link"/>
+    <origin xyz="${screen_offset_x} ${screen_offset_y} ${screen_offset_z}" rpy="0 0 0"/>
+  </joint>
+
+</robot>

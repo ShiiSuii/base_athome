@@ -307,6 +307,8 @@ class HriReceptionistChallengeNode(Node):
         self.pub_arm_joint = self.create_publisher(JointState, "/arm/joint_cmd", 5)
         self.pub_arm_gripper = self.create_publisher(Float32, "/arm/gripper_cmd", 5)
         self.pub_joint_states = self.create_publisher(JointState, "/joint_states", 10)
+        self.pub_voice_mute = self.create_publisher(Bool, "/voice/mute", 10)
+        self.pub_voice_prompt = self.create_publisher(String, "/voice/initial_prompt", 10)
 
         # Cliente para activar microfono /voice/listen_trigger
         self.cli_mic_trigger = self.create_client(Trigger, "/voice/listen_trigger")
@@ -324,11 +326,11 @@ class HriReceptionistChallengeNode(Node):
         )
 
         candidate_topics = [
+            "/camera/camera/color/image_raw",
+            "/camera/color/image_raw",
             "/zed/zed_node/rgb/image_rect_color",
             "/zed/zed_node/left/image_rect_color",
             "/zed/rgb/image_rect_color",
-            "/camera/camera/color/image_raw",
-            "/camera/color/image_raw",
         ]
         if camera_topic:
             candidate_topics.insert(0, camera_topic)
@@ -559,6 +561,12 @@ class HriReceptionistChallengeNode(Node):
         if not text:
             return
 
+        # 1. Silenciar microfono en la Jetson para evitar auto-escucha (anti-echo)
+        if hasattr(self, "pub_voice_mute"):
+            mute_on = Bool()
+            mute_on.data = True
+            self.pub_voice_mute.publish(mute_on)
+
         self.last_spoken_text = text
         self.current_banner_text = text
 
@@ -572,7 +580,14 @@ class HriReceptionistChallengeNode(Node):
             self.set_robot_emotion(emotion)
 
         # Locución con Piper TTS
-        self.speaker.speak(text, blocking=blocking)
+        try:
+            self.speaker.speak(text, blocking=blocking)
+        finally:
+            # 2. Desactivar silencio tras terminar de hablar
+            if hasattr(self, "pub_voice_mute"):
+                mute_off = Bool()
+                mute_off.data = False
+                self.pub_voice_mute.publish(mute_off)
 
     def set_robot_emotion(self, emotion: str):
         """Envia estado emocional a la cara interactiva en pantalla."""
@@ -756,7 +771,7 @@ class HriReceptionistChallengeNode(Node):
                     self.get_logger().info(
                         f"⏳ [Pre-vuelo]: Esperando transmisión de cámara en '{self.camera_topic_name}'..."
                     )
-                self.current_banner_text = "PRE-VUELO: Esperando conexion de camara ZED Mini..."
+                self.current_banner_text = "PRE-VUELO: Esperando conexion de camara RealSense D435..."
                 return
 
             # 2. Comprobación y sincronización de Nav2
@@ -778,7 +793,7 @@ class HriReceptionistChallengeNode(Node):
             print("\n" + "=" * 70)
             print("🚀 [PRE-VUELO RECEPTIONIST COMPLETADO - SUBSISTEMAS LISTOS]")
             print("=" * 70)
-            print(f"  [✔] Cámara ZED Mini      : Stream OK ({frame_shape[1]}x{frame_shape[0]} px)")
+            print(f"  [✔] Cámara RealSense D435: Stream OK ({frame_shape[1]}x{frame_shape[0]} px)")
             print(f"  [✔] Memoria & Almacen    : {self.session_file}")
             print(f"  [✔] Reconocimiento Facial: SFace (128-d) + YuNet inicializados")
             print(f"  [✔] Navegación           : {'SIMULADA (Segura sin base)' if self.sim_nav else 'Nav2 REAL'}")
@@ -796,11 +811,14 @@ class HriReceptionistChallengeNode(Node):
             self.state = self.STATE_WAIT_DOOR
             self.state_start_time = now
             self.door_detection_start = None
-            self.move_head_to(0.0, -5.0)
+            self.move_head_to(0.0, 0.0)  # Centrado exacto al llegar a la puerta
             self.set_robot_emotion("neutral")
             self.current_banner_text = f"Esperando invitado {self.guest_index} en la puerta..."
 
         elif self.state == self.STATE_WAIT_DOOR:
+            # Mantener cabezal centrado en la puerta si no hay seguimiento activo
+            if not face_results:
+                self.move_head_to(0.0, 0.0)
             # Esperar a que una persona se acerque a la puerta
             if face_results:
                 largest_face = max(face_results, key=lambda f: f["bbox"][2] * f["bbox"][3])
@@ -1351,7 +1369,7 @@ def main():
                     cv2.putText(blank, "Verificando y sincronizando subsistemas requeridos:", (40, 115), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (220, 220, 220), 1)
 
                     # Estado de Cámara
-                    cv2.putText(blank, f"[...] Camara ZED Mini : Conectando a {node.camera_topic_name}...", (40, 160), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 170, 255), 1)
+                    cv2.putText(blank, f"[...] Camara RealSense D435 : Conectando a {node.camera_topic_name}...", (40, 160), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 170, 255), 1)
 
                     # Estado de Navegación
                     nav_str = "Modo Simulacion Activo" if node.sim_nav else "Esperando / Verificando Nav2..."
@@ -1367,7 +1385,7 @@ def main():
                     cv2.putText(blank, f"[v] Mapa Semantico     : {len(node.zones)} zonas | {len(node.waypoints)} waypoints | {len(node.seats)} asientos", (40, 320), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 240, 140), 1)
 
                     cv2.line(blank, (40, 420), (800, 420), (50, 65, 80), 1)
-                    cv2.putText(blank, "ATENCION: Conecte la camara ZED o ejecute 'camara' en otra terminal.", (40, 455), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (255, 200, 0), 1)
+                    cv2.putText(blank, "ATENCION: Verifique que la camara RealSense D435 este transmitiendo.", (40, 455), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (255, 200, 0), 1)
                     cv2.putText(blank, "Atajo de pruebas: Presione [ESPACIO] para generar frame sintetico y avanzar.", (40, 485), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (140, 160, 180), 1)
                     cv2.imshow(window_name, blank)
 

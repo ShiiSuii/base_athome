@@ -1,12 +1,24 @@
 {
-  "session_id": "receptionist_20261029_162809",
-  "started_at": "2026-10-29 16:28:09",
+  "session_id": "receptionist_20261029_163245",
+  "started_at": "2026-10-29 16:32:45",
   "status": "RUNNING",
   "host": {
     "name": "Charlie",
     "role": "host",
     "seat_zone": "living_room"
   },
-  "guests_count": 0,
-  "guests": []
+  "guests_count": 1,
+  "guests": [
+    {
+      "guest_index": 1,
+      "person_id": "person_002",
+      "name": "Guest 1",
+      "favorite_drink": "Water",
+      "assigned_seat": "sof_principal",
+      "biometric_samples": 1,
+      "best_sharpness": 65.57,
+      "registered_at": "2026-10-29 16:33:47",
+      "thumbnail_path": ""
+    }
+  ]
 }

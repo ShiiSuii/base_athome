@@ -49,6 +49,8 @@ class GarbageViewer(Node if ROS2_AVAILABLE else object):
             self.subs_cam = []
             cand_topics = [
                 topic,
+                "/camera/camera/color/image_raw",
+                "/camera/color/image_raw",
                 "/zed/zed_node/rgb/image_rect_color",
                 "/zed/zed_node/left/image_rect_color",
                 "/zed/zed_node/rgb/image_raw_color",
@@ -60,8 +62,6 @@ class GarbageViewer(Node if ROS2_AVAILABLE else object):
                 "/zed/image_raw",
                 "/zedm/zed_node/rgb/image_rect_color",
                 "/zedm/zed_node/left/image_rect_color",
-                "/camera/camera/color/image_raw",
-                "/camera/color/image_raw",
             ]
             seen_topics = set()
             for t in cand_topics:

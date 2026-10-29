@@ -1,0 +1,20 @@
+[Unit]
+Description=Jetson Head ROS 2 Bringup (RealSense D435 + Pan-Tilt)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu
+ExecStart=/bin/bash /home/ubuntu/start_mapping_head.sh
+Restart=always
+RestartSec=5
+KillMode=mixed
+TimeoutStopSec=10
+Environment=HOME=/home/ubuntu
+Environment=USER=ubuntu
+
+[Install]
+WantedBy=multi-user.target
