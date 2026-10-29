@@ -441,16 +441,20 @@ class HriReceptionistChallengeNode(Node):
             lsusb_out = subprocess.check_output(["lsusb"], text=True)
             if "8086:0b07" in lsusb_out or "RealSense" in lsusb_out:
                 self.get_logger().info("📷 RealSense D435 detectada en NUC por USB. Iniciando driver automáticamente...")
-                cmd = ["ros2", "launch", "base_athome_bringup", "realsense_nuc.launch.py"]
-                self.cam_proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                cmd = (
+                    "bash -c 'source /opt/ros/jazzy/setup.bash && "
+                    "source /home/athome/base_athome_ws/install/setup.bash 2>/dev/null && "
+                    "exec ros2 launch base_athome_bringup realsense_nuc.launch.py'"
+                )
+                self.cam_proc = subprocess.Popen(cmd, shell=True, preexec_fn=os.setsid)
         except Exception as e:
             self.get_logger().warn(f"No se pudo autoiniciar realsense2_camera_node: {e}")
 
     def destroy_node(self):
         if hasattr(self, 'cam_proc') and self.cam_proc is not None:
             try:
-                self.cam_proc.terminate()
-                self.cam_proc.wait(timeout=2.0)
+                import signal
+                os.killpg(os.getpgid(self.cam_proc.pid), signal.SIGTERM)
             except Exception:
                 pass
         super().destroy_node()
@@ -587,13 +591,12 @@ class HriReceptionistChallengeNode(Node):
 
     def _check_nav2_ready(self, timeout_sec: float = 2.0) -> bool:
         """Verifica si el servidor de acción NavigateToPose de Nav2 está activo."""
-        if ActionClient is None or NavigateToPose is None:
+        if self.navigator is None:
             return False
         try:
-            client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
-            ready = client.wait_for_server(timeout_sec=timeout_sec)
-            client.destroy()
-            return bool(ready)
+            if hasattr(self.navigator, '_action_client') and self.navigator._action_client:
+                return self.navigator._action_client.server_is_ready()
+            return True
         except Exception as e:
             self.get_logger().debug(f"Error comprobando servidor Nav2: {e}")
             return False

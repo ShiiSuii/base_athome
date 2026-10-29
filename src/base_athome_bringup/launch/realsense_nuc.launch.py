@@ -19,6 +19,8 @@ def generate_launch_description():
                 'rgb_camera.color_profile': '640x480x15',
                 'depth_module.depth_profile': '640x480x15',
                 'enable_depth': 'true',
+                'enable_infra1': 'false',
+                'enable_infra2': 'false',
                 'align_depth.enable': 'true',
                 'enable_sync': 'true',
                 'pointcloud.enable': 'false',
