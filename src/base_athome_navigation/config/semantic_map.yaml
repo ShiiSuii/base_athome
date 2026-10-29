@@ -1,54 +1,66 @@
-# ==============================================================================
-# Base@Home - Mapa Semántico, Delimitación de Zonas y Objetos para RoboCup @Home
-# ==============================================================================
 map_info:
   yaml_file: /home/athome/mapa_base_athome.yaml
   image_file: /home/athome/mapa_base_athome.pgm
   resolution: 0.05
-  origin: [-10.705, -5.656, 0.0]
-  width: 464
-  height: 531
-
-# Zonas delimitadas (polígonos métricos en el marco 'map')
+  origin:
+  - -6.192
+  - -9.153
+  - 0.0
+  width: 324
+  height: 582
 zones:
   entrance:
     name: Entrada
     type: entrance
     color: '#00d2ff'
     polygon:
-    - [0.4, -0.6]
-    - [1.3, -0.6]
-    - [1.3, 0.6]
-    - [0.4, 0.6]
+    - - 0.4
+      - -0.6
+    - - 1.3
+      - -0.6
+    - - 1.3
+      - 0.6
+    - - 0.4
+      - 0.6
   living_room:
     name: Sala de Estar
     type: living_room
     color: '#00f090'
     polygon:
-    - [1.2, -0.8]
-    - [2.4, -0.8]
-    - [2.4, 0.8]
-    - [1.2, 0.8]
+    - - 1.2
+      - -0.8
+    - - 2.4
+      - -0.8
+    - - 2.4
+      - 0.8
+    - - 1.2
+      - 0.8
   couch_area:
     name: Zona del Sofá
     type: seating
     color: '#ffaa00'
     polygon:
-    - [1.5, -0.7]
-    - [2.2, -0.7]
-    - [2.2, -0.1]
-    - [1.5, -0.1]
+    - - 1.5
+      - -0.7
+    - - 2.2
+      - -0.7
+    - - 2.2
+      - -0.1
+    - - 1.5
+      - -0.1
   chair_area:
     name: Zona de Sillas
     type: seating
     color: '#ff5500'
     polygon:
-    - [1.5, 0.1]
-    - [2.2, 0.1]
-    - [2.2, 0.7]
-    - [1.5, 0.7]
-
-# Waypoints oficiales con orientación (Yaw) para Nav2
+    - - 1.5
+      - 0.1
+    - - 2.2
+      - 0.1
+    - - 2.2
+      - 0.7
+    - - 1.5
+      - 0.7
 waypoints:
   door:
     name: door
@@ -90,8 +102,6 @@ waypoints:
     qy: 0.0
     qz: 0.0905
     qw: 0.9959
-
-# Asientos identificados para asignación en el Receptionist Challenge
 seats:
   couch:
     name: Sofá
@@ -107,3 +117,19 @@ seats:
     arm_gesture: point_chair
     capacity: 1
     occupied: false
+furniture:
+  mesa_centro:
+    name: Mesa de Centro
+    type: table
+    height_m: 0.76
+    solidified_in_map: false
+    polygon:
+    - - 1.5
+      - -0.5
+    - - 2.1
+      - -0.5
+    - - 2.1
+      - -0.1
+    - - 1.5
+      - -0.1
+keepout_zones: {}
