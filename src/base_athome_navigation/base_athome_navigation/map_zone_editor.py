@@ -1484,21 +1484,22 @@ HTML_PAGE = r'''<!DOCTYPE html>
   }
 
   function drawBadge(x, y, text, color) {
-    ctx.font = `bold ${Math.max(10, 11 / Math.sqrt(view.zoom))}px sans-serif`;
-    const tw = ctx.measureText(text).width;
-    const pad = 4 / view.zoom;
-
-    ctx.fillStyle = 'rgba(10, 14, 22, 0.85)';
-    ctx.fillRect(x - tw / 2 - pad, y - 8 / view.zoom, tw + pad * 2, 16 / view.zoom);
-
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 1 / view.zoom;
-    ctx.strokeRect(x - tw / 2 - pad, y - 8 / view.zoom, tw + pad * 2, 16 / view.zoom);
-
-    ctx.fillStyle = color;
+    const fontSize = Math.max(7.5, Math.min(10, 8.5 / Math.sqrt(view.zoom)));
+    ctx.font = `600 ${fontSize}px sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
+
+    // Halo suave para contraste directo sobre el mapa sin caja de fondo negro
+    ctx.save();
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.9)';
+    ctx.shadowBlur = 2;
+    ctx.strokeStyle = 'rgba(8, 12, 18, 0.85)';
+    ctx.lineWidth = 2.0 / view.zoom;
+    ctx.strokeText(text, x, y);
+
+    ctx.fillStyle = color;
     ctx.fillText(text, x, y);
+    ctx.restore();
   }
 
   function drawWaypointPin(px, py, yawDeg, label) {

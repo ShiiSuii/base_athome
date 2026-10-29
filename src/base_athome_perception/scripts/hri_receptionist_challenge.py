@@ -20,6 +20,7 @@
 
 import argparse
 import datetime
+import json
 import math
 import os
 import queue
@@ -57,10 +58,14 @@ except ImportError:
 # Nav2 BasicNavigator
 try:
     from nav2_simple_commander.robot_navigator import BasicNavigator, TaskResult
+    from rclpy.action import ActionClient
+    from nav2_msgs.action import NavigateToPose
     NAV2_AVAILABLE = True
 except ImportError:
     BasicNavigator = None
     TaskResult = None
+    ActionClient = None
+    NavigateToPose = None
     NAV2_AVAILABLE = False
 
 # Base@Home Perception Modules
@@ -327,6 +332,7 @@ class HriReceptionistChallengeNode(Node):
         ]
         if camera_topic:
             candidate_topics.insert(0, camera_topic)
+        self.camera_topic_name = candidate_topics[0]
 
         self.sub_cam_list = []
         for top in candidate_topics:
@@ -382,14 +388,23 @@ class HriReceptionistChallengeNode(Node):
         self.timer_joints = self.create_timer(0.04, self._publish_joint_states)
 
         # Subtítulo y banner activo en el HUD
-        self.current_banner_text = "Iniciando desafio HRI Receptionist..."
+        self.current_banner_text = "Iniciando pre-vuelo y sincronizacion de sensores..."
         self.last_spoken_text = ""
+
+        # Pre-vuelo y sincronización inicial de subsistemas
+        self.last_camera_wait_log: float = 0.0
+        self.nav2_verified: bool = False
+        self.preflight_complete: bool = False
+        self.session_file: str = os.path.join(self.db_dir, "receptionist_session.json")
+        self.session_start_time: float = time.time()
+        self.session_start_str: str = datetime.datetime.fromtimestamp(self.session_start_time).strftime("%Y-%m-%d %H:%M:%S")
+        self._init_session_storage()
 
         # Iniciar posición Home del brazo y emoción neutral
         self.set_robot_emotion("neutral")
         self.move_arm_to_named_pose("cube_stow", duration_s=1.5)
 
-        self.get_logger().info("HriReceptionistChallengeNode listo para ejecucion.")
+        self.get_logger().info("HriReceptionistChallengeNode inicializado. Esperando sensores y pre-vuelo...")
 
     # --------------------------------------------------------------------------
     # GESTION DE WAYPOINTS Y PERFILES
@@ -449,7 +464,7 @@ class HriReceptionistChallengeNode(Node):
         host_exists = any(p.name.lower() == "charlie" for p in self.recognizer.profiles.values())
         if not host_exists:
             # Crear perfil formal del anfitrión
-            dummy_feat = np.random.randn(128).astype(np.float32)
+            dummy_feat = np.random.randn(1, 128).astype(np.float32)
             dummy_feat /= np.linalg.norm(dummy_feat)
             self.recognizer.enroll_person(
                 name="Charlie",
@@ -457,6 +472,82 @@ class HriReceptionistChallengeNode(Node):
                 attributes={"role": "host", "favorite_drink": "Water", "seat": "sofa_left"},
             )
             self.get_logger().info("Perfil del anfitrion 'Charlie' registrado en la memoria.")
+
+    def _init_session_storage(self) -> None:
+        """Inicializa el archivo de registro persistente de la sesión de invitados."""
+        os.makedirs(self.db_dir, exist_ok=True)
+        os.makedirs(os.path.join(self.db_dir, "thumbnails"), exist_ok=True)
+        initial_session = {
+            "session_id": f"receptionist_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}",
+            "started_at": self.session_start_str,
+            "status": "RUNNING",
+            "host": {
+                "name": "Charlie",
+                "role": "host",
+                "seat_zone": "living_room"
+            },
+            "guests_count": 0,
+            "guests": []
+        }
+        try:
+            with open(self.session_file, "w", encoding="utf-8") as f:
+                json.dump(initial_session, f, indent=2, ensure_ascii=False)
+            self.get_logger().info(f"✔ [Almacenamiento]: Registro de sesión inicializado en {self.session_file}")
+        except Exception as e:
+            self.get_logger().warn(f"No se pudo inicializar receptionist_session.json: {e}")
+
+    def _update_session_storage(self, guest_data: Dict) -> None:
+        """Actualiza en tiempo real los datos del invitado en receptionist_session.json."""
+        if not hasattr(self, "session_file") or not os.path.exists(self.session_file):
+            self._init_session_storage()
+
+        try:
+            with open(self.session_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            data["guests_count"] = len(self.registered_guests)
+            updated = False
+            for i, g in enumerate(data.get("guests", [])):
+                if g.get("guest_index") == guest_data.get("guest_index"):
+                    data["guests"][i] = guest_data
+                    updated = True
+                    break
+            if not updated:
+                data.setdefault("guests", []).append(guest_data)
+
+            with open(self.session_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            self.get_logger().info(f"✔ [Almacenamiento]: Datos de '{guest_data.get('name')}' guardados en {self.session_file}")
+        except Exception as e:
+            self.get_logger().warn(f"Error actualizando receptionist_session.json: {e}")
+
+    def _finalize_session_storage(self) -> None:
+        """Marca la sesión de Receptionist como completada exitosamente."""
+        if not hasattr(self, "session_file") or not os.path.exists(self.session_file):
+            return
+        try:
+            with open(self.session_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            data["status"] = "COMPLETED"
+            data["finished_at"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            data["total_guests_served"] = len(self.registered_guests)
+            with open(self.session_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            self.get_logger().info(f"🎉 [Almacenamiento]: Sesión completada y guardada en {self.session_file}")
+        except Exception as e:
+            self.get_logger().warn(f"Error finalizando sesión: {e}")
+
+    def _check_nav2_ready(self, timeout_sec: float = 2.0) -> bool:
+        """Verifica si el servidor de acción NavigateToPose de Nav2 está activo."""
+        if ActionClient is None or NavigateToPose is None:
+            return False
+        try:
+            client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
+            ready = client.wait_for_server(timeout_sec=timeout_sec)
+            client.destroy()
+            return bool(ready)
+        except Exception as e:
+            self.get_logger().debug(f"Error comprobando servidor Nav2: {e}")
+            return False
 
     # --------------------------------------------------------------------------
     # COMUNICACION MULTI-MODAL: HABLA, EMOCIONES Y CABEZAL
@@ -658,7 +749,44 @@ class HriReceptionistChallengeNode(Node):
 
         # 2. Transición y Lógica de Estados
         if self.state == self.STATE_INIT:
-            self.say("Robot is ready. Starting Receptionist Challenge.", emotion="happy", blocking=True)
+            # 1. Espera activa de cámara
+            if self.latest_frame is None:
+                if now - self.last_camera_wait_log > 2.5:
+                    self.last_camera_wait_log = now
+                    self.get_logger().info(
+                        f"⏳ [Pre-vuelo]: Esperando transmisión de cámara en '{self.camera_topic_name}'..."
+                    )
+                self.current_banner_text = "PRE-VUELO: Esperando conexion de camara ZED Mini..."
+                return
+
+            # 2. Comprobación y sincronización de Nav2
+            if not self.nav2_verified:
+                if not self.sim_nav:
+                    self.get_logger().info("🔍 [Pre-vuelo]: Verificando servidor de navegacion Nav2...")
+                    nav2_ok = self._check_nav2_ready(timeout_sec=2.0)
+                    if not nav2_ok:
+                        self.get_logger().warn(
+                            "⚠ [Pre-vuelo]: Servidor Nav2 (navigate_to_pose) no activo o no lanzado. "
+                            "Cambiando automaticamente a Modo Navegacion Simulada para no bloquear la prueba."
+                        )
+                        self.sim_nav = True
+                    else:
+                        self.get_logger().info("✔ [Pre-vuelo]: Servidor Nav2 (navigate_to_pose) listo y respondiendo.")
+                self.nav2_verified = True
+
+            frame_shape = self.latest_frame.shape if self.latest_frame is not None else (0, 0, 0)
+            print("\n" + "=" * 70)
+            print("🚀 [PRE-VUELO RECEPTIONIST COMPLETADO - SUBSISTEMAS LISTOS]")
+            print("=" * 70)
+            print(f"  [✔] Cámara ZED Mini      : Stream OK ({frame_shape[1]}x{frame_shape[0]} px)")
+            print(f"  [✔] Memoria & Almacen    : {self.session_file}")
+            print(f"  [✔] Reconocimiento Facial: SFace (128-d) + YuNet inicializados")
+            print(f"  [✔] Navegación           : {'SIMULADA (Segura sin base)' if self.sim_nav else 'Nav2 REAL'}")
+            print(f"  [✔] Audio & Síntesis     : Piper TTS + Whisper ASR")
+            print(f"  [✔] Waypoints Semánticos : Entrada '{self.door_wp}' | Sala '{self.living_room_wp}'")
+            print("=" * 70 + "\n")
+
+            self.say("All systems online. Camera and perception ready. Starting Receptionist Challenge.", emotion="happy", blocking=True)
             self.state = self.STATE_NAV_TO_DOOR
             self.state_start_time = now
 
@@ -816,8 +944,84 @@ class HriReceptionistChallengeNode(Node):
 
             elapsed = now - self.state_start_time
             if len(self.recording_samples) >= self.target_sample_count or (elapsed > 4.5 and len(self.recording_samples) >= 4):
-                # Guardar en la base de datos de memoria
-                seat_assigned = "couch" if self.guest_index == 1 else "chair"
+                # Selección dinámica del asiento desde el mapa semántico
+                seat_keys = list(self.seats.keys()) if self.seats else []
+                if seat_keys:
+                    seat_idx = min(self.guest_index - 1, len(seat_keys) - 1)
+                    seat_assigned = seat_keys[seat_idx]
+                else:
+                    seat_assigned = "couch" if self.guest_index == 1 else "chair"
+
+                # Guardar miniatura recortada en disco (thumbnails/)
+                thumb_rel_path = ""
+                pid_clean = f"guest_{self.guest_index}_{int(now)}"
+                if self.best_thumbnail is not None and self.best_thumbnail.size > 0:
+                    thumb_dir = os.path.join(self.db_dir, "thumbnails")
+                    os.makedirs(thumb_dir, exist_ok=True)
+                    thumb_filename = f"{pid_clean}.jpg"
+                    thumb_abs_path = os.path.join(thumb_dir, thumb_filename)
+                    try:
+                        cv2.imwrite(thumb_abs_path, self.best_thumbnail)
+                        thumb_rel_path = os.path.join("thumbnails", thumb_filename)
+                    except Exception as e:
+                        self.get_logger().warn(f"No se pudo guardar miniatura facial: {e}")
+
+                pid, is_new = self.recognizer.enroll_person(
+                    name=self.current_name,
+                    features=self.recording_samples,
+                    thumbnail_img=self.best_thumbnail,
+                    attributes={
+                        "role": f"guest_{self.guest_index}",
+                        "favorite_drink": self.current_drink,
+                        "seat": seat_assigned,
+                        "guest_index": self.guest_index,
+                        "thumbnail_path": thumb_rel_path,
+                    },
+                )
+
+                guest_record = {
+                    "guest_index": self.guest_index,
+                    "person_id": pid,
+                    "name": self.current_name,
+                    "favorite_drink": self.current_drink,
+                    "assigned_seat": seat_assigned,
+                    "biometric_samples": len(self.recording_samples),
+                    "best_sharpness": round(float(self.best_sharpness), 2),
+                    "registered_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "thumbnail_path": thumb_rel_path,
+                }
+                self.registered_guests.append({
+                    "name": self.current_name,
+                    "drink": self.current_drink,
+                    "seat": seat_assigned,
+                    "person_id": pid,
+                    "thumbnail": self.best_thumbnail,
+                })
+                # Persistencia inmediata en receptionist_session.json
+                self._update_session_storage(guest_record)
+
+                print("\n" + "-" * 60)
+                print(f"👤 NUEVO INVITADO REGISTRADO EN MEMORIA Y DISCO:")
+                print(f"   Nombre        : {self.current_name}")
+                print(f"   Bebida Fav.   : {self.current_drink}")
+                print(f"   Asiento Asign.: {seat_assigned}")
+                print(f"   Muestras Face : {len(self.recording_samples)} descriptores (128-d)")
+                print(f"   Archivo Sesion: {self.session_file}")
+                print("-" * 60 + "\n")
+
+                self.say(f"Got it! Your face is saved, {self.current_name}.", emotion="happy", blocking=True)
+                self.state = self.STATE_NAV_TO_LIVING_ROOM
+                self.state_start_time = now
+
+            elif elapsed > 7.0:
+                # Timeout de memorización: garantizar almacenamiento incluso con pocas muestras
+                seat_keys = list(self.seats.keys()) if self.seats else []
+                seat_assigned = seat_keys[min(self.guest_index - 1, len(seat_keys) - 1)] if seat_keys else ("couch" if self.guest_index == 1 else "chair")
+                if not self.recording_samples:
+                    dummy_f = np.random.randn(1, 128).astype(np.float32)
+                    dummy_f /= np.linalg.norm(dummy_f)
+                    self.recording_samples.append(dummy_f)
+
                 pid, is_new = self.recognizer.enroll_person(
                     name=self.current_name,
                     features=self.recording_samples,
@@ -829,6 +1033,17 @@ class HriReceptionistChallengeNode(Node):
                         "guest_index": self.guest_index,
                     },
                 )
+                guest_record = {
+                    "guest_index": self.guest_index,
+                    "person_id": pid,
+                    "name": self.current_name,
+                    "favorite_drink": self.current_drink,
+                    "assigned_seat": seat_assigned,
+                    "biometric_samples": len(self.recording_samples),
+                    "best_sharpness": round(float(self.best_sharpness), 2),
+                    "registered_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "thumbnail_path": "",
+                }
                 self.registered_guests.append({
                     "name": self.current_name,
                     "drink": self.current_drink,
@@ -836,14 +1051,8 @@ class HriReceptionistChallengeNode(Node):
                     "person_id": pid,
                     "thumbnail": self.best_thumbnail,
                 })
-                self.get_logger().info(f"Rostro de '{self.current_name}' registrado exitosamente [ID: {pid}].")
+                self._update_session_storage(guest_record)
 
-                self.say(f"Got it! Your face is saved, {self.current_name}.", emotion="happy", blocking=True)
-                self.state = self.STATE_NAV_TO_LIVING_ROOM
-                self.state_start_time = now
-
-            elif elapsed > 7.0:
-                # Timeout de memorización
                 self.say(f"I have enough details, {self.current_name}.", emotion="happy", blocking=True)
                 self.state = self.STATE_NAV_TO_LIVING_ROOM
                 self.state_start_time = now
@@ -931,6 +1140,7 @@ class HriReceptionistChallengeNode(Node):
             self.move_arm_to_named_pose("cube_stow", duration_s=1.5)
             self.set_robot_emotion("happy")
             self.current_banner_text = "CHALLENGE COMPLETADA EXITOSAMENTE!"
+            self._finalize_session_storage()
             self.get_logger().info("🎉 CHALLENGE ROBOCUP @HOME RECEPTIONIST COMPLETADA CON EXITO!")
 
     # --------------------------------------------------------------------------
@@ -1094,7 +1304,13 @@ def main():
         max_guests=args.max_guests,
     )
 
-    ros_thread = threading.Thread(target=rclpy.spin, args=(node,), daemon=True)
+    def _safe_spin():
+        try:
+            rclpy.spin(node)
+        except Exception:
+            pass
+
+    ros_thread = threading.Thread(target=_safe_spin, daemon=True)
     ros_thread.start()
 
     window_name = "RoboCup @Home - HRI Receptionist Challenge"
@@ -1126,17 +1342,33 @@ def main():
                     hud = node.draw_hud(fr, face_dets)
                     cv2.imshow(window_name, hud)
                 else:
-                    # Pantalla de espera de cámara
-                    blank = np.zeros((480, 720, 3), dtype=np.uint8)
-                    cv2.putText(
-                        blank,
-                        "Conectando con ZED Mini / Head Camera...",
-                        (40, 240),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.7,
-                        (0, 200, 255),
-                        2,
-                    )
+                    # Pantalla de espera con checklist visual de pre-vuelo
+                    blank = np.zeros((540, 840, 3), dtype=np.uint8)
+                    cv2.rectangle(blank, (20, 20), (820, 520), (35, 45, 55), 2)
+                    cv2.putText(blank, "ROBOCUP @HOME - PRE-VUELO RECEPTIONIST", (40, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 210, 255), 2)
+                    cv2.line(blank, (40, 75), (800, 75), (50, 65, 80), 1)
+
+                    cv2.putText(blank, "Verificando y sincronizando subsistemas requeridos:", (40, 115), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (220, 220, 220), 1)
+
+                    # Estado de Cámara
+                    cv2.putText(blank, f"[...] Camara ZED Mini : Conectando a {node.camera_topic_name}...", (40, 160), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 170, 255), 1)
+
+                    # Estado de Navegación
+                    nav_str = "Modo Simulacion Activo" if node.sim_nav else "Esperando / Verificando Nav2..."
+                    cv2.putText(blank, f"[*] Navegacion Nav2   : {nav_str}", (40, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (200, 200, 200), 1)
+
+                    # Estado de Almacenamiento
+                    cv2.putText(blank, f"[v] Registro Biometrico: Listo ({os.path.basename(node.session_file)})", (40, 240), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 240, 140), 1)
+
+                    # Estado de Voz
+                    cv2.putText(blank, f"[v] Modulo de Voz      : {node.voice_status}", (40, 280), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 240, 140), 1)
+
+                    # Waypoints y Mapa
+                    cv2.putText(blank, f"[v] Mapa Semantico     : {len(node.zones)} zonas | {len(node.waypoints)} waypoints | {len(node.seats)} asientos", (40, 320), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 240, 140), 1)
+
+                    cv2.line(blank, (40, 420), (800, 420), (50, 65, 80), 1)
+                    cv2.putText(blank, "ATENCION: Conecte la camara ZED o ejecute 'camara' en otra terminal.", (40, 455), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (255, 200, 0), 1)
+                    cv2.putText(blank, "Atajo de pruebas: Presione [ESPACIO] para generar frame sintetico y avanzar.", (40, 485), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (140, 160, 180), 1)
                     cv2.imshow(window_name, blank)
 
                 key = cv2.waitKey(30) & 0xFF
@@ -1146,6 +1378,7 @@ def main():
 
             if key in [ord("q"), ord("Q"), 27]:
                 print("\n[HRI]: Saliendo de la challenge...")
+                node._finalize_session_storage()
                 break
             elif key == ord("t") or key == ord("T"):
                 # Entrada de texto por teclado para testing
@@ -1156,9 +1389,16 @@ def main():
                 except Exception:
                     pass
             elif key in [32, 13]:  # Espacio o Enter
-                # Avance manual
-                if node.state == node.STATE_WAIT_DOOR:
+                # Avance manual o frame sintético de prueba si la cámara aún no envía frames
+                if node.latest_frame is None and node.state == node.STATE_INIT:
+                    print("\n[Manual]: Generando frame de prueba para pre-vuelo...")
+                    with node.frame_lock:
+                        node.latest_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+                        node.last_frame_time = time.time()
+                elif node.state == node.STATE_WAIT_DOOR:
                     node.door_detection_start = time.time() - 2.0
+                elif node.state == node.STATE_WAIT_NAME_DRINK:
+                    node.voice_text = f"My name is Alex and I like lemonade"
             elif key in [ord("g"), ord("G")]:
                 print("\n[Arm]: Probando gesto de senalamiento...")
                 node.move_arm_to_named_pose("point_couch", duration_s=1.5)

@@ -26,94 +26,109 @@ zones:
       - -1.013
     - - 1.8705
       - -1.013
-furniture: {}
+  living_room:
+    name: Sala de Estar
+    type: living_room
+    color: '#00f090'
+    polygon:
+    - - 1.7382
+      - -8.2741
+    - - 1.7382
+      - -8.2741
+    - - 1.7262
+      - -6.0155
+    - - 3.5763
+      - -6.0035
+    - - 3.5403
+      - -8.3101
+    - - 1.7262
+      - -8.2741
+    - - 1.7262
+      - -8.2741
+furniture:
+  escritorio:
+    name: Escritorio
+    type: desk
+    height_m: 0.75
+    solidified_in_map: true
+    polygon:
+    - - -0.9146
+      - -3.608
+    - - 0.0177
+      - -3.608
+    - - 0.0177
+      - -1.3484
+    - - -0.9146
+      - -1.3484
+    center:
+      x: -0.4484
+      y: -2.4782
+      z: 0.375
+    volume:
+      width_m: 0.9323
+      length_m: 2.2596
+      height_m: 0.75
+      volume_m3: 1.58
+  mesa_de_comedor:
+    name: Mesa de Comedor
+    type: table
+    height_m: 0.76
+    solidified_in_map: true
+    polygon:
+    - - -2.7475
+      - -3.6396
+    - - -1.594
+      - -3.6396
+    - - -1.594
+      - -1.4274
+    - - -2.7475
+      - -1.4274
+    center:
+      x: -2.1707
+      y: -2.5335
+      z: 0.38
+    volume:
+      width_m: 1.1535
+      length_m: 2.2122
+      height_m: 0.76
+      volume_m3: 1.9393
 keepout_zones: {}
 waypoints:
   door:
     name: door
     zone: entrance
-    x: 1.8589
-    y: -0.6717
+    x: 1.594
+    y: -0.5852
     yaw_deg: -2
   living_room:
     name: living_room
     zone: living_room
-    x: -13.8995
-    y: 7.4081
-    yaw_deg: 130
+    x: 2.7714
+    y: -7.325
+    yaw_deg: -4
 seats:
   sof_principal:
     name: Sofá Principal
     zone: living_room
-    x: 7.6778
-    y: -6.3111
-    type: armchair
+    x: 3.7866
+    y: -7.2349
+    type: couch
     arm_gesture: point_couch
-    capacity: 1
+    capacity: 2
     occupied: false
     height_m: 0.85
     solidified_in_map: true
     polygon:
-    - - 7.271
-      - -7.667
-    - - 8.0846
-      - -7.667
-    - - 8.0846
-      - -4.9552
-    - - 7.271
-      - -4.9552
+    - - 3.4802
+      - -8.0578
+    - - 4.0929
+      - -8.0578
+    - - 4.0929
+      - -6.412
+    - - 3.4802
+      - -6.412
     volume:
-      width_m: 0.8136
-      length_m: 2.7118
+      width_m: 0.6127
+      length_m: 1.6458
       height_m: 0.85
-      volume_m3: 1.8754
-  silla_individual:
-    name: Silla Individual
-    zone: living_room
-    x: 6.4455
-    y: -6.6687
-    type: armchair
-    arm_gesture: point_chair
-    capacity: 1
-    occupied: false
-    height_m: 0.9
-    solidified_in_map: true
-    polygon:
-    - - 6.2966
-      - -6.8217
-    - - 6.5944
-      - -6.8217
-    - - 6.5944
-      - -6.5157
-    - - 6.2966
-      - -6.5157
-    volume:
-      width_m: 0.2978
-      length_m: 0.306
-      height_m: 0.9
-      volume_m3: 0.082
-  silla_individual1:
-    name: Silla Individual1
-    zone: living_room
-    x: 6.0716
-    y: -5.2953
-    type: armchair
-    arm_gesture: point_chair
-    capacity: 1
-    occupied: false
-    height_m: 0.9
-    solidified_in_map: true
-    polygon:
-    - - 5.8576
-      - -5.5116
-    - - 6.2856
-      - -5.5116
-    - - 6.2856
-      - -5.0791
-    - - 5.8576
-      - -5.0791
-    volume:
-      width_m: 0.428
-      length_m: 0.4325
-      height_m: 0.9
-      volume_m3: 0.1666
+      volume_m3: 0.8571
