@@ -9,7 +9,13 @@ from typing import Dict, List, Tuple
 
 import cv2
 import numpy as np
-from ultralytics import YOLO
+
+try:
+    from ultralytics import YOLO
+    ULTRALYTICS_AVAILABLE = True
+except ImportError:
+    YOLO = None
+    ULTRALYTICS_AVAILABLE = False
 
 
 class PersonPoseDetector:
@@ -28,6 +34,8 @@ class PersonPoseDetector:
     ]
 
     def __init__(self, model_path: str, conf_thresh: float = 0.50):
+        if not ULTRALYTICS_AVAILABLE:
+            raise ImportError("Paquete 'ultralytics' no instalado en el entorno.")
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"No se encontro modelo YOLOv8-pose en: {model_path}")
         self.model = YOLO(model_path)

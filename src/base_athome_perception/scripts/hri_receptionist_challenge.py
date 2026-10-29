@@ -71,7 +71,10 @@ except ImportError:
 # Base@Home Perception Modules
 from base_athome_perception.face_recognizer import FaceRecognizer, PersonProfile
 from base_athome_perception.speaker import RoboCupSpeaker
-from base_athome_perception.person_pose_detector import PersonPoseDetector
+try:
+    from base_athome_perception.person_pose_detector import PersonPoseDetector
+except ImportError:
+    PersonPoseDetector = None
 from base_athome_perception.piper_kinematics import (
     SAFE_JOINT_LIMITS_DEG,
     DEFAULT_NAMED_POSES,
@@ -409,6 +412,12 @@ class HriReceptionistChallengeNode(Node):
         self.set_robot_emotion("neutral")
         self.move_arm_to_named_pose("cube_stow", duration_s=1.5)
 
+        # Estado de la GUI OpenCV
+        self.window_name = "RoboCup @Home - HRI Receptionist Challenge"
+        self.request_shutdown = False
+        self.current_face_dets: List[Dict] = []
+        self.frame_count = 0
+
         self.get_logger().info("HriReceptionistChallengeNode inicializado. Esperando sensores y pre-vuelo...")
 
     # --------------------------------------------------------------------------
@@ -558,8 +567,112 @@ class HriReceptionistChallengeNode(Node):
     # COMUNICACION MULTI-MODAL: HABLA, EMOCIONES Y CABEZAL
     # --------------------------------------------------------------------------
 
+    # --------------------------------------------------------------------------
+    # GESTION DE INTERFAZ GRAFICA (OPENCV HUD SIN CONGELAMIENTO)
+    # --------------------------------------------------------------------------
+
+    def pump_gui(self, delay_ms: int = 15) -> int:
+        """Renderiza el cuadro en vivo de la camara RealSense con HUD y bombea eventos OpenCV a ~40-60 FPS."""
+        if self.no_gui or self.request_shutdown:
+            time.sleep(delay_ms / 1000.0)
+            return 255
+
+        with self.frame_lock:
+            fr = self.latest_frame.copy() if self.latest_frame is not None else None
+
+        if fr is not None:
+            hud = self.draw_hud(fr, self.current_face_dets)
+            cv2.imshow(self.window_name, hud)
+        else:
+            self._draw_waiting_screen()
+
+        key = cv2.waitKey(max(1, delay_ms)) & 0xFF
+        if key != 255:
+            self.handle_key(key)
+        return key
+
+    def sleep_gui(self, duration_s: float):
+        """Espera de tiempo activa que mantiene la camara y la ventana OpenCV vivas y actualizandose."""
+        t_end = time.time() + duration_s
+        while time.time() < t_end and rclpy.ok() and not self.request_shutdown:
+            self.pump_gui(20)
+
+    def _draw_waiting_screen(self):
+        """Pantalla visual de prevuelo mientras se conecta el stream de la camara."""
+        blank = np.zeros((540, 840, 3), dtype=np.uint8)
+        cv2.rectangle(blank, (20, 20), (820, 520), (35, 45, 55), 2)
+        cv2.putText(blank, "ROBOCUP @HOME - PRE-VUELO RECEPTIONIST", (40, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 210, 255), 2)
+        cv2.line(blank, (40, 75), (800, 75), (50, 65, 80), 1)
+
+        cv2.putText(blank, "Verificando y sincronizando subsistemas requeridos:", (40, 115), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (220, 220, 220), 1)
+        cv2.putText(blank, f"[...] Camara RealSense D435 : Conectando a {self.camera_topic_name}...", (40, 160), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 170, 255), 1)
+
+        nav_str = "Modo Simulacion Activo" if self.sim_nav else "Esperando / Verificando Nav2..."
+        cv2.putText(blank, f"[*] Navegacion Nav2   : {nav_str}", (40, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (200, 200, 200), 1)
+        cv2.putText(blank, f"[v] Registro Biometrico: Listo ({os.path.basename(self.session_file)})", (40, 240), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 240, 140), 1)
+        cv2.putText(blank, f"[v] Modulo de Voz      : {self.voice_status}", (40, 280), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 240, 140), 1)
+        cv2.putText(blank, f"[v] Mapa Semantico     : {len(self.zones)} zonas | {len(self.waypoints)} waypoints | {len(self.seats)} asientos", (40, 320), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 240, 140), 1)
+
+        cv2.line(blank, (40, 420), (800, 420), (50, 65, 80), 1)
+        cv2.putText(blank, "ATENCION: Verifique que la camara RealSense D435 este transmitiendo.", (40, 455), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (255, 200, 0), 1)
+        cv2.putText(blank, "Atajo de pruebas: Presione [ESPACIO] para generar frame sintetico y avanzar.", (40, 485), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (140, 160, 180), 1)
+        cv2.imshow(self.window_name, blank)
+
+    def handle_key(self, key: int):
+        """Gestiona atajos de teclado interactivos para pruebas y depuracion."""
+        if key in [ord("q"), ord("Q"), 27]:
+            print("\n[HRI]: Saliendo de la challenge...")
+            self._finalize_session_storage()
+            self.request_shutdown = True
+        elif key in [32, 13]:  # Espacio o Enter
+            print(f"\n[Manual]: Tecla [ESPACIO/ENTER] presionada en estado '{self.STATE_NAMES.get(self.state, self.state)}'. Forzando avance...")
+            self.force_advance = True
+            if self.state == self.STATE_INIT:
+                if self.latest_frame is None:
+                    with self.frame_lock:
+                        self.latest_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+                        self.last_frame_time = time.time()
+            elif self.state == self.STATE_WAIT_DOOR:
+                self.state = self.STATE_GREET_AND_PROMPT
+                self.state_start_time = time.time()
+                self.door_detection_start = None
+            elif self.state == self.STATE_WAIT_NAME_DRINK:
+                print("   [Manual]: Asignando datos de demo por teclado: 'Alex' y 'Lemonade'")
+                self.current_name = "Alex" if self.guest_index == 1 else "Taylor"
+                self.current_drink = "Lemonade" if self.guest_index == 1 else "Coffee"
+                self.state = self.STATE_CONFIRM_DETAILS
+                self.state_start_time = time.time()
+            elif self.state == self.STATE_MEMORIZE_FACE:
+                if not self.recording_samples:
+                    dummy_f = np.random.randn(1, 128).astype(np.float32)
+                    dummy_f /= np.linalg.norm(dummy_f)
+                    self.recording_samples.append(dummy_f)
+                self.state_start_time = time.time() - 10.0
+        elif key in [ord("t"), ord("T")]:
+            try:
+                sim_text = input("\n🎙️ [Simular Respuesta de Voz]: ")
+                if sim_text.strip():
+                    self.voice_text = sim_text.strip()
+                    self.get_logger().info(f"🎙️ [Manual Texto]: '{self.voice_text}'")
+            except Exception:
+                pass
+        elif key in [ord("g"), ord("G")]:
+            print("\n[Arm]: Probando gesto de senalamiento...")
+            self.move_arm_to_named_pose("point_couch", duration_s=1.5)
+        elif key in [ord("r"), ord("R")]:
+            print("\n[Mic]: Forzando escucha de microfono...")
+            self.trigger_mic_listening()
+        elif key in [ord("n"), ord("N")]:
+            print("\n[Nav]: Omitiendo navegacion en curso...")
+            if self.navigator and not self.sim_nav:
+                self.navigator.cancelTask()
+
+    # --------------------------------------------------------------------------
+    # COMUNICACION MULTI-MODAL: HABLA, EMOCIONES Y CABEZAL
+    # --------------------------------------------------------------------------
+
     def say(self, text: str, emotion: str = "speaking", blocking: bool = False):
-        """Sintetiza texto con Piper TTS y sincroniza la cara animada y los subtitulos."""
+        """Sintetiza texto con Piper TTS y sincroniza la cara animada y los subtitulos sin congelar la GUI."""
         text = text.strip()
         if not text:
             return
@@ -582,11 +695,10 @@ class HriReceptionistChallengeNode(Node):
         if emotion:
             self.set_robot_emotion(emotion)
 
-        # Locución con Piper TTS
-        try:
-            self.speaker.speak(text, blocking=blocking)
-        finally:
-            # 2. Desactivar silencio tras terminar de hablar
+        done_event = threading.Event()
+
+        def _on_done():
+            done_event.set()
             if rclpy.ok() and hasattr(self, "pub_voice_mute"):
                 try:
                     mute_off = Bool()
@@ -595,27 +707,53 @@ class HriReceptionistChallengeNode(Node):
                 except Exception:
                     pass
 
+        # Locución con Piper TTS
+        try:
+            self.speaker.speak(text, blocking=False, on_done=_on_done)
+            if blocking:
+                # Bombea la GUI continuamente para que el video de la camara nunca se freeze mientras habla
+                while not done_event.is_set() and rclpy.ok() and not self.request_shutdown:
+                    self.pump_gui(20)
+        except Exception as e:
+            self.get_logger().warn(f"Error en say(): {e}")
+            _on_done()
+
     def set_robot_emotion(self, emotion: str):
         """Envia estado emocional a la cara interactiva en pantalla."""
-        msg = String()
-        msg.data = emotion
-        self.pub_emotion.publish(msg)
+        if not rclpy.ok():
+            return
+        try:
+            msg = String()
+            msg.data = emotion
+            self.pub_emotion.publish(msg)
+        except Exception:
+            pass
 
     def trigger_mic_listening(self):
         """Solicita al servicio de Whisper en la Jetson comenzar a escuchar."""
-        if self.cli_mic_trigger.service_is_ready():
-            req = Trigger.Request()
-            self.cli_mic_trigger.call_async(req)
+        if not rclpy.ok():
+            return
+        try:
+            if self.cli_mic_trigger.service_is_ready():
+                req = Trigger.Request()
+                self.cli_mic_trigger.call_async(req)
+        except Exception:
+            pass
 
     def move_head_to(self, pan_deg: float, tilt_deg: float):
         """Envía comandos angulares al cabezal pan-tilt."""
         self.target_pan_deg = float(np.clip(pan_deg, -65.0, 65.0))
         self.target_tilt_deg = float(np.clip(tilt_deg, -35.0, 35.0))
-        msg = Vector3()
-        msg.x = self.target_pan_deg
-        msg.y = self.target_tilt_deg
-        msg.z = 0.0
-        self.pub_pantilt.publish(msg)
+        if not rclpy.ok():
+            return
+        try:
+            msg = Vector3()
+            msg.x = self.target_pan_deg
+            msg.y = self.target_tilt_deg
+            msg.z = 0.0
+            self.pub_pantilt.publish(msg)
+        except Exception:
+            pass
 
     def move_arm_to_named_pose(self, pose_name: str, duration_s: float = 2.0):
         """Mueve el brazo AgileX Piper a una postura segura precalibrada."""
@@ -627,46 +765,54 @@ class HriReceptionistChallengeNode(Node):
         self.current_arm_pose_name = pose_name
         self.arm_joints_deg = list(target_deg)
 
-        js = JointState()
-        js.header.stamp = self.get_clock().now().to_msg()
-        js.name = [f"joint{i}" for i in range(1, 7)]
-        js.position = [math.radians(d) for d in target_deg]
-        js.velocity = [duration_s]
-        self.pub_arm_joint.publish(js)
+        if not rclpy.ok():
+            return
+        try:
+            js = JointState()
+            js.header.stamp = self.get_clock().now().to_msg()
+            js.name = [f"joint{i}" for i in range(1, 7)]
+            js.position = [math.radians(d) for d in target_deg]
+            js.velocity = [duration_s]
+            self.pub_arm_joint.publish(js)
 
-        # Control de pinza segun la pose
-        g_msg = Float32()
-        g_msg.data = 60.0 if "point" in pose_name else 25.0
-        self.pub_arm_gripper.publish(g_msg)
+            # Control de pinza segun la pose
+            g_msg = Float32()
+            g_msg.data = 60.0 if "point" in pose_name else 25.0
+            self.pub_arm_gripper.publish(g_msg)
+        except Exception:
+            pass
 
     def _publish_joint_states(self):
         """Publica el estado cinematico actual en /joint_states para visualizacion en RViz2."""
-        js = JointState()
-        js.header.stamp = self.get_clock().now().to_msg()
-        js.name = [
-            "pan_joint",
-            "tilt_joint",
-            "joint1",
-            "joint2",
-            "joint3",
-            "joint4",
-            "joint5",
-            "joint6",
-        ]
-        # Pan-tilt en radianes
-        pan_rad = math.radians(self.target_pan_deg)
-        tilt_rad = math.radians(self.target_tilt_deg)
-        arm_rad = [math.radians(d) for d in self.arm_joints_deg]
-
-        js.position = [pan_rad, tilt_rad] + arm_rad
-        self.pub_joint_states.publish(js)
+        if not rclpy.ok():
+            return
+        try:
+            js = JointState()
+            js.header.stamp = self.get_clock().now().to_msg()
+            js.name = [
+                "pan_joint",
+                "tilt_joint",
+                "joint1",
+                "joint2",
+                "joint3",
+                "joint4",
+                "joint5",
+                "joint6",
+            ]
+            pan_rad = math.radians(self.target_pan_deg)
+            tilt_rad = math.radians(self.target_tilt_deg)
+            arm_rad = [math.radians(d) for d in self.arm_joints_deg]
+            js.position = [pan_rad, tilt_rad] + arm_rad
+            self.pub_joint_states.publish(js)
+        except Exception:
+            pass
 
     # --------------------------------------------------------------------------
     # NAVEGACION AUTONOMA
     # --------------------------------------------------------------------------
 
     def navigate_to_waypoint(self, wp_name: str) -> bool:
-        """Navega de forma autónoma al waypoint objetivo."""
+        """Navega de forma autónoma al waypoint objetivo bombeando activamente la GUI."""
         self.get_logger().info(f"🎯 Iniciando navegacion hacia waypoint '{wp_name}'...")
         self.current_banner_text = f"Navegando hacia '{wp_name}'..."
         self.set_robot_emotion("neutral")
@@ -677,7 +823,7 @@ class HriReceptionistChallengeNode(Node):
 
         if self.sim_nav or self.navigator is None:
             self.get_logger().info(f"[SIM NAV]: Simulando viaje a '{wp_name}' (3.0s)...")
-            time.sleep(3.0)
+            self.sleep_gui(3.0)
             self.get_logger().info(f"[SIM NAV]: Llegada confirmada a '{wp_name}'.")
             return True
 
@@ -699,8 +845,8 @@ class HriReceptionistChallengeNode(Node):
 
         self.navigator.goToPose(target_pose)
 
-        while not self.navigator.isTaskComplete():
-            time.sleep(0.1)
+        while not self.navigator.isTaskComplete() and rclpy.ok() and not self.request_shutdown:
+            self.pump_gui(20)
 
         result = self.navigator.getResult()
         if result == TaskResult.SUCCEEDED:
@@ -720,6 +866,7 @@ class HriReceptionistChallengeNode(Node):
             with self.frame_lock:
                 self.latest_frame = cv_img
                 self.last_frame_time = time.time()
+                self.frame_count += 1
         except Exception as e:
             self.get_logger().warn(f"Error procesando frame de camara: {e}")
 
@@ -748,6 +895,7 @@ class HriReceptionistChallengeNode(Node):
         face_results = []
         if frame is not None:
             face_results = self.recognizer.detect_and_recognize(frame)
+            self.current_face_dets = face_results
 
             # Seguimiento suave del rostro con Pan-Tilt
             if self.pan_tilt_tracking and face_results:
@@ -812,14 +960,18 @@ class HriReceptionistChallengeNode(Node):
             self.state_start_time = now
 
         elif self.state == self.STATE_NAV_TO_DOOR:
-            self.say("Navigating to the entrance door.", emotion="neutral")
+            self.say("Navigating to the entrance door.", emotion="neutral", blocking=True)
             self.navigate_to_waypoint(self.door_wp)
-            self.state = self.STATE_WAIT_DOOR
-            self.state_start_time = now
+            # Limpieza rigurosa de audio al llegar a la puerta para no registrar ruido o eco de navegacion
+            self.voice_text = None
+            self.user_speech_buffer = ""
             self.door_detection_start = None
+            self.last_person_seen_time = None
             self.move_head_to(0.0, 0.0)  # Centrado exacto al llegar a la puerta
             self.set_robot_emotion("neutral")
             self.current_banner_text = f"Esperando invitado {self.guest_index} en la puerta..."
+            self.state = self.STATE_WAIT_DOOR
+            self.state_start_time = time.time()
 
         elif self.state == self.STATE_WAIT_DOOR:
             # 1. Avance manual forzado vía teclado [ESPACIO / ENTER]
@@ -857,18 +1009,23 @@ class HriReceptionistChallengeNode(Node):
                 except Exception:
                     pass
 
-            # C. Presencia por voz (si el invitado dice algo al acercarse)
+            # C. Presencia por voz (SOLO si dice palabras de saludo explícitas)
             if not person_detected and self.voice_text:
-                person_detected = True
-                detect_reason = f"Voz detectada: '{self.voice_text}'"
+                v_clean = self.voice_text.lower().strip()
+                door_keywords = ["hello", "hi", "hey", "robot", "here", "door", "open", "i'm here", "im here", "hola", "buenas"]
+                if any(k in v_clean for k in door_keywords) or len(v_clean.split()) >= 3:
+                    person_detected = True
+                    detect_reason = f"Voz de saludo detectada: '{self.voice_text}'"
+                # Consumir para evitar falsos positivos acumulados
+                self.voice_text = None
 
-            # 4. Debounce y transición fluida (0.7s continuo de presencia)
+            # 4. Debounce y confirmación de presencia (1.0s continuo de presencia)
             if person_detected:
                 self.last_person_seen_time = now
                 if self.door_detection_start is None:
                     self.door_detection_start = now
                     self.get_logger().info(f"👀 [Puerta]: {detect_reason}. Confirmando presencia...")
-                elif now - self.door_detection_start >= 0.7:
+                elif now - self.door_detection_start >= 1.0:
                     self.get_logger().info("✔ [Puerta]: Invitado confirmado. Iniciando saludo y bienvenida.")
                     self.state = self.STATE_GREET_AND_PROMPT
                     self.state_start_time = now
@@ -879,8 +1036,8 @@ class HriReceptionistChallengeNode(Node):
                 if self.last_person_seen_time is None or (now - self.last_person_seen_time > 1.0):
                     self.door_detection_start = None
 
-            # 5. Recordatorio cortés si espera más de 18 segundos sin nadie
-            if (now - self.state_start_time > 18.0) and (now - self.last_door_prompt_time > 18.0):
+            # 5. Recordatorio cortés si espera más de 20 segundos sin nadie
+            if (now - self.state_start_time > 20.0) and (now - self.last_door_prompt_time > 20.0):
                 self.last_door_prompt_time = now
                 self.say("Hello! I am waiting for the guest at the door. Please step forward.", emotion="speaking", blocking=False)
 
@@ -889,15 +1046,17 @@ class HriReceptionistChallengeNode(Node):
             greeting = f"Hello! Welcome to our home. I am Robot. Please tell me your name, and your favorite drink."
             self.say(greeting, emotion="speaking", blocking=True)
             # Tono de turn-taking acustico para ceder el turno de habla al humano
-            self.speaker.play_beep(blocking=True)
+            self.speaker.play_beep(blocking=False)
             self.set_robot_emotion("listening")
             self.trigger_mic_listening()
             self.voice_text = None
+            self.user_speech_buffer = ""
+            self.retry_count = 0
             self.state = self.STATE_WAIT_NAME_DRINK
             self.state_start_time = now
 
         elif self.state == self.STATE_WAIT_NAME_DRINK:
-            # Esperar respuesta por Whisper ASR (hasta 8.5s)
+            # Esperar respuesta por Whisper ASR
             if self.voice_text:
                 speech = self.voice_text
                 self.voice_text = None
@@ -926,36 +1085,31 @@ class HriReceptionistChallengeNode(Node):
                     self.state = self.STATE_PROMPT_MISSING_INFO
                     self.state_start_time = now
                 else:
-                    # No se extrajo ninguno
+                    # Habló pero no se extrajo ninguno: pedir aclaración cortés sin inventar datos
                     self.retry_count += 1
-                    if self.retry_count >= 2:
-                        # Asignar nombres por defecto para avanzar de forma robusta
-                        self.current_name = f"Guest {self.guest_index}"
-                        self.current_drink = "Water"
-                        self.state = self.STATE_CONFIRM_DETAILS
-                        self.state_start_time = now
-                    else:
-                        prompt_clarify = "I did not catch that. Please state clearly: My name is, and your drink."
-                        self.say(prompt_clarify, emotion="speaking", blocking=True)
-                        self.speaker.play_beep(blocking=True)
-                        self.set_robot_emotion("listening")
-                        self.trigger_mic_listening()
-                        self.state_start_time = now
-
-            elif now - self.state_start_time > 8.5:
-                # Timeout de habla
-                self.retry_count += 1
-                if self.retry_count >= 2:
-                    self.current_name = f"Guest {self.guest_index}"
-                    self.current_drink = "Water"
-                    self.state = self.STATE_CONFIRM_DETAILS
-                    self.state_start_time = now
-                else:
-                    self.say("I didn't hear you. Please tell me your name.", emotion="speaking", blocking=True)
-                    self.speaker.play_beep(blocking=True)
+                    prompt_clarify = "I did not catch that. Please state clearly: My name is, and your drink."
+                    self.say(prompt_clarify, emotion="speaking", blocking=True)
+                    self.speaker.play_beep(blocking=False)
                     self.set_robot_emotion("listening")
                     self.trigger_mic_listening()
                     self.state_start_time = now
+
+            elif now - self.state_start_time > 10.0:
+                # Timeout de silencio: NO avanzar automáticamente. Recordar cortésmente y seguir escuchando
+                self.retry_count += 1
+                self.get_logger().info(
+                    f"⏳ [Audio]: Esperando respuesta del invitado (intento {self.retry_count})... "
+                    "Use [T] para escribir por teclado o hable al microfono."
+                )
+                if self.retry_count % 2 == 1:
+                    prompt_wait = "I am listening. Please say: My name is, and your favorite drink."
+                else:
+                    prompt_wait = "Please tell me your name and favorite drink."
+                self.say(prompt_wait, emotion="speaking", blocking=True)
+                self.speaker.play_beep(blocking=False)
+                self.set_robot_emotion("listening")
+                self.trigger_mic_listening()
+                self.state_start_time = now
 
         elif self.state == self.STATE_PROMPT_MISSING_INFO:
             if self.missing_field == "drink":
@@ -965,10 +1119,11 @@ class HriReceptionistChallengeNode(Node):
                 prompt_name = "I got your drink, but what is your name?"
                 self.say(prompt_name, emotion="speaking", blocking=True)
 
-            self.speaker.play_beep(blocking=True)
+            self.speaker.play_beep(blocking=False)
             self.set_robot_emotion("listening")
             self.trigger_mic_listening()
             self.voice_text = None
+            self.user_speech_buffer = ""
             self.state = self.STATE_WAIT_NAME_DRINK
             self.state_start_time = now
 
@@ -1136,9 +1291,9 @@ class HriReceptionistChallengeNode(Node):
             # Llegada a la sala: escanear el entorno
             self.say("We have arrived at the living room. Let me introduce you.", emotion="happy", blocking=True)
             self.move_head_to(20.0, -5.0)
-            time.sleep(1.0)
+            self.sleep_gui(1.0)
             self.move_head_to(-20.0, -5.0)
-            time.sleep(1.0)
+            self.sleep_gui(1.0)
             self.move_head_to(0.0, -5.0)
 
             self.state = self.STATE_INTRODUCE_GUESTS
@@ -1179,7 +1334,7 @@ class HriReceptionistChallengeNode(Node):
 
             # Ejecutar gesto físico de señalamiento con el brazo
             self.move_arm_to_named_pose(pose_gesture, duration_s=2.0)
-            time.sleep(3.2)
+            self.sleep_gui(3.2)
             self.move_arm_to_named_pose("cube_stow", duration_s=1.8)
 
             self.state = self.STATE_CHECK_NEXT_GUEST
@@ -1193,6 +1348,8 @@ class HriReceptionistChallengeNode(Node):
                 self.current_name = None
                 self.current_drink = None
                 self.retry_count = 0
+                self.voice_text = None
+                self.user_speech_buffer = ""
                 self.state = self.STATE_NAV_TO_DOOR
                 self.state_start_time = now
             else:
@@ -1203,7 +1360,7 @@ class HriReceptionistChallengeNode(Node):
             final_msg = "All guests have arrived and are comfortably seated. The Receptionist Challenge is complete. Enjoy the party!"
             self.say(final_msg, emotion="happy", blocking=True)
             self.move_arm_to_named_pose("wave_hello", duration_s=2.0)
-            time.sleep(2.5)
+            self.sleep_gui(2.5)
             self.move_arm_to_named_pose("cube_stow", duration_s=1.5)
             self.set_robot_emotion("happy")
             self.current_banner_text = "CHALLENGE COMPLETADA EXITOSAMENTE!"
@@ -1309,18 +1466,20 @@ class HriReceptionistChallengeNode(Node):
                 break
 
         # Telemetría del Sistema
-        ty = canvas_h - 110
+        ty = canvas_h - 130
         cv2.line(canvas, (px + 10, ty), (canvas_w - 10, ty), (60, 70, 85), 1)
         ty += 18
         cv2.putText(canvas, "TELEMETRIA", (px + 15, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 220, 255), 1)
-        ty += 20
-        cv2.putText(canvas, f"Head: Pan {self.target_pan_deg:+.1f} deg | Tilt {self.target_tilt_deg:+.1f} deg", (px + 15, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (200, 200, 200), 1)
         ty += 18
-        cv2.putText(canvas, f"Arm Pose: {self.current_arm_pose_name}", (px + 15, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (200, 200, 200), 1)
+        cv2.putText(canvas, f"Camara: RealSense D435 (#{self.frame_count})", (px + 15, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 255, 120), 1)
         ty += 18
-        cv2.putText(canvas, f"Mic Status: {self.voice_status}", (px + 15, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 220, 180) if self.voice_status == "LISTENING" else (160, 160, 160), 1)
+        cv2.putText(canvas, f"Head: Pan {self.target_pan_deg:+.1f} deg | Tilt {self.target_tilt_deg:+.1f} deg", (px + 15, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (200, 200, 200), 1)
         ty += 18
-        cv2.putText(canvas, f"Nav Mode: {'SIMULADO' if self.sim_nav else 'NAV2 REAL'}", (px + 15, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (255, 200, 0) if self.sim_nav else (0, 255, 120), 1)
+        cv2.putText(canvas, f"Arm Pose: {self.current_arm_pose_name}", (px + 15, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (200, 200, 200), 1)
+        ty += 18
+        cv2.putText(canvas, f"Mic Status: {self.voice_status}", (px + 15, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 220, 180) if self.voice_status == "LISTENING" else (160, 160, 160), 1)
+        ty += 18
+        cv2.putText(canvas, f"Nav Mode: {'SIMULADO' if self.sim_nav else 'NAV2 REAL'}", (px + 15, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (255, 200, 0) if self.sim_nav else (0, 255, 120), 1)
 
         return canvas
 
@@ -1380,14 +1539,13 @@ def main():
     ros_thread = threading.Thread(target=_safe_spin, daemon=True)
     ros_thread.start()
 
-    window_name = "RoboCup @Home - HRI Receptionist Challenge"
     if not args.no_gui:
-        cv2.namedWindow(window_name, cv2.WINDOW_AUTOSIZE)
+        cv2.namedWindow(node.window_name, cv2.WINDOW_AUTOSIZE)
 
     print("\n" + "=" * 70)
     print("🤖 ROBOCUP @HOME - HRI RECEPTIONIST CHALLENGE")
     print("=" * 70)
-    print("   [ESPACIO / ENTER] : Forzar avance de paso / simular deteccion")
+    print("   [ESPACIO / ENTER] : Forzar avance de paso / simular deteccion o datos")
     print("   [T]               : Escribir texto por teclado (simular microfono)")
     print("   [R]               : Forzar escucha de microfono (/voice/listen_trigger)")
     print("   [G]               : Probar gesto de senalamiento con brazo Piper")
@@ -1396,95 +1554,9 @@ def main():
     print("=" * 70 + "\n")
 
     try:
-        while rclpy.ok():
+        while rclpy.ok() and not node.request_shutdown:
             node.step()
-
-            # Renderizado gráfico
-            if not args.no_gui:
-                with node.frame_lock:
-                    fr = node.latest_frame.copy() if node.latest_frame is not None else None
-
-                if fr is not None:
-                    face_dets = node.recognizer.detect_and_recognize(fr)
-                    hud = node.draw_hud(fr, face_dets)
-                    cv2.imshow(window_name, hud)
-                else:
-                    # Pantalla de espera con checklist visual de pre-vuelo
-                    blank = np.zeros((540, 840, 3), dtype=np.uint8)
-                    cv2.rectangle(blank, (20, 20), (820, 520), (35, 45, 55), 2)
-                    cv2.putText(blank, "ROBOCUP @HOME - PRE-VUELO RECEPTIONIST", (40, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 210, 255), 2)
-                    cv2.line(blank, (40, 75), (800, 75), (50, 65, 80), 1)
-
-                    cv2.putText(blank, "Verificando y sincronizando subsistemas requeridos:", (40, 115), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (220, 220, 220), 1)
-
-                    # Estado de Cámara
-                    cv2.putText(blank, f"[...] Camara RealSense D435 : Conectando a {node.camera_topic_name}...", (40, 160), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 170, 255), 1)
-
-                    # Estado de Navegación
-                    nav_str = "Modo Simulacion Activo" if node.sim_nav else "Esperando / Verificando Nav2..."
-                    cv2.putText(blank, f"[*] Navegacion Nav2   : {nav_str}", (40, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (200, 200, 200), 1)
-
-                    # Estado de Almacenamiento
-                    cv2.putText(blank, f"[v] Registro Biometrico: Listo ({os.path.basename(node.session_file)})", (40, 240), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 240, 140), 1)
-
-                    # Estado de Voz
-                    cv2.putText(blank, f"[v] Modulo de Voz      : {node.voice_status}", (40, 280), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 240, 140), 1)
-
-                    # Waypoints y Mapa
-                    cv2.putText(blank, f"[v] Mapa Semantico     : {len(node.zones)} zonas | {len(node.waypoints)} waypoints | {len(node.seats)} asientos", (40, 320), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 240, 140), 1)
-
-                    cv2.line(blank, (40, 420), (800, 420), (50, 65, 80), 1)
-                    cv2.putText(blank, "ATENCION: Verifique que la camara RealSense D435 este transmitiendo.", (40, 455), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (255, 200, 0), 1)
-                    cv2.putText(blank, "Atajo de pruebas: Presione [ESPACIO] para generar frame sintetico y avanzar.", (40, 485), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (140, 160, 180), 1)
-                    cv2.imshow(window_name, blank)
-
-                key = cv2.waitKey(30) & 0xFF
-            else:
-                time.sleep(0.04)
-                key = 255
-
-            if key in [ord("q"), ord("Q"), 27]:
-                print("\n[HRI]: Saliendo de la challenge...")
-                node._finalize_session_storage()
-                break
-            elif key == ord("t") or key == ord("T"):
-                # Entrada de texto por teclado para testing
-                try:
-                    sim_text = input("\n🎙️ [Simular Respuesta de Voz]: ")
-                    if sim_text.strip():
-                        node.voice_text = sim_text.strip()
-                except Exception:
-                    pass
-            elif key in [32, 13]:  # Espacio o Enter
-                # Avance manual forzado o frame sintético de prueba
-                print(f"\n[Manual]: Tecla [ESPACIO/ENTER] presionada en estado '{node.state}'. Forzando avance...")
-                node.force_advance = True
-                if node.latest_frame is None and node.state == node.STATE_INIT:
-                    with node.frame_lock:
-                        node.latest_frame = np.zeros((480, 640, 3), dtype=np.uint8)
-                        node.last_frame_time = time.time()
-                elif node.state == node.STATE_WAIT_DOOR:
-                    node.state = node.STATE_GREET_AND_PROMPT
-                    node.state_start_time = time.time()
-                    node.door_detection_start = None
-                elif node.state == node.STATE_WAIT_NAME_DRINK:
-                    node.voice_text = "My name is Alex and I like lemonade"
-                elif node.state == node.STATE_WAIT_GUEST_STANDING:
-                    node.state = node.STATE_DESCRIBE_GUEST
-                    node.state_start_time = time.time()
-                elif node.state == node.STATE_MEMORIZE_FACE:
-                    # Forzar fin de memorización si ya tiene al menos 1 muestra
-                    if not node.recording_samples:
-                        dummy_f = np.random.randn(1, 128).astype(np.float32)
-                        dummy_f /= np.linalg.norm(dummy_f)
-                        node.recording_samples.append(dummy_f)
-                    node.state_start_time = time.time() - 10.0
-            elif key in [ord("g"), ord("G")]:
-                print("\n[Arm]: Probando gesto de senalamiento...")
-                node.move_arm_to_named_pose("point_couch", duration_s=1.5)
-            elif key in [ord("r"), ord("R")]:
-                node.trigger_mic_listening()
-
+            node.pump_gui(20)
     except KeyboardInterrupt:
         pass
     finally:
