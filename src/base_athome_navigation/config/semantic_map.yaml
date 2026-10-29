@@ -8,8 +8,112 @@ map_info:
   - 0.0
   width: 324
   height: 582
-zones: {}
+zones:
+  entrance:
+    name: Entrada
+    type: entrance
+    color: '#00d2ff'
+    polygon:
+    - - 1.8589
+      - -1.0363
+    - - 1.8473
+      - -0.1739
+    - - 1.8628
+      - -1.0285
+    - - 1.855
+      - -1.0324
+    - - 1.8705
+      - -1.013
+    - - 1.8705
+      - -1.013
 furniture: {}
 keepout_zones: {}
-waypoints: {}
-seats: {}
+waypoints:
+  door:
+    name: door
+    zone: entrance
+    x: 1.8589
+    y: -0.6717
+    yaw_deg: -2
+  living_room:
+    name: living_room
+    zone: living_room
+    x: -13.8995
+    y: 7.4081
+    yaw_deg: 130
+seats:
+  sof_principal:
+    name: Sofá Principal
+    zone: living_room
+    x: 7.6778
+    y: -6.3111
+    type: armchair
+    arm_gesture: point_couch
+    capacity: 1
+    occupied: false
+    height_m: 0.85
+    solidified_in_map: true
+    polygon:
+    - - 7.271
+      - -7.667
+    - - 8.0846
+      - -7.667
+    - - 8.0846
+      - -4.9552
+    - - 7.271
+      - -4.9552
+    volume:
+      width_m: 0.8136
+      length_m: 2.7118
+      height_m: 0.85
+      volume_m3: 1.8754
+  silla_individual:
+    name: Silla Individual
+    zone: living_room
+    x: 6.4455
+    y: -6.6687
+    type: armchair
+    arm_gesture: point_chair
+    capacity: 1
+    occupied: false
+    height_m: 0.9
+    solidified_in_map: true
+    polygon:
+    - - 6.2966
+      - -6.8217
+    - - 6.5944
+      - -6.8217
+    - - 6.5944
+      - -6.5157
+    - - 6.2966
+      - -6.5157
+    volume:
+      width_m: 0.2978
+      length_m: 0.306
+      height_m: 0.9
+      volume_m3: 0.082
+  silla_individual1:
+    name: Silla Individual1
+    zone: living_room
+    x: 6.0716
+    y: -5.2953
+    type: armchair
+    arm_gesture: point_chair
+    capacity: 1
+    occupied: false
+    height_m: 0.9
+    solidified_in_map: true
+    polygon:
+    - - 5.8576
+      - -5.5116
+    - - 6.2856
+      - -5.5116
+    - - 6.2856
+      - -5.0791
+    - - 5.8576
+      - -5.0791
+    volume:
+      width_m: 0.428
+      length_m: 0.4325
+      height_m: 0.9
+      volume_m3: 0.1666

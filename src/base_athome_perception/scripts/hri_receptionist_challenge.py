@@ -1172,7 +1172,8 @@ def main():
         if not args.no_gui:
             cv2.destroyAllWindows()
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":

@@ -39,10 +39,16 @@ class PersonProfile:
 
     def update_centroid(self) -> None:
         """Calcula el vector biometrico medio (centroide normalizado) de la persona."""
+        valid_feats = []
+        for f in self.features:
+            if f is not None and getattr(f, "size", 0) == 128:
+                valid_feats.append(f.reshape(1, 128).astype(np.float32))
+        self.features = valid_feats
+
         if self.features:
-            feats_array = np.array(self.features)
-            mean_vec = np.mean(feats_array, axis=0)
-            norm = np.linalg.norm(mean_vec)
+            feats_array = np.vstack(self.features)
+            mean_vec = np.mean(feats_array, axis=0, keepdims=True)
+            norm = float(np.linalg.norm(mean_vec))
             if norm > 1e-6:
                 self.centroid = (mean_vec / norm).astype(np.float32)
             else:
@@ -340,9 +346,10 @@ class FaceRecognizer:
 
     def recognize_face(self, feature: np.ndarray) -> Tuple[str, float, Optional[str]]:
         """Compara un embedding contra los perfiles guardados usando Similitud Coseno, Top-K y Centroide."""
-        if not self.profiles or feature is None:
+        if not self.profiles or feature is None or getattr(feature, "size", 0) != 128:
             return "Desconocido", 0.0, None
 
+        feature_norm = feature.reshape(1, 128).astype(np.float32)
         best_profile: Optional[PersonProfile] = None
         best_score = -1.0
 
@@ -351,10 +358,17 @@ class FaceRecognizer:
                 continue
 
             # 1. Similitudes con todas las muestras biometricas de la persona
-            scores = [
-                float(self.sface.match(feature, known_feat, cv2.FaceRecognizerSF_FR_COSINE))
-                for known_feat in profile.features
-            ]
+            scores = []
+            for known_feat in profile.features:
+                if known_feat is not None and getattr(known_feat, "size", 0) == 128:
+                    kf = known_feat.reshape(1, 128).astype(np.float32)
+                    try:
+                        scores.append(float(self.sface.match(feature_norm, kf, cv2.FaceRecognizerSF_FR_COSINE)))
+                    except Exception:
+                        pass
+
+            if not scores:
+                continue
 
             # 2. Promedio robusto de las 2 mejores muestras (elimina falsos positivos por un unico outlier)
             sorted_scores = sorted(scores, reverse=True)
@@ -362,9 +376,13 @@ class FaceRecognizer:
             top_k_score = float(np.mean(sorted_scores[:k]))
 
             # 3. Similitud con el vector centroide del perfil (identidad media)
-            if profile.centroid is not None:
-                centroid_score = float(self.sface.match(feature, profile.centroid, cv2.FaceRecognizerSF_FR_COSINE))
-                composite_score = 0.60 * top_k_score + 0.40 * centroid_score
+            if profile.centroid is not None and getattr(profile.centroid, "size", 0) == 128:
+                cent = profile.centroid.reshape(1, 128).astype(np.float32)
+                try:
+                    centroid_score = float(self.sface.match(feature_norm, cent, cv2.FaceRecognizerSF_FR_COSINE))
+                    composite_score = 0.60 * top_k_score + 0.40 * centroid_score
+                except Exception:
+                    composite_score = top_k_score
             else:
                 composite_score = top_k_score
 
