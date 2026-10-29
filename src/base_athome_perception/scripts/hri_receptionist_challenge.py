@@ -37,6 +37,7 @@ import yaml
 # ROS 2 Imports
 import rclpy
 from rclpy.node import Node
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
 from geometry_msgs.msg import Vector3, PoseStamped
 from sensor_msgs.msg import Image, JointState
@@ -323,9 +324,9 @@ class HriReceptionistChallengeNode(Node):
         self.last_frame_time: float = 0.0
 
         qos_cam = QoSProfile(
-            reliability=QoSReliabilityPolicy.BEST_EFFORT,
+            reliability=QoSReliabilityPolicy.RELIABLE,
             history=QoSHistoryPolicy.KEEP_LAST,
-            depth=1,
+            depth=5,
         )
 
         candidate_topics = [
@@ -337,10 +338,11 @@ class HriReceptionistChallengeNode(Node):
         ]
         if camera_topic:
             candidate_topics.insert(0, camera_topic)
-        self.camera_topic_name = candidate_topics[0]
+        unique_topics = list(dict.fromkeys(candidate_topics))
+        self.camera_topic_name = unique_topics[0]
 
         self.sub_cam_list = []
-        for top in candidate_topics:
+        for top in unique_topics:
             self.sub_cam_list.append(
                 self.create_subscription(Image, top, self.image_callback, qos_cam)
             )
@@ -416,7 +418,10 @@ class HriReceptionistChallengeNode(Node):
         self.window_name = "RoboCup @Home - HRI Receptionist Challenge"
         self.request_shutdown = False
         self.current_face_dets: List[Dict] = []
+        self.current_poses: List[Dict] = []
         self.frame_count = 0
+        self.last_face_time = 0.0
+        self.last_pose_time = 0.0
 
         self.get_logger().info("HriReceptionistChallengeNode inicializado. Esperando sensores y pre-vuelo...")
 
@@ -586,6 +591,8 @@ class HriReceptionistChallengeNode(Node):
         else:
             self._draw_waiting_screen()
 
+        # Pausa de 5ms para ceder el GIL de Python y permitir que el hilo de ROS reciba frames continuamente
+        time.sleep(0.005)
         key = cv2.waitKey(max(1, delay_ms)) & 0xFF
         if key != 255:
             self.handle_key(key)
@@ -891,11 +898,21 @@ class HriReceptionistChallengeNode(Node):
         with self.frame_lock:
             frame = self.latest_frame.copy() if self.latest_frame is not None else None
 
-        # 1. Detección Facial y Seguimiento de Cabezal
-        face_results = []
+        # 1. Detección Facial y Seguimiento de Cabezal (Throttling para preservar GIL y CPU)
+        face_results = self.current_face_dets
         if frame is not None:
-            face_results = self.recognizer.detect_and_recognize(frame)
-            self.current_face_dets = face_results
+            if now - self.last_face_time >= 0.07:
+                self.last_face_time = now
+                self.current_face_dets = self.recognizer.detect_and_recognize(frame)
+            face_results = self.current_face_dets
+
+            # Detección de poses humanas en background throttled a ~3-4 Hz
+            if self.pose_detector is not None and (now - self.last_pose_time >= 0.28):
+                self.last_pose_time = now
+                try:
+                    self.current_poses = self.pose_detector.detect_poses(frame)
+                except Exception:
+                    pass
 
             # Seguimiento suave del rostro con Pan-Tilt
             if self.pan_tilt_tracking and face_results:
@@ -1379,11 +1396,10 @@ class HriReceptionistChallengeNode(Node):
         canvas = np.zeros((canvas_h, canvas_w, 3), dtype=np.uint8)
         canvas[:h, :w] = frame
 
-        # Detección de poses humanas si el detector está disponible
-        if self.pose_detector is not None:
+        # Detección de poses humanas desde cache (sin inferencia síncrona aquí para no congelar la GUI)
+        if self.pose_detector is not None and self.current_poses:
             try:
-                poses = self.pose_detector.detect_poses(frame)
-                canvas[:h, :w] = self.pose_detector.draw_poses(canvas[:h, :w], poses)
+                canvas[:h, :w] = self.pose_detector.draw_poses(canvas[:h, :w], self.current_poses)
             except Exception:
                 pass
 
@@ -1530,9 +1546,12 @@ def main():
         max_guests=args.max_guests,
     )
 
+    executor = MultiThreadedExecutor(num_threads=4)
+    executor.add_node(node)
+
     def _safe_spin():
         try:
-            rclpy.spin(node)
+            executor.spin()
         except Exception:
             pass
 
@@ -1563,6 +1582,7 @@ def main():
         node.speaker.stop()
         if not args.no_gui:
             cv2.destroyAllWindows()
+        executor.shutdown()
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
