@@ -11,8 +11,8 @@ def generate_launch_description():
 
     topic_arg = DeclareLaunchArgument(
         'topic',
-        default_value='/zed/zed_node/rgb/image_rect_color',
-        description='Topico de imagen ROS 2 (ZED Mini o Head Camera)'
+        default_value='/camera/camera/color/image_raw',
+        description='Topico de imagen ROS 2 (RealSense D435 o Head Camera)'
     )
     door_wp_arg = DeclareLaunchArgument(
         'door_wp',

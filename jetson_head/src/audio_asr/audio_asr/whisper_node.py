@@ -52,8 +52,8 @@ class WhisperASRNode(Node):
         super().__init__('whisper_asr_node')
 
         # ---------------- Parametros ----------------
-        self.declare_parameter('model_size', 'base.en')
-        self.declare_parameter('language', 'en')
+        self.declare_parameter('model_size', 'tiny')
+        self.declare_parameter('language', 'auto')
         self.declare_parameter('energy_threshold', 0.02)
         self.declare_parameter('vad_mode', 2)
         self.declare_parameter('silence_duration_sec', 1.0)
@@ -167,15 +167,22 @@ class WhisperASRNode(Node):
     # ------------------------------------------------------------------
     def find_microphone_device(self):
         try:
+            try:
+                sd._terminate()
+                sd._initialize()
+            except Exception:
+                pass
             devices = sd.query_devices()
             for i, d in enumerate(devices):
                 name = d['name'].lower()
-                if (self.mic_name_hint in name or 'videomic' in name) and d['max_input_channels'] > 0:
+                ch = d['max_input_channels']
+                if ('videomic' in name or 'rode' in name or 'røde' in name or self.mic_name_hint in name) and ch > 0:
                     self.get_logger().info(f'Found microphone: [{i}] {d["name"]}', throttle_duration_sec=30.0)
                     return i
             for i, d in enumerate(devices):
                 name = d['name'].lower()
-                if 'usb' in name and d['max_input_channels'] > 0:
+                ch = d['max_input_channels']
+                if 'usb' in name and ch > 0:
                     self.get_logger().info(f'Found USB microphone: [{i}] {d["name"]}', throttle_duration_sec=30.0)
                     return i
         except Exception as e:

@@ -1487,7 +1487,17 @@ class HriReceptionistChallengeNode(Node):
         ty += 18
         cv2.putText(canvas, "TELEMETRIA", (px + 15, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 220, 255), 1)
         ty += 18
-        cv2.putText(canvas, f"Camara: RealSense D435 (#{self.frame_count})", (px + 15, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 255, 120), 1)
+        now = time.time()
+        time_since_frame = now - self.last_frame_time if self.last_frame_time > 0 else 999.0
+        if time_since_frame > 1.0:
+            cam_color = (0, 0, 255)
+            cam_str = f"Camara: CONGELADA ({time_since_frame:.1f}s sin datos)"
+            cv2.rectangle(canvas, (10, 42), (430, 72), (0, 0, 180), -1)
+            cv2.putText(canvas, f"ALERTA: CAMARA SIN DATOS ({time_since_frame:.1f}s)", (15, 63), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 2)
+        else:
+            cam_color = (0, 255, 120)
+            cam_str = f"Camara: RealSense D435 (#{self.frame_count} - VIVO)"
+        cv2.putText(canvas, cam_str, (px + 15, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.38, cam_color, 1)
         ty += 18
         cv2.putText(canvas, f"Head: Pan {self.target_pan_deg:+.1f} deg | Tilt {self.target_tilt_deg:+.1f} deg", (px + 15, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (200, 200, 200), 1)
         ty += 18
