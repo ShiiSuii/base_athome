@@ -9,7 +9,7 @@ waypoints:
     qz: -0.0175
     qw: 0.9998
     yaw_deg: -2.0
-    timestamp: '2026-10-29 16:37:04'
+    timestamp: '2026-10-29 17:39:51'
   living_room:
     name: living_room
     x: 1.8054
@@ -20,4 +20,4 @@ waypoints:
     qz: -0.0175
     qw: 0.9998
     yaw_deg: -2.0
-    timestamp: '2026-10-29 16:37:04'
+    timestamp: '2026-10-29 17:39:51'

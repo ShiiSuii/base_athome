@@ -584,10 +584,13 @@ class HriReceptionistChallengeNode(Node):
             self.speaker.speak(text, blocking=blocking)
         finally:
             # 2. Desactivar silencio tras terminar de hablar
-            if hasattr(self, "pub_voice_mute"):
-                mute_off = Bool()
-                mute_off.data = False
-                self.pub_voice_mute.publish(mute_off)
+            if rclpy.ok() and hasattr(self, "pub_voice_mute"):
+                try:
+                    mute_off = Bool()
+                    mute_off.data = False
+                    self.pub_voice_mute.publish(mute_off)
+                except Exception:
+                    pass
 
     def set_robot_emotion(self, emotion: str):
         """Envia estado emocional a la cara interactiva en pantalla."""

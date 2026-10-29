@@ -169,7 +169,7 @@ class FaceRecognizer:
                 print(f"[FaceRecognizer] Error cargando memoria ({e}), verificando respaldo...")
 
         # Migracion automatica si solo existe faces_db.pkl legado
-        if os.path.exists(self.legacy_pkl_path):
+        if self.legacy_pkl_path and self.legacy_pkl_path.endswith(".pkl") and os.path.exists(self.legacy_pkl_path):
             try:
                 with open(self.legacy_pkl_path, "rb") as f:
                     legacy_data = pickle.load(f)
