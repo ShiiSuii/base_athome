@@ -127,15 +127,23 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
                 history=QoSHistoryPolicy.KEEP_LAST,
                 depth=1,
             )
-            # Soporte dual: escucha tanto ZED Mini (/zed/zed_node/rgb/image_rect_color) como RealSense/UVC
+            # Soporte multi-camara: ZED Mini / ZEDm / RealSense / UVC
             self.subs_cam = []
             cand_topics = [
                 topic,
                 "/zed/zed_node/rgb/image_rect_color",
                 "/zed/zed_node/left/image_rect_color",
+                "/zed/zed_node/rgb/image_raw_color",
+                "/zed/zed_node/left/image_raw_color",
                 "/zed/rgb/image_rect_color",
+                "/zed/left/image_rect_color",
+                "/zed/rgb/image_raw",
+                "/zed/left/image_raw",
+                "/zed/image_raw",
+                "/zedm/zed_node/rgb/image_rect_color",
+                "/zedm/zed_node/left/image_rect_color",
                 "/camera/camera/color/image_raw",
-                "/camera/color/image_raw"
+                "/camera/color/image_raw",
             ]
             seen_topics = set()
             for t in cand_topics:
@@ -290,7 +298,11 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
 
     def image_callback(self, msg: Image):
         try:
-            self.latest_frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
+            cv_img = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
+            # Soporte estéreo Side-by-Side (ej. ZED Mini 2560x720 / 1344x376): recortar ojo izquierdo
+            if cv_img.shape[1] > int(cv_img.shape[0] * 1.9):
+                cv_img = cv_img[:, : cv_img.shape[1] // 2]
+            self.latest_frame = cv_img
         except Exception as e:
             if hasattr(self, "get_logger"):
                 self.get_logger().error(f"Error convirtiendo imagen: {e}")

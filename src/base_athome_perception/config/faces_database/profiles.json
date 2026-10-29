@@ -1,0 +1,18 @@
+{
+  "person_001": {
+    "person_id": "person_001",
+    "name": "Charlie",
+    "enrolled_at": 1793293380.079477,
+    "enrolled_date": "2026-10-29 14:03:00",
+    "last_seen": 1793293380.079477,
+    "last_seen_date": "2026-10-29 14:03:00",
+    "sighting_count": 1,
+    "thumbnail_file": "",
+    "samples_count": 1,
+    "attributes": {
+      "role": "host",
+      "favorite_drink": "Water",
+      "seat": "sofa_left"
+    }
+  }
+}
