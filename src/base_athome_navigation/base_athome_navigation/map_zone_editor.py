@@ -5,10 +5,9 @@
 # Herramientas para:
 #  - Limpieza de obstáculos fantasma (goma/rectángulo libre)
 #  - Dibujo de paredes y obstáculos faltantes (lápiz/línea recta)
-#  - Delimitación de mesas y objetos elevados (cajas 2D/3D sobre las patas)
-#  - Solidificación de mesas en el mapa PGM para evitar colisiones de Nav2
-#  - Áreas prohibidas (Keep-out / No-Go zones)
-#  - Zonas poligonales, Waypoints Nav2 con orientación (Yaw) y Asientos
+#  - Catálogo de Opciones y Plantillas (Mesas 76cm, Sofá point_couch, Sillas, WPs)
+#  - Delimitación y solidificación de mesas en el mapa PGM para Nav2
+#  - Zonas semánticas y áreas prohibidas (Keep-out)
 # ==============================================================================
 
 import argparse
@@ -40,6 +39,7 @@ BACKUP_DIR = "/home/athome/mapa_backups"
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
     """Servidor HTTP multihilo para atender peticiones web concurrentes sin bloqueo."""
     daemon_threads = True
+    allow_reuse_address = True
 
 
 class SemanticMapManager:
@@ -90,7 +90,6 @@ class SemanticMapManager:
             gray = cv2.imread(img_abs, cv2.IMREAD_GRAYSCALE)
             if gray is not None:
                 self.map_info["height"], self.map_info["width"] = gray.shape[:2]
-                # Codificar en PNG de 8 bits sin pérdida
                 ret, buf = cv2.imencode(".png", gray)
                 if ret:
                     self.raw_png_bytes = buf.tobytes()
@@ -99,69 +98,27 @@ class SemanticMapManager:
             print(f"⚠ Imagen PGM no encontrada en: {img_abs}")
 
     def load_semantic_data(self):
-        """Carga zonas, mesas, áreas prohibidas, waypoints y asientos guardados."""
+        """Carga zonas, mesas, áreas prohibidas, waypoints y asientos guardados por el usuario."""
         if os.path.exists(self.semantic_yaml_path):
             try:
                 with open(self.semantic_yaml_path, "r", encoding="utf-8") as f:
                     data = yaml.safe_load(f) or {}
-                self.zones = data.get("zones", {})
-                self.furniture = data.get("furniture", {})
-                self.keepout_zones = data.get("keepout_zones", {})
-                self.waypoints = data.get("waypoints", {})
-                self.seats = data.get("seats", {})
-                print(f"✔ Datos semánticos cargados: {len(self.zones)} zonas, {len(self.furniture)} muebles/mesas, {len(self.waypoints)} waypoints, {len(self.seats)} asientos.")
+                self.zones = data.get("zones", {}) or {}
+                self.furniture = data.get("furniture", {}) or {}
+                self.keepout_zones = data.get("keepout_zones", {}) or {}
+                self.waypoints = data.get("waypoints", {}) or {}
+                self.seats = data.get("seats", {}) or {}
+                print(f"✔ Datos semánticos del usuario cargados: {len(self.zones)} zonas, {len(self.furniture)} mesas, {len(self.waypoints)} waypoints, {len(self.seats)} asientos.")
                 return
             except Exception as e:
                 print(f"⚠ Error cargando semantic_map.yaml: {e}")
 
-        # Plantilla inicial con valores por defecto si no existe
-        self.zones = {
-            "entrance": {
-                "name": "Entrada",
-                "type": "entrance",
-                "color": "#00d2ff",
-                "polygon": [[0.4, -0.6], [1.3, -0.6], [1.3, 0.6], [0.4, 0.6]],
-            },
-            "living_room": {
-                "name": "Sala de Estar",
-                "type": "living_room",
-                "color": "#00f090",
-                "polygon": [[1.2, -0.8], [2.4, -0.8], [2.4, 0.8], [1.2, 0.8]],
-            },
-            "couch_area": {
-                "name": "Zona del Sofá",
-                "type": "seating",
-                "color": "#ffaa00",
-                "polygon": [[1.5, -0.7], [2.2, -0.7], [2.2, -0.1], [1.5, -0.1]],
-            },
-            "chair_area": {
-                "name": "Zona de Sillas",
-                "type": "seating",
-                "color": "#ff5500",
-                "polygon": [[1.5, 0.1], [2.2, 0.1], [2.2, 0.7], [1.5, 0.7]],
-            },
-        }
-        self.furniture = {
-            "mesa_centro": {
-                "name": "Mesa de Centro",
-                "type": "table",
-                "height_m": 0.76,
-                "solidified_in_map": True,
-                "polygon": [[1.5, -0.5], [2.1, -0.5], [2.1, -0.1], [1.5, -0.1]],
-                "bbox": {"x_min": 1.5, "x_max": 2.1, "y_min": -0.5, "y_max": -0.1, "center_x": 1.8, "center_y": -0.3, "width_m": 0.6, "length_m": 0.4},
-            }
-        }
+        # Iniciar limpio por defecto: NO precargar elementos intrínsecos ficticios en el mapa del usuario
+        self.zones = {}
+        self.furniture = {}
         self.keepout_zones = {}
-        self.waypoints = {
-            "door": {"name": "door", "zone": "entrance", "x": 1.001, "y": 0.065, "yaw_deg": 18.0},
-            "living_room": {"name": "living_room", "zone": "living_room", "x": 1.598, "y": -0.355, "yaw_deg": 159.0},
-            "couch": {"name": "couch", "zone": "couch_area", "x": 1.673, "y": -0.043, "yaw_deg": 68.0},
-            "chair": {"name": "chair", "zone": "chair_area", "x": 1.716, "y": 0.364, "yaw_deg": 10.0},
-        }
-        self.seats = {
-            "couch": {"name": "Sofá", "zone": "living_room", "type": "couch", "arm_gesture": "point_couch", "capacity": 2, "occupied": False},
-            "chair": {"name": "Silla Individual", "zone": "living_room", "type": "armchair", "arm_gesture": "point_chair", "capacity": 1, "occupied": False},
-        }
+        self.waypoints = {}
+        self.seats = {}
 
     def save_map_image(self, base64_png_data: str) -> bool:
         """Guarda la imagen del mapa PGM editada en disco, creando respaldos de seguridad."""
@@ -175,8 +132,6 @@ class SemanticMapManager:
                 print("❌ [Editor] Error al decodificar la imagen enviada desde el navegador.")
                 return False
 
-            # Cuantizar a valores exactos del mapa ROS 2
-            # 254 = Espacio libre, 0 = Obstáculo, 205 = Desconocido
             result_pgm = np.full_like(img, 205, dtype=np.uint8)
             result_pgm[img > 220] = 254
             result_pgm[img < 40] = 0
@@ -185,23 +140,19 @@ class SemanticMapManager:
             os.makedirs(os.path.dirname(os.path.abspath(pgm_path)), exist_ok=True)
             os.makedirs(BACKUP_DIR, exist_ok=True)
 
-            # 1. Respaldo permanente del original si no existe
             orig_backup = pgm_path + ".orig"
             if os.path.exists(pgm_path) and not os.path.exists(orig_backup):
                 shutil.copy2(pgm_path, orig_backup)
                 print(f"✔ [Editor] Respaldo original permanente creado en: {orig_backup}")
 
-            # 2. Respaldo con timestamp
             ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             ts_backup = os.path.join(BACKUP_DIR, f"mapa_base_athome_{ts}.pgm")
             if os.path.exists(pgm_path):
                 shutil.copy2(pgm_path, ts_backup)
 
-            # 3. Sobrescribir archivo PGM oficial
             cv2.imwrite(pgm_path, result_pgm)
             print(f"✔ [Editor] Mapa PGM guardado exitosamente en: {pgm_path} (Respaldo: {ts_backup})")
 
-            # 4. Recargar mapa en memoria para sincronización inmediata
             self.load_map()
             return True
         except Exception as e:
@@ -229,7 +180,6 @@ class SemanticMapManager:
             self.waypoints = new_data.get("waypoints", self.waypoints)
             self.seats = new_data.get("seats", self.seats)
 
-            # 1. Guardar mapa semántico enriquecido
             sem_payload = {
                 "map_info": {
                     "yaml_file": self.map_yaml_path,
@@ -250,7 +200,6 @@ class SemanticMapManager:
             with open(self.semantic_yaml_path, "w", encoding="utf-8") as f:
                 yaml.dump(sem_payload, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
 
-            # 2. Sincronizar automáticamente con waypoints.yaml para Nav2
             wp_dict = {}
             for name, wp in self.waypoints.items():
                 yaw_deg = float(wp.get("yaw_deg", 0.0))
@@ -279,7 +228,7 @@ class SemanticMapManager:
             with open(user_wp, "w", encoding="utf-8") as f:
                 yaml.dump({"waypoints": wp_dict}, f, default_flow_style=False, sort_keys=False)
 
-            print(f"✔ [Editor] Datos semánticos guardados: {len(self.zones)} zonas, {len(self.furniture)} mesas, {len(self.waypoints)} waypoints.")
+            print(f"✔ [Editor] Datos semánticos guardados: {len(self.zones)} zonas, {len(self.furniture)} mesas, {len(self.waypoints)} waypoints, {len(self.seats)} asientos.")
             return True
         except Exception as e:
             print(f"❌ Error guardando datos semánticos: {e}")
@@ -310,7 +259,7 @@ HTML_PAGE = r'''<!DOCTYPE html>
 
   /* Barra Lateral */
   #sidebar {
-    width: 390px;
+    width: 410px;
     background: var(--panel-bg);
     border-right: 1px solid var(--panel-border);
     display: flex;
@@ -331,10 +280,10 @@ HTML_PAGE = r'''<!DOCTYPE html>
   .status-badge { background: rgba(0, 240, 144, 0.15); color: var(--accent-green); border: 1px solid var(--accent-green); padding: 3px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; display: flex; align-items: center; gap: 4px; }
   .status-badge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent-green); }
 
-  /* Selector de Pestañas Principales */
+  /* Selector de Pestañas (4 pestañas) */
   .tab-nav {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(4, 1fr);
     background: #0d121c;
     border-bottom: 1px solid var(--panel-border);
   }
@@ -343,8 +292,8 @@ HTML_PAGE = r'''<!DOCTYPE html>
     border: none;
     border-bottom: 2px solid transparent;
     color: var(--text-muted);
-    padding: 10px 4px;
-    font-size: 12px;
+    padding: 10px 2px;
+    font-size: 11px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.2s;
@@ -357,6 +306,67 @@ HTML_PAGE = r'''<!DOCTYPE html>
   .tab-content { display: none; flex: 1; flex-direction: column; overflow-y: auto; padding: 14px; gap: 14px; }
   .tab-content.active { display: flex; }
 
+  /* Sección de Plantillas / Opciones Rápidas */
+  .template-section {
+    background: #151d2a;
+    border: 1px solid var(--panel-border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .template-title {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--accent-cyan);
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .template-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .template-card {
+    background: #1a2436;
+    border: 1px solid var(--panel-border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    color: var(--text-main);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    transition: all 0.15s;
+  }
+  .template-card:hover {
+    border-color: var(--accent-cyan);
+    background: rgba(0, 210, 255, 0.1);
+    transform: translateX(2px);
+  }
+  .template-card.active-tpl {
+    border-color: var(--accent-green);
+    background: rgba(0, 240, 144, 0.15);
+  }
+  .template-info { display: flex; flex-direction: column; gap: 2px; }
+  .template-name { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+  .template-desc { font-size: 11px; color: var(--text-muted); }
+  .pill-badge {
+    background: rgba(0, 210, 255, 0.15);
+    color: var(--accent-cyan);
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 4px;
+    border: 1px solid rgba(0, 210, 255, 0.3);
+  }
+  .pill-badge.green { background: rgba(0, 240, 144, 0.15); color: var(--accent-green); border-color: rgba(0, 240, 144, 0.3); }
+  .pill-badge.purple { background: rgba(179, 136, 255, 0.15); color: var(--accent-purple); border-color: rgba(179, 136, 255, 0.3); }
+
   /* Cuadrícula de Herramientas */
   .tool-grid {
     display: grid;
@@ -367,7 +377,7 @@ HTML_PAGE = r'''<!DOCTYPE html>
     background: #182030;
     border: 1px solid var(--panel-border);
     color: var(--text-main);
-    padding: 10px 10px;
+    padding: 9px 10px;
     border-radius: 6px;
     font-size: 12px;
     cursor: pointer;
@@ -396,7 +406,7 @@ HTML_PAGE = r'''<!DOCTYPE html>
   .preset-btn { flex: 1; background: #0f1522; border: 1px solid var(--panel-border); color: var(--text-main); font-size: 11px; padding: 4px; border-radius: 4px; cursor: pointer; text-align: center; }
   .preset-btn:hover, .preset-btn.active { border-color: var(--accent-cyan); color: var(--accent-cyan); }
 
-  /* Acciones de Deshacer / Rehacer */
+  /* Deshacer / Rehacer */
   .history-row { display: flex; gap: 8px; }
   .sub-btn {
     flex: 1;
@@ -415,9 +425,19 @@ HTML_PAGE = r'''<!DOCTYPE html>
   .sub-btn:hover:not(:disabled) { background: #222d42; border-color: var(--accent-cyan); }
   .sub-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
-  /* Lista de Elementos */
+  /* Lista de Elementos en el Mapa */
   .section-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-muted); margin-top: 4px; display: flex; justify-content: space-between; }
-  .item-list { display: flex; flex-direction: column; gap: 6px; max-height: 280px; overflow-y: auto; }
+  .item-list { display: flex; flex-direction: column; gap: 6px; max-height: 220px; overflow-y: auto; }
+  .empty-state {
+    padding: 14px 10px;
+    text-align: center;
+    font-size: 11px;
+    color: var(--text-muted);
+    border: 1px dashed var(--panel-border);
+    border-radius: 6px;
+    background: rgba(255,255,255,0.01);
+    line-height: 1.5;
+  }
   .item-card {
     background: #161e2c;
     border: 1px solid var(--panel-border);
@@ -429,7 +449,6 @@ HTML_PAGE = r'''<!DOCTYPE html>
     transition: all 0.15s;
   }
   .item-card:hover { border-color: rgba(255,255,255,0.25); background: #1c2638; }
-  .item-card.selected { border-color: var(--accent-cyan); background: rgba(0, 210, 255, 0.08); }
   .item-info { display: flex; flex-direction: column; gap: 2px; }
   .item-title { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
   .item-subtitle { font-size: 11px; color: var(--text-muted); }
@@ -510,15 +529,15 @@ HTML_PAGE = r'''<!DOCTYPE html>
     position: absolute;
     top: 16px;
     left: 16px;
-    background: rgba(14, 20, 32, 0.92);
+    background: rgba(14, 20, 32, 0.94);
     backdrop-filter: blur(8px);
-    border: 1px solid var(--panel-border);
+    border: 1px solid var(--accent-cyan);
     border-radius: 6px;
     padding: 10px 16px;
     font-size: 13px;
     color: var(--text-main);
     box-shadow: 0 4px 16px rgba(0,0,0,0.5);
-    max-width: 550px;
+    max-width: 580px;
     display: flex;
     align-items: center;
     gap: 10px;
@@ -600,7 +619,8 @@ HTML_PAGE = r'''<!DOCTYPE html>
   <div class="tab-nav">
     <button class="tab-btn active" onclick="switchTab('cleaning')">🧹 Limpieza</button>
     <button class="tab-btn" onclick="switchTab('furniture')">🪑 Mesas</button>
-    <button class="tab-btn" onclick="switchTab('semantics')">📍 Zonas/WPs</button>
+    <button class="tab-btn" onclick="switchTab('seats')">🛋️ Asientos</button>
+    <button class="tab-btn" onclick="switchTab('zones')">📍 Zonas/WPs</button>
   </div>
 
   <!-- PESTAÑA 1: LIMPIEZA Y EDICIÓN DEL MAPA PGM -->
@@ -643,60 +663,164 @@ HTML_PAGE = r'''<!DOCTYPE html>
 
   <!-- PESTAÑA 2: MESAS Y MOBILIARIO -->
   <div class="tab-content" id="tab-furniture">
-    <div class="section-title">
-      <span>Delimitar Mesas & Obstáculos 2D/3D</span>
+    <div class="template-section">
+      <div class="template-title">⚡ Opciones Listas para Colocar en el Mapa:</div>
+      <div class="template-list">
+        <div class="template-card" onclick="placeTableTemplate('Mesa de Centro', 'table', 76, true)">
+          <div class="template-info">
+            <span class="template-name">☕ Mesa de Centro / Pringles</span>
+            <span class="template-desc">Arrastra caja sobre 4 patas | Altura 76 cm</span>
+          </div>
+          <span class="pill-badge">76 cm</span>
+        </div>
+        <div class="template-card" onclick="placeTableTemplate('Mesa de Comedor', 'table', 76, true)">
+          <div class="template-info">
+            <span class="template-name">🍽️ Mesa de Comedor</span>
+            <span class="template-desc">Arrastra caja sobre patas | Altura 76 cm</span>
+          </div>
+          <span class="pill-badge">76 cm</span>
+        </div>
+        <div class="template-card" onclick="placeTableTemplate('Escritorio', 'desk', 75, true)">
+          <div class="template-info">
+            <span class="template-name">💻 Escritorio / Mesada</span>
+            <span class="template-desc">Arrastra caja | Altura 75 cm</span>
+          </div>
+          <span class="pill-badge">75 cm</span>
+        </div>
+      </div>
     </div>
+
+    <div class="section-title"><span>Herramientas Libres</span></div>
     <div class="tool-grid">
-      <button class="tool-btn" id="btn-table_rect" onclick="setMode('table_rect')">➕ Caja de Mesa (Drag)</button>
+      <button class="tool-btn" id="btn-table_rect" onclick="setMode('table_rect')">➕ Caja Libre (Drag)</button>
       <button class="tool-btn" id="btn-table_poly" onclick="setMode('table_poly')">📐 Mesa Polígono</button>
     </div>
 
     <div class="section-title">
-      <span>Mesas y Muebles Registrados</span>
+      <span>Mesas en tu Mapa</span>
       <span id="furniture-count">0</span>
     </div>
     <div class="item-list" id="furniture-list"></div>
   </div>
 
-  <!-- PESTAÑA 3: ZONAS SEMÁNTICAS, WAYPOINTS Y ASIENTOS -->
-  <div class="tab-content" id="tab-semantics">
-    <div class="section-title">
-      <span>Entorno Semántico</span>
+  <!-- PESTAÑA 3: ASIENTOS RECEPTIONIST -->
+  <div class="tab-content" id="tab-seats">
+    <div class="template-section">
+      <div class="template-title">⚡ Opciones de Asientos (Receptionist Challenge):</div>
+      <div class="template-list">
+        <div class="template-card" onclick="placeSeatTemplate('Sofá', 'couch', 'point_couch', 2)">
+          <div class="template-info">
+            <span class="template-name">🛋️ Sofá Receptionist</span>
+            <span class="template-desc">Clic en el mapa | Gesto point_couch | 2 plazas</span>
+          </div>
+          <span class="pill-badge purple">point_couch</span>
+        </div>
+        <div class="template-card" onclick="placeSeatTemplate('Silla Individual', 'armchair', 'point_chair', 1)">
+          <div class="template-info">
+            <span class="template-name">🪑 Silla Individual</span>
+            <span class="template-desc">Clic en el mapa | Gesto point_chair | 1 plaza</span>
+          </div>
+          <span class="pill-badge purple">point_chair</span>
+        </div>
+        <div class="template-card" onclick="placeSeatTemplate('Silla Secundaria', 'armchair', 'point_chair', 1)">
+          <div class="template-info">
+            <span class="template-name">🪑 Silla Secundaria</span>
+            <span class="template-desc">Clic en el mapa | Gesto point_chair | 1 plaza</span>
+          </div>
+          <span class="pill-badge purple">point_chair</span>
+        </div>
+      </div>
     </div>
+
+    <div class="section-title"><span>Herramienta Libre</span></div>
     <div class="tool-grid">
-      <button class="tool-btn" id="btn-zone" onclick="setMode('zone')">📐 Dibujar Zona</button>
-      <button class="tool-btn" id="btn-waypoint" onclick="setMode('waypoint')">📍 Waypoint (Yaw)</button>
-      <button class="tool-btn" id="btn-seat" onclick="setMode('seat')">🛋️ Asiento</button>
-      <button class="tool-btn danger" id="btn-keepout" onclick="setMode('keepout')">🚫 Zona Prohibida</button>
+      <button class="tool-btn" id="btn-seat" onclick="setMode('seat')">➕ Asiento Libre</button>
     </div>
 
     <div class="section-title">
-      <span>Zonas Delimitadas</span>
-      <span id="zone-count">0</span>
-    </div>
-    <div class="item-list" id="zones-list"></div>
-
-    <div class="section-title">
-      <span>Waypoints Nav2</span>
-      <span id="wp-count">0</span>
-    </div>
-    <div class="item-list" id="waypoints-list"></div>
-
-    <div class="section-title">
-      <span>Asientos Receptionist</span>
+      <span>Asientos en tu Mapa</span>
       <span id="seat-count">0</span>
     </div>
     <div class="item-list" id="seats-list"></div>
   </div>
 
+  <!-- PESTAÑA 4: ZONAS Y WAYPOINTS -->
+  <div class="tab-content" id="tab-zones">
+    <div class="template-section">
+      <div class="template-title">⚡ Puntos Oficiales Receptionist (Nav2):</div>
+      <div class="template-list">
+        <div class="template-card" onclick="placeWaypointTemplate('door', 'entrance')">
+          <div class="template-info">
+            <span class="template-name">🚪 Punto Puerta / Entrada (door)</span>
+            <span class="template-desc">Clic + arrastrar orientación Yaw para esperar invitados</span>
+          </div>
+          <span class="pill-badge green">door</span>
+        </div>
+        <div class="template-card" onclick="placeWaypointTemplate('living_room', 'living_room')">
+          <div class="template-info">
+            <span class="template-name">🛋️ Punto Sala de Estar (living_room)</span>
+            <span class="template-desc">Clic + arrastrar Yaw para presentar al anfitrión</span>
+          </div>
+          <span class="pill-badge green">living_room</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="template-section">
+      <div class="template-title">⚡ Plantillas de Zonas Semánticas:</div>
+      <div class="template-list">
+        <div class="template-card" onclick="placeZoneTemplate('Sala de Estar', 'living_room', '#00f090')">
+          <div class="template-info">
+            <span class="template-name">📐 Delimitar Sala de Estar</span>
+            <span class="template-desc">Clics para polígono de la sala | Doble clic para terminar</span>
+          </div>
+          <span class="pill-badge">living_room</span>
+        </div>
+        <div class="template-card" onclick="placeZoneTemplate('Entrada', 'entrance', '#00d2ff')">
+          <div class="template-info">
+            <span class="template-name">📐 Delimitar Entrada</span>
+            <span class="template-desc">Clics para polígono del pasillo/puerta</span>
+          </div>
+          <span class="pill-badge">entrance</span>
+        </div>
+        <div class="template-card" onclick="placeZoneTemplate('Cocina', 'kitchen', '#ffaa00')">
+          <div class="template-info">
+            <span class="template-name">🍽️ Delimitar Cocina</span>
+            <span class="template-desc">Clics para polígono de cocina</span>
+          </div>
+          <span class="pill-badge">kitchen</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-title"><span>Herramientas Libres</span></div>
+    <div class="tool-grid">
+      <button class="tool-btn" id="btn-waypoint" onclick="setMode('waypoint')">📍 Waypoint Libre</button>
+      <button class="tool-btn" id="btn-zone" onclick="setMode('zone')">📐 Zona Libre</button>
+      <button class="tool-btn danger" id="btn-keepout" onclick="setMode('keepout')">🚫 Zona Prohibida</button>
+    </div>
+
+    <div class="section-title">
+      <span>Zonas en tu Mapa</span>
+      <span id="zone-count">0</span>
+    </div>
+    <div class="item-list" id="zones-list"></div>
+
+    <div class="section-title">
+      <span>Waypoints en tu Mapa</span>
+      <span id="wp-count">0</span>
+    </div>
+    <div class="item-list" id="waypoints-list"></div>
+  </div>
+
   <!-- Capas de Visualización -->
   <div class="layer-toggles">
     <label class="layer-item"><input type="checkbox" id="layer-map" checked onchange="draw()"> 🗺️ Mapa PGM</label>
-    <label class="layer-item"><input type="checkbox" id="layer-furniture" checked onchange="draw()"> 🪑 Mesas/Muebles</label>
-    <label class="layer-item"><input type="checkbox" id="layer-zones" checked onchange="draw()"> 📐 Zonas Semánticas</label>
-    <label class="layer-item"><input type="checkbox" id="layer-waypoints" checked onchange="draw()"> 📍 Waypoints Nav2</label>
+    <label class="layer-item"><input type="checkbox" id="layer-furniture" checked onchange="draw()"> 🪑 Mesas</label>
     <label class="layer-item"><input type="checkbox" id="layer-seats" checked onchange="draw()"> 🛋️ Asientos</label>
-    <label class="layer-item"><input type="checkbox" id="layer-keepout" checked onchange="draw()"> 🚫 Áreas Prohibidas</label>
+    <label class="layer-item"><input type="checkbox" id="layer-waypoints" checked onchange="draw()"> 📍 Waypoints Nav2</label>
+    <label class="layer-item"><input type="checkbox" id="layer-zones" checked onchange="draw()"> 📐 Zonas</label>
+    <label class="layer-item"><input type="checkbox" id="layer-keepout" checked onchange="draw()"> 🚫 Prohibido</label>
   </div>
 
   <!-- Acciones Finales -->
@@ -725,10 +849,10 @@ HTML_PAGE = r'''<!DOCTYPE html>
 <!-- Modal de Registro de Mesa -->
 <div class="modal-overlay" id="table-modal">
   <div class="modal-card">
-    <h3>🪑 Delimitar Nueva Mesa / Mueble</h3>
+    <h3>🪑 Delimitar Mesa / Mueble</h3>
     <div class="form-group">
       <label>Nombre del Mueble:</label>
-      <input type="text" id="table-name-input" value="Mesa de Centro" placeholder="ej. Mesa de Centro, Escritorio">
+      <input type="text" id="table-name-input" value="Mesa de Centro">
     </div>
     <div class="form-group">
       <label>Tipo de Mueble:</label>
@@ -766,31 +890,28 @@ HTML_PAGE = r'''<!DOCTYPE html>
   let waypoints = {};
   let seats = {};
 
-  let currentMode = 'pan'; // pan, erase, clear_box, obstacle, line_wall, unknown, table_rect, table_poly, zone, waypoint, seat, keepout
+  let currentMode = 'pan';
   let brushSize = 3; // px
   let mousePixel = { x: 0, y: 0 };
   let isMouseDown = false;
   let dragStartPixel = null;
   let pendingGeometry = null;
 
-  // Transformación de Vista (Pan & Zoom)
+  // Plantilla Activa en Espera de Colocación
+  let activeTemplate = null;
+
+  // Transformación de Vista
   let view = { x: 50, y: 50, zoom: 1.5 };
 
-  // Canvases de Renderizado
-  // 1. rawCanvas: tamaño real de la imagen PGM (324x582), contiene los valores de 8-bits exactos [0, 205, 254]
+  // Canvases
   const rawCanvas = document.createElement('canvas');
   const rawCtx = rawCanvas.getContext('2d', { willReadFrequently: true });
-
-  // 2. colorCanvas: representación visual en color de alto contraste
   const colorCanvas = document.createElement('canvas');
   const colorCtx = colorCanvas.getContext('2d');
-
-  // 3. displayCanvas: canvas visible en el navegador
   const displayCanvas = document.getElementById('mapCanvas');
   const ctx = displayCanvas.getContext('2d');
   const container = document.getElementById('map-container');
 
-  // Pilas de Deshacer / Rehacer para el mapa PGM
   let undoStack = [];
   let redoStack = [];
   const MAX_HISTORY = 25;
@@ -802,7 +923,6 @@ HTML_PAGE = r'''<!DOCTYPE html>
   }
   window.addEventListener('resize', resizeDisplayCanvas);
 
-  // --- Conversión de Coordenadas Métricas <-> Píxeles ---
   function worldToPixel(x, y) {
     const px = (x - mapInfo.origin[0]) / mapInfo.resolution;
     const py = (mapInfo.height - 1) - ((y - mapInfo.origin[1]) / mapInfo.resolution);
@@ -816,17 +936,11 @@ HTML_PAGE = r'''<!DOCTYPE html>
   }
 
   function screenToPixel(sx, sy) {
-    return {
-      x: (sx - view.x) / view.zoom,
-      y: (sy - view.y) / view.zoom
-    };
+    return { x: (sx - view.x) / view.zoom, y: (sy - view.y) / view.zoom };
   }
 
   function pixelToScreen(px, py) {
-    return {
-      x: view.x + px * view.zoom,
-      y: view.y + py * view.zoom
-    };
+    return { x: view.x + px * view.zoom, y: view.y + py * view.zoom };
   }
 
   function worldToScreen(x, y) {
@@ -834,7 +948,6 @@ HTML_PAGE = r'''<!DOCTYPE html>
     return pixelToScreen(p.x, p.y);
   }
 
-  // --- Carga Inicial de Datos ---
   async function loadData() {
     try {
       const res = await fetch('/api/data');
@@ -849,13 +962,11 @@ HTML_PAGE = r'''<!DOCTYPE html>
       document.getElementById('map-meta-info').textContent =
         `Mapa PGM: ${mapInfo.width}x${mapInfo.height} px (${mapInfo.resolution} m/px)`;
 
-      // Configurar dimensiones de los canvases internos
       rawCanvas.width = mapInfo.width;
       rawCanvas.height = mapInfo.height;
       colorCanvas.width = mapInfo.width;
       colorCanvas.height = mapInfo.height;
 
-      // Cargar imagen cruda PGM
       const rawImg = new Image();
       rawImg.src = '/api/map_raw.png?t=' + Date.now();
       rawImg.onload = () => {
@@ -870,7 +981,6 @@ HTML_PAGE = r'''<!DOCTYPE html>
     }
   }
 
-  // --- Actualización de ColorCanvas desde RawCanvas ---
   function updateColorCanvas() {
     const imgData = rawCtx.getImageData(0, 0, mapInfo.width, mapInfo.height);
     const pixels = imgData.data;
@@ -880,20 +990,16 @@ HTML_PAGE = r'''<!DOCTYPE html>
     for (let i = 0; i < pixels.length; i += 4) {
       const val = pixels[i];
       if (val > 220) {
-        // Espacio Libre (254) -> Blanco suave cálido
         out[i] = 240; out[i+1] = 244; out[i+2] = 250; out[i+3] = 255;
       } else if (val < 40) {
-        // Espacio Ocupado / Pared (0) -> Negro azulado sólido
         out[i] = 10; out[i+1] = 14; out[i+2] = 20; out[i+3] = 255;
       } else {
-        // Desconocido (205) -> Gris azulado intermedio
         out[i] = 45; out[i+1] = 54; out[i+2] = 70; out[i+3] = 255;
       }
     }
     colorCtx.putImageData(colorData, 0, 0);
   }
 
-  // --- Sistema de Deshacer / Rehacer (Undo / Redo) ---
   function pushUndo() {
     if (undoStack.length >= MAX_HISTORY) undoStack.shift();
     undoStack.push(rawCtx.getImageData(0, 0, mapInfo.width, mapInfo.height));
@@ -930,7 +1036,6 @@ HTML_PAGE = r'''<!DOCTYPE html>
     document.getElementById('btn-redo').disabled = redoStack.length === 0;
   }
 
-  // --- Centrar Vista ---
   function resetView() {
     const scaleX = (displayCanvas.width * 0.85) / mapInfo.width;
     const scaleY = (displayCanvas.height * 0.85) / mapInfo.height;
@@ -949,7 +1054,9 @@ HTML_PAGE = r'''<!DOCTYPE html>
 
   function setMode(mode) {
     currentMode = mode;
+    activeTemplate = null;
     document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.template-card').forEach(c => c.classList.remove('active-tpl'));
     const btn = document.getElementById(`btn-${mode}`);
     if (btn) btn.classList.add('active');
     pendingGeometry = null;
@@ -961,14 +1068,60 @@ HTML_PAGE = r'''<!DOCTYPE html>
       obstacle: '✏️ <b>Lápiz de Pared:</b> Pinta en negro obstáculos o paredes faltantes a mano alzada.',
       line_wall: '📏 <b>Línea de Pared:</b> Haz clic en el punto inicial y arrastra para trazar una pared recta.',
       unknown: '🌫️ <b>Pincel Gris:</b> Pinta en gris espacio desconocido fuera de los límites de la habitación.',
-      table_rect: '🪑 <b>Delimitar Mesa:</b> Haz clic y arrastra una caja cubriendo las 4 patas del LiDAR.',
+      table_rect: '🪑 <b>Delimitar Mesa:</b> Haz clic y arrastra una caja cubriendo las 4 patas del LiDAR en tu mapa.',
       table_poly: '📐 <b>Mesa Polígono:</b> Haz clic en cada pata o esquina para trazar la mesa. Doble clic para terminar.',
-      zone: '📐 <b>Dibujar Zona:</b> Haz clic para agregar vértices al polígono. Doble clic para cerrar.',
+      zone: '📐 <b>Dibujar Zona Libre:</b> Haz clic para agregar vértices al polígono. Doble clic para cerrar.',
       waypoint: '📍 <b>Colocar Waypoint:</b> Haz clic donde irá el robot y arrastra la flecha hacia donde mirará (Yaw).',
       seat: '🛋️ <b>Colocar Asiento:</b> Haz clic en el mapa donde está el sofá o silla a señalar con el brazo.',
       keepout: '🚫 <b>Zona Prohibida:</b> Marca el polígono de área restringida donde el robot no debe entrar.'
     };
     document.getElementById('hud-instructions').innerHTML = instructions[mode] || '';
+    draw();
+  }
+
+  // --- Activadores de Plantillas Rápidas ---
+  function placeTableTemplate(name, type, heightCm, solidify) {
+    activeTemplate = { category: 'table', name, type, heightCm, solidify };
+    currentMode = 'table_rect';
+    document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.template-card').forEach(c => c.classList.remove('active-tpl'));
+    event.currentTarget.classList.add('active-tpl');
+    document.getElementById('hud-instructions').innerHTML =
+      `☕ <b>Plantilla '${name}':</b> Arrastra un rectángulo cubriendo las 4 patas en tu mapa (Altura: ${heightCm}cm).`;
+    draw();
+  }
+
+  function placeSeatTemplate(name, type, gesture, capacity) {
+    activeTemplate = { category: 'seat', name, type, gesture, capacity };
+    currentMode = 'place_seat_template';
+    document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.template-card').forEach(c => c.classList.remove('active-tpl'));
+    event.currentTarget.classList.add('active-tpl');
+    document.getElementById('hud-instructions').innerHTML =
+      `🛋️ <b>Plantilla '${name}':</b> Haz un clic en el mapa exactamente donde está situado este asiento.`;
+    draw();
+  }
+
+  function placeWaypointTemplate(name, zone) {
+    activeTemplate = { category: 'waypoint', name, zone };
+    currentMode = 'place_wp_template';
+    document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.template-card').forEach(c => c.classList.remove('active-tpl'));
+    event.currentTarget.classList.add('active-tpl');
+    document.getElementById('hud-instructions').innerHTML =
+      `📍 <b>Plantilla '${name}':</b> Haz clic en el punto deseado y arrastra la flecha indicando hacia dónde mirará el robot (Yaw).`;
+    draw();
+  }
+
+  function placeZoneTemplate(name, type, color) {
+    activeTemplate = { category: 'zone', name, type, color };
+    currentMode = 'place_zone_template';
+    pendingGeometry = [];
+    document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.template-card').forEach(c => c.classList.remove('active-tpl'));
+    event.currentTarget.classList.add('active-tpl');
+    document.getElementById('hud-instructions').innerHTML =
+      `📐 <b>Plantilla '${name}':</b> Haz clics sucesivos sobre el mapa para marcar los límites de la habitación. Doble clic para terminar.`;
     draw();
   }
 
@@ -983,7 +1136,6 @@ HTML_PAGE = r'''<!DOCTYPE html>
     draw();
   }
 
-  // --- Pintar en RawCanvas (Píxeles exactos PGM) ---
   function applyPixelBrush(px, py, colorVal) {
     rawCtx.fillStyle = colorVal;
     rawCtx.beginPath();
@@ -991,7 +1143,6 @@ HTML_PAGE = r'''<!DOCTYPE html>
     rawCtx.fill();
   }
 
-  // --- Renderizado Gráfico Principal ---
   function draw() {
     ctx.clearRect(0, 0, displayCanvas.width, displayCanvas.height);
 
@@ -999,7 +1150,7 @@ HTML_PAGE = r'''<!DOCTYPE html>
     ctx.translate(view.x, view.y);
     ctx.scale(view.zoom, view.zoom);
 
-    // 1. Capa Mapa PGM (escalado pixel-art sin blur)
+    // 1. Capa Mapa PGM
     if (document.getElementById('layer-map').checked) {
       ctx.imageSmoothingEnabled = false;
       ctx.drawImage(colorCanvas, 0, 0);
@@ -1043,14 +1194,13 @@ HTML_PAGE = r'''<!DOCTYPE html>
         ctx.lineWidth = 2 / view.zoom;
         ctx.stroke();
 
-        // Etiqueta
         const center = getPolygonCenter(zone.polygon);
         const cp = worldToPixel(center.x, center.y);
         drawBadge(cp.x, cp.y, zone.name || id, zone.color || '#00d2ff');
       }
     }
 
-    // 4. Capa Mesas y Muebles (Delimitación de Patas & Tableros)
+    // 4. Capa Mesas y Muebles
     if (document.getElementById('layer-furniture').checked) {
       for (const [id, item] of Object.entries(furniture)) {
         if (!item.polygon || item.polygon.length < 3) continue;
@@ -1068,7 +1218,6 @@ HTML_PAGE = r'''<!DOCTYPE html>
         ctx.lineWidth = 2.5 / view.zoom;
         ctx.stroke();
 
-        // Dibujar patas en las esquinas
         ctx.fillStyle = '#ff3366';
         for (const pt of item.polygon) {
           const p = worldToPixel(pt[0], pt[1]);
@@ -1077,7 +1226,6 @@ HTML_PAGE = r'''<!DOCTYPE html>
           ctx.fill();
         }
 
-        // Etiqueta con nombre y altura
         const center = getPolygonCenter(item.polygon);
         const cp = worldToPixel(center.x, center.y);
         const hLabel = item.height_m ? ` (${(item.height_m * 100).toFixed(0)}cm)` : '';
@@ -1103,7 +1251,7 @@ HTML_PAGE = r'''<!DOCTYPE html>
       }
     }
 
-    // 7. Previsualizaciones en Vivo de Herramientas
+    // 7. Previsualizaciones en Vivo
     if (isMouseDown && dragStartPixel) {
       if (currentMode === 'clear_box' || currentMode === 'table_rect') {
         const minX = Math.min(dragStartPixel.x, mousePixel.x);
@@ -1117,7 +1265,6 @@ HTML_PAGE = r'''<!DOCTYPE html>
         ctx.strokeRect(minX, minY, w, h);
         ctx.setLineDash([]);
 
-        // Dimensiones en metros
         const wm = (w * mapInfo.resolution).toFixed(2);
         const hm = (h * mapInfo.resolution).toFixed(2);
         drawBadge(minX + w / 2, minY - 10 / view.zoom, `${wm}m x ${hm}m`, currentMode === 'clear_box' ? '#00f090' : '#ff9d00');
@@ -1132,15 +1279,15 @@ HTML_PAGE = r'''<!DOCTYPE html>
         const distPx = Math.hypot(mousePixel.x - dragStartPixel.x, mousePixel.y - dragStartPixel.y);
         const distM = (distPx * mapInfo.resolution).toFixed(2);
         drawBadge((dragStartPixel.x + mousePixel.x) / 2, (dragStartPixel.y + mousePixel.y) / 2 - 10 / view.zoom, `${distM}m`, '#00d2ff');
-      } else if (currentMode === 'waypoint') {
+      } else if (currentMode === 'waypoint' || currentMode === 'place_wp_template') {
         const dx = mousePixel.x - dragStartPixel.x;
         const dy = -(mousePixel.y - dragStartPixel.y);
         const yawDeg = Math.round((Math.atan2(dy, dx) * 180) / Math.PI);
-        drawWaypointPin(dragStartPixel.x, dragStartPixel.y, yawDeg, 'Nuevo WP');
+        const label = activeTemplate ? activeTemplate.name : 'Nuevo WP';
+        drawWaypointPin(dragStartPixel.x, dragStartPixel.y, yawDeg, label);
       }
     }
 
-    // 8. Previsualización de Polígonos en Construcción
     if (pendingGeometry && pendingGeometry.length > 0) {
       ctx.beginPath();
       ctx.moveTo(pendingGeometry[0].x, pendingGeometry[0].y);
@@ -1148,14 +1295,13 @@ HTML_PAGE = r'''<!DOCTYPE html>
         ctx.lineTo(pendingGeometry[i].x, pendingGeometry[i].y);
       }
       ctx.lineTo(mousePixel.x, mousePixel.y);
-      ctx.strokeStyle = '#00d2ff';
+      ctx.strokeStyle = activeTemplate && activeTemplate.color ? activeTemplate.color : '#00d2ff';
       ctx.lineWidth = 2 / view.zoom;
       ctx.setLineDash([4 / view.zoom, 4 / view.zoom]);
       ctx.stroke();
       ctx.setLineDash([]);
     }
 
-    // 9. Círculo de Pincel bajo el Cursor (para Goma, Lápiz y Gris)
     if (['erase', 'obstacle', 'unknown'].includes(currentMode)) {
       ctx.beginPath();
       ctx.arc(mousePixel.x, mousePixel.y, brushSize / 2, 0, Math.PI * 2);
@@ -1167,7 +1313,6 @@ HTML_PAGE = r'''<!DOCTYPE html>
     ctx.restore();
   }
 
-  // --- Funciones de Dibujo Auxiliares ---
   function drawBadge(x, y, text, color) {
     ctx.font = `bold ${Math.max(10, 11 / Math.sqrt(view.zoom))}px sans-serif`;
     const tw = ctx.measureText(text).width;
@@ -1196,7 +1341,6 @@ HTML_PAGE = r'''<!DOCTYPE html>
     ctx.lineWidth = 2 / view.zoom;
     ctx.stroke();
 
-    // Flecha Yaw
     const rad = (-yawDeg * Math.PI) / 180;
     const len = 20 / view.zoom;
     const ex = px + len * Math.cos(rad);
@@ -1246,10 +1390,7 @@ HTML_PAGE = r'''<!DOCTYPE html>
     dragStartPixel = screenToPixel(sx, sy);
     mousePixel = { ...dragStartPixel };
 
-    if (e.button === 2 || e.spaceKey || currentMode === 'pan') {
-      // Pan
-      return;
-    }
+    if (e.button === 2 || e.spaceKey || currentMode === 'pan') return;
 
     if (currentMode === 'erase') {
       applyPixelBrush(mousePixel.x, mousePixel.y, '#ffffff');
@@ -1263,6 +1404,22 @@ HTML_PAGE = r'''<!DOCTYPE html>
       applyPixelBrush(mousePixel.x, mousePixel.y, '#cdcdcd');
       updateColorCanvas();
       draw();
+    } else if (currentMode === 'place_seat_template' && activeTemplate) {
+      const world = pixelToWorld(mousePixel.x, mousePixel.y);
+      const id = activeTemplate.name.toLowerCase().replace(/\s+/g, '_');
+      seats[id] = {
+        name: activeTemplate.name,
+        zone: 'living_room',
+        x: round4(world.x),
+        y: round4(world.y),
+        type: activeTemplate.type,
+        arm_gesture: activeTemplate.gesture,
+        capacity: activeTemplate.capacity,
+        occupied: false
+      };
+      updateSidebar();
+      showToast(`🛋️ '${activeTemplate.name}' colocado en el mapa`);
+      setMode('pan');
     } else if (currentMode === 'seat') {
       const world = pixelToWorld(mousePixel.x, mousePixel.y);
       const name = prompt('Nombre del Asiento (ej. Sofá, Silla):', 'Silla');
@@ -1292,7 +1449,6 @@ HTML_PAGE = r'''<!DOCTYPE html>
     const p = screenToPixel(sx, sy);
     mousePixel = p;
 
-    // Actualizar HUD de coordenadas
     const world = pixelToWorld(p.x, p.y);
     document.getElementById('coord-x').textContent = world.x.toFixed(2);
     document.getElementById('coord-y').textContent = world.y.toFixed(2);
@@ -1381,18 +1537,45 @@ HTML_PAGE = r'''<!DOCTYPE html>
           [round4(p3.x), round4(p3.y)],
           [round4(p4.x), round4(p4.y)]
         ];
+
+        if (activeTemplate && activeTemplate.category === 'table') {
+          document.getElementById('table-name-input').value = activeTemplate.name;
+          document.getElementById('table-type-input').value = activeTemplate.type;
+          document.getElementById('table-height-input').value = activeTemplate.heightCm;
+          document.getElementById('table-solidify-check').checked = activeTemplate.solidify;
+        } else {
+          document.getElementById('table-name-input').value = 'Mesa';
+          document.getElementById('table-height-input').value = 76;
+        }
         openTableModal();
       }
+    } else if (currentMode === 'place_wp_template' && activeTemplate) {
+      const dx = mousePixel.x - dragStartPixel.x;
+      const dy = -(mousePixel.y - dragStartPixel.y);
+      const yawDeg = Math.round((Math.atan2(dy, dx) * 180) / Math.PI);
+      const world = pixelToWorld(dragStartPixel.x, dragStartPixel.y);
+
+      waypoints[activeTemplate.name] = {
+        name: activeTemplate.name,
+        zone: activeTemplate.zone || 'living_room',
+        x: round4(world.x),
+        y: round4(world.y),
+        yaw_deg: yawDeg
+      };
+      updateSidebar();
+      showToast(`📍 Waypoint '${activeTemplate.name}' colocado con Yaw ${yawDeg}°`);
+      setMode('pan');
     } else if (currentMode === 'waypoint') {
       const dx = mousePixel.x - dragStartPixel.x;
       const dy = -(mousePixel.y - dragStartPixel.y);
       const yawDeg = Math.round((Math.atan2(dy, dx) * 180) / Math.PI);
       const world = pixelToWorld(dragStartPixel.x, dragStartPixel.y);
 
-      const name = prompt('Nombre del Waypoint Nav2 (ej. mesa_pringles, sofa, cocina):', 'punto_' + Object.keys(waypoints).length);
+      const name = prompt('Nombre del Waypoint Nav2:', 'punto_' + Object.keys(waypoints).length);
       if (name) {
         waypoints[name] = {
           name: name,
+          zone: 'living_room',
           x: round4(world.x),
           y: round4(world.y),
           yaw_deg: yawDeg
@@ -1407,9 +1590,8 @@ HTML_PAGE = r'''<!DOCTYPE html>
     draw();
   });
 
-  // Manejo de Clics para Polígonos
   displayCanvas.addEventListener('click', (e) => {
-    if (['zone', 'keepout', 'table_poly'].includes(currentMode)) {
+    if (['zone', 'keepout', 'table_poly', 'place_zone_template'].includes(currentMode)) {
       if (!pendingGeometry) pendingGeometry = [];
       pendingGeometry.push({ ...mousePixel });
       draw();
@@ -1417,14 +1599,24 @@ HTML_PAGE = r'''<!DOCTYPE html>
   });
 
   displayCanvas.addEventListener('dblclick', (e) => {
-    if (['zone', 'keepout', 'table_poly'].includes(currentMode)) {
+    if (['zone', 'keepout', 'table_poly', 'place_zone_template'].includes(currentMode)) {
       if (pendingGeometry && pendingGeometry.length >= 3) {
         const polyWorld = pendingGeometry.map(p => {
           const w = pixelToWorld(p.x, p.y);
           return [round4(w.x), round4(w.y)];
         });
 
-        if (currentMode === 'zone') {
+        if (currentMode === 'place_zone_template' && activeTemplate) {
+          const id = activeTemplate.type;
+          zones[id] = {
+            name: activeTemplate.name,
+            type: activeTemplate.type,
+            color: activeTemplate.color,
+            polygon: polyWorld
+          };
+          updateSidebar();
+          showToast(`📐 Zona '${activeTemplate.name}' delimitada`);
+        } else if (currentMode === 'zone') {
           const name = prompt('Nombre de la Zona Semántica:', 'Nueva Zona');
           if (name) {
             const id = name.toLowerCase().replace(/\s+/g, '_');
@@ -1450,7 +1642,6 @@ HTML_PAGE = r'''<!DOCTYPE html>
     }
   });
 
-  // Zoom con Rueda
   displayCanvas.addEventListener('wheel', (e) => {
     e.preventDefault();
     const rect = displayCanvas.getBoundingClientRect();
@@ -1466,7 +1657,6 @@ HTML_PAGE = r'''<!DOCTYPE html>
     draw();
   });
 
-  // Atajos de Teclado
   window.addEventListener('keydown', (e) => {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
 
@@ -1478,11 +1668,9 @@ HTML_PAGE = r'''<!DOCTYPE html>
     else if (e.key === '4') setMode('obstacle');
     else if (e.key === '5') setMode('line_wall');
     else if (e.key === '6') setMode('unknown');
-    else if (e.key === '7') setMode('table_rect');
     else if (e.key === 'Escape') { pendingGeometry = null; setMode('pan'); closeTableModal(); }
   });
 
-  // --- Modal de Mesa ---
   let pendingTablePolygon = null;
   function openTableModal() {
     document.getElementById('table-modal').classList.add('active');
@@ -1554,92 +1742,108 @@ HTML_PAGE = r'''<!DOCTYPE html>
     }
   }
 
-  // --- Actualización de la Barra Lateral ---
   function updateSidebar() {
     // Mesas
     const fList = document.getElementById('furniture-list');
     fList.innerHTML = '';
     const fKeys = Object.keys(furniture);
     document.getElementById('furniture-count').textContent = fKeys.length;
-    for (const [id, f] of Object.entries(furniture)) {
-      const card = document.createElement('div');
-      card.className = 'item-card';
-      card.innerHTML = `
-        <div class="item-info">
-          <span class="item-title">🪑 ${f.name}</span>
-          <span class="item-subtitle">${(f.height_m * 100).toFixed(0)}cm alt | ${f.solidified_in_map ? '⚡ Solidificada' : 'Huella libre'}</span>
-        </div>
-        <div class="item-actions">
-          <button class="icon-btn solidify" title="Solidificar/Despejar" onclick="toggleSolidify('${id}')">⚡</button>
-          <button class="icon-btn danger" title="Eliminar" onclick="deleteItem('furniture', '${id}')">🗑️</button>
-        </div>
-      `;
-      fList.appendChild(card);
-    }
-
-    // Zonas
-    const zList = document.getElementById('zones-list');
-    zList.innerHTML = '';
-    document.getElementById('zone-count').textContent = Object.keys(zones).length;
-    for (const [id, z] of Object.entries(zones)) {
-      const card = document.createElement('div');
-      card.className = 'item-card';
-      card.innerHTML = `
-        <div class="item-info">
-          <span class="item-title"><span style="color: ${z.color};">■</span> ${z.name || id}</span>
-          <span class="item-subtitle">${z.type || 'zone'} (${z.polygon ? z.polygon.length : 0} vértices)</span>
-        </div>
-        <div class="item-actions">
-          <button class="icon-btn danger" onclick="deleteItem('zones', '${id}')">🗑️</button>
-        </div>
-      `;
-      zList.appendChild(card);
-    }
-
-    // Waypoints
-    const wList = document.getElementById('waypoints-list');
-    wList.innerHTML = '';
-    document.getElementById('wp-count').textContent = Object.keys(waypoints).length;
-    for (const [name, wp] of Object.entries(waypoints)) {
-      const card = document.createElement('div');
-      card.className = 'item-card';
-      card.innerHTML = `
-        <div class="item-info">
-          <span class="item-title">📍 ${name}</span>
-          <span class="item-subtitle">X:${wp.x.toFixed(2)}, Y:${wp.y.toFixed(2)} | Yaw:${wp.yaw_deg || 0}°</span>
-        </div>
-        <div class="item-actions">
-          <button class="icon-btn danger" onclick="deleteItem('waypoints', '${name}')">🗑️</button>
-        </div>
-      `;
-      wList.appendChild(card);
+    if (fKeys.length === 0) {
+      fList.innerHTML = '<div class="empty-state">No hay mesas en tu mapa.<br>Selecciona una opción arriba y arrastra la caja sobre sus patas.</div>';
+    } else {
+      for (const [id, f] of Object.entries(furniture)) {
+        const card = document.createElement('div');
+        card.className = 'item-card';
+        card.innerHTML = `
+          <div class="item-info">
+            <span class="item-title">🪑 ${f.name}</span>
+            <span class="item-subtitle">${(f.height_m * 100).toFixed(0)}cm alt | ${f.solidified_in_map ? '⚡ Solidificada' : 'Huella libre'}</span>
+          </div>
+          <div class="item-actions">
+            <button class="icon-btn solidify" title="Solidificar/Despejar" onclick="toggleSolidify('${id}')">⚡</button>
+            <button class="icon-btn danger" title="Eliminar" onclick="deleteItem('furniture', '${id}')">🗑️</button>
+          </div>
+        `;
+        fList.appendChild(card);
+      }
     }
 
     // Asientos
     const sList = document.getElementById('seats-list');
     sList.innerHTML = '';
-    document.getElementById('seat-count').textContent = Object.keys(seats).length;
-    for (const [id, s] of Object.entries(seats)) {
-      const card = document.createElement('div');
-      card.className = 'item-card';
-      card.innerHTML = `
-        <div class="item-info">
-          <span class="item-title">🛋️ ${s.name || id}</span>
-          <span class="item-subtitle">Gesto: ${s.arm_gesture || 'point_couch'}</span>
-        </div>
-        <div class="item-actions">
-          <button class="icon-btn danger" onclick="deleteItem('seats', '${id}')">🗑️</button>
-        </div>
-      `;
-      sList.appendChild(card);
+    const sKeys = Object.keys(seats);
+    document.getElementById('seat-count').textContent = sKeys.length;
+    if (sKeys.length === 0) {
+      sList.innerHTML = '<div class="empty-state">No hay asientos colocados.<br>Haz clic en una opción arriba y marca su posición en tu mapa.</div>';
+    } else {
+      for (const [id, s] of Object.entries(seats)) {
+        const card = document.createElement('div');
+        card.className = 'item-card';
+        card.innerHTML = `
+          <div class="item-info">
+            <span class="item-title">🛋️ ${s.name || id}</span>
+            <span class="item-subtitle">Gesto: ${s.arm_gesture || 'point_couch'}</span>
+          </div>
+          <div class="item-actions">
+            <button class="icon-btn danger" onclick="deleteItem('seats', '${id}')">🗑️</button>
+          </div>
+        `;
+        sList.appendChild(card);
+      }
+    }
+
+    // Zonas
+    const zList = document.getElementById('zones-list');
+    zList.innerHTML = '';
+    const zKeys = Object.keys(zones);
+    document.getElementById('zone-count').textContent = zKeys.length;
+    if (zKeys.length === 0) {
+      zList.innerHTML = '<div class="empty-state">No hay zonas delimitadas todavía.</div>';
+    } else {
+      for (const [id, z] of Object.entries(zones)) {
+        const card = document.createElement('div');
+        card.className = 'item-card';
+        card.innerHTML = `
+          <div class="item-info">
+            <span class="item-title"><span style="color: ${z.color};">■</span> ${z.name || id}</span>
+            <span class="item-subtitle">${z.type || 'zone'} (${z.polygon ? z.polygon.length : 0} vértices)</span>
+          </div>
+          <div class="item-actions">
+            <button class="icon-btn danger" onclick="deleteItem('zones', '${id}')">🗑️</button>
+          </div>
+        `;
+        zList.appendChild(card);
+      }
+    }
+
+    // Waypoints
+    const wList = document.getElementById('waypoints-list');
+    wList.innerHTML = '';
+    const wKeys = Object.keys(waypoints);
+    document.getElementById('wp-count').textContent = wKeys.length;
+    if (wKeys.length === 0) {
+      wList.innerHTML = '<div class="empty-state">No hay waypoints colocados todavía.</div>';
+    } else {
+      for (const [name, wp] of Object.entries(waypoints)) {
+        const card = document.createElement('div');
+        card.className = 'item-card';
+        card.innerHTML = `
+          <div class="item-info">
+            <span class="item-title">📍 ${name}</span>
+            <span class="item-subtitle">X:${wp.x.toFixed(2)}, Y:${wp.y.toFixed(2)} | Yaw:${wp.yaw_deg || 0}°</span>
+          </div>
+          <div class="item-actions">
+            <button class="icon-btn danger" onclick="deleteItem('waypoints', '${name}')">🗑️</button>
+          </div>
+        `;
+        wList.appendChild(card);
+      }
     }
   }
 
-  // --- Guardar Todo (PGM + Datos Semánticos) ---
   async function saveAll() {
     showToast('Guardando cambios...');
     try {
-      // 1. Guardar Imagen PGM
       const pgmBase64 = rawCanvas.toDataURL('image/png');
       const imgRes = await fetch('/api/save_map_image', {
         method: 'POST',
@@ -1648,7 +1852,6 @@ HTML_PAGE = r'''<!DOCTYPE html>
       });
       const imgData = await imgRes.json();
 
-      // 2. Guardar Datos Semánticos
       const semRes = await fetch('/api/save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1710,7 +1913,6 @@ class MapZoneEditorHandler(BaseHTTPRequestHandler):
     manager: Optional[SemanticMapManager] = None
 
     def log_message(self, format, *args):
-        # Silenciar logs ruidosos de peticiones estáticas
         return
 
     def do_GET(self):
@@ -1828,7 +2030,8 @@ def main():
 
     try:
         print(f"🚀 Servidor activo en http://localhost:{args.port}/")
-        print("   Herramientas activas: Limpieza PGM, Goma, Paredes, Mesas 2D/3D, Solidificación, Zonas y WPs.")
+        print("   Modo limpio activado: No hay elementos ficticios precargados en el mapa.")
+        print("   Opciones y plantillas de RoboCup @Home disponibles en la barra lateral.")
         print("   Presiona Ctrl+C para detener el servidor.\n")
         server.serve_forever()
     except KeyboardInterrupt:
