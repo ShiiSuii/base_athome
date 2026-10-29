@@ -25,6 +25,7 @@ import math
 import os
 import queue
 import re
+import subprocess
 import sys
 import threading
 import time
@@ -422,8 +423,37 @@ class HriReceptionistChallengeNode(Node):
         self.frame_count = 0
         self.last_face_time = 0.0
         self.last_pose_time = 0.0
+        self.cam_proc: Optional[subprocess.Popen] = None
+        self._ensure_camera_running()
 
         self.get_logger().info("HriReceptionistChallengeNode inicializado. Esperando sensores y pre-vuelo...")
+
+    def _ensure_camera_running(self):
+        """Verifica si la RealSense D435 está conectada y si el driver está activo; si no, lo inicia."""
+        try:
+            out = subprocess.check_output(["pgrep", "-f", "realsense2_camera_node"], text=True)
+            if out.strip():
+                return
+        except Exception:
+            pass
+
+        try:
+            lsusb_out = subprocess.check_output(["lsusb"], text=True)
+            if "8086:0b07" in lsusb_out or "RealSense" in lsusb_out:
+                self.get_logger().info("📷 RealSense D435 detectada en NUC por USB. Iniciando driver automáticamente...")
+                cmd = ["ros2", "launch", "base_athome_bringup", "realsense_nuc.launch.py"]
+                self.cam_proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception as e:
+            self.get_logger().warn(f"No se pudo autoiniciar realsense2_camera_node: {e}")
+
+    def destroy_node(self):
+        if hasattr(self, 'cam_proc') and self.cam_proc is not None:
+            try:
+                self.cam_proc.terminate()
+                self.cam_proc.wait(timeout=2.0)
+            except Exception:
+                pass
+        super().destroy_node()
 
     # --------------------------------------------------------------------------
     # GESTION DE WAYPOINTS Y PERFILES
