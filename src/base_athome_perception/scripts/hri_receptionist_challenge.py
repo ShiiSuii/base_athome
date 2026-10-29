@@ -362,6 +362,9 @@ class HriReceptionistChallengeNode(Node):
         self.missing_field: Optional[str] = None
         self.retry_count = 0
         self.door_detection_start: Optional[float] = None
+        self.last_person_seen_time: Optional[float] = None
+        self.last_door_prompt_time: float = 0.0
+        self.force_advance: bool = False
 
         # Grabación biométrica
         self.recording_samples: List[np.ndarray] = []
@@ -819,24 +822,67 @@ class HriReceptionistChallengeNode(Node):
             self.current_banner_text = f"Esperando invitado {self.guest_index} en la puerta..."
 
         elif self.state == self.STATE_WAIT_DOOR:
-            # Mantener cabezal centrado en la puerta si no hay seguimiento activo
-            if not face_results:
+            # 1. Avance manual forzado vía teclado [ESPACIO / ENTER]
+            if self.force_advance:
+                self.force_advance = False
+                self.get_logger().info("⚡ [Manual]: Forzando avance de puerta -> Saludo.")
+                self.state = self.STATE_GREET_AND_PROMPT
+                self.state_start_time = now
+                self.door_detection_start = None
+                return
+
+            # 2. Centrado suave del cabezal si no hay seguimiento activo
+            if not face_results and (abs(self.target_pan_deg) > 3.0 or abs(self.target_tilt_deg) > 3.0):
                 self.move_head_to(0.0, 0.0)
-            # Esperar a que una persona se acerque a la puerta
+
+            # 3. Detección Multi-Modal de Persona frente al robot
+            person_detected = False
+            detect_reason = ""
+
+            # A. Rostro detectado (umbral realista >= 500 px², visible desde 2.5m)
             if face_results:
                 largest_face = max(face_results, key=lambda f: f["bbox"][2] * f["bbox"][3])
                 fw, fh = largest_face["bbox"][2], largest_face["bbox"][3]
-                # Si el rostro tiene tamaño suficiente (persona frente al robot)
-                if fw * fh > 3500:
-                    if self.door_detection_start is None:
-                        self.door_detection_start = now
-                    elif now - self.door_detection_start >= 1.2:
-                        self.state = self.STATE_GREET_AND_PROMPT
-                        self.state_start_time = now
-                else:
+                if fw * fh >= 500:
+                    person_detected = True
+                    detect_reason = f"Rostro visible ({fw}x{fh} px)"
+
+            # B. Detección de cuerpo humano con YOLOv8-pose (por si la persona no mira directo a la cámara)
+            if not person_detected and self.pose_detector is not None and frame is not None:
+                try:
+                    poses = self.pose_detector.detect_poses(frame)
+                    if poses and len(poses) > 0:
+                        person_detected = True
+                        detect_reason = f"Cuerpo/Silueta detectado (YOLO: {len(poses)} personas)"
+                except Exception:
+                    pass
+
+            # C. Presencia por voz (si el invitado dice algo al acercarse)
+            if not person_detected and self.voice_text:
+                person_detected = True
+                detect_reason = f"Voz detectada: '{self.voice_text}'"
+
+            # 4. Debounce y transición fluida (0.7s continuo de presencia)
+            if person_detected:
+                self.last_person_seen_time = now
+                if self.door_detection_start is None:
+                    self.door_detection_start = now
+                    self.get_logger().info(f"👀 [Puerta]: {detect_reason}. Confirmando presencia...")
+                elif now - self.door_detection_start >= 0.7:
+                    self.get_logger().info("✔ [Puerta]: Invitado confirmado. Iniciando saludo y bienvenida.")
+                    self.state = self.STATE_GREET_AND_PROMPT
+                    self.state_start_time = now
                     self.door_detection_start = None
+                    return
             else:
-                self.door_detection_start = None
+                # Tolerancia de 1.0s para no reiniciar el contador si hay un parpadeo de frame
+                if self.last_person_seen_time is None or (now - self.last_person_seen_time > 1.0):
+                    self.door_detection_start = None
+
+            # 5. Recordatorio cortés si espera más de 18 segundos sin nadie
+            if (now - self.state_start_time > 18.0) and (now - self.last_door_prompt_time > 18.0):
+                self.last_door_prompt_time = now
+                self.say("Hello! I am waiting for the guest at the door. Please step forward.", emotion="speaking", blocking=False)
 
         elif self.state == self.STATE_GREET_AND_PROMPT:
             # Saludo y pregunta abierta de nombre y bebida favorita
@@ -1410,16 +1456,29 @@ def main():
                 except Exception:
                     pass
             elif key in [32, 13]:  # Espacio o Enter
-                # Avance manual o frame sintético de prueba si la cámara aún no envía frames
+                # Avance manual forzado o frame sintético de prueba
+                print(f"\n[Manual]: Tecla [ESPACIO/ENTER] presionada en estado '{node.state}'. Forzando avance...")
+                node.force_advance = True
                 if node.latest_frame is None and node.state == node.STATE_INIT:
-                    print("\n[Manual]: Generando frame de prueba para pre-vuelo...")
                     with node.frame_lock:
                         node.latest_frame = np.zeros((480, 640, 3), dtype=np.uint8)
                         node.last_frame_time = time.time()
                 elif node.state == node.STATE_WAIT_DOOR:
-                    node.door_detection_start = time.time() - 2.0
+                    node.state = node.STATE_GREET_AND_PROMPT
+                    node.state_start_time = time.time()
+                    node.door_detection_start = None
                 elif node.state == node.STATE_WAIT_NAME_DRINK:
-                    node.voice_text = f"My name is Alex and I like lemonade"
+                    node.voice_text = "My name is Alex and I like lemonade"
+                elif node.state == node.STATE_WAIT_GUEST_STANDING:
+                    node.state = node.STATE_DESCRIBE_GUEST
+                    node.state_start_time = time.time()
+                elif node.state == node.STATE_MEMORIZE_FACE:
+                    # Forzar fin de memorización si ya tiene al menos 1 muestra
+                    if not node.recording_samples:
+                        dummy_f = np.random.randn(1, 128).astype(np.float32)
+                        dummy_f /= np.linalg.norm(dummy_f)
+                        node.recording_samples.append(dummy_f)
+                    node.state_start_time = time.time() - 10.0
             elif key in [ord("g"), ord("G")]:
                 print("\n[Arm]: Probando gesto de senalamiento...")
                 node.move_arm_to_named_pose("point_couch", duration_s=1.5)

@@ -3,29 +3,25 @@ map_info:
   image_file: /home/athome/mapa_base_athome.pgm
   resolution: 0.05
   origin:
-  - -6.192
-  - -9.153
+  - -5.12
+  - -8.732
   - 0.0
-  width: 324
-  height: 582
+  width: 204
+  height: 264
 zones:
   entrance:
     name: Entrada
     type: entrance
     color: '#00d2ff'
     polygon:
-    - - 1.8589
-      - -1.0363
-    - - 1.8473
-      - -0.1739
-    - - 1.8628
-      - -1.0285
-    - - 1.855
-      - -1.0324
-    - - 1.8705
-      - -1.013
-    - - 1.8705
-      - -1.013
+    - - 2.8263
+      - -0.8032
+    - - 2.8263
+      - -0.6581
+    - - 2.8101
+      - 0.1805
+    - - 2.8101
+      - 0.1805
   living_room:
     name: Sala de Estar
     type: living_room
@@ -46,65 +42,42 @@ zones:
     - - 1.7262
       - -8.2741
 furniture:
-  escritorio:
-    name: Escritorio
-    type: desk
-    height_m: 0.75
-    solidified_in_map: true
-    polygon:
-    - - -0.9146
-      - -3.608
-    - - 0.0177
-      - -3.608
-    - - 0.0177
-      - -1.3484
-    - - -0.9146
-      - -1.3484
-    center:
-      x: -0.4484
-      y: -2.4782
-      z: 0.375
-    volume:
-      width_m: 0.9323
-      length_m: 2.2596
-      height_m: 0.75
-      volume_m3: 1.58
-  mesa_de_comedor:
-    name: Mesa de Comedor
+  mesa_de_centro:
+    name: Mesa de Centro
     type: table
     height_m: 0.76
     solidified_in_map: true
     polygon:
-    - - -2.7475
-      - -3.6396
-    - - -1.594
-      - -3.6396
-    - - -1.594
-      - -1.4274
-    - - -2.7475
-      - -1.4274
+    - - -3.9306
+      - -3.1254
+    - - -1.3343
+      - -3.1254
+    - - -1.3343
+      - -0.4484
+    - - -3.9306
+      - -0.4484
     center:
-      x: -2.1707
-      y: -2.5335
+      x: -2.6324
+      y: -1.7869
       z: 0.38
     volume:
-      width_m: 1.1535
-      length_m: 2.2122
+      width_m: 2.5963
+      length_m: 2.677
       height_m: 0.76
-      volume_m3: 1.9393
+      volume_m3: 5.2822
 keepout_zones: {}
 waypoints:
   door:
     name: door
     zone: entrance
-    x: 1.594
-    y: -0.5852
-    yaw_deg: -2
+    x: 2.4554
+    y: -0.2388
+    yaw_deg: 0
   living_room:
     name: living_room
     zone: living_room
-    x: 1.8054
-    y: -7.3838
+    x: 0.7944
+    y: -7.2375
     yaw_deg: -2
 seats:
   sof_principal:
