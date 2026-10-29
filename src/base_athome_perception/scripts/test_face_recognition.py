@@ -120,14 +120,29 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
     ):
         if ROS2_AVAILABLE and use_camera_id == -1:
             super().__init__("face_recognition_viewer")
-            self.get_logger().info(f"Subscribiendo a camara RealSense: {topic}")
+            self.get_logger().info(f"Subscribiendo a camara del cabezal (ZED Mini / RealSense): {topic}")
             self.bridge = CvBridge()
             qos = QoSProfile(
                 reliability=QoSReliabilityPolicy.BEST_EFFORT,
                 history=QoSHistoryPolicy.KEEP_LAST,
                 depth=1,
             )
-            self.sub = self.create_subscription(Image, topic, self.image_callback, qos)
+            # Soporte dual: escucha tanto ZED Mini (/zed/zed_node/rgb/image_rect_color) como RealSense/UVC
+            self.subs_cam = []
+            cand_topics = [
+                topic,
+                "/zed/zed_node/rgb/image_rect_color",
+                "/zed/zed_node/left/image_rect_color",
+                "/zed/rgb/image_rect_color",
+                "/camera/camera/color/image_raw",
+                "/camera/color/image_raw"
+            ]
+            seen_topics = set()
+            for t in cand_topics:
+                if t and t not in seen_topics:
+                    seen_topics.add(t)
+                    self.subs_cam.append(self.create_subscription(Image, t, self.image_callback, qos))
+            self.sub = self.subs_cam[0]
 
             # Subscripcion a transcripcion de voz (Whisper desde la Jetson)
             self.sub_voice = self.create_subscription(
@@ -781,7 +796,7 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
                 wait_screen = np.zeros((480, 640, 3), dtype=np.uint8)
                 cv2.putText(
                     wait_screen,
-                    "Esperando senal de camara RealSense D435...",
+                    "Esperando senal de camara (ZED Mini / Head Camera)...",
                     (50, 240),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.65,

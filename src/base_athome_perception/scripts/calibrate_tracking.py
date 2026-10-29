@@ -50,7 +50,21 @@ class TrackingCalibrator(Node if ROS2_AVAILABLE else object):
                 history=QoSHistoryPolicy.KEEP_LAST,
                 depth=1,
             )
-            self.sub = self.create_subscription(Image, topic, self.image_callback, qos)
+            self.subs_cam = []
+            cand_topics = [
+                topic,
+                "/zed/zed_node/rgb/image_rect_color",
+                "/zed/zed_node/left/image_rect_color",
+                "/zed/rgb/image_rect_color",
+                "/camera/camera/color/image_raw",
+                "/camera/color/image_raw"
+            ]
+            seen_topics = set()
+            for t in cand_topics:
+                if t and t not in seen_topics:
+                    seen_topics.add(t)
+                    self.subs_cam.append(self.create_subscription(Image, t, self.image_callback, qos))
+            self.sub = self.subs_cam[0]
             self.pub_pantilt = self.create_publisher(Vector3, "/pan_tilt/target_degrees", 10)
         else:
             self.sub = None

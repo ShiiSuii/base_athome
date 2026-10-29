@@ -28,10 +28,10 @@ import numpy as np
 #   - Base del brazo en lado izquierdo del prisma (arm_base_link): (0.155, +0.175, -0.075) m
 # Vector desde el hombro izquierdo (arm_base_link) hasta el eje Tilt del cabezal,
 # calibrado con compensación de centro volumétrico de botella (+5 cm X) y nivel de mesa (+6 cm Z):
-HEAD_TO_ARM_OFFSET_M: Tuple[float, float, float] = (-0.035, -0.175, 0.335)
+HEAD_TO_ARM_OFFSET_M: Tuple[float, float, float] = (-0.135, -0.175, 0.335)
 
-# Offset desde el eje Tilt hasta el centro óptico de la RealSense D435 (camera_link):
-CAMERA_LEVER_ARM_M: Tuple[float, float, float] = (0.035, 0.0, 0.015)
+# Offset desde el eje Tilt hasta el centro óptico de la ZED Mini (camera_link):
+CAMERA_LEVER_ARM_M: Tuple[float, float, float] = (0.135, 0.0, 0.015)
 
 # Cámara del brazo (Orbbec DaBai) centrada físicamente con el eje de la pinza (tcp_link):
 WRIST_CAMERA_RIGHT_OFFSET_M: float = 0.0

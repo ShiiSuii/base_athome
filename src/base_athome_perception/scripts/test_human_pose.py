@@ -46,7 +46,21 @@ class HumanPoseViewer(Node if ROS2_AVAILABLE else object):
                 history=QoSHistoryPolicy.KEEP_LAST,
                 depth=1,
             )
-            self.sub = self.create_subscription(Image, topic, self.image_callback, qos)
+            self.subs_cam = []
+            cand_topics = [
+                topic,
+                "/zed/zed_node/rgb/image_rect_color",
+                "/zed/zed_node/left/image_rect_color",
+                "/zed/rgb/image_rect_color",
+                "/camera/camera/color/image_raw",
+                "/camera/color/image_raw"
+            ]
+            seen_topics = set()
+            for t in cand_topics:
+                if t and t not in seen_topics:
+                    seen_topics.add(t)
+                    self.subs_cam.append(self.create_subscription(Image, t, self.image_callback, qos))
+            self.sub = self.subs_cam[0]
         else:
             self.sub = None
 
@@ -98,7 +112,7 @@ class HumanPoseViewer(Node if ROS2_AVAILABLE else object):
                 wait_screen = np.zeros((480, 640, 3), dtype=np.uint8)
                 cv2.putText(
                     wait_screen,
-                    "Esperando se;al de camara RealSense D435...",
+                    "Esperando senal de camara (ZED Mini / Head Camera)...",
                     (50, 240),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.65,

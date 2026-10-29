@@ -35,6 +35,11 @@ setup(
             'manipulacion_autonoma.py = scripts.manipulacion_autonoma:main',
             'calibrar_aruco_manipulacion = scripts.calibrar_aruco_manipulacion:main',
             'calibrar_aruco_manipulacion.py = scripts.calibrar_aruco_manipulacion:main',
+            'hri_receptionist = scripts.hri_receptionist_challenge:main',
+            'hri_receptionist.py = scripts.hri_receptionist_challenge:main',
+            'challenge_hri = scripts.hri_receptionist_challenge:main',
+            'animated_face = scripts.animated_face_node:main',
+            'animated_face.py = scripts.animated_face_node:main',
         ],
     },
 )

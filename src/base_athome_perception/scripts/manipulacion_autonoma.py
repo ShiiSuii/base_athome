@@ -144,9 +144,17 @@ class ManipulacionAutonomaNode(Node):
         )
 
         # Suscriptores
-        self.sub_head_color = self.create_subscription(
-            Image, "/camera/camera/color/image_raw", self.head_color_callback, qos_fast
-        )
+        self.subs_head_color = []
+        for t in [
+            "/zed/zed_node/rgb/image_rect_color",
+            "/zed/zed_node/left/image_rect_color",
+            "/camera/camera/color/image_raw",
+            "/camera/color/image_raw",
+        ]:
+            self.subs_head_color.append(
+                self.create_subscription(Image, t, self.head_color_callback, qos_fast)
+            )
+        self.sub_head_color = self.subs_head_color[0]
         self.sub_wrist_cam = self.create_subscription(
             Image, "/arm_camera/image_raw", self.wrist_cam_callback, qos_fast
         )

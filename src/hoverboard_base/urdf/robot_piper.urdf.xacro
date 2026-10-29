@@ -103,6 +103,9 @@
   <material name="orbbec_black">
     <color rgba="0.08 0.08 0.08 1.0"/>
   </material>
+  <material name="zed_black">
+    <color rgba="0.12 0.12 0.12 1.0"/>
+  </material>
 
   <!-- ==================== BASE FOOTPRINT ==================== -->
   <link name="base_footprint"/>
@@ -431,40 +434,80 @@
     <limit lower="-0.7854" upper="0.7854" effort="2.5" velocity="3.14"/>
   </joint>
 
-  <!-- Cámara RealSense D435 en Cabezal -->
+  <!-- Cámara Estereoscópica Stereolabs ZED Mini en Cabezal Pan-Tilt -->
+  <!-- Desplazada 10 cm adicionales hacia adelante respecto al anclaje anterior (x = 0.135 m) -->
   <joint name="camera_mount_joint" type="fixed">
     <parent link="tilt_link"/>
     <child link="camera_link"/>
-    <origin xyz="0.035 0.0 0.015" rpy="0 0 0"/>
+    <origin xyz="0.135 0.0 0.015" rpy="0 0 0"/>
   </joint>
 
+  <!-- Chasis Central de la ZED Mini (124.5 mm ancho x 30.5 mm prof x 30.5 mm alto, peso ~63g) -->
   <link name="camera_link">
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <box size="0.025 0.090 0.025"/>
+        <box size="0.0305 0.1245 0.0305"/>
       </geometry>
-      <material name="realsense_silver"/>
+      <material name="zed_black"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <box size="0.025 0.090 0.025"/>
+        <box size="0.0305 0.1245 0.0305"/>
       </geometry>
     </collision>
     <inertial>
       <origin xyz="0 0 0" rpy="0 0 0"/>
-      <mass value="0.072"/>
-      <inertia ixx="0.00005" ixy="0.0" ixz="0.0" iyy="0.00001" iyz="0.0" izz="0.00005"/>
+      <mass value="0.063"/>
+      <inertia ixx="0.00008" ixy="0.0" ixz="0.0" iyy="0.00001" iyz="0.0" izz="0.00008"/>
     </inertial>
   </link>
 
-  <!-- Marco Óptico RealSense (Estándar ROS: Z adelante, X derecha, Y abajo) -->
+  <!-- Enlace zed_camera_link para compatibilidad nativa con el wrapper oficial de Stereolabs -->
+  <link name="zed_camera_link"/>
+  <joint name="zed_camera_link_joint" type="fixed">
+    <parent link="camera_link"/>
+    <child link="zed_camera_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Lente Izquierda ZED Mini (Baseline 63 mm -> +31.5 mm en Y) -->
+  <link name="zed_left_camera_frame"/>
+  <joint name="zed_left_camera_joint" type="fixed">
+    <parent link="camera_link"/>
+    <child link="zed_left_camera_frame"/>
+    <origin xyz="0 0.0315 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="zed_left_camera_optical_frame"/>
+  <joint name="zed_left_camera_optical_joint" type="fixed">
+    <parent link="zed_left_camera_frame"/>
+    <child link="zed_left_camera_optical_frame"/>
+    <origin xyz="0 0 0" rpy="-1.5707963 0 -1.5707963"/>
+  </joint>
+
+  <!-- Lente Derecha ZED Mini (Baseline 63 mm -> -31.5 mm en Y) -->
+  <link name="zed_right_camera_frame"/>
+  <joint name="zed_right_camera_joint" type="fixed">
+    <parent link="camera_link"/>
+    <child link="zed_right_camera_frame"/>
+    <origin xyz="0 -0.0315 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="zed_right_camera_optical_frame"/>
+  <joint name="zed_right_camera_optical_joint" type="fixed">
+    <parent link="zed_right_camera_frame"/>
+    <child link="zed_right_camera_optical_frame"/>
+    <origin xyz="0 0 0" rpy="-1.5707963 0 -1.5707963"/>
+  </joint>
+
+  <!-- Marco Óptico de Color (Mantenido para 100% de retrocompatibilidad con nodos de visión y RViz) -->
   <link name="camera_color_optical_frame"/>
   <joint name="camera_color_optical_joint" type="fixed">
-    <parent link="camera_link"/>
+    <parent link="zed_left_camera_optical_frame"/>
     <child link="camera_color_optical_frame"/>
-    <origin xyz="0 0 0" rpy="-1.5707963 0 -1.5707963"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
   </joint>
 
   <!-- ==================== BRAZO ROBÓTICO AGILEX PIPER 6-DOF ==================== -->

@@ -29,13 +29,13 @@ safety_envelope:
     - -0.48
     - 0.35
   head_to_arm_offset_m:
-  - -0.035
+  - -0.135
   - -0.175
   - 0.335
   wrist_camera_right_offset_m: 0.008
   grasp_forward_cm: 35.0
   grasp_height_offset_cm: 7.7
-  dabai_extra_advance_cm: 11.6
+  dabai_extra_advance_cm: 8.0
   dabai_center_zone_px: 80
   arm_speed_pct: 30
   dabai_lateral_offset_mm: 14.4
