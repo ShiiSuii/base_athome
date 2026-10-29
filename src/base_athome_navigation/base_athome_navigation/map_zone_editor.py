@@ -567,6 +567,18 @@ HTML_PAGE = r'''<!DOCTYPE html>
     gap: 14px;
   }
   .modal-card h3 { font-size: 16px; color: var(--accent-cyan); display: flex; align-items: center; gap: 8px; }
+  .vol-metrics-box {
+    background: #182030;
+    border: 1px solid var(--panel-border);
+    border-radius: 6px;
+    padding: 8px 12px;
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 8px;
+    font-size: 11px;
+    text-align: center;
+  }
+  .vol-metric-item b { display: block; font-size: 14px; color: var(--accent-green); margin-top: 2px; }
   .form-group { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--text-muted); }
   .form-group input, .form-group select {
     background: #182030;
@@ -661,39 +673,46 @@ HTML_PAGE = r'''<!DOCTYPE html>
     <button class="sub-btn danger" style="margin-top: 4px;" onclick="restoreOriginalMap()">🔄 Revertir al Mapa Original (.orig)</button>
   </div>
 
-  <!-- PESTAÑA 2: MESAS Y MOBILIARIO -->
+  <!-- PESTAÑA 2: MESAS Y MOBILIARIO VOLUMÉTRICO -->
   <div class="tab-content" id="tab-furniture">
     <div class="template-section">
-      <div class="template-title">⚡ Opciones Listas para Colocar en el Mapa:</div>
+      <div class="template-title">📦 Opciones de Mesas (Dibuja su Volumen 3D):</div>
       <div class="template-list">
-        <div class="template-card" onclick="placeTableTemplate('Mesa de Centro', 'table', 76, true)">
+        <div class="template-card" onclick="placeVolumeTemplate('furniture', 'Mesa de Centro', 'table', 76, true)">
           <div class="template-info">
             <span class="template-name">☕ Mesa de Centro / Pringles</span>
-            <span class="template-desc">Arrastra caja sobre 4 patas | Altura 76 cm</span>
+            <span class="template-desc">Arrastra la caja sobre las patas | Altura 76 cm</span>
           </div>
-          <span class="pill-badge">76 cm</span>
+          <span class="pill-badge orange">76 cm</span>
         </div>
-        <div class="template-card" onclick="placeTableTemplate('Mesa de Comedor', 'table', 76, true)">
+        <div class="template-card" onclick="placeVolumeTemplate('furniture', 'Mesa de Comedor', 'table', 76, true)">
           <div class="template-info">
             <span class="template-name">🍽️ Mesa de Comedor</span>
-            <span class="template-desc">Arrastra caja sobre patas | Altura 76 cm</span>
+            <span class="template-desc">Arrastra la caja del volumen | Altura 76 cm</span>
           </div>
-          <span class="pill-badge">76 cm</span>
+          <span class="pill-badge orange">76 cm</span>
         </div>
-        <div class="template-card" onclick="placeTableTemplate('Escritorio', 'desk', 75, true)">
+        <div class="template-card" onclick="placeVolumeTemplate('furniture', 'Escritorio', 'desk', 75, true)">
           <div class="template-info">
             <span class="template-name">💻 Escritorio / Mesada</span>
-            <span class="template-desc">Arrastra caja | Altura 75 cm</span>
+            <span class="template-desc">Arrastra la caja del volumen | Altura 75 cm</span>
           </div>
-          <span class="pill-badge">75 cm</span>
+          <span class="pill-badge orange">75 cm</span>
+        </div>
+        <div class="template-card" onclick="placeVolumeTemplate('furniture', 'Estante TV / Repisa', 'shelf', 110, true)">
+          <div class="template-info">
+            <span class="template-name">📺 Mueble TV / Estante</span>
+            <span class="template-desc">Arrastra el volumen | Altura 110 cm</span>
+          </div>
+          <span class="pill-badge orange">110 cm</span>
         </div>
       </div>
     </div>
 
-    <div class="section-title"><span>Herramientas Libres</span></div>
+    <div class="section-title"><span>Herramientas de Volumen Libre</span></div>
     <div class="tool-grid">
-      <button class="tool-btn" id="btn-table_rect" onclick="setMode('table_rect')">➕ Caja Libre (Drag)</button>
-      <button class="tool-btn" id="btn-table_poly" onclick="setMode('table_poly')">📐 Mesa Polígono</button>
+      <button class="tool-btn" id="btn-draw_vol_box" onclick="startFreeVolumeBox('furniture')">📦 Caja 3D (Drag)</button>
+      <button class="tool-btn" id="btn-draw_vol_poly" onclick="startFreeVolumePoly('furniture')">📐 Polígono 3D</button>
     </div>
 
     <div class="section-title">
@@ -703,38 +722,39 @@ HTML_PAGE = r'''<!DOCTYPE html>
     <div class="item-list" id="furniture-list"></div>
   </div>
 
-  <!-- PESTAÑA 3: ASIENTOS RECEPTIONIST -->
+  <!-- PESTAÑA 3: ASIENTOS VOLUMÉTRICOS -->
   <div class="tab-content" id="tab-seats">
     <div class="template-section">
-      <div class="template-title">⚡ Opciones de Asientos (Receptionist Challenge):</div>
+      <div class="template-title">🛋️ Opciones de Asientos (Dibuja su Volumen 3D):</div>
       <div class="template-list">
-        <div class="template-card" onclick="placeSeatTemplate('Sofá', 'couch', 'point_couch', 2)">
+        <div class="template-card" onclick="placeVolumeTemplate('seat', 'Sofá Principal', 'couch', 85, true, 'point_couch', 2)">
           <div class="template-info">
-            <span class="template-name">🛋️ Sofá Receptionist</span>
-            <span class="template-desc">Clic en el mapa | Gesto point_couch | 2 plazas</span>
+            <span class="template-name">🛋️ Sofá Receptionist (Volumen)</span>
+            <span class="template-desc">Arrastra la caja del sofá | Altura 85 cm | Gesto point_couch</span>
           </div>
           <span class="pill-badge purple">point_couch</span>
         </div>
-        <div class="template-card" onclick="placeSeatTemplate('Silla Individual', 'armchair', 'point_chair', 1)">
+        <div class="template-card" onclick="placeVolumeTemplate('seat', 'Silla Individual', 'armchair', 90, true, 'point_chair', 1)">
           <div class="template-info">
-            <span class="template-name">🪑 Silla Individual</span>
-            <span class="template-desc">Clic en el mapa | Gesto point_chair | 1 plaza</span>
+            <span class="template-name">🪑 Silla Individual (Volumen)</span>
+            <span class="template-desc">Arrastra la caja de la silla | Altura 90 cm | Gesto point_chair</span>
           </div>
           <span class="pill-badge purple">point_chair</span>
         </div>
-        <div class="template-card" onclick="placeSeatTemplate('Silla Secundaria', 'armchair', 'point_chair', 1)">
+        <div class="template-card" onclick="placeVolumeTemplate('seat', 'Silla Secundaria', 'armchair', 90, true, 'point_chair', 1)">
           <div class="template-info">
-            <span class="template-name">🪑 Silla Secundaria</span>
-            <span class="template-desc">Clic en el mapa | Gesto point_chair | 1 plaza</span>
+            <span class="template-name">🪑 Silla Secundaria (Volumen)</span>
+            <span class="template-desc">Arrastra la caja de la silla | Altura 90 cm | Gesto point_chair</span>
           </div>
           <span class="pill-badge purple">point_chair</span>
         </div>
       </div>
     </div>
 
-    <div class="section-title"><span>Herramienta Libre</span></div>
+    <div class="section-title"><span>Herramientas de Asiento Libre</span></div>
     <div class="tool-grid">
-      <button class="tool-btn" id="btn-seat" onclick="setMode('seat')">➕ Asiento Libre</button>
+      <button class="tool-btn" onclick="startFreeVolumeBox('seat')">📦 Asiento Caja (Drag)</button>
+      <button class="tool-btn" onclick="startFreeVolumePoly('seat')">📐 Asiento Polígono</button>
     </div>
 
     <div class="section-title">
@@ -846,35 +866,57 @@ HTML_PAGE = r'''<!DOCTYPE html>
   </div>
 </div>
 
-<!-- Modal de Registro de Mesa -->
-<div class="modal-overlay" id="table-modal">
+<!-- Modal Unificado de Registro de Volumen 3D -->
+<div class="modal-overlay" id="volume-modal">
   <div class="modal-card">
-    <h3>🪑 Delimitar Mesa / Mueble</h3>
-    <div class="form-group">
-      <label>Nombre del Mueble:</label>
-      <input type="text" id="table-name-input" value="Mesa de Centro">
+    <h3 id="vol-modal-title">📦 Registrar Volumen 3D</h3>
+    
+    <div class="vol-metrics-box">
+      <div class="vol-metric-item">Ancho (X)<b id="vol-metric-w">1.20 m</b></div>
+      <div class="vol-metric-item">Largo (Y)<b id="vol-metric-l">0.80 m</b></div>
+      <div class="vol-metric-item">Volumen 3D<b id="vol-metric-v">0.73 m³</b></div>
     </div>
+
     <div class="form-group">
-      <label>Tipo de Mueble:</label>
-      <select id="table-type-input">
-        <option value="table">Mesa de Comedor / Centro (table)</option>
-        <option value="desk">Escritorio (desk)</option>
+      <label>Nombre del Elemento:</label>
+      <input type="text" id="vol-name-input" value="Mesa de Centro">
+    </div>
+
+    <div class="form-group">
+      <label>Categoría / Tipo:</label>
+      <select id="vol-type-input" onchange="onVolTypeChange(this.value)">
+        <option value="couch">Sofá (couch - Asiento)</option>
+        <option value="armchair">Silla / Sillón (armchair - Asiento)</option>
+        <option value="table">Mesa de Centro / Comedor (table)</option>
+        <option value="desk">Escritorio / Mesada (desk)</option>
         <option value="shelf">Estante / Repisa (shelf)</option>
-        <option value="counter">Mostrador / Barra (counter)</option>
-        <option value="box">Caja / Obstáculo Elevado (box)</option>
+        <option value="obstacle">Obstáculo Volumétrico (box)</option>
       </select>
     </div>
+
     <div class="form-group">
-      <label>Altura del Tablero / Superficie (cm):</label>
-      <input type="number" id="table-height-input" value="76" min="10" max="250" step="1">
+      <label>Altura Total (Z) en cm:</label>
+      <input type="number" id="vol-height-input" value="76" min="10" max="260" step="1" oninput="updateModalVolume()">
     </div>
+
+    <div class="form-group" id="vol-gesture-group">
+      <label>Gesto del Brazo Piper (para Asientos Receptionist):</label>
+      <select id="vol-gesture-input">
+        <option value="point_couch">Señalar Sofá (point_couch)</option>
+        <option value="point_chair">Señalar Silla (point_chair)</option>
+        <option value="wave_hello">Saludar (wave_hello)</option>
+        <option value="none">Sin Gesto</option>
+      </select>
+    </div>
+
     <label class="checkbox-group">
-      <input type="checkbox" id="table-solidify-check" checked>
-      <b>⚡ Solidificar en el mapa PGM (Rellenar patas en negro para evitar colisión de Nav2)</b>
+      <input type="checkbox" id="vol-solidify-check" checked>
+      <b>⚡ Solidificar volumen en el mapa PGM (Rellenar huella en negro para evitar colisión de Nav2)</b>
     </label>
+
     <div class="modal-actions">
-      <button class="modal-btn cancel" onclick="closeTableModal()">Cancelar</button>
-      <button class="modal-btn primary" onclick="confirmSaveTable()">Guardar Mesa</button>
+      <button class="modal-btn cancel" onclick="closeVolumeModal()">Cancelar</button>
+      <button class="modal-btn primary" onclick="confirmSaveVolume()">Guardar Volumen</button>
     </div>
   </div>
 </div>
@@ -1068,37 +1110,67 @@ HTML_PAGE = r'''<!DOCTYPE html>
       obstacle: '✏️ <b>Lápiz de Pared:</b> Pinta en negro obstáculos o paredes faltantes a mano alzada.',
       line_wall: '📏 <b>Línea de Pared:</b> Haz clic en el punto inicial y arrastra para trazar una pared recta.',
       unknown: '🌫️ <b>Pincel Gris:</b> Pinta en gris espacio desconocido fuera de los límites de la habitación.',
-      table_rect: '🪑 <b>Delimitar Mesa:</b> Haz clic y arrastra una caja cubriendo las 4 patas del LiDAR en tu mapa.',
-      table_poly: '📐 <b>Mesa Polígono:</b> Haz clic en cada pata o esquina para trazar la mesa. Doble clic para terminar.',
+      draw_vol_box: '📦 <b>Caja Volumétrica 3D:</b> Arrastra una caja sobre el mapa para definir ancho y largo físico.',
+      draw_vol_poly: '📐 <b>Polígono Volumétrico 3D:</b> Haz clics para marcar los vértices de la base. Doble clic para terminar.',
       zone: '📐 <b>Dibujar Zona Libre:</b> Haz clic para agregar vértices al polígono. Doble clic para cerrar.',
       waypoint: '📍 <b>Colocar Waypoint:</b> Haz clic donde irá el robot y arrastra la flecha hacia donde mirará (Yaw).',
-      seat: '🛋️ <b>Colocar Asiento:</b> Haz clic en el mapa donde está el sofá o silla a señalar con el brazo.',
       keepout: '🚫 <b>Zona Prohibida:</b> Marca el polígono de área restringida donde el robot no debe entrar.'
     };
     document.getElementById('hud-instructions').innerHTML = instructions[mode] || '';
     draw();
   }
 
-  // --- Activadores de Plantillas Rápidas ---
-  function placeTableTemplate(name, type, heightCm, solidify) {
-    activeTemplate = { category: 'table', name, type, heightCm, solidify };
-    currentMode = 'table_rect';
+  // --- Activadores de Opciones y Plantillas Volumétricas ---
+  function placeVolumeTemplate(targetCollection, name, type, heightCm, solidify, armGesture = 'none', capacity = 1) {
+    activeTemplate = { targetCollection, name, type, heightCm, solidify, armGesture, capacity };
+    currentMode = 'draw_vol_box';
     document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('.template-card').forEach(c => c.classList.remove('active-tpl'));
-    event.currentTarget.classList.add('active-tpl');
+    if (window.event && window.event.currentTarget) window.event.currentTarget.classList.add('active-tpl');
+    const icon = targetCollection === 'seat' ? '🛋️' : '🪑';
     document.getElementById('hud-instructions').innerHTML =
-      `☕ <b>Plantilla '${name}':</b> Arrastra un rectángulo cubriendo las 4 patas en tu mapa (Altura: ${heightCm}cm).`;
+      `${icon} <b>Opción '${name}' (${heightCm}cm):</b> Haz clic y arrastra sobre el mapa para delimitar el volumen 3D (ancho × largo).`;
     draw();
   }
 
-  function placeSeatTemplate(name, type, gesture, capacity) {
-    activeTemplate = { category: 'seat', name, type, gesture, capacity };
-    currentMode = 'place_seat_template';
+  function startFreeVolumeBox(targetCollection) {
+    const isSeat = targetCollection === 'seat';
+    activeTemplate = {
+      targetCollection,
+      name: isSeat ? 'Nuevo Asiento' : 'Nueva Mesa',
+      type: isSeat ? 'couch' : 'table',
+      heightCm: isSeat ? 85 : 76,
+      solidify: true,
+      armGesture: isSeat ? 'point_couch' : 'none',
+      capacity: isSeat ? 2 : 1
+    };
+    currentMode = 'draw_vol_box';
     document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('.template-card').forEach(c => c.classList.remove('active-tpl'));
-    event.currentTarget.classList.add('active-tpl');
+    if (window.event && window.event.currentTarget) window.event.currentTarget.classList.add('active');
     document.getElementById('hud-instructions').innerHTML =
-      `🛋️ <b>Plantilla '${name}':</b> Haz un clic en el mapa exactamente donde está situado este asiento.`;
+      `📦 <b>Caja Volumétrica 3D:</b> Haz clic y arrastra sobre el mapa para delimitar las dimensiones físicas del elemento.`;
+    draw();
+  }
+
+  function startFreeVolumePoly(targetCollection) {
+    const isSeat = targetCollection === 'seat';
+    activeTemplate = {
+      targetCollection,
+      name: isSeat ? 'Nuevo Asiento' : 'Nueva Mesa',
+      type: isSeat ? 'couch' : 'table',
+      heightCm: isSeat ? 85 : 76,
+      solidify: true,
+      armGesture: isSeat ? 'point_couch' : 'none',
+      capacity: isSeat ? 2 : 1
+    };
+    currentMode = 'draw_vol_poly';
+    pendingGeometry = [];
+    document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.template-card').forEach(c => c.classList.remove('active-tpl'));
+    if (window.event && window.event.currentTarget) window.event.currentTarget.classList.add('active');
+    document.getElementById('hud-instructions').innerHTML =
+      `📐 <b>Polígono Volumétrico 3D:</b> Haz clics para marcar los vértices de la base del elemento. Doble clic para cerrar.`;
     draw();
   }
 
@@ -1200,36 +1272,12 @@ HTML_PAGE = r'''<!DOCTYPE html>
       }
     }
 
-    // 4. Capa Mesas y Muebles
+    // 4. Capa Mesas y Mobiliario Volumétrico
     if (document.getElementById('layer-furniture').checked) {
       for (const [id, item] of Object.entries(furniture)) {
-        if (!item.polygon || item.polygon.length < 3) continue;
-        ctx.beginPath();
-        const p0 = worldToPixel(item.polygon[0][0], item.polygon[0][1]);
-        ctx.moveTo(p0.x, p0.y);
-        for (let i = 1; i < item.polygon.length; i++) {
-          const p = worldToPixel(item.polygon[i][0], item.polygon[i][1]);
-          ctx.lineTo(p.x, p.y);
+        if (item.polygon && item.polygon.length >= 3) {
+          drawVolumetricExtrusion(item.polygon, item.height_m, '#ff9d00', item.name || id, '🪑', item.solidified_in_map);
         }
-        ctx.closePath();
-        ctx.fillStyle = 'rgba(255, 157, 0, 0.25)';
-        ctx.fill();
-        ctx.strokeStyle = '#ff9d00';
-        ctx.lineWidth = 2.5 / view.zoom;
-        ctx.stroke();
-
-        ctx.fillStyle = '#ff3366';
-        for (const pt of item.polygon) {
-          const p = worldToPixel(pt[0], pt[1]);
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, 4 / view.zoom, 0, Math.PI * 2);
-          ctx.fill();
-        }
-
-        const center = getPolygonCenter(item.polygon);
-        const cp = worldToPixel(center.x, center.y);
-        const hLabel = item.height_m ? ` (${(item.height_m * 100).toFixed(0)}cm)` : '';
-        drawBadge(cp.x, cp.y, `🪑 ${item.name}${hLabel}`, '#ff9d00');
       }
     }
 
@@ -1241,10 +1289,13 @@ HTML_PAGE = r'''<!DOCTYPE html>
       }
     }
 
-    // 6. Capa Asientos Receptionist
+    // 6. Capa Asientos Volumétricos Receptionist
     if (document.getElementById('layer-seats').checked) {
       for (const [id, seat] of Object.entries(seats)) {
-        if (seat.x !== undefined && seat.y !== undefined) {
+        if (seat.polygon && seat.polygon.length >= 3) {
+          const icon = seat.type === 'couch' ? '🛋️' : '🪑';
+          drawVolumetricExtrusion(seat.polygon, seat.height_m || 0.85, '#b388ff', seat.name || id, icon, seat.solidified_in_map);
+        } else if (seat.x !== undefined && seat.y !== undefined) {
           const p = worldToPixel(seat.x, seat.y);
           drawSeatPin(p.x, p.y, seat.name || id, seat.arm_gesture || '');
         }
@@ -1253,13 +1304,13 @@ HTML_PAGE = r'''<!DOCTYPE html>
 
     // 7. Previsualizaciones en Vivo
     if (isMouseDown && dragStartPixel) {
-      if (currentMode === 'clear_box' || currentMode === 'table_rect') {
+      if (currentMode === 'clear_box') {
         const minX = Math.min(dragStartPixel.x, mousePixel.x);
         const minY = Math.min(dragStartPixel.y, mousePixel.y);
         const w = Math.abs(dragStartPixel.x - mousePixel.x);
         const h = Math.abs(dragStartPixel.y - mousePixel.y);
 
-        ctx.strokeStyle = currentMode === 'clear_box' ? '#00f090' : '#ff9d00';
+        ctx.strokeStyle = '#00f090';
         ctx.lineWidth = 2 / view.zoom;
         ctx.setLineDash([4 / view.zoom, 4 / view.zoom]);
         ctx.strokeRect(minX, minY, w, h);
@@ -1267,7 +1318,62 @@ HTML_PAGE = r'''<!DOCTYPE html>
 
         const wm = (w * mapInfo.resolution).toFixed(2);
         const hm = (h * mapInfo.resolution).toFixed(2);
-        drawBadge(minX + w / 2, minY - 10 / view.zoom, `${wm}m x ${hm}m`, currentMode === 'clear_box' ? '#00f090' : '#ff9d00');
+        drawBadge(minX + w / 2, minY - 10 / view.zoom, `${wm}m x ${hm}m`, '#00f090');
+      } else if (currentMode === 'draw_vol_box') {
+        const minX = Math.min(dragStartPixel.x, mousePixel.x);
+        const minY = Math.min(dragStartPixel.y, mousePixel.y);
+        const w = Math.abs(dragStartPixel.x - mousePixel.x);
+        const h = Math.abs(dragStartPixel.y - mousePixel.y);
+
+        const wM = (w * mapInfo.resolution);
+        const lM = (h * mapInfo.resolution);
+        const hCm = activeTemplate && activeTemplate.heightCm ? activeTemplate.heightCm : 76;
+        const hM = hCm / 100.0;
+        const volM3 = (wM * lM * hM);
+
+        const isSeat = activeTemplate && activeTemplate.targetCollection === 'seat';
+        const color = isSeat ? '#b388ff' : '#ff9d00';
+
+        const hPx = (hM / mapInfo.resolution);
+        const isoDx = hPx * 0.28;
+        const isoDy = -hPx * 0.42;
+
+        // Huella base en suelo
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2 / view.zoom;
+        ctx.setLineDash([4 / view.zoom, 4 / view.zoom]);
+        ctx.strokeRect(minX, minY, w, h);
+        ctx.setLineDash([]);
+        ctx.fillStyle = hexToRgba(color, 0.15);
+        ctx.fillRect(minX, minY, w, h);
+
+        // Pilares verticales 3D
+        ctx.beginPath();
+        ctx.moveTo(minX, minY); ctx.lineTo(minX + isoDx, minY + isoDy);
+        ctx.moveTo(minX + w, minY); ctx.lineTo(minX + w + isoDx, minY + isoDy);
+        ctx.moveTo(minX + w, minY + h); ctx.lineTo(minX + w + isoDx, minY + h + isoDy);
+        ctx.moveTo(minX, minY + h); ctx.lineTo(minX + isoDx, minY + h + isoDy);
+        ctx.strokeStyle = hexToRgba(color, 0.6);
+        ctx.lineWidth = 1.2 / view.zoom;
+        ctx.stroke();
+
+        // Tapa superior 3D
+        ctx.beginPath();
+        ctx.moveTo(minX + isoDx, minY + isoDy);
+        ctx.lineTo(minX + w + isoDx, minY + isoDy);
+        ctx.lineTo(minX + w + isoDx, minY + h + isoDy);
+        ctx.lineTo(minX + isoDx, minY + h + isoDy);
+        ctx.closePath();
+        ctx.fillStyle = hexToRgba(color, 0.35);
+        ctx.fill();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2 / view.zoom;
+        ctx.stroke();
+
+        // Badge con dimensiones
+        const tCx = minX + w / 2 + isoDx;
+        const tCy = minY + h / 2 + isoDy;
+        drawBadge(tCx, tCy, `📦 ${wM.toFixed(2)}m × ${lM.toFixed(2)}m × ${hM.toFixed(2)}m (${volM3.toFixed(2)} m³)`, color);
       } else if (currentMode === 'line_wall') {
         ctx.strokeStyle = '#000000';
         ctx.lineWidth = brushSize;
@@ -1295,7 +1401,9 @@ HTML_PAGE = r'''<!DOCTYPE html>
         ctx.lineTo(pendingGeometry[i].x, pendingGeometry[i].y);
       }
       ctx.lineTo(mousePixel.x, mousePixel.y);
-      ctx.strokeStyle = activeTemplate && activeTemplate.color ? activeTemplate.color : '#00d2ff';
+      const isSeat = activeTemplate && activeTemplate.targetCollection === 'seat';
+      const color = currentMode === 'draw_vol_poly' ? (isSeat ? '#b388ff' : '#ff9d00') : (activeTemplate && activeTemplate.color ? activeTemplate.color : '#00d2ff');
+      ctx.strokeStyle = color;
       ctx.lineWidth = 2 / view.zoom;
       ctx.setLineDash([4 / view.zoom, 4 / view.zoom]);
       ctx.stroke();
@@ -1311,6 +1419,68 @@ HTML_PAGE = r'''<!DOCTYPE html>
     }
 
     ctx.restore();
+  }
+
+  function drawVolumetricExtrusion(polyWorld, heightM, color, label, icon, isSolidified) {
+    if (!polyWorld || polyWorld.length < 3) return;
+    const basePts = polyWorld.map(pt => worldToPixel(pt[0], pt[1]));
+    const hM = heightM || 0.76;
+    const hPx = (hM / mapInfo.resolution);
+    const isoDx = hPx * 0.28;
+    const isoDy = -hPx * 0.42;
+    const topPts = basePts.map(p => ({ x: p.x + isoDx, y: p.y + isoDy }));
+
+    // 1. Huella base en el suelo (footprint 2D)
+    ctx.beginPath();
+    ctx.moveTo(basePts[0].x, basePts[0].y);
+    for (let i = 1; i < basePts.length; i++) ctx.lineTo(basePts[i].x, basePts[i].y);
+    ctx.closePath();
+    ctx.fillStyle = hexToRgba(color, 0.20);
+    ctx.fill();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.8 / view.zoom;
+    ctx.stroke();
+
+    // 2. Pilares verticales (aristas de extrusión 3D)
+    ctx.beginPath();
+    for (let i = 0; i < basePts.length; i++) {
+      ctx.moveTo(basePts[i].x, basePts[i].y);
+      ctx.lineTo(topPts[i].x, topPts[i].y);
+    }
+    ctx.strokeStyle = hexToRgba(color, 0.6);
+    ctx.lineWidth = 1.2 / view.zoom;
+    ctx.setLineDash([3 / view.zoom, 3 / view.zoom]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // 3. Cara superior 3D (tapa elevada del volumen)
+    ctx.beginPath();
+    ctx.moveTo(topPts[0].x, topPts[0].y);
+    for (let i = 1; i < topPts.length; i++) ctx.lineTo(topPts[i].x, topPts[i].y);
+    ctx.closePath();
+    ctx.fillStyle = hexToRgba(color, 0.42);
+    ctx.fill();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2.2 / view.zoom;
+    ctx.stroke();
+
+    // 4. Puntos de anclaje en las esquinas superiores
+    ctx.fillStyle = color;
+    for (const p of topPts) {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 3.5 / view.zoom, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // 5. Etiqueta flotante 3D sobre la tapa superior
+    let topCx = 0, topCy = 0;
+    for (const p of topPts) { topCx += p.x; topCy += p.y; }
+    topCx /= topPts.length;
+    topCy /= topPts.length;
+
+    const hLabel = `${Math.round(hM * 100)}cm`;
+    const solidBadge = isSolidified ? ' ⚡' : '';
+    drawBadge(topCx, topCy, `${icon} ${label} (${hLabel})${solidBadge}`, color);
   }
 
   function drawBadge(x, y, text, color) {
@@ -1404,41 +1574,6 @@ HTML_PAGE = r'''<!DOCTYPE html>
       applyPixelBrush(mousePixel.x, mousePixel.y, '#cdcdcd');
       updateColorCanvas();
       draw();
-    } else if (currentMode === 'place_seat_template' && activeTemplate) {
-      const world = pixelToWorld(mousePixel.x, mousePixel.y);
-      const id = activeTemplate.name.toLowerCase().replace(/\s+/g, '_');
-      seats[id] = {
-        name: activeTemplate.name,
-        zone: 'living_room',
-        x: round4(world.x),
-        y: round4(world.y),
-        type: activeTemplate.type,
-        arm_gesture: activeTemplate.gesture,
-        capacity: activeTemplate.capacity,
-        occupied: false
-      };
-      updateSidebar();
-      showToast(`🛋️ '${activeTemplate.name}' colocado en el mapa`);
-      setMode('pan');
-    } else if (currentMode === 'seat') {
-      const world = pixelToWorld(mousePixel.x, mousePixel.y);
-      const name = prompt('Nombre del Asiento (ej. Sofá, Silla):', 'Silla');
-      if (name) {
-        const id = name.toLowerCase().replace(/\s+/g, '_');
-        seats[id] = {
-          name: name,
-          zone: 'living_room',
-          x: round4(world.x),
-          y: round4(world.y),
-          type: id.includes('sofa') || id.includes('couch') ? 'couch' : 'armchair',
-          arm_gesture: id.includes('sofa') || id.includes('couch') ? 'point_couch' : 'point_chair',
-          capacity: 1,
-          occupied: false
-        };
-        updateSidebar();
-        showToast('Asiento registrado');
-      }
-      setMode('pan');
     }
   });
 
@@ -1519,35 +1654,26 @@ HTML_PAGE = r'''<!DOCTYPE html>
       pushUndo();
       showToast('Pared trazada');
       setMode('pan');
-    } else if (currentMode === 'table_rect') {
+    } else if (currentMode === 'draw_vol_box') {
       const minX = Math.min(dragStartPixel.x, mousePixel.x);
       const minY = Math.min(dragStartPixel.y, mousePixel.y);
       const maxX = Math.max(dragStartPixel.x, mousePixel.x);
       const maxY = Math.max(dragStartPixel.y, mousePixel.y);
 
       if (Math.abs(maxX - minX) > 4 && Math.abs(maxY - minY) > 4) {
-        const p1 = pixelToWorld(minX, minY);
-        const p2 = pixelToWorld(maxX, minY);
-        const p3 = pixelToWorld(maxX, maxY);
-        const p4 = pixelToWorld(minX, maxY);
+        const p1 = pixelToWorld(minX, maxY);
+        const p2 = pixelToWorld(maxX, maxY);
+        const p3 = pixelToWorld(maxX, minY);
+        const p4 = pixelToWorld(minX, minY);
 
-        pendingTablePolygon = [
+        pendingVolumePolygon = [
           [round4(p1.x), round4(p1.y)],
           [round4(p2.x), round4(p2.y)],
           [round4(p3.x), round4(p3.y)],
           [round4(p4.x), round4(p4.y)]
         ];
 
-        if (activeTemplate && activeTemplate.category === 'table') {
-          document.getElementById('table-name-input').value = activeTemplate.name;
-          document.getElementById('table-type-input').value = activeTemplate.type;
-          document.getElementById('table-height-input').value = activeTemplate.heightCm;
-          document.getElementById('table-solidify-check').checked = activeTemplate.solidify;
-        } else {
-          document.getElementById('table-name-input').value = 'Mesa';
-          document.getElementById('table-height-input').value = 76;
-        }
-        openTableModal();
+        openVolumeModal();
       }
     } else if (currentMode === 'place_wp_template' && activeTemplate) {
       const dx = mousePixel.x - dragStartPixel.x;
@@ -1591,7 +1717,7 @@ HTML_PAGE = r'''<!DOCTYPE html>
   });
 
   displayCanvas.addEventListener('click', (e) => {
-    if (['zone', 'keepout', 'table_poly', 'place_zone_template'].includes(currentMode)) {
+    if (['zone', 'keepout', 'draw_vol_poly', 'place_zone_template'].includes(currentMode)) {
       if (!pendingGeometry) pendingGeometry = [];
       pendingGeometry.push({ ...mousePixel });
       draw();
@@ -1599,7 +1725,7 @@ HTML_PAGE = r'''<!DOCTYPE html>
   });
 
   displayCanvas.addEventListener('dblclick', (e) => {
-    if (['zone', 'keepout', 'table_poly', 'place_zone_template'].includes(currentMode)) {
+    if (['zone', 'keepout', 'draw_vol_poly', 'place_zone_template'].includes(currentMode)) {
       if (pendingGeometry && pendingGeometry.length >= 3) {
         const polyWorld = pendingGeometry.map(p => {
           const w = pixelToWorld(p.x, p.y);
@@ -1632,13 +1758,13 @@ HTML_PAGE = r'''<!DOCTYPE html>
             updateSidebar();
             showToast('Área prohibida guardada');
           }
-        } else if (currentMode === 'table_poly') {
-          pendingTablePolygon = polyWorld;
-          openTableModal();
+        } else if (currentMode === 'draw_vol_poly') {
+          pendingVolumePolygon = polyWorld;
+          openVolumeModal();
         }
       }
       pendingGeometry = null;
-      setMode('pan');
+      if (currentMode !== 'draw_vol_poly') setMode('pan');
     }
   });
 
@@ -1668,44 +1794,144 @@ HTML_PAGE = r'''<!DOCTYPE html>
     else if (e.key === '4') setMode('obstacle');
     else if (e.key === '5') setMode('line_wall');
     else if (e.key === '6') setMode('unknown');
-    else if (e.key === 'Escape') { pendingGeometry = null; setMode('pan'); closeTableModal(); }
+    else if (e.key === 'Escape') { pendingGeometry = null; setMode('pan'); closeVolumeModal(); }
   });
 
-  let pendingTablePolygon = null;
-  function openTableModal() {
-    document.getElementById('table-modal').classList.add('active');
+  let pendingVolumePolygon = null;
+
+  function openVolumeModal() {
+    if (!pendingVolumePolygon || pendingVolumePolygon.length < 3) return;
+
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const pt of pendingVolumePolygon) {
+      minX = Math.min(minX, pt[0]); maxX = Math.max(maxX, pt[0]);
+      minY = Math.min(minY, pt[1]); maxY = Math.max(maxY, pt[1]);
+    }
+    const wM = maxX - minX;
+    const lM = maxY - minY;
+
+    const tpl = activeTemplate || {};
+    const isSeat = tpl.targetCollection === 'seat' || ['couch', 'armchair'].includes(tpl.type);
+    const heightCm = tpl.heightCm || (isSeat ? 85 : 76);
+    const hM = heightCm / 100.0;
+    const volM3 = wM * lM * hM;
+
+    document.getElementById('vol-metric-w').textContent = `${wM.toFixed(2)} m`;
+    document.getElementById('vol-metric-l').textContent = `${lM.toFixed(2)} m`;
+    document.getElementById('vol-metric-v').textContent = `${volM3.toFixed(2)} m³`;
+
+    document.getElementById('vol-modal-title').innerHTML = isSeat ? '🛋️ Registrar Asiento 3D' : '🪑 Registrar Mueble / Mesa 3D';
+    document.getElementById('vol-name-input').value = tpl.name || (isSeat ? 'Sofá' : 'Mesa');
+    document.getElementById('vol-type-input').value = tpl.type || (isSeat ? 'couch' : 'table');
+    document.getElementById('vol-height-input').value = heightCm;
+    document.getElementById('vol-solidify-check').checked = tpl.solidify !== undefined ? tpl.solidify : true;
+    document.getElementById('vol-gesture-input').value = tpl.armGesture || (tpl.type === 'armchair' ? 'point_chair' : 'point_couch');
+
+    onVolTypeChange(document.getElementById('vol-type-input').value);
+    document.getElementById('volume-modal').classList.add('active');
   }
-  function closeTableModal() {
-    document.getElementById('table-modal').classList.remove('active');
-    pendingTablePolygon = null;
+
+  function updateModalVolume() {
+    if (!pendingVolumePolygon) return;
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const pt of pendingVolumePolygon) {
+      minX = Math.min(minX, pt[0]); maxX = Math.max(maxX, pt[0]);
+      minY = Math.min(minY, pt[1]); maxY = Math.max(maxY, pt[1]);
+    }
+    const wM = maxX - minX;
+    const lM = maxY - minY;
+    const heightCm = parseFloat(document.getElementById('vol-height-input').value) || 76;
+    const hM = heightCm / 100.0;
+    const volM3 = wM * lM * hM;
+    document.getElementById('vol-metric-v').textContent = `${volM3.toFixed(2)} m³`;
+  }
+
+  function onVolTypeChange(typeVal) {
+    const isSeat = ['couch', 'armchair'].includes(typeVal);
+    const gGroup = document.getElementById('vol-gesture-group');
+    if (gGroup) gGroup.style.display = isSeat ? 'flex' : 'none';
+  }
+
+  function closeVolumeModal() {
+    document.getElementById('volume-modal').classList.remove('active');
+    pendingVolumePolygon = null;
     setMode('pan');
   }
-  function confirmSaveTable() {
-    if (!pendingTablePolygon) return;
-    const name = document.getElementById('table-name-input').value.trim() || 'Mesa';
-    const type = document.getElementById('table-type-input').value;
-    const heightCm = parseFloat(document.getElementById('table-height-input').value) || 76;
-    const solidify = document.getElementById('table-solidify-check').checked;
 
-    const id = name.toLowerCase().replace(/\s+/g, '_');
-    furniture[id] = {
-      name: name,
-      type: type,
-      height_m: heightCm / 100.0,
-      solidified_in_map: solidify,
-      polygon: pendingTablePolygon
-    };
+  function confirmSaveVolume() {
+    if (!pendingVolumePolygon || pendingVolumePolygon.length < 3) return;
 
-    if (solidify) {
-      solidifyTableGeometry(pendingTablePolygon, true);
+    const name = document.getElementById('vol-name-input').value.trim() || 'Elemento';
+    const type = document.getElementById('vol-type-input').value;
+    const heightCm = parseFloat(document.getElementById('vol-height-input').value) || 76;
+    const hM = heightCm / 100.0;
+    const gesture = document.getElementById('vol-gesture-input').value;
+    const solidify = document.getElementById('vol-solidify-check').checked;
+
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    let cx = 0, cy = 0;
+    for (const pt of pendingVolumePolygon) {
+      minX = Math.min(minX, pt[0]); maxX = Math.max(maxX, pt[0]);
+      minY = Math.min(minY, pt[1]); maxY = Math.max(maxY, pt[1]);
+      cx += pt[0]; cy += pt[1];
+    }
+    cx /= pendingVolumePolygon.length;
+    cy /= pendingVolumePolygon.length;
+    const wM = round4(maxX - minX);
+    const lM = round4(maxY - minY);
+    const volM3 = round4(wM * lM * hM);
+
+    const id = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || ('item_' + Date.now());
+    const isSeat = ['couch', 'armchair'].includes(type) || (activeTemplate && activeTemplate.targetCollection === 'seat');
+
+    if (isSeat) {
+      seats[id] = {
+        name: name,
+        zone: 'living_room',
+        x: round4(cx),
+        y: round4(cy),
+        type: type,
+        arm_gesture: gesture,
+        capacity: type === 'couch' ? 2 : 1,
+        occupied: false,
+        height_m: round4(hM),
+        solidified_in_map: solidify,
+        polygon: pendingVolumePolygon,
+        volume: {
+          width_m: wM,
+          length_m: lM,
+          height_m: round4(hM),
+          volume_m3: volM3
+        }
+      };
+    } else {
+      furniture[id] = {
+        name: name,
+        type: type,
+        height_m: round4(hM),
+        solidified_in_map: solidify,
+        polygon: pendingVolumePolygon,
+        center: { x: round4(cx), y: round4(cy), z: round4(hM / 2.0) },
+        volume: {
+          width_m: wM,
+          length_m: lM,
+          height_m: round4(hM),
+          volume_m3: volM3
+        }
+      };
     }
 
-    closeTableModal();
+    if (solidify) {
+      solidifyGeometry(pendingVolumePolygon, true);
+    }
+
+    closeVolumeModal();
     updateSidebar();
-    showToast(`Mesa '${name}' guardada`);
+    draw();
+    showToast(`✔ ${isSeat ? '🛋️ Asiento' : '🪑 Mueble'} '${name}' registrado (${wM}m × ${lM}m × ${hM}m)`);
   }
 
-  function solidifyTableGeometry(polyWorld, isObstacle) {
+  function solidifyGeometry(polyWorld, isObstacle) {
     if (!polyWorld || polyWorld.length < 3) return;
     rawCtx.fillStyle = isObstacle ? '#000000' : '#ffffff';
     rawCtx.beginPath();
@@ -1722,45 +1948,54 @@ HTML_PAGE = r'''<!DOCTYPE html>
     draw();
   }
 
-  function toggleSolidify(id) {
-    const item = furniture[id];
+  function toggleSolidify(collectionName, id) {
+    let item = collectionName === 'seats' ? seats[id] : furniture[id];
     if (!item) return;
     item.solidified_in_map = !item.solidified_in_map;
-    solidifyTableGeometry(item.polygon, item.solidified_in_map);
+    if (item.polygon) {
+      solidifyGeometry(item.polygon, item.solidified_in_map);
+    }
     updateSidebar();
-    showToast(item.solidified_in_map ? 'Mesa solidificada en PGM' : 'Mesa despejada');
+    draw();
+    showToast(item.solidified_in_map ? '⚡ Solidificado en mapa PGM' : 'Huella despejada en PGM');
   }
 
   function deleteItem(collectionName, id) {
     if (confirm(`¿Eliminar '${id}'?`)) {
-      if (collectionName === 'furniture') delete furniture[id];
-      else if (collectionName === 'zones') delete zones[id];
-      else if (collectionName === 'waypoints') delete waypoints[id];
-      else if (collectionName === 'seats') delete seats[id];
+      let item = null;
+      if (collectionName === 'furniture') { item = furniture[id]; delete furniture[id]; }
+      else if (collectionName === 'zones') { delete zones[id]; }
+      else if (collectionName === 'waypoints') { delete waypoints[id]; }
+      else if (collectionName === 'seats') { item = seats[id]; delete seats[id]; }
+
+      if (item && item.solidified_in_map && item.polygon) {
+        solidifyGeometry(item.polygon, false);
+      }
       updateSidebar();
       draw();
     }
   }
 
   function updateSidebar() {
-    // Mesas
+    // Mesas y Mobiliario Volumétrico
     const fList = document.getElementById('furniture-list');
     fList.innerHTML = '';
     const fKeys = Object.keys(furniture);
     document.getElementById('furniture-count').textContent = fKeys.length;
     if (fKeys.length === 0) {
-      fList.innerHTML = '<div class="empty-state">No hay mesas en tu mapa.<br>Selecciona una opción arriba y arrastra la caja sobre sus patas.</div>';
+      fList.innerHTML = '<div class="empty-state">No hay mesas en tu mapa.<br>Selecciona una opción arriba y dibuja su volumen 3D.</div>';
     } else {
       for (const [id, f] of Object.entries(furniture)) {
         const card = document.createElement('div');
         card.className = 'item-card';
+        const volDesc = f.volume ? `${f.volume.width_m}×${f.volume.length_m}m (${f.volume.volume_m3}m³)` : `${Math.round((f.height_m || 0.76) * 100)}cm`;
         card.innerHTML = `
           <div class="item-info">
             <span class="item-title">🪑 ${f.name}</span>
-            <span class="item-subtitle">${(f.height_m * 100).toFixed(0)}cm alt | ${f.solidified_in_map ? '⚡ Solidificada' : 'Huella libre'}</span>
+            <span class="item-subtitle">${volDesc} | ${f.solidified_in_map ? '⚡ Solidificada' : 'Huella libre'}</span>
           </div>
           <div class="item-actions">
-            <button class="icon-btn solidify" title="Solidificar/Despejar" onclick="toggleSolidify('${id}')">⚡</button>
+            <button class="icon-btn solidify" title="Solidificar/Despejar en PGM" onclick="toggleSolidify('furniture', '${id}')">⚡</button>
             <button class="icon-btn danger" title="Eliminar" onclick="deleteItem('furniture', '${id}')">🗑️</button>
           </div>
         `;
@@ -1768,23 +2003,25 @@ HTML_PAGE = r'''<!DOCTYPE html>
       }
     }
 
-    // Asientos
+    // Asientos Volumétricos Receptionist
     const sList = document.getElementById('seats-list');
     sList.innerHTML = '';
     const sKeys = Object.keys(seats);
     document.getElementById('seat-count').textContent = sKeys.length;
     if (sKeys.length === 0) {
-      sList.innerHTML = '<div class="empty-state">No hay asientos colocados.<br>Haz clic en una opción arriba y marca su posición en tu mapa.</div>';
+      sList.innerHTML = '<div class="empty-state">No hay asientos colocados.<br>Selecciona una opción arriba y arrastra la caja de su volumen.</div>';
     } else {
       for (const [id, s] of Object.entries(seats)) {
         const card = document.createElement('div');
         card.className = 'item-card';
+        const volDesc = s.volume ? `${s.volume.width_m}×${s.volume.length_m}×${Math.round((s.height_m || 0.85)*100)}cm` : '';
         card.innerHTML = `
           <div class="item-info">
-            <span class="item-title">🛋️ ${s.name || id}</span>
-            <span class="item-subtitle">Gesto: ${s.arm_gesture || 'point_couch'}</span>
+            <span class="item-title">${s.type === 'couch' ? '🛋️' : '🪑'} ${s.name || id}</span>
+            <span class="item-subtitle">${volDesc ? volDesc + ' | ' : ''}Gesto: ${s.arm_gesture || 'point_couch'} | ${s.solidified_in_map ? '⚡ PGM' : 'Libre'}</span>
           </div>
           <div class="item-actions">
+            <button class="icon-btn solidify" title="Solidificar/Despejar en PGM" onclick="toggleSolidify('seats', '${id}')">⚡</button>
             <button class="icon-btn danger" onclick="deleteItem('seats', '${id}')">🗑️</button>
           </div>
         `;
