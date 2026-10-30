@@ -53,9 +53,16 @@ from base_athome_perception import wrist_geometry as wg
 from base_athome_perception.moveit_bridge import MoveItBridge, decimate, pose_from, quat_from_matrix
 from base_athome_perception.piper_kinematics import PiperKinematicsSolver
 from base_athome_perception.teach_wizard import LABELS, POSES, TeachWizard
-from base_athome_perception.wrist_detector import TargetTracker, WristDetector
+from base_athome_perception.wrist_detector import TargetTracker, make_detector
 
 CONFIG = os.path.expanduser("~/base_athome_ws/src/base_athome_perception/config/arm_poses_and_limits.yaml")
+if os.environ.get("ATHOME_SIM") == "1":  # en simulacion no pisar la calibracion del robot real
+    _SIM_CONFIG = os.path.expanduser("~/.local/share/base_athome/sim/arm_poses_and_limits.yaml")
+    if not os.path.exists(_SIM_CONFIG):
+        import shutil
+        os.makedirs(os.path.dirname(_SIM_CONFIG), exist_ok=True)
+        shutil.copy(CONFIG, _SIM_CONFIG)
+    CONFIG = _SIM_CONFIG
 SHOULDER_IN_BASE = np.array([0.005, 0.175, 1.065])  # arm_base_link en base_link (URDF), mismos ejes
 GRIPPER_OPEN_MM, GRIPPER_CLOSE_MM = 105.0, 50.0
 WINDOW = "Manipulacion Base@Home"
@@ -93,7 +100,7 @@ class Manipulacion(Node):
         self.speed_pct = float(np.clip(env.get("arm_speed_pct", 30), 5, 100))
         self.align_before_grasp = bool(env.get("align_before_grasp", False))  # desactivado: [G] como antes
         models = os.path.expanduser("~/base_athome_ws/src/base_athome_perception/models")
-        self.detector = WristDetector(models)
+        self.detector = make_detector(models)
         self.tracker = TargetTracker()
         self.det_label = ""
         self.obj_base = None  # centro del objeto en base_link (para RViz y agarre)

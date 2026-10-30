@@ -1,0 +1,579 @@
+#!/usr/bin/env python3
+"""Robot simulado Base@Home: mismos topicos/servicios que la Jetson (Piper, pan-tilt, whisper),
+la RealSense de la NUC, la camara de muneca y Nav2 (navigate_to_pose, /amcl_pose, /scan, TF).
+
+Las apps reales (receptionist, manipulacion, mision) corren SIN CAMBIOS contra este nodo con
+ATHOME_SIM=1 y un ROS_DOMAIN_ID distinto del robot (por defecto 42, ver alias `sim_env`).
+
+Control del "mundo" (alias en scripts/aliases/nuc_aliases.sh):
+  /sim/speech  (String)  lo que dice el invitado; solo se escucha con la ventana de escucha
+                         abierta, igual que whisper_node en modo bajo demanda    -> sim_decir "..."
+  /sim/guest   (String)  "door" (invitado en la puerta, mirando al robot) | "none" | "next"
+  /sim/auto_guest (Bool) responde solo cada vez que el robot abre la ventana de escucha
+"""
+import glob
+import json
+import math
+import os
+import threading
+import time
+
+import cv2
+import numpy as np
+import rclpy
+import yaml
+from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped, TransformStamped, Twist, Vector3
+from nav2_msgs.action import NavigateToPose
+from nav_msgs.msg import OccupancyGrid, Odometry
+from rclpy.action import ActionServer, CancelResponse, GoalResponse
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
+from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data
+from sensor_msgs.msg import CameraInfo, Image, JointState, LaserScan
+from std_msgs.msg import Bool, Float32, Float64, String
+from std_srvs.srv import SetBool, Trigger
+from tf2_ros import Buffer, StaticTransformBroadcaster, TransformBroadcaster, TransformListener
+from trajectory_msgs.msg import JointTrajectory
+from visualization_msgs.msg import Marker, MarkerArray
+
+from base_athome_sim import gz_model
+from base_athome_sim.sim_core import REST_DEG, SimArm, SimBase, SimMicrophone, SimPanTilt
+
+D2R = math.pi / 180.0
+WS = os.path.expanduser("~/base_athome_ws")
+ARM_CONFIG = os.path.join(WS, "src/base_athome_perception/config/arm_poses_and_limits.yaml")
+DEFAULT_FACES = ["/opt/ros/jazzy/share/rqt_image_view/resource/lena.png", "/usr/share/pixmaps/faces/surfer.jpg"]
+AUTO_LINES = ["My name is Robin and my favorite drink is iced tea", "yes",
+              "My name is Charlie and I like orange juice", "yes"]
+
+
+def yaw_quat(yaw):
+    return 0.0, 0.0, math.sin(yaw / 2), math.cos(yaw / 2)
+
+
+def to_image(arr, encoding, stamp, frame):
+    m = Image()
+    m.header.stamp, m.header.frame_id = stamp, frame
+    m.height, m.width = arr.shape[:2]
+    m.encoding = encoding
+    m.step = arr.strides[0]
+    m.data = arr.tobytes()
+    return m
+
+
+class SimRobot(Node):
+    def __init__(self):
+        super().__init__("sim_robot")
+        p = self.declare_parameter
+        p("map_yaml", os.path.expanduser("~/mapa_base_athome.yaml"))
+        p("start_pose", [0.0, 0.0, 0.0])          # x, y, yaw (si hay waypoint 'home' se usa ese)
+        p("object_xyz", [0.52, -0.155, 0.93])     # objeto en base_footprint: ~24 cm frente a la pinza en PRE-GRASP
+        p("guest_distance_m", 1.2)
+        p("faces", [""])                           # imagenes de rostros (vacio = publicas del sistema)
+        p("auto_guest", False)
+        p("camera_rate_hz", 15.0)
+        p("nav_speed", 0.5)
+        p("gazebo", False)                         # True: base, lidar y camaras vienen de gz sim
+        gp = lambda n: self.get_parameter(n).value
+
+        self.cb = ReentrantCallbackGroup()
+        self.lock = threading.Lock()
+        self.arm, self.pt = SimArm(), SimPanTilt()
+        self.mic = SimMicrophone()
+        self.auto_guest = bool(gp("auto_guest"))
+        self.auto_idx = 0
+        self.prompt = ""
+        wp = self._waypoints().get("home")
+        sx, sy, syaw = (wp["x"], wp["y"], math.radians(wp.get("yaw_deg", 0))) if wp else gp("start_pose")
+        self.base = SimBase(sx, sy, syaw, speed=float(gp("nav_speed")))
+        self.cmd_vel = (0.0, 0.0, 0.0)
+        self.obj = list(gp("object_xyz"))
+        self.obj_attached = False
+        self.guest_present = False
+        self.guest_idx = 0
+        self.guest_d = float(gp("guest_distance_m"))
+        faces = [f for f in gp("faces") if f] or sorted(glob.glob(os.path.expanduser("~/sim_faces/*.jpg"))) or DEFAULT_FACES
+        self.faces = [im for im in (cv2.imread(f) for f in faces) if im is not None]
+        self.get_logger().info(f"Rostros simulados: {len(self.faces)}")
+        calib = {}
+        try:
+            with open(ARM_CONFIG, encoding="utf-8") as f:
+                calib = (yaml.safe_load(f) or {}).get("wrist_camera_calibration") or {}
+        except OSError:
+            pass
+        self.wfx = float(calib.get("focal_px", 485.0))
+        self.wcx, self.wcy = float(calib.get("cx_px", 320.0)), float(calib.get("cy_px", 240.0))
+        self.gz = bool(gp("gazebo"))
+        self.map = None if self.gz else self._load_map(gp("map_yaml"))
+
+        # --- Publicadores (mismos nombres que el robot real) ---
+        self.pub_js = self.create_publisher(JointState, "/joint_states", 10)
+        self.pub_arm_js = self.create_publisher(JointState, "/arm/joint_states", 10)
+        self.pub_pt_js = self.create_publisher(JointState, "/pan_tilt/joint_states", 10)
+        self.pub_arm_status = self.create_publisher(String, "/arm/status", 10)
+        latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self.pub_pt_conn = self.create_publisher(Bool, "/pan_tilt/connected", latched)
+        self.pub_voice = self.create_publisher(String, "/voice/transcription", 10)
+        self.pub_vstatus = self.create_publisher(String, "/voice/status", 10)
+        self.pub_level = self.create_publisher(Float32, "/voice/mic_level", 10)
+        self.pub_rgb = self.create_publisher(Image, "/camera/camera/color/image_raw", qos_profile_sensor_data)
+        self.pub_depth = self.create_publisher(Image, "/camera/camera/aligned_depth_to_color/image_raw", qos_profile_sensor_data)
+        self.pub_info = self.create_publisher(CameraInfo, "/camera/camera/color/camera_info", qos_profile_sensor_data)
+        self.pub_wrist = self.create_publisher(Image, "/arm_camera/image_raw", qos_profile_sensor_data)
+        self.pub_odom = self.create_publisher(Odometry, "/odom", 10)
+        self.pub_amcl = self.create_publisher(PoseWithCovarianceStamped, "/amcl_pose", latched)
+        self.pub_scan = self.create_publisher(LaserScan, "/scan", qos_profile_sensor_data)
+        self.pub_map = self.create_publisher(OccupancyGrid, "/map", latched)
+        self.pub_world = self.create_publisher(MarkerArray, "/sim/world", 5)
+        self.pub_pt_conn.publish(Bool(data=True))
+
+        # --- Suscripciones / servicios ---
+        sub = lambda t, n, f, q=10: self.create_subscription(t, n, f, q, callback_group=self.cb)
+        sub(JointState, "/arm/joint_cmd", self._joint_cmd, 5)
+        sub(JointTrajectory, "/arm/joint_trajectory", self._trajectory, 2)
+        sub(Float32, "/arm/gripper_cmd", lambda m: self.arm.gripper(m.data), 5)
+        sub(Bool, "/arm/enable", lambda m: self.arm.set_enable(m.data), 5)
+        sub(Vector3, "/pan_tilt/target_degrees", lambda m: setattr(self.pt, "target", (m.x, m.y)))
+        sub(JointState, "/pan_tilt/command", self._pt_cmd)
+        sub(Bool, "/voice/mute", lambda m: setattr(self.mic, "muted", bool(m.data)))
+        sub(String, "/voice/initial_prompt", lambda m: setattr(self, "prompt", m.data))
+        sub(String, "/sim/speech", self._speech)
+        sub(String, "/sim/guest", self._guest)
+        sub(Bool, "/sim/auto_guest", lambda m: setattr(self, "auto_guest", bool(m.data)))
+        sub(PoseStamped, "/goal_pose", self._goal_pose)  # "2D Goal Pose" de RViz, como bt_navigator
+        sub(Twist, "/cmd_vel", lambda m: setattr(self, "cmd_vel", (m.linear.x, m.angular.z, time.time())))
+        srv = lambda t, n, f: self.create_service(t, n, f, callback_group=self.cb)
+        srv(SetBool, "/arm/set_enable", self._srv_enable)
+        srv(SetBool, "/pan_tilt/set_torque", self._srv_torque)
+        srv(Trigger, "/voice/listen_trigger", self._srv_listen)
+        srv(Trigger, "/arm/home", self._srv_home)
+        ActionServer(self, NavigateToPose, "navigate_to_pose", execute_callback=self._nav_execute,
+                     goal_callback=lambda g: GoalResponse.ACCEPT, cancel_callback=lambda g: CancelResponse.ACCEPT,
+                     callback_group=self.cb)
+
+        self.tf = TransformBroadcaster(self)
+        st = TransformStamped()
+        st.header.frame_id, st.child_frame_id = "map", "odom"
+        st.transform.rotation.w = 1.0
+        self.static_tf = StaticTransformBroadcaster(self)
+        self.static_tf.sendTransform(st)
+        self.tf_buf = Buffer()
+        self.tf_listener = TransformListener(self.tf_buf, self)
+
+        self.last = time.time()
+        self.create_timer(0.02, self._tick)
+        if self.gz:
+            self._setup_gazebo()
+        else:
+            self.create_timer(1.0 / float(gp("camera_rate_hz")), self._cameras)
+            self.create_timer(0.1, self._scan)
+        self.create_timer(0.5, self._slow)
+        if self.map is not None:
+            self.pub_map.publish(self.map["msg"])
+        self.get_logger().info("Robot simulado listo (Piper, pan-tilt, voz, camaras, Nav2 falso).")
+
+    # ------------------------------------------------------------------ mundo
+    @staticmethod
+    def _waypoints():
+        wps = {}
+        for f in ("semantic_map.yaml", "waypoints.yaml"):
+            try:
+                with open(os.path.join(WS, "src/base_athome_navigation/config", f), encoding="utf-8") as fh:
+                    for k, v in ((yaml.safe_load(fh) or {}).get("waypoints") or {}).items():
+                        if isinstance(v, dict) and "x" in v:
+                            wps.setdefault(k, v)
+            except OSError:
+                pass
+        return wps
+
+    def _load_map(self, path):
+        try:
+            with open(path, encoding="utf-8") as f:
+                info = yaml.safe_load(f)
+            img_path = info["image"] if os.path.isabs(info["image"]) else os.path.join(os.path.dirname(path), info["image"])
+            img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
+            res, origin = float(info["resolution"]), info["origin"]
+            occ_th = float(info.get("occupied_thresh", 0.65))
+            occ = (255 - img.astype(np.float32)) / 255.0 > occ_th   # negate=0
+            occ = np.flipud(occ)                                     # fila 0 = y minima
+            msg = OccupancyGrid()
+            msg.header.frame_id = "map"
+            msg.info.resolution = res
+            msg.info.width, msg.info.height = img.shape[1], img.shape[0]
+            msg.info.origin.position.x, msg.info.origin.position.y = float(origin[0]), float(origin[1])
+            msg.info.origin.orientation.w = 1.0
+            free = (255 - np.flipud(img).astype(np.float32)) / 255.0 < float(info.get("free_thresh", 0.25))
+            grid = np.full(occ.shape, -1, np.int8)
+            grid[free], grid[occ] = 0, 100
+            msg.data = grid.flatten().tolist()
+            self.get_logger().info(f"Mapa cargado: {path}")
+            return {"occ": occ, "res": res, "ox": float(origin[0]), "oy": float(origin[1]), "msg": msg}
+        except Exception as e:  # sin mapa: /scan vacio, todo lo demas funciona
+            self.get_logger().warn(f"Sin mapa para /scan ({e})")
+            return None
+
+    def _guest(self, msg):
+        cmd = msg.data.strip().lower()
+        if cmd in ("door", "present", "si", "yes"):
+            self.guest_present = True
+        elif cmd in ("none", "absent", "no", "seated", "sentado"):
+            self.guest_present = False
+        elif cmd == "next":
+            self.guest_idx += 1
+            self.guest_present = True
+        self.get_logger().info(f"Invitado #{self.guest_idx + 1}: {'presente' if self.guest_present else 'ausente'}")
+
+    def _goal_pose(self, msg):
+        q = msg.pose.orientation
+        self.base.set_goal(msg.pose.position.x, msg.pose.position.y, 2 * math.atan2(q.z, q.w))
+
+    def _speech(self, msg):
+        ok = self.mic.hear(msg.data)
+        self.get_logger().info(f"Invitado dice: '{msg.data}' -> {'ESCUCHADO' if ok else 'PERDIDO (el robot no estaba escuchando)'}")
+
+    # ------------------------------------------------------------------ callbacks reales
+    def _joint_cmd(self, msg):
+        if len(msg.position) < 6:
+            return
+        is_rad = all(abs(v) <= 3.5 for v in msg.position[:6])
+        tgt = [v / D2R if is_rad else v for v in msg.position[:6]]
+        dur = max(0.6, min(10.0, msg.velocity[0])) if len(msg.velocity) and msg.velocity[0] > 0 else 2.5
+        with self.lock:
+            self.arm.joint_cmd(tgt, dur)
+            if len(msg.position) >= 7:
+                g = msg.position[6]
+                self.arm.gripper(g * 1000.0 if g < 1.0 else g)
+
+    def _trajectory(self, msg):
+        try:
+            idx = [msg.joint_names.index(f"joint{i}") for i in range(1, 7)]
+        except ValueError:
+            return
+        times, pts = [], []
+        for pt in msg.points:
+            t = pt.time_from_start.sec + pt.time_from_start.nanosec * 1e-9
+            if times and t <= times[-1]:
+                continue
+            times.append(t)
+            pts.append([pt.positions[i] / D2R for i in idx])
+        if pts:
+            with self.lock:
+                self.arm.trajectory(times, pts)
+
+    def _pt_cmd(self, msg):
+        pan, tilt = self.pt.target
+        for n, v in zip(msg.name, msg.position):
+            if "pan" in n:
+                pan = v / D2R
+            elif "tilt" in n:
+                tilt = v / D2R
+        self.pt.target = (pan, tilt)
+
+    def _srv_enable(self, req, res):
+        self.arm.set_enable(req.data)
+        res.success, res.message = True, f"sim: brazo {'habilitado' if req.data else 'libre'}"
+        return res
+
+    def _srv_torque(self, req, res):
+        self.pt.torque = bool(req.data)
+        res.success, res.message = True, f"sim: torque pan-tilt {req.data}"
+        return res
+
+    def _srv_home(self, req, res):
+        self.arm.joint_cmd(REST_DEG, 3.0)
+        res.success, res.message = True, "sim: home"
+        return res
+
+    def _srv_listen(self, req, res):
+        self.mic.trigger()
+        self.get_logger().info(f"Ventana de escucha {self.mic.window_s:.0f}s abierta (prompt: '{self.prompt[:50]}')")
+        if self.auto_guest:
+            line = AUTO_LINES[self.auto_idx % len(AUTO_LINES)]
+            self.auto_idx += 1
+            threading.Timer(1.0, lambda: self._speech(String(data=line))).start()
+        res.success, res.message = True, "Triggered recording (sim)"
+        return res
+
+    async def _nav_execute(self, goal_handle):
+        p = goal_handle.request.pose.pose
+        yaw = 2 * math.atan2(p.orientation.z, p.orientation.w)
+        self.base.set_goal(p.position.x, p.position.y, yaw)
+        self.get_logger().info(f"Nav2 (sim): ir a ({p.position.x:.2f}, {p.position.y:.2f})")
+        fb = NavigateToPose.Feedback()
+        while rclpy.ok():
+            if goal_handle.is_cancel_requested:
+                self.base.goal = None
+                goal_handle.canceled()
+                return NavigateToPose.Result()
+            if self.base.goal is None:
+                break
+            fb.distance_remaining = float(math.hypot(p.position.x - self.base.x, p.position.y - self.base.y))
+            fb.current_pose.header.frame_id = "map"
+            fb.current_pose.pose.position.x, fb.current_pose.pose.position.y = self.base.x, self.base.y
+            goal_handle.publish_feedback(fb)
+            time.sleep(0.1)
+        goal_handle.succeed()
+        return NavigateToPose.Result()
+
+    # ------------------------------------------------------------------ bucles
+    def _tick(self):
+        now = time.time()
+        dt, self.last = now - self.last, now
+        with self.lock:
+            self.arm.update(now)
+        self.pt.update(dt)
+        if self.gz:
+            self._gz_tick(now)
+        elif self.base.goal is not None:
+            self.base.update(dt)
+        elif now - self.cmd_vel[2] < 0.5:  # teleop directo (sin objetivo de Nav2)
+            v, w = self.cmd_vel[0], self.cmd_vel[1]
+            self.base.yaw += w * dt
+            self.base.x += v * dt * math.cos(self.base.yaw)
+            self.base.y += v * dt * math.sin(self.base.yaw)
+        stamp = self.get_clock().now().to_msg()
+        q = [v * D2R for v in self.arm.q]
+        half = min(0.035, max(0.0, self.arm.gripper_mm / 2000.0))
+        arm = JointState(name=[f"joint{i}" for i in range(1, 9)], position=q + [half, -half])
+        arm.header.stamp = stamp
+        pt = JointState(name=["pan_joint", "tilt_joint"], position=[self.pt.pan * D2R, self.pt.tilt * D2R])
+        pt.header.stamp = stamp
+        full = JointState(name=arm.name + pt.name + ["torso_lift_joint"], position=list(arm.position) + list(pt.position) + [0.0])
+        full.header.stamp = stamp
+        self.pub_js.publish(full)
+        self.pub_arm_js.publish(arm)
+        self.pub_pt_js.publish(pt)
+        if self.gz:
+            for j, v in zip(full.name, full.position):
+                self.gz_joint_pubs[j].publish(Float64(data=float(v)))
+        t = TransformStamped()
+        t.header.stamp, t.header.frame_id, t.child_frame_id = stamp, "odom", "base_footprint"
+        t.transform.translation.x, t.transform.translation.y = self.base.x, self.base.y
+        _, _, t.transform.rotation.z, t.transform.rotation.w = yaw_quat(self.base.yaw)
+        self.tf.sendTransform(t)
+        for text in self.mic.due(now):
+            self.pub_voice.publish(String(data=text))
+            self.get_logger().info(f"/voice/transcription <- '{text}'")
+
+    # ------------------------------------------------------------------ Gazebo
+    def _setup_gazebo(self):
+        """gz sim aporta fisica de la base, lidar y camaras; este nodo sigue siendo el 'firmware'
+        (Piper, pan-tilt, voz, Nav2 falso) y reenvia los sensores con los nombres del robot real."""
+        self.gz_joint_pubs = {j: self.create_publisher(Float64, gz_model.joint_cmd_topic(j), 10)
+                              for j in gz_model.POSITION_JOINTS}
+        self.gz_cmd = self.create_publisher(Twist, f"/model/{gz_model.MODEL}/cmd_vel", 10)
+        sub = lambda t, n, f: self.create_subscription(t, n, f, qos_profile_sensor_data, callback_group=self.cb)
+        sub(Odometry, f"/model/{gz_model.MODEL}/odometry", self._gz_odom)
+        sub(LaserScan, "/sim/gz/scan", self._gz_scan)
+        sub(Image, "/sim/gz/head/image", self._gz_head)
+        sub(Image, "/sim/gz/head/depth_image", self._gz_depth)
+        sub(CameraInfo, "/sim/gz/head/camera_info", self._gz_info)
+        sub(Image, "/sim/gz/wrist", self._gz_wrist)
+        self.get_logger().info("Modo Gazebo: base/lidar/camaras desde gz sim")
+
+    def _gz_tick(self, now):
+        v = w = 0.0
+        g = self.base.goal
+        if g is not None:
+            dx, dy = g[0] - self.base.x, g[1] - self.base.y
+            d = math.hypot(dx, dy)
+            wrap = lambda a: math.atan2(math.sin(a), math.cos(a))
+            if d > 0.08:
+                err = wrap(math.atan2(dy, dx) - self.base.yaw)
+                w = max(-1.0, min(1.0, 2.0 * err))
+                v = min(self.base.speed, 0.8 * d) if abs(err) < 0.5 else 0.0
+            else:
+                err = wrap(g[2] - self.base.yaw)
+                w = max(-1.0, min(1.0, 2.0 * err))
+                if abs(err) < 0.05:
+                    self.base.goal, w = None, 0.0
+        elif now - self.cmd_vel[2] < 0.5:
+            v, w = self.cmd_vel[0], self.cmd_vel[1]
+        cmd = Twist()
+        cmd.linear.x, cmd.angular.z = float(v), float(w)
+        self.gz_cmd.publish(cmd)
+
+    def _gz_odom(self, m):
+        p, q = m.pose.pose.position, m.pose.pose.orientation
+        self.base.x, self.base.y = p.x, p.y
+        self.base.yaw = 2 * math.atan2(q.z, q.w)
+        m.header.stamp = self.get_clock().now().to_msg()
+        m.header.frame_id, m.child_frame_id = "odom", "base_footprint"
+        self.pub_odom.publish(m)
+
+    def _restamp(self, m, frame):
+        m.header.stamp, m.header.frame_id = self.get_clock().now().to_msg(), frame
+        return m
+
+    def _gz_scan(self, m):
+        self.pub_scan.publish(self._restamp(m, "laser"))
+
+    def _gz_info(self, m):
+        self.pub_info.publish(self._restamp(m, "camera_color_optical_frame"))
+
+    def _gz_wrist(self, m):
+        img = np.frombuffer(m.data, np.uint8).reshape(m.height, m.width, 3)
+        bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR) if m.encoding == "rgb8" else img
+        self.pub_wrist.publish(to_image(np.ascontiguousarray(bgr), "bgr8", self.get_clock().now().to_msg(), "arm_camera_optical_frame"))
+
+    def _gz_head(self, m):
+        img = np.frombuffer(m.data, np.uint8).reshape(m.height, m.width, 3)
+        bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR) if m.encoding == "rgb8" else img.copy()
+        self._overlay_guest(bgr, None)
+        self.pub_rgb.publish(to_image(bgr, "bgr8", self.get_clock().now().to_msg(), "camera_color_optical_frame"))
+
+    def _gz_depth(self, m):
+        d = np.frombuffer(m.data, np.float32).reshape(m.height, m.width)
+        mm = np.nan_to_num(d * 1000.0, nan=0.0, posinf=0.0, neginf=0.0).clip(0, 65535).astype(np.uint16)
+        self._overlay_guest(None, mm)
+        self.pub_depth.publish(to_image(mm, "16UC1", self.get_clock().now().to_msg(), "camera_color_optical_frame"))
+
+    def _slow(self):
+        stamp = self.get_clock().now().to_msg()
+        self.pub_arm_status.publish(String(data=json.dumps({
+            "is_moving": self.arm.moving, "enabled": self.arm.enabled, "feedback_ok": True,
+            "gripper_mm": round(self.arm.gripper_mm, 2), "xyz_mm": [0.0, 0.0, 0.0],
+            "joints_deg": [round(v, 2) for v in self.arm.q], "sim": True})))
+        st = "MUTED" if self.mic.muted else ("LISTENING" if self.mic.listening else ("PROCESSING" if self.mic.pending else "IDLE"))
+        self.pub_vstatus.publish(String(data=st))
+        self.pub_level.publish(Float32(data=0.02 if st == "LISTENING" else 0.0))
+        a = PoseWithCovarianceStamped()
+        a.header.stamp, a.header.frame_id = stamp, "map"
+        a.pose.pose.position.x, a.pose.pose.position.y = self.base.x, self.base.y
+        _, _, a.pose.pose.orientation.z, a.pose.pose.orientation.w = yaw_quat(self.base.yaw)
+        self.pub_amcl.publish(a)
+        if not self.gz:
+            o = Odometry()
+            o.header.stamp, o.header.frame_id, o.child_frame_id = stamp, "odom", "base_footprint"
+            o.pose.pose = a.pose.pose
+            self.pub_odom.publish(o)
+        self._update_object(stamp)
+
+    def _lookup(self, target, source):
+        try:
+            tr = self.tf_buf.lookup_transform(target, source, rclpy.time.Time())
+        except Exception:
+            return None
+        t, r = tr.transform.translation, tr.transform.rotation
+        x, y, z, w = r.x, r.y, r.z, r.w
+        R = np.array([[1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+                      [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+                      [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)]])
+        return R, np.array([t.x, t.y, t.z])
+
+    def _update_object(self, stamp):
+        """Agarre simulado: si la pinza se cierra con el TCP a <6 cm del objeto, el objeto la sigue."""
+        tcp = self._lookup("base_footprint", "tcp_link")
+        if tcp is not None:
+            d = float(np.linalg.norm(tcp[1] - np.array(self.obj)))
+            if not self.obj_attached and self.arm.gripper_mm < 70 and d < 0.06:
+                self.obj_attached = True
+                self.get_logger().info("Objeto AGARRADO (sim)")
+            elif self.obj_attached and self.arm.gripper_mm > 75:
+                self.obj_attached = False
+                self.get_logger().info("Objeto SOLTADO (sim)")
+            if self.obj_attached:
+                self.obj = tcp[1].tolist()
+        m = Marker()
+        m.header.stamp, m.header.frame_id = stamp, "base_footprint"
+        m.ns, m.id, m.type, m.action = "sim_object", 0, Marker.CYLINDER, Marker.ADD
+        m.pose.position.x, m.pose.position.y, m.pose.position.z = self.obj
+        m.pose.orientation.w = 1.0
+        m.scale.x = m.scale.y = 0.075
+        m.scale.z = 0.23
+        m.color.r, m.color.g, m.color.b, m.color.a = 0.85, 0.1, 0.85, 1.0
+        self.pub_world.publish(MarkerArray(markers=[m]))
+
+    def _overlay_guest(self, rgb, depth, W=640, H=480, f=615.0):
+        """Dibuja al invitado (rostro real de una imagen + cuerpo) donde lo veria la RealSense segun
+        el pan-tilt. Se usa igual sobre la imagen sintetica o sobre el render de Gazebo."""
+        if not (self.guest_present and self.faces):
+            return
+        face = self.faces[self.guest_idx % len(self.faces)]
+        u = W / 2 + f * math.tan(self.pt.pan * D2R)           # pan + izquierda: el invitado se ve a la derecha
+        v = H / 2 + f * math.tan((self.pt.tilt - 5.0) * D2R)  # rostro ~5 grados arriba del eje
+        size = int(f * 0.45 / self.guest_d)                    # el rostro ocupa ~1/3 de la foto: cara real ~15 cm
+        if not (20 < size < H and -size < u < W + size):
+            return
+        fi = cv2.resize(face, (size, int(size * face.shape[0] / face.shape[1])))
+        x0, y0 = int(u - fi.shape[1] / 2), int(v - fi.shape[0] / 2)
+        xa, ya, xb, yb = max(0, x0), max(0, y0), min(W, x0 + fi.shape[1]), min(H, y0 + fi.shape[0])
+        if xb <= xa or yb <= ya:
+            return
+        bx0, bx1 = max(0, xa - size // 4), min(W, xb + size // 4)
+        if rgb is not None:
+            rgb[ya:yb, xa:xb] = fi[ya - y0:yb - y0, xa - x0:xb - x0]
+            rgb[yb:H, bx0:bx1] = (90, 60, 40)
+        if depth is not None:
+            depth[ya:H, bx0:bx1] = int(self.guest_d * 1000)
+
+    def _cameras(self):
+        stamp = self.get_clock().now().to_msg()
+        # --- RealSense de la cabeza (640x480, fx ~615) ---
+        W, H, f = 640, 480, 615.0
+        rgb = np.full((H, W, 3), (70, 75, 80), np.uint8)
+        rgb[int(H * 0.62):] = (60, 90, 120)  # piso
+        depth = np.full((H, W), 3000, np.uint16)
+        self._overlay_guest(rgb, depth)
+        self.pub_rgb.publish(to_image(rgb, "bgr8", stamp, "camera_color_optical_frame"))
+        self.pub_depth.publish(to_image(depth, "16UC1", stamp, "camera_color_optical_frame"))
+        info = CameraInfo(width=W, height=H, distortion_model="plumb_bob")
+        info.header.stamp, info.header.frame_id = stamp, "camera_color_optical_frame"
+        info.k = [f, 0.0, W / 2, 0.0, f, H / 2, 0.0, 0.0, 1.0]
+        info.p = [f, 0.0, W / 2, 0.0, 0.0, f, H / 2, 0.0, 0.0, 0.0, 1.0, 0.0]
+        info.d = [0.0] * 5
+        info.r = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+        self.pub_info.publish(info)
+        # --- Camara de muneca: lata magenta proyectada con la pose real del brazo (TF) ---
+        wimg = np.full((480, 640, 3), (150, 160, 165), np.uint8)
+        cam = self._lookup("arm_camera_optical_frame", "base_footprint")
+        if cam is not None and not self.obj_attached:
+            pc = cam[0] @ np.array(self.obj) + cam[1]
+            if pc[2] > 0.05:
+                u, v = self.wcx + self.wfx * pc[0] / pc[2], self.wcy + self.wfx * pc[1] / pc[2]
+                hw, hh = self.wfx * 0.075 / pc[2] / 2, self.wfx * 0.23 / pc[2] / 2
+                cv2.rectangle(wimg, (int(u - hw), int(v - hh)), (int(u + hw), int(v + hh)), (200, 30, 200), -1)
+        self.pub_wrist.publish(to_image(wimg, "bgr8", stamp, "arm_camera_optical_frame"))
+
+    def _scan(self):
+        s = LaserScan()
+        s.header.stamp, s.header.frame_id = self.get_clock().now().to_msg(), "laser"
+        s.angle_min, s.angle_max, s.angle_increment = -2.356, 2.356, 0.5 * D2R
+        s.range_min, s.range_max, s.scan_time = 0.06, 5.0, 0.1
+        n = int(round((s.angle_max - s.angle_min) / s.angle_increment)) + 1
+        if self.map is None:
+            s.ranges = [float("inf")] * n
+        else:
+            mp = self.map
+            ang = self.base.yaw + s.angle_min + np.arange(n) * s.angle_increment
+            rs = np.arange(0.06, 5.0, mp["res"] / 2)
+            xs = self.base.x + np.outer(np.cos(ang), rs)
+            ys = self.base.y + np.outer(np.sin(ang), rs)
+            ci = ((xs - mp["ox"]) / mp["res"]).astype(int)
+            ri = ((ys - mp["oy"]) / mp["res"]).astype(int)
+            h, w = mp["occ"].shape
+            inside = (ci >= 0) & (ci < w) & (ri >= 0) & (ri < h)
+            hit = np.zeros_like(inside)
+            hit[inside] = mp["occ"][ri[inside], ci[inside]]
+            first = np.where(hit.any(axis=1), hit.argmax(axis=1), -1)
+            s.ranges = [float(rs[k]) if k >= 0 else float("inf") for k in first]
+        self.pub_scan.publish(s)
+
+
+def main():
+    rclpy.init()
+    node = SimRobot()
+    ex = MultiThreadedExecutor(num_threads=4)
+    ex.add_node(node)
+    try:
+        ex.spin()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.try_shutdown()
+
+
+if __name__ == "__main__":
+    main()

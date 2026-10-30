@@ -29,6 +29,8 @@ import numpy as np
 MAX_SAMPLES = 15
 PLACEHOLDER_NAMES = {"", "desconocido", "unknown", "guest", "me llamo", "followed by"}
 DEFAULT_DB_DIR = os.path.expanduser("~/.local/share/base_athome/faces_database")
+if os.environ.get("ATHOME_SIM") == "1":  # la simulacion usa su propia base (no mezcla personas reales)
+    DEFAULT_DB_DIR = os.path.expanduser("~/.local/share/base_athome/sim/faces_database")
 
 
 def _now_str(ts: float) -> str:

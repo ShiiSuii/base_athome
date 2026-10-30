@@ -108,3 +108,32 @@ class WristDetector:
             self.source = "YOLO-World"
             return [(tuple(float(v) for v in b.xyxy[0].tolist()), float(b.conf), r.names[int(b.cls)]) for b in r.boxes]
         return []
+
+
+class SimColorDetector:
+    """Detector para la simulacion (ATHOME_SIM=1): segmenta el objeto magenta que dibuja sim_robot.
+    Misma interfaz que WristDetector.detect -> [(caja, confianza, etiqueta)]."""
+
+    def __init__(self, *_, **__):
+        self.source = "sim-color"
+        self.misses = 0
+
+    def detect(self, frame) -> List[Tuple[Box, float, str]]:
+        import cv2
+        import numpy as np
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        mask = cv2.inRange(hsv, np.array([140, 120, 80]), np.array([165, 255, 255]))
+        n, _, stats, _ = cv2.connectedComponentsWithStats(mask)
+        dets = []
+        for i in range(1, n):
+            x, y, w, h, area = stats[i]
+            if area >= 40:
+                dets.append(((float(x), float(y), float(x + w), float(y + h)), 0.9, "pringles can"))
+        return dets
+
+
+def make_detector(models_dir: str):
+    """WristDetector real, o SimColorDetector si ATHOME_SIM=1."""
+    if os.environ.get("ATHOME_SIM") == "1":
+        return SimColorDetector()
+    return WristDetector(models_dir)

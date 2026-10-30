@@ -55,7 +55,8 @@ Red/Jetson:    jetson (ssh) | red_jetson | deploy_jetson[_dry] | jetson_stats
 Cabeza:        head_start | head_stop | head_restart | head_status | head_logs
 Manipulacion:  manipulacion (incluye MoveIt) | manipulacion_avanzada | rviz_manipulacion | agarrar_botella | teach_record
 Misiones:      mision | mision_sim | mision_pedir "<pedido>" | mision_estado
-Receptionist:  receptionist | hri_sim | limpiar_memoria | memoria_personas
+Receptionist:  receptionist | hri_sim | limpiar_memoria | memoria_personas | pantalla_invitado
+Simulacion:    simulacion (=sim) | sim_gazebo | sim_env | sim_salir | sim_decir "..." | sim_invitado door|none|next | sim_auto
 ROS (lectura): topicos | nodos | brazo_estado | pantilt_conectado | voz | detecciones | camara_muneca[_hz]
 Existentes:    mapeo2d | navegacion | rviznav | lidar | receptionist | rostros | cara | piper | stepper ...
 EOF
@@ -92,3 +93,16 @@ alias mision='_ros && DISPLAY="${DISPLAY:-:1}" /home/athome/ros2_vision_venv/bin
 alias mision_sim='mision --sim'
 mision_pedir() { _ros && ros2 topic pub --once /mission/command std_msgs/msg/String "{data: '$*'}"; }  # mision_pedir do the mission
 alias mision_estado='_ros && ros2 topic echo /mission/status'
+
+# --- Simulacion (paquete base_athome_sim; ver docs/SIMULACION.md) ---
+# sim_env cambia ESTA terminal al dominio 42 + ATHOME_SIM=1: ahi receptionist / manipulacion / mision
+# corren sin cambios contra el robot simulado y nunca tocan el robot real (dominio 10).
+sim_env() { _ros; export ROS_DOMAIN_ID=42 ATHOME_SIM=1; echo "Terminal en SIMULACION (ROS_DOMAIN_ID=42). Volver: sim_salir"; }
+sim_salir() { export ROS_DOMAIN_ID=10; unset ATHOME_SIM; echo "Terminal en ROBOT REAL (ROS_DOMAIN_ID=10)"; }
+simulacion() { sim_env && ros2 launch base_athome_sim sim.launch.py "$@"; }               # liviana, sin fisica
+sim_gazebo() { sim_env && ros2 launch base_athome_sim sim.launch.py gazebo:=true "$@"; }  # Gazebo Harmonic
+alias sim='simulacion'
+sim_decir() { sim_env >/dev/null && ros2 topic pub --once /sim/speech std_msgs/msg/String "{data: '$*'}" >/dev/null && echo "invitado dijo: $*"; }
+sim_invitado() { sim_env >/dev/null && ros2 topic pub --once /sim/guest std_msgs/msg/String "{data: '${1:-door}'}" >/dev/null && echo "invitado: ${1:-door}"; }  # door | none | next
+sim_auto() { sim_env >/dev/null && ros2 topic pub --once /sim/auto_guest std_msgs/msg/Bool "{data: ${1:-true}}" >/dev/null; }  # invitado responde solo
+alias pantalla_invitado='xdg-open http://127.0.0.1:8090/ >/dev/null 2>&1'  # botones nombre/bebida/SI-NO (alternativa al microfono)
