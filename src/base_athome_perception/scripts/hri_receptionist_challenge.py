@@ -349,7 +349,8 @@ class HriReceptionistChallengeNode(Node):
         self.fallback_guest_pan_deg = [25.0, -25.0]  # si no hay pose: invitado 1 / invitado 2
         self.pub_arm_joint = self.create_publisher(JointState, "/arm/joint_cmd", 5)
         self.pub_arm_gripper = self.create_publisher(Float32, "/arm/gripper_cmd", 5)
-        self.pub_joint_states = self.create_publisher(JointState, "/joint_states", 10)
+        self.pub_torso_joint_states = self.create_publisher(JointState, "/torso/joint_states", 10)
+        self.pub_arm_joint_states_cmd = self.create_publisher(JointState, "/arm/joint_states_cmd", 10)
         self.pub_voice_mute = self.create_publisher(Bool, "/voice/mute", 10)
         self._mute_lock = threading.Lock()
         self._mute_refs = 0
@@ -1028,27 +1029,30 @@ class HriReceptionistChallengeNode(Node):
             pass
 
     def _publish_joint_states(self):
-        """Publica el estado cinematico actual en /joint_states para visualizacion en RViz2."""
-        if not rclpy.ok():
-            return
+        """Publica torso_lift_joint en /torso/joint_states y pose comandada del brazo en /arm/joint_states_cmd."""
         try:
-            js = JointState()
-            js.header.stamp = self.get_clock().now().to_msg()
-            js.name = [
-                "pan_joint",
-                "tilt_joint",
-                "joint1",
-                "joint2",
-                "joint3",
-                "joint4",
-                "joint5",
-                "joint6",
-            ]
-            pan_rad = math.radians(self.target_pan_deg)
-            tilt_rad = math.radians(self.target_tilt_deg)
+            now = self.get_clock().now().to_msg()
+
+            # 1. Torso lift joint -> /torso/joint_states (un solo dueño por joint)
+            js_torso = JointState()
+            js_torso.header.stamp = now
+            js_torso.name = ["torso_lift_joint"]
+            js_torso.position = [0.0]
+            js_torso.velocity = [0.0]
+            js_torso.effort = [0.0]
+            if hasattr(self, 'pub_torso_joint_states') and self.pub_torso_joint_states:
+                self.pub_torso_joint_states.publish(js_torso)
+
+            # 2. Brazo (pose de gesto comandada) -> SOLO a /arm/joint_states_cmd (nunca /joint_states)
+            js_arm = JointState()
+            js_arm.header.stamp = now
+            js_arm.name = [f"joint{i}" for i in range(1, 7)]
             arm_rad = [math.radians(d) for d in self.arm_joints_deg]
-            js.position = [pan_rad, tilt_rad] + arm_rad
-            self.pub_joint_states.publish(js)
+            js_arm.position = arm_rad
+            js_arm.velocity = [0.0] * len(arm_rad)
+            js_arm.effort = [0.0] * len(arm_rad)
+            if hasattr(self, 'pub_arm_joint_states_cmd') and self.pub_arm_joint_states_cmd:
+                self.pub_arm_joint_states_cmd.publish(js_arm)
         except Exception:
             pass
 

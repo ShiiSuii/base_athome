@@ -38,3 +38,20 @@ Para recompilar `robot.urdf` tras realizar cambios en los archivos `.xacro`:
 | `camera_color_optical_frame` | Marco óptico de color (Z hacia adelante) | Visión / Detección |
 | `arm_base_link` | Base del brazo robótico AgileX Piper 6-DOF | Manipulación |
 | `arm_camera_optical_frame` | Marco óptico de la cámara de muñeca Orbbec DaBai | Eye-in-Hand |
+
+## Quién publica cada joint (Política de dueño único — HOME-20)
+
+Para evitar saltos y parpadeos en RViz, cada articulación tiene un **único dueño productor** de su estado medido:
+
+| Joint(s) | Tipo | Tópico de publicación | Nodo responsable / Dueño | Tasa | Nota |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `pan_joint`, `tilt_joint` | Revolute | `/pan_tilt/joint_states` | `pan_tilt_node` (Jetson) | 20 Hz | Medido de servos Dynamixel XL430 |
+| `joint1`..`joint6` (brazo) + `joint7`, `joint8` (pinza) | Revolute / Prismatic | `/arm/joint_states` | `piper_arm_controller.py` (Jetson) | 50 Hz | Medido del bus CAN del brazo Piper |
+| `torso_lift_joint` | Prismatic | `/torso/joint_states` | Driver elevador NEMA23 / scripts de fallback | 25 Hz | Eje vertical del torso prismático |
+| *(Agregación de todos los joints)* | — | `/joint_states` | `joint_state_publisher` (`view_robot.launch.py`) | ~30 Hz | Suscrito a `source_list=['/arm/joint_states', '/pan_tilt/joint_states', '/torso/joint_states']`; completa con 0.0 cualquier joint sin fuente |
+| `joint1`..`joint8` (comandados) | — | `/arm/joint_states_cmd` | `manipulacion_autonoma.py`, `hri_receptionist_challenge.py` | 25 Hz | Visualización de pose objetivo (NUNCA publicado en `/joint_states`) |
+
+### Reglas de integración
+1. **NUNCA publicar poses de aplicación en `/joint_states`**: los nodos de alto nivel (`manipulacion_autonoma.py`, `hri_receptionist_challenge.py`) no publican directamente en `/joint_states`.
+2. **Visualización de poses planificadas**: si un nodo necesita mostrar la pose comandada en RViz, la publica exclusivamente en `/arm/joint_states_cmd`.
+3. **Agregación centralizada**: `joint_state_publisher` fusiona las fuentes parciales (`/arm/joint_states`, `/pan_tilt/joint_states`, `/torso/joint_states`) en `/joint_states`, desde donde `robot_state_publisher` calcula y emite el árbol de transformaciones TF.
