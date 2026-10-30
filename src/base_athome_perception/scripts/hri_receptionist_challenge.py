@@ -40,10 +40,10 @@ import rclpy
 from rclpy.node import Node
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
-from geometry_msgs.msg import Vector3, PoseStamped
+from geometry_msgs.msg import Vector3, PoseStamped, PoseWithCovarianceStamped
 from sensor_msgs.msg import Image, JointState
 from std_msgs.msg import String, Float32, Bool
-from std_srvs.srv import Trigger
+from std_srvs.srv import SetBool, Trigger
 
 # CV Bridge
 try:
@@ -309,6 +309,14 @@ class HriReceptionistChallengeNode(Node):
         self.pub_say = self.create_publisher(String, "/hri/say_something", 10)
         self.pub_emotion = self.create_publisher(String, "/robot/emotion", 10)
         self.pub_pantilt = self.create_publisher(Vector3, "/pan_tilt/target_degrees", 10)
+        # El pan-tilt arranca sin torque (auto_torque=false): se habilita al primer movimiento.
+        self.cli_pantilt_torque = self.create_client(SetBool, "/pan_tilt/set_torque")
+        self._pantilt_torque_requested = False
+        # Pose del robot (solo lectura de AMCL) para orientar la cabeza hacia los asientos.
+        self.robot_pose = None  # (x, y, yaw) en frame map
+        self.create_subscription(PoseWithCovarianceStamped, "/amcl_pose", self._amcl_pose_cb, 10)
+        self.head_pan_sign = 1.0  # +1: pan positivo = izquierda (REP-103). PENDIENTE verificar en hardware
+        self.fallback_guest_pan_deg = [25.0, -25.0]  # si no hay pose: invitado 1 / invitado 2
         self.pub_arm_joint = self.create_publisher(JointState, "/arm/joint_cmd", 5)
         self.pub_arm_gripper = self.create_publisher(Float32, "/arm/gripper_cmd", 5)
         self.pub_joint_states = self.create_publisher(JointState, "/joint_states", 10)
@@ -782,8 +790,51 @@ class HriReceptionistChallengeNode(Node):
         except Exception:
             pass
 
+    def _amcl_pose_cb(self, msg: PoseWithCovarianceStamped):
+        q = msg.pose.pose.orientation
+        yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+        self.robot_pose = (msg.pose.pose.position.x, msg.pose.pose.position.y, yaw)
+
+    def _ensure_pantilt_torque(self):
+        if self._pantilt_torque_requested or not self.cli_pantilt_torque.service_is_ready():
+            return
+        self._pantilt_torque_requested = True
+        self.cli_pantilt_torque.call_async(SetBool.Request(data=True))
+        self.get_logger().info("Torque del pan-tilt solicitado (/pan_tilt/set_torque)")
+
+    def _head_pan_to_seat(self, seat_key: str) -> Optional[float]:
+        """Angulo de pan (grados) para mirar un asiento del mapa semantico, o None."""
+        seat = self.seats.get(seat_key) if self.seats else None
+        if not seat or self.robot_pose is None or "x" not in seat or "y" not in seat:
+            return None
+        rx, ry, ryaw = self.robot_pose
+        bearing = math.atan2(float(seat["y"]) - ry, float(seat["x"]) - rx) - ryaw
+        bearing = math.atan2(math.sin(bearing), math.cos(bearing))
+        return self.head_pan_sign * math.degrees(bearing)
+
+    def _look_at_guest(self, guest_idx: int):
+        guest = self.registered_guests[guest_idx]
+        pan = self._head_pan_to_seat(guest.get("seat", ""))
+        if pan is None:
+            pan = self.fallback_guest_pan_deg[min(guest_idx, len(self.fallback_guest_pan_deg) - 1)]
+        self.move_head_to(pan, -5.0)
+        self.sleep_gui(0.8)
+
+    def _introduce_guests_to_each_other(self):
+        """Reglamento 2026.2 §5.1: mirando a un invitado, decir nombre y bebida del OTRO (para ambos)."""
+        if len(self.registered_guests) < 2:
+            return
+        g1, g2 = self.registered_guests[0], self.registered_guests[1]
+        for listener_idx, other in ((1, g1), (0, g2)):
+            listener = self.registered_guests[listener_idx]
+            self._look_at_guest(listener_idx)
+            self.say(f"{listener['name']}, this is {other['name']}. "
+                     f"{other['name']}'s favorite drink is {other['drink']}.",
+                     emotion="speaking", blocking=True)
+
     def move_head_to(self, pan_deg: float, tilt_deg: float):
         """Envía comandos angulares al cabezal pan-tilt."""
+        self._ensure_pantilt_torque()
         self.target_pan_deg = float(np.clip(pan_deg, -65.0, 65.0))
         self.target_tilt_deg = float(np.clip(tilt_deg, -35.0, 35.0))
         if not rclpy.ok():
@@ -1392,6 +1443,9 @@ class HriReceptionistChallengeNode(Node):
             self.move_arm_to_named_pose(pose_gesture, duration_s=2.0)
             self.sleep_gui(3.2)
             self.move_arm_to_named_pose("cube_stow", duration_s=1.8)
+
+            if self.guest_index >= 2:
+                self._introduce_guests_to_each_other()
 
             self.state = self.STATE_CHECK_NEXT_GUEST
             self.state_start_time = now
