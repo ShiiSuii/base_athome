@@ -9,8 +9,8 @@ Una sola ventana: video de la camara de MUNECA (no la de la cabeza) + panel de t
   [ESC]      cancelar la ensenanza (bloquea el brazo) / salir si no hay ensenanza
   [1][2][3]  ir a HOME / PRE-GRASP / POST-GRASP guardadas
   [O] [C]    abrir / cerrar pinza
-  [A]        alinear la pinza con el objeto (centrarlo en el eje) sin agarrar
-  [G]        agarrar: primero alinea, luego cinematica inversa (MoveIt arranca solo con este script)
+  [A]        alinear la pinza con el objeto (opcional, manual)
+  [G]        agarrar con cinematica inversa (MoveIt arranca solo con este script)
   [M]        calibrar distancia con la cinta (Medido_cm = centro de la pinza -> cara del objeto)
   Sliders:   Avance_max_cm (tope del avance hacia el objeto), Ajuste_cm (-10..+10 sobre el avance),
              Velocidad_% (5..100 de la velocidad maxima; avance final y subida a la mitad). [K] guarda.
@@ -89,6 +89,7 @@ class Manipulacion(Node):
         self.advance_adjust_cm = float(env.get("advance_adjust_cm", 0.0))
         # Velocidad de los movimientos (% de la maxima de MoveIt / joint_limits). Slider Velocidad_%.
         self.speed_pct = float(np.clip(env.get("arm_speed_pct", 30), 5, 100))
+        self.align_before_grasp = bool(env.get("align_before_grasp", False))  # desactivado: [G] como antes
         models = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models")
         self.detector = WristDetector(models)
         self.tracker = TargetTracker()
@@ -446,12 +447,12 @@ class Manipulacion(Node):
     def _grasp_worker(self):
         self.busy, self.abort = True, False
         try:
-            # 1) Alinear la pinza con el objeto antes de calcular la cinematica inversa
-            if not self.align_with_object():
+            # Como antes de la alineacion: usa la deteccion actual. Alinear es opcional con [A].
+            if self.align_before_grasp and not self.align_with_object():
                 return
-            det = self._fresh_detection(after=time.time() - 0.1)
+            det = self.detection
             if det is None:
-                self.status = "Agarre: perdi el objeto despues de alinear."
+                self.status = "Agarre: no veo el objeto."
                 return
             (x1, y1, x2, y2), z = det
             q_now = [math.radians(v) for v in self.joints_deg]
