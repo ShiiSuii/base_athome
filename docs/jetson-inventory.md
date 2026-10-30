@@ -77,3 +77,23 @@ Estado: **BLOCKED_APPROVAL**.
   3. Comprobar compatibilidad arm64/Jazzy de: `piper_sdk` (python-can, gs_usb), Orbbec SDK / `OrbbecSDK_ROS2`, `dynamixel_sdk`, faster-whisper/CTranslate2 con CUDA del JetPack 7, `realsense2_camera`.
   4. Decisión humana explícita sobre: dispositivo destino, datos que se borran, método (ISO / SDK Manager) y ventana.
 - No se aplicaron `apt upgrade` ni otros cambios a la Jetson en esta sesión: con el único canal por WiFi y una migración que reemplazará el sistema, el beneficio no justifica el riesgo de perder acceso.
+
+## Matriz de compatibilidad para Jazzy / Ubuntu 24.04 (preparación HOME-11)
+
+Fuente: `apt-mark showmanual` y `pip3 freeze` del respaldo (2026-10-29). Estado de soporte arm64/Jazzy a verificar en la ventana de migración.
+
+| Componente | Versión actual (Humble/22.04) | Ruta en Jazzy/24.04 | Riesgo |
+|---|---|---|---|
+| ROS base | `ros-humble-ros-base` | `ros-jazzy-ros-base` (apt oficial arm64) | Bajo |
+| DDS | `ros-humble-rmw-cyclonedds-cpp`, `cyclonedds` | `ros-jazzy-rmw-cyclonedds-cpp` | Bajo; reusar `cyclonedds.xml` |
+| RealSense | `ros-humble-realsense2-camera` + `pyrealsense2 2.59.1` (pip) | `ros-jazzy-realsense2-camera` (apt) | Medio: librealsense con kernel L4T 39.x |
+| Mensajes visión | `ros-humble-vision-msgs` | `ros-jazzy-vision-msgs` | Bajo |
+| Piper | `piper_sdk 0.6.2`, `python-can 4.6.1` (pip) | igual vía pip en venv, o `agx_arm_ros` rama `ros2` (Jazzy "Pass") | Bajo-medio: `gs_usb` debe estar en el kernel nuevo (hoy hay `~/gs_usb` compilado a mano) |
+| Dynamixel | `dynamixel-sdk 4.1.0` (pip) | `ros-jazzy-dynamixel-sdk` o pip | Bajo |
+| ASR | `faster-whisper 1.2.1`, `ctranslate2 4.8.3` (pip) | ctranslate2 con CUDA del JetPack 7 → probablemente compilar desde fuente | **Alto**: sin wheel CUDA arm64 oficial |
+| ONNX | `onnxruntime 1.23.2` (CPU) | `onnxruntime-gpu` de Jetson AI Lab | Medio |
+| Orbbec | `stream_orbbec.py` propio (SDK Python) | `OrbbecSDK_ROS2` `v2-main` | Medio: confirmar DC1 |
+| Audio | `sounddevice 0.5.6`, PulseAudio/PipeWire | igual (24.04 usa PipeWire) | Bajo |
+| numpy | 2.2.6 (pip, sobre python 3.10) | python 3.12 del sistema: usar venv (PEP 668) | Medio: no `pip install` global |
+
+Conclusión: el bloqueo real es **ctranslate2/faster-whisper con CUDA** y el **módulo `gs_usb`** en el kernel nuevo. Plan B para ASR si ctranslate2 no compila: whisper vía TensorRT-LLM / `whisper.cpp` con CUDA, o sherpa-onnx (usado por WrightEagle).
