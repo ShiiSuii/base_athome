@@ -20,11 +20,28 @@
     "name": "Guest 1",
     "enrolled_at": 1793302427.4114988,
     "enrolled_date": "2026-10-29 16:33:47",
-    "last_seen": 1793302427.4114988,
-    "last_seen_date": "2026-10-29 16:33:47",
-    "sighting_count": 1,
+    "last_seen": 1793307788.3095384,
+    "last_seen_date": "2026-10-29 18:03:08",
+    "sighting_count": 2,
     "thumbnail_file": "thumbnails/person_002.jpg",
-    "samples_count": 1,
+    "samples_count": 2,
+    "attributes": {
+      "role": "guest_1",
+      "favorite_drink": "Water",
+      "seat": "sof_principal",
+      "guest_index": 1
+    }
+  },
+  "person_003": {
+    "person_id": "person_003",
+    "name": "Pablo",
+    "enrolled_at": 1793310690.592482,
+    "enrolled_date": "2026-10-29 18:51:30",
+    "last_seen": 1793312817.3911133,
+    "last_seen_date": "2026-10-29 19:26:57",
+    "sighting_count": 2,
+    "thumbnail_file": "thumbnails/person_003.jpg",
+    "samples_count": 2,
     "attributes": {
       "role": "guest_1",
       "favorite_drink": "Water",
