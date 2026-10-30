@@ -63,6 +63,7 @@ class SemanticMapManager:
         self.keepout_zones: Dict[str, Any] = {}
         self.waypoints: Dict[str, Any] = {}
         self.seats: Dict[str, Any] = {}
+        self.objects: Dict[str, Any] = {}
 
         self.load_map()
         self.load_semantic_data()
@@ -108,7 +109,8 @@ class SemanticMapManager:
                 self.keepout_zones = data.get("keepout_zones", {}) or {}
                 self.waypoints = data.get("waypoints", {}) or {}
                 self.seats = data.get("seats", {}) or {}
-                print(f"✔ Datos semánticos del usuario cargados: {len(self.zones)} zonas, {len(self.furniture)} mesas, {len(self.waypoints)} waypoints, {len(self.seats)} asientos.")
+                self.objects = data.get("objects", {}) or {}
+                print(f"✔ Datos semánticos del usuario cargados: {len(self.zones)} zonas, {len(self.furniture)} mesas, {len(self.waypoints)} waypoints, {len(self.seats)} asientos, {len(self.objects)} objetos.")
                 return
             except Exception as e:
                 print(f"⚠ Error cargando semantic_map.yaml: {e}")
@@ -119,6 +121,7 @@ class SemanticMapManager:
         self.keepout_zones = {}
         self.waypoints = {}
         self.seats = {}
+        self.objects = {}
 
     def save_map_image(self, base64_png_data: str) -> bool:
         """Guarda la imagen del mapa PGM editada en disco, creando respaldos de seguridad."""
@@ -179,6 +182,7 @@ class SemanticMapManager:
             self.keepout_zones = new_data.get("keepout_zones", self.keepout_zones)
             self.waypoints = new_data.get("waypoints", self.waypoints)
             self.seats = new_data.get("seats", self.seats)
+            self.objects = new_data.get("objects", self.objects)
 
             sem_payload = {
                 "map_info": {
@@ -194,6 +198,7 @@ class SemanticMapManager:
                 "keepout_zones": self.keepout_zones,
                 "waypoints": self.waypoints,
                 "seats": self.seats,
+                "objects": self.objects,
             }
 
             os.makedirs(os.path.dirname(self.semantic_yaml_path), exist_ok=True)
@@ -228,7 +233,7 @@ class SemanticMapManager:
             with open(user_wp, "w", encoding="utf-8") as f:
                 yaml.dump({"waypoints": wp_dict}, f, default_flow_style=False, sort_keys=False)
 
-            print(f"✔ [Editor] Datos semánticos guardados: {len(self.zones)} zonas, {len(self.furniture)} mesas, {len(self.waypoints)} waypoints, {len(self.seats)} asientos.")
+            print(f"✔ [Editor] Datos semánticos guardados: {len(self.zones)} zonas, {len(self.furniture)} mesas, {len(self.waypoints)} waypoints, {len(self.seats)} asientos, {len(self.objects)} objetos.")
             return True
         except Exception as e:
             print(f"❌ Error guardando datos semánticos: {e}")
@@ -280,10 +285,10 @@ HTML_PAGE = r'''<!DOCTYPE html>
   .status-badge { background: rgba(0, 240, 144, 0.15); color: var(--accent-green); border: 1px solid var(--accent-green); padding: 3px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; display: flex; align-items: center; gap: 4px; }
   .status-badge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent-green); }
 
-  /* Selector de Pestañas (4 pestañas) */
+  /* Selector de Pestañas (5 pestañas) */
   .tab-nav {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(5, 1fr);
     background: #0d121c;
     border-bottom: 1px solid var(--panel-border);
   }
@@ -366,6 +371,8 @@ HTML_PAGE = r'''<!DOCTYPE html>
   }
   .pill-badge.green { background: rgba(0, 240, 144, 0.15); color: var(--accent-green); border-color: rgba(0, 240, 144, 0.3); }
   .pill-badge.purple { background: rgba(179, 136, 255, 0.15); color: var(--accent-purple); border-color: rgba(179, 136, 255, 0.3); }
+  .pill-badge.orange { background: rgba(255, 157, 0, 0.15); color: #ff9d00; border-color: rgba(255, 157, 0, 0.3); }
+  .pill-badge.blue { background: rgba(0, 210, 255, 0.15); color: var(--accent-cyan); border-color: rgba(0, 210, 255, 0.3); }
 
   /* Cuadrícula de Herramientas */
   .tool-grid {
@@ -632,6 +639,7 @@ HTML_PAGE = r'''<!DOCTYPE html>
     <button class="tab-btn active" onclick="switchTab('cleaning')">🧹 Limpieza</button>
     <button class="tab-btn" onclick="switchTab('furniture')">🪑 Mesas</button>
     <button class="tab-btn" onclick="switchTab('seats')">🛋️ Asientos</button>
+    <button class="tab-btn" onclick="switchTab('objects')">🥫 Objetos</button>
     <button class="tab-btn" onclick="switchTab('zones')">📍 Zonas/WPs</button>
   </div>
 
@@ -764,7 +772,55 @@ HTML_PAGE = r'''<!DOCTYPE html>
     <div class="item-list" id="seats-list"></div>
   </div>
 
-  <!-- PESTAÑA 4: ZONAS Y WAYPOINTS -->
+  <!-- PESTAÑA 4: OBJETOS MANIPULABLES -->
+  <div class="tab-content" id="tab-objects">
+    <div class="template-section">
+      <div class="template-title">🥫 Plantillas de Objetos (Clic en Mapa):</div>
+      <div class="template-list">
+        <div class="template-card" onclick="placeObjectTemplate('pringles', 'can', 'Pringles (Lata)')">
+          <div class="template-info">
+            <span class="template-name">🥫 Pringles / Papas</span>
+            <span class="template-desc">Clic en la mesa | Lata (can) | Approach 0.60m</span>
+          </div>
+          <span class="pill-badge orange">can</span>
+        </div>
+        <div class="template-card" onclick="placeObjectTemplate('coke', 'can', 'Coca-Cola (Lata)')">
+          <div class="template-info">
+            <span class="template-name">🥤 Coca-Cola / Refresco</span>
+            <span class="template-desc">Clic en la mesa | Lata (can)</span>
+          </div>
+          <span class="pill-badge orange">can</span>
+        </div>
+        <div class="template-card" onclick="placeObjectTemplate('water', 'bottle', 'Agua (Botella)')">
+          <div class="template-info">
+            <span class="template-name">🍾 Botella de Agua</span>
+            <span class="template-desc">Clic en la mesa | Botella (bottle)</span>
+          </div>
+          <span class="pill-badge blue">bottle</span>
+        </div>
+        <div class="template-card" onclick="placeObjectTemplate('cup', 'cup', 'Taza / Vaso')">
+          <div class="template-info">
+            <span class="template-name">☕ Taza / Pocillo</span>
+            <span class="template-desc">Clic en la mesa | Taza (cup)</span>
+          </div>
+          <span class="pill-badge purple">cup</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-title"><span>Herramienta de Objeto Libre</span></div>
+    <div class="tool-grid">
+      <button class="tool-btn" id="btn-place_object" onclick="startPlaceObject()">🎯 Colocar Objeto (Click)</button>
+    </div>
+
+    <div class="section-title">
+      <span>Objetos en tu Mapa</span>
+      <span id="object-count">0</span>
+    </div>
+    <div class="item-list" id="objects-list"></div>
+  </div>
+
+  <!-- PESTAÑA 5: ZONAS Y WAYPOINTS -->
   <div class="tab-content" id="tab-zones">
     <div class="template-section">
       <div class="template-title">⚡ Puntos Oficiales Receptionist (Nav2):</div>
@@ -838,6 +894,7 @@ HTML_PAGE = r'''<!DOCTYPE html>
     <label class="layer-item"><input type="checkbox" id="layer-map" checked onchange="draw()"> 🗺️ Mapa PGM</label>
     <label class="layer-item"><input type="checkbox" id="layer-furniture" checked onchange="draw()"> 🪑 Mesas</label>
     <label class="layer-item"><input type="checkbox" id="layer-seats" checked onchange="draw()"> 🛋️ Asientos</label>
+    <label class="layer-item"><input type="checkbox" id="layer-objects" checked onchange="draw()"> 🥫 Objetos</label>
     <label class="layer-item"><input type="checkbox" id="layer-waypoints" checked onchange="draw()"> 📍 Waypoints Nav2</label>
     <label class="layer-item"><input type="checkbox" id="layer-zones" checked onchange="draw()"> 📐 Zonas</label>
     <label class="layer-item"><input type="checkbox" id="layer-keepout" checked onchange="draw()"> 🚫 Prohibido</label>
@@ -921,6 +978,57 @@ HTML_PAGE = r'''<!DOCTYPE html>
   </div>
 </div>
 
+<!-- Modal de Configuración / Edición de Objetos -->
+<div class="modal-overlay" id="object-modal">
+  <div class="modal-card">
+    <h3 id="obj-modal-title">🎯 Registrar Objeto Manipulable</h3>
+
+    <div class="form-group">
+      <label>Número Único (visible en el círculo del mapa):</label>
+      <input type="number" id="obj-number-input" min="1" step="1" oninput="validateObjectModalNumber()">
+      <small id="obj-number-warning" style="color: #ff3366; display: none; font-size: 11px;">⚠ Este número ya está en uso</small>
+    </div>
+
+    <div class="form-group">
+      <label>Nombre del Objeto (ej. pringles, coke, cup):</label>
+      <input type="text" id="obj-name-input" value="pringles">
+    </div>
+
+    <div class="form-group">
+      <label>Clase del Objeto:</label>
+      <select id="obj-class-input">
+        <option value="can">can (Lata)</option>
+        <option value="bottle">bottle (Botella)</option>
+        <option value="cup">cup (Vaso / Taza)</option>
+        <option value="box">box (Caja)</option>
+        <option value="other">other (Otro)</option>
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label>Altura Z del centro del objeto (metros):</label>
+      <input type="number" id="obj-z-input" step="0.005" value="0.865">
+      <small id="obj-z-desc" style="color: var(--text-muted); font-size: 11px;">Default: altura de la mesa contenedora + 0.10 m</small>
+    </div>
+
+    <div class="form-group">
+      <label>Mesa contenedora (on):</label>
+      <input type="text" id="obj-on-input" readonly style="background: rgba(255,255,255,0.05); color: #00f090; font-weight: 600;">
+    </div>
+
+    <div class="vol-metrics-box">
+      <div class="vol-metric-item">Approach X<b id="obj-app-x-disp">0.00 m</b></div>
+      <div class="vol-metric-item">Approach Y<b id="obj-app-y-disp">0.00 m</b></div>
+      <div class="vol-metric-item">Yaw (hacia obj)<b id="obj-app-yaw-disp">0°</b></div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="modal-btn cancel" onclick="closeObjectModal()">Cancelar</button>
+      <button class="modal-btn primary" id="btn-save-object" onclick="confirmSaveObject()">Guardar Objeto</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast">¡Guardado con éxito!</div>
 
 <script>
@@ -931,6 +1039,9 @@ HTML_PAGE = r'''<!DOCTYPE html>
   let keepout_zones = {};
   let waypoints = {};
   let seats = {};
+  let objects = {};
+  let pendingObject = null;
+  let editingObjectId = null;
 
   let currentMode = 'pan';
   let brushSize = 3; // px
@@ -1000,6 +1111,7 @@ HTML_PAGE = r'''<!DOCTYPE html>
       keepout_zones = data.keepout_zones || {};
       waypoints = data.waypoints || {};
       seats = data.seats || {};
+      objects = data.objects || {};
 
       document.getElementById('map-meta-info').textContent =
         `Mapa PGM: ${mapInfo.width}x${mapInfo.height} px (${mapInfo.resolution} m/px)`;
@@ -1114,7 +1226,8 @@ HTML_PAGE = r'''<!DOCTYPE html>
       draw_vol_poly: '📐 <b>Polígono Volumétrico 3D:</b> Haz clics para marcar los vértices de la base. Doble clic para terminar.',
       zone: '📐 <b>Dibujar Zona Libre:</b> Haz clic para agregar vértices al polígono. Doble clic para cerrar.',
       waypoint: '📍 <b>Colocar Waypoint:</b> Haz clic donde irá el robot y arrastra la flecha hacia donde mirará (Yaw).',
-      keepout: '🚫 <b>Zona Prohibida:</b> Marca el polígono de área restringida donde el robot no debe entrar.'
+      keepout: '🚫 <b>Zona Prohibida:</b> Marca el polígono de área restringida donde el robot no debe entrar.',
+      place_object: '🎯 <b>Colocar Objeto:</b> Haz clic sobre la mesa para situar el objeto (o arrastra para definir la posición de aproximación).'
     };
     document.getElementById('hud-instructions').innerHTML = instructions[mode] || '';
     draw();
@@ -1191,9 +1304,32 @@ HTML_PAGE = r'''<!DOCTYPE html>
     pendingGeometry = [];
     document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('.template-card').forEach(c => c.classList.remove('active-tpl'));
-    event.currentTarget.classList.add('active-tpl');
+    if (window.event && window.event.currentTarget) window.event.currentTarget.classList.add('active-tpl');
     document.getElementById('hud-instructions').innerHTML =
       `📐 <b>Plantilla '${name}':</b> Haz clics sucesivos sobre el mapa para marcar los límites de la habitación. Doble clic para terminar.`;
+    draw();
+  }
+
+  function placeObjectTemplate(name, objClass, label) {
+    activeTemplate = { category: 'object', name, objClass, label };
+    currentMode = 'place_object';
+    document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.template-card').forEach(c => c.classList.remove('active-tpl'));
+    if (window.event && window.event.currentTarget) window.event.currentTarget.classList.add('active-tpl');
+    document.getElementById('hud-instructions').innerHTML =
+      `🎯 <b>Plantilla '${label}':</b> Haz clic sobre la mesa para colocarlo (o arrastra para fijar la posición de aproximación).`;
+    draw();
+  }
+
+  function startPlaceObject() {
+    activeTemplate = { category: 'object', name: 'pringles', objClass: 'can', label: 'Nuevo Objeto' };
+    currentMode = 'place_object';
+    document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.template-card').forEach(c => c.classList.remove('active-tpl'));
+    const btn = document.getElementById('btn-place_object');
+    if (btn) btn.classList.add('active');
+    document.getElementById('hud-instructions').innerHTML =
+      `🎯 <b>Colocar Objeto:</b> Haz clic en el mapa sobre la mesa para situarlo (o arrastra para definir la aproximación del robot).`;
     draw();
   }
 
@@ -1302,7 +1438,26 @@ HTML_PAGE = r'''<!DOCTYPE html>
       }
     }
 
-    // 7. Previsualizaciones en Vivo
+    // 7. Capa Objetos Manipulables
+    const layerObjCheck = document.getElementById('layer-objects');
+    if (layerObjCheck && layerObjCheck.checked) {
+      for (const [id, obj] of Object.entries(objects)) {
+        if (obj.x !== undefined && obj.y !== undefined) {
+          const pObj = worldToPixel(obj.x, obj.y);
+          let appP = null;
+          let yawDeg = 0;
+          if (obj.approach && obj.approach.x !== undefined && obj.approach.y !== undefined) {
+            appP = worldToPixel(obj.approach.x, obj.approach.y);
+            yawDeg = obj.approach.yaw_deg || 0;
+          } else {
+            appP = { x: pObj.x + 20 / view.zoom, y: pObj.y };
+          }
+          drawObjectMarker(pObj.x, pObj.y, obj.number || 1, obj.name || id, obj.class || 'other', appP.x, appP.y, yawDeg);
+        }
+      }
+    }
+
+    // 8. Previsualizaciones en Vivo
     if (isMouseDown && dragStartPixel) {
       if (currentMode === 'clear_box') {
         const minX = Math.min(dragStartPixel.x, mousePixel.x);
@@ -1391,6 +1546,28 @@ HTML_PAGE = r'''<!DOCTYPE html>
         const yawDeg = Math.round((Math.atan2(dy, dx) * 180) / Math.PI);
         const label = activeTemplate ? activeTemplate.name : 'Nuevo WP';
         drawWaypointPin(dragStartPixel.x, dragStartPixel.y, yawDeg, label);
+      } else if (currentMode === 'place_object') {
+        ctx.beginPath();
+        ctx.arc(dragStartPixel.x, dragStartPixel.y, 11 / view.zoom, 0, Math.PI * 2);
+        ctx.fillStyle = '#ff7700';
+        ctx.fill();
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2 / view.zoom;
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(mousePixel.x, mousePixel.y);
+        ctx.lineTo(dragStartPixel.x, dragStartPixel.y);
+        ctx.strokeStyle = '#ff9d00';
+        ctx.lineWidth = 1.5 / view.zoom;
+        ctx.setLineDash([4 / view.zoom, 3 / view.zoom]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        const objW = pixelToWorld(dragStartPixel.x, dragStartPixel.y);
+        const appW = pixelToWorld(mousePixel.x, mousePixel.y);
+        const d = Math.hypot(objW.x - appW.x, objW.y - appW.y).toFixed(2);
+        drawBadge(mousePixel.x, mousePixel.y - 10 / view.zoom, `Approach (${d}m)`, '#00f090');
       }
     }
 
@@ -1537,6 +1714,62 @@ HTML_PAGE = r'''<!DOCTYPE html>
     ctx.stroke();
 
     drawBadge(px, py - 14 / view.zoom, `🛋️ ${label}`, '#b388ff');
+  }
+
+  function drawObjectMarker(px, py, number, name, objClass, appPx, appPy, yawDeg) {
+    // 1. Línea fina y punteada desde approach hacia el objeto
+    ctx.beginPath();
+    ctx.moveTo(appPx, appPy);
+    ctx.lineTo(px, py);
+    ctx.strokeStyle = '#ff9d00';
+    ctx.lineWidth = 1.5 / view.zoom;
+    ctx.setLineDash([4 / view.zoom, 3 / view.zoom]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // 2. Marcador del punto de approach (donde se para el robot)
+    const appR = 5 / view.zoom;
+    ctx.beginPath();
+    ctx.arc(appPx, appPy, appR, 0, Math.PI * 2);
+    ctx.fillStyle = '#00f090';
+    ctx.fill();
+    ctx.strokeStyle = '#080c13';
+    ctx.lineWidth = 1.5 / view.zoom;
+    ctx.stroke();
+
+    // Flecha de orientación del approach (Yaw)
+    const rad = (-yawDeg * Math.PI) / 180;
+    const arrowLen = 14 / view.zoom;
+    const ex = appPx + arrowLen * Math.cos(rad);
+    const ey = appPy + arrowLen * Math.sin(rad);
+    ctx.beginPath();
+    ctx.moveTo(appPx, appPy);
+    ctx.lineTo(ex, ey);
+    ctx.strokeStyle = '#00f090';
+    ctx.lineWidth = 2.5 / view.zoom;
+    ctx.stroke();
+
+    // 3. Círculo naranja con el número del objeto
+    const r = 11 / view.zoom;
+    ctx.beginPath();
+    ctx.arc(px, py, r, 0, Math.PI * 2);
+    ctx.fillStyle = '#ff7700';
+    ctx.fill();
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2 / view.zoom;
+    ctx.stroke();
+
+    // Número visible en el círculo
+    ctx.save();
+    ctx.font = `bold ${Math.max(9, Math.round(11 / view.zoom))}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`${number}`, px, py);
+    ctx.restore();
+
+    // Etiqueta flotante con nombre y clase
+    drawBadge(px, py - 16 / view.zoom, `${name} (${objClass})`, '#ff7700');
   }
 
   function getPolygonCenter(pts) {
@@ -1710,6 +1943,23 @@ HTML_PAGE = r'''<!DOCTYPE html>
         updateSidebar();
         showToast(`Waypoint '${name}' registrado`);
       }
+      setMode('pan');
+    } else if (currentMode === 'place_object') {
+      const objWorld = pixelToWorld(dragStartPixel.x, dragStartPixel.y);
+      let customApp = null;
+      const dragDist = Math.hypot(mousePixel.x - dragStartPixel.x, mousePixel.y - dragStartPixel.y);
+      if (dragDist > 8) {
+        const appWorld = pixelToWorld(mousePixel.x, mousePixel.y);
+        const lookDx = objWorld.x - appWorld.x;
+        const lookDy = objWorld.y - appWorld.y;
+        const yawDeg = Math.round((Math.atan2(lookDy, lookDx) * 180) / Math.PI);
+        customApp = {
+          x: round4(appWorld.x),
+          y: round4(appWorld.y),
+          yaw_deg: yawDeg
+        };
+      }
+      openObjectModal(objWorld.x, objWorld.y, customApp);
       setMode('pan');
     }
 
@@ -1968,6 +2218,7 @@ HTML_PAGE = r'''<!DOCTYPE html>
       else if (collectionName === 'zones') { delete zones[id]; }
       else if (collectionName === 'waypoints') { delete waypoints[id]; }
       else if (collectionName === 'seats') { item = seats[id]; delete seats[id]; }
+      else if (collectionName === 'objects') { delete objects[id]; }
 
       if (item && item.solidified_in_map && item.polygon) {
         solidifyGeometry(item.polygon, false);
@@ -2027,6 +2278,39 @@ HTML_PAGE = r'''<!DOCTYPE html>
           </div>
         `;
         sList.appendChild(card);
+      }
+    }
+
+    // Objetos Manipulables
+    const oList = document.getElementById('objects-list');
+    if (oList) {
+      oList.innerHTML = '';
+      const oKeys = Object.keys(objects);
+      const oCountEl = document.getElementById('object-count');
+      if (oCountEl) oCountEl.textContent = oKeys.length;
+      if (oKeys.length === 0) {
+        oList.innerHTML = '<div class="empty-state">No hay objetos colocados todavía.<br>Selecciona una plantilla o herramienta arriba y haz clic en el mapa.</div>';
+      } else {
+        const sortedObjects = Object.entries(objects).sort((a, b) => (a[1].number || 0) - (b[1].number || 0));
+        for (const [id, obj] of sortedObjects) {
+          const card = document.createElement('div');
+          card.className = 'item-card';
+          const iconMap = { can: '🥫', bottle: '🍾', cup: '☕', box: '📦', other: '🎯' };
+          const icon = iconMap[obj.class] || '🎯';
+          const onDesc = obj.on ? `Mesa: ${obj.on}` : 'Suelo';
+          const appDesc = obj.approach ? `Approach (${obj.approach.x.toFixed(2)}, ${obj.approach.y.toFixed(2)}, ${obj.approach.yaw_deg}°)` : '';
+          card.innerHTML = `
+            <div class="item-info">
+              <span class="item-title">${icon} [#${obj.number}] ${obj.name}</span>
+              <span class="item-subtitle">${obj.class} | En ${onDesc} | Z: ${obj.z}m<br><span style="font-size: 10px; color: var(--accent-cyan);">${appDesc}</span></span>
+            </div>
+            <div class="item-actions">
+              <button class="icon-btn" title="Editar Objeto" onclick="editObject('${id}')">✏️</button>
+              <button class="icon-btn danger" title="Eliminar" onclick="deleteItem('objects', '${id}')">🗑️</button>
+            </div>
+          `;
+          oList.appendChild(card);
+        }
       }
     }
 
@@ -2098,7 +2382,8 @@ HTML_PAGE = r'''<!DOCTYPE html>
           furniture: furniture,
           keepout_zones: keepout_zones,
           waypoints: waypoints,
-          seats: seats
+          seats: seats,
+          objects: objects
         })
       });
       const semData = await semRes.json();
@@ -2128,6 +2413,191 @@ HTML_PAGE = r'''<!DOCTYPE html>
   }
 
   function round4(num) { return Math.round(num * 10000) / 10000; }
+  function round3(num) { return Math.round(num * 1000) / 1000; }
+
+  function jsPointInPolygon(x, y, polygon) {
+    if (!polygon || polygon.length < 3) return false;
+    let inside = false;
+    const n = polygon.length;
+    let j = n - 1;
+    for (let i = 0; i < n; i++) {
+      const xi = polygon[i][0], yi = polygon[i][1];
+      const xj = polygon[j][0], yj = polygon[j][1];
+      if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) {
+        inside = !inside;
+      }
+      j = i;
+    }
+    return inside;
+  }
+
+  function jsFindContainingFurniture(x, y) {
+    for (const [id, f] of Object.entries(furniture)) {
+      if (f.polygon && jsPointInPolygon(x, y, f.polygon)) {
+        return { id: id, data: f };
+      }
+    }
+    return null;
+  }
+
+  function jsGetNextFreeNumber() {
+    const used = new Set();
+    for (const obj of Object.values(objects)) {
+      if (obj && obj.number !== undefined) {
+        const n = parseInt(obj.number, 10);
+        if (!isNaN(n) && n > 0) used.add(n);
+      }
+    }
+    let candidate = 1;
+    while (used.has(candidate)) candidate++;
+    return candidate;
+  }
+
+  function jsIsNumberUnique(num, currentId = null) {
+    const n = parseInt(num, 10);
+    if (isNaN(n) || n <= 0) return false;
+    for (const [id, obj] of Object.entries(objects)) {
+      if (currentId && id === currentId) continue;
+      if (obj && parseInt(obj.number, 10) === n) return false;
+    }
+    return true;
+  }
+
+  function jsCalculateApproach(objX, objY, refCenter = null, distance = 0.60) {
+    let ux = 1.0, uy = 0.0;
+    if (refCenter && refCenter.x !== undefined && refCenter.y !== undefined) {
+      const dx = objX - refCenter.x;
+      const dy = objY - refCenter.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist > 1e-4) {
+        ux = dx / dist;
+        uy = dy / dist;
+      }
+    } else {
+      const distOrig = Math.hypot(objX, objY);
+      if (distOrig > 1e-4) {
+        ux = objX / distOrig;
+        uy = objY / distOrig;
+      }
+    }
+
+    const appX = round4(objX + distance * ux);
+    const appY = round4(objY + distance * uy);
+    const lookDx = objX - appX;
+    const lookDy = objY - appY;
+    const yawDeg = Math.round((Math.atan2(lookDy, lookDx) * 180) / Math.PI);
+    return { x: appX, y: appY, yaw_deg: yawDeg };
+  }
+
+  function openObjectModal(objX, objY, customApproach = null, existingId = null) {
+    editingObjectId = existingId;
+    const tpl = activeTemplate || {};
+    const containing = jsFindContainingFurniture(objX, objY);
+    const onTable = containing ? containing.id : '';
+    const tableHeight = (containing && containing.data && containing.data.height_m) ? containing.data.height_m : 0.76;
+
+    let num, name, objClass, z, app;
+    if (existingId && objects[existingId]) {
+      const existing = objects[existingId];
+      num = existing.number;
+      name = existing.name;
+      objClass = existing.class;
+      z = existing.z;
+      app = existing.approach || jsCalculateApproach(objX, objY, containing ? containing.data.center : null, 0.60);
+    } else {
+      num = jsGetNextFreeNumber();
+      name = tpl.name || 'pringles';
+      objClass = tpl.objClass || 'can';
+      z = onTable ? round3(tableHeight + 0.10) : 0.865;
+      if (customApproach) {
+        app = customApproach;
+      } else {
+        const refCenter = (containing && containing.data && containing.data.center) ? containing.data.center : null;
+        app = jsCalculateApproach(objX, objY, refCenter, 0.60);
+      }
+    }
+
+    pendingObject = {
+      x: round4(objX),
+      y: round4(objY),
+      on: onTable,
+      approach: app
+    };
+
+    document.getElementById('obj-modal-title').innerHTML = existingId ? `🎯 Editar Objeto '${name}'` : '🎯 Registrar Objeto Manipulable';
+    document.getElementById('obj-number-input').value = num;
+    document.getElementById('obj-name-input').value = name;
+    document.getElementById('obj-class-input').value = objClass;
+    document.getElementById('obj-z-input').value = z;
+    document.getElementById('obj-on-input').value = onTable ? `Mesa: ${onTable}` : '(Ninguna / Suelo)';
+    document.getElementById('obj-app-x-disp').textContent = `${app.x.toFixed(2)} m`;
+    document.getElementById('obj-app-y-disp').textContent = `${app.y.toFixed(2)} m`;
+    document.getElementById('obj-app-yaw-disp').textContent = `${app.yaw_deg}°`;
+
+    validateObjectModalNumber();
+    document.getElementById('object-modal').classList.add('active');
+  }
+
+  function closeObjectModal() {
+    document.getElementById('object-modal').classList.remove('active');
+    pendingObject = null;
+    editingObjectId = null;
+  }
+
+  function validateObjectModalNumber() {
+    const val = parseInt(document.getElementById('obj-number-input').value, 10);
+    const warn = document.getElementById('obj-number-warning');
+    const saveBtn = document.getElementById('btn-save-object');
+    if (!val || val <= 0) {
+      warn.textContent = '⚠ El número debe ser mayor a 0';
+      warn.style.display = 'block';
+      if (saveBtn) saveBtn.disabled = true;
+      return false;
+    }
+    const isUnique = jsIsNumberUnique(val, editingObjectId);
+    if (!isUnique) {
+      warn.textContent = `⚠ El número ${val} ya está en uso`;
+      warn.style.display = 'block';
+      if (saveBtn) saveBtn.disabled = true;
+      return false;
+    }
+    warn.style.display = 'none';
+    if (saveBtn) saveBtn.disabled = false;
+    return true;
+  }
+
+  function confirmSaveObject() {
+    if (!validateObjectModalNumber()) return;
+    if (!pendingObject) return;
+    const num = parseInt(document.getElementById('obj-number-input').value, 10);
+    const name = document.getElementById('obj-name-input').value.trim() || `obj_${num}`;
+    const objClass = document.getElementById('obj-class-input').value;
+    const z = parseFloat(document.getElementById('obj-z-input').value) || 0.865;
+
+    const id = editingObjectId || `obj_${num}`;
+
+    objects[id] = {
+      number: num,
+      name: name,
+      class: objClass,
+      x: pendingObject.x,
+      y: pendingObject.y,
+      z: round3(z),
+      on: pendingObject.on,
+      approach: pendingObject.approach
+    };
+
+    closeObjectModal();
+    updateSidebar();
+    draw();
+    showToast(`✔ Objeto #${num} '${name}' guardado`);
+  }
+
+  function editObject(id) {
+    if (!objects[id]) return;
+    const obj = objects[id];
+    openObjectModal(obj.x, obj.y, obj.approach, id);
+  }
 
   function showToast(msg) {
     const t = document.getElementById('toast');
@@ -2181,6 +2651,7 @@ class MapZoneEditorHandler(BaseHTTPRequestHandler):
                 "keepout_zones": self.manager.keepout_zones,
                 "waypoints": self.manager.waypoints,
                 "seats": self.manager.seats,
+                "objects": self.manager.objects,
             }
             self.wfile.write(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
 
