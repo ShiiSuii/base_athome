@@ -1,11 +1,16 @@
 #!/bin/bash
-export PATH=/opt/ros/humble/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-source /opt/ros/humble/setup.bash
+# Distro autodetectada: Jazzy tras HOME-11 (JetPack 7.2.1), Humble en JetPack 6.
+ROS_DIR=$(ls -d /opt/ros/jazzy /opt/ros/humble 2>/dev/null | head -1)
+export PATH=$ROS_DIR/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+source $ROS_DIR/setup.bash
 if [ -f /home/ubuntu/athome_ws/install/setup.bash ]; then
     source /home/ubuntu/athome_ws/install/setup.bash
 fi
 
-export LD_LIBRARY_PATH=/opt/ros/humble/lib/aarch64-linux-gnu:/opt/ros/humble/lib:/usr/local/cuda/lib64
+export LD_LIBRARY_PATH=$ROS_DIR/lib/aarch64-linux-gnu:$ROS_DIR/lib:/usr/local/cuda/lib64
+# Ubuntu 24.04 (PEP 668): dependencias pip en ~/robot_venv (bootstrap_jazzy.sh)
+VENV_SITE=$(ls -d /home/ubuntu/robot_venv/lib/python3*/site-packages 2>/dev/null | head -1)
+[ -n "$VENV_SITE" ] && export PYTHONPATH=$VENV_SITE:$PYTHONPATH
 export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 export CYCLONEDDS_URI=file:///home/ubuntu/cyclonedds.xml
 export ROS_DOMAIN_ID=10

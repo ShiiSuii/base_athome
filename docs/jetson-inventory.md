@@ -72,7 +72,7 @@ Ubicación en la NUC: `/home/athome/jetson_backups/2026-10-29_pre_migration/` (f
 
 ## Migración a JetPack 7.2.1 / Ubuntu 24.04 / Jazzy (HOME-11)
 
-Estado: **BLOCKED_APPROVAL**.
+Estado: **BLOCKED_APPROVAL** — todo lo preparable está hecho (ISO descargado, respaldos extra, `bootstrap_jazzy.sh`). Procedimiento: `docs/collab/RUNBOOK_MIGRACION_JETSON.md`. Falta: humano frente a la Jetson + elección del disco destino.
 
 - **Verificado en la página oficial de NVIDIA (2026-10-30)** — [JetPack 7.2.1](https://developer.nvidia.com/embedded/jetpack/downloads/archive-7.2.1): Jetson Linux 39.2.1, **L4T Ubuntu 24.04, kernel 6.8, CUDA 13.2.2, cuDNN 9.20, TensorRT 10.16.2**. Soporta "Jetson Orin Family" (el Orin Nano no se nombra explícitamente). Para el Orin Nano Dev Kit **ya no hay imagen de microSD**: se instala con la **ISO unificada desde un pendrive USB**, que usa por defecto la configuración de flasheo *Super*. La página no documenta ruta de actualización desde JetPack 6 ni el procedimiento de QSPI → seguir la Getting Started Guide. Consecuencias: (1) destino NVMe o microSD nueva vía instalador ISO (necesita monitor+teclado o consola en la Jetson), (2) **CUDA 13** → ctranslate2 y cualquier wheel CUDA deben ser builds para CUDA 13, (3) los engines TensorRT 10.3 actuales **no sirven** en 10.16: reconstruir con `build_yolo_trt.sh`.
 - No existe ruta de actualización in-place soportada de JetPack 6 (L4T 36, Ubuntu 22.04) a JetPack 7.x (Ubuntu 24.04); `do-release-upgrade` está prohibido. La migración implica **reflashear el medio de arranque (borra la microSD) y probablemente actualizar QSPI** (actual 36.5.2). Que JetPack 7.2.1 soporte Orin Nano Super está `SOLO_DOCUMENTADO` en las instrucciones; verificar en las release notes de NVIDIA antes de proceder.

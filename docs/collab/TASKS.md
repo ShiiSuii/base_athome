@@ -96,3 +96,4 @@ Jetson ENCENDIDA y conectada por Ethernet; AgileX Piper apagado; cámara de muñ
 - No cambios en navegación. No acceso Google. No ROS1. No pagos. No pushes no autorizados.
 | HOME-15a | run_8db8fe9ab48b | Antigravity | ctx_a61d1dad86ff | 2026-10-30 | INTEGRATED | merge 84b3c7c | parser GPSR offline, 34 tests; métrica de primera acción débil |
 | HOME-15b | — | por asignar | — | 2026-10-30 | READY_OFFLINE | — | corregir pasos perdidos en comandos compuestos; dataset con planes esperados y métrica de plan exacto |
+| HOME-11 | run_8db8fe9ab48b | Claude (+humano para instalar) | — | 2026-10-30 | BLOCKED_APPROVAL | — | preparado: ISO r39.2.1 en la NUC, respaldos extra, bootstrap_jazzy.sh, runbook; requiere humano con monitor/teclado y destino (NVMe recomendado) |
