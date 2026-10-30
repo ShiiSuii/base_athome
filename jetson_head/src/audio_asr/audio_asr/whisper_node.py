@@ -63,7 +63,7 @@ class WhisperASRNode(Node):
         self.declare_parameter('trigger_wait_sec', 7.0)
         self.declare_parameter('unmute_guard_sec', 0.45)
         self.declare_parameter('max_mute_sec', 25.0)      # failsafe: ninguna frase del robot dura tanto
-        self.declare_parameter('max_ambient_rms', 0.04)
+        self.declare_parameter('max_ambient_rms', 0.15)  # con ganancia maxima el ruido de sala es alto: dejar adaptar
         self.declare_parameter('mic_gain_percent', 100)    # siempre a maxima ganancia
         self.declare_parameter('beam_size', 3)
         self.declare_parameter('no_speech_threshold', 0.6)
@@ -161,8 +161,10 @@ class WhisperASRNode(Node):
             self.guard_until = now + self.unmute_guard_sec
 
     def prompt_callback(self, msg: String):
-        text = msg.data.strip()
-        self.initial_prompt = text if text else DEFAULT_PROMPT
+        text = msg.data.strip() or DEFAULT_PROMPT
+        if text == self.initial_prompt:
+            return  # el receptionist lo re-publica periodicamente: no loguear repetidos
+        self.initial_prompt = text
         self.get_logger().info(f'initial_prompt actualizado ({len(self.initial_prompt)} chars)')
 
     def handle_listen_trigger(self, request, response):
