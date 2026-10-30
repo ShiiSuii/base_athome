@@ -45,7 +45,7 @@ Fuente: `rulebook.pdf` del release oficial **2026.2** (publicado 2026-05-11, "Ve
 
 ## 4. Brechas principales detectadas (preliminar)
 
-1. **Receptionist hace preguntas de confirmación** (`STATE_CONFIRM_DETAILS`) → pierde el bonus de 4×15 y arriesga −40 si confirma mal. Revisar en HOME-06a.
+1. `STATE_CONFIRM_DETAILS` hace una **afirmación** ("I noted that..."), no una pregunta → el bonus 4×15 se conserva; el riesgo es memorizar un dato mal transcrito (−40 c/u). Detalle completo en `docs/hri_challenge_2026_gap_analysis.md` (HOME-06a): faltan bolsa+seguir anfitrión (300), atributo visual (80), timbre (60), bebida y mirada en la presentación.
 2. **Sin detección de timbre** (2×30) — existe `socrob/doorbell_detector` (YAMNet, ROS 2) reutilizable, falta verificar licencia.
 3. **Seguir al anfitrión** (200) — hay `calibrate_tracking.py` y tracking de personas; falta el comportamiento follow con Nav2 (como cliente, sin modificar Nav2).
 4. **Handover de bolsa** (50) con el Piper — requiere modo seguro (el robot no debe "atacar" la mano, §5.1 regla 5).
