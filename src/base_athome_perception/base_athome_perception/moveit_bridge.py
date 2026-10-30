@@ -143,7 +143,7 @@ class MoveItBridge:
         return trajectory_points(res.motion_plan_response.trajectory)
 
     def cartesian_path(self, start_rad: Sequence[float], waypoints: List[Pose], eef_step: float = 0.01,
-                       min_fraction: float = 0.95) -> Optional[List[Tuple[List[float], float]]]:
+                       min_fraction: float = 0.95, vel_scale: float = 0.15) -> Optional[List[Tuple[List[float], float]]]:
         req = GetCartesianPath.Request()
         req.header.frame_id = FRAME
         req.start_state = _robot_state(start_rad)
@@ -152,8 +152,8 @@ class MoveItBridge:
         req.waypoints = [self._to_model(w) for w in waypoints]
         req.max_step = eef_step
         req.avoid_collisions = True
-        req.max_velocity_scaling_factor = 0.15
-        req.max_acceleration_scaling_factor = 0.15
+        req.max_velocity_scaling_factor = vel_scale
+        req.max_acceleration_scaling_factor = vel_scale
         res = self._call(self.cli_cart, req, timeout_s=8.0)
         if res.error_code.val != 1 or res.fraction < min_fraction:
             return None

@@ -11,7 +11,8 @@ Una sola ventana: video de la camara de MUNECA (no la de la cabeza) + panel de t
   [O] [C]    abrir / cerrar pinza
   [G]        agarrar el objeto visto con cinematica inversa (MoveIt arranca solo con este script)
   [M]        calibrar distancia con la cinta (Medido_cm = centro de la pinza -> cara del objeto)
-  Sliders:   Avance_max_cm (tope del avance hacia el objeto) y Ajuste_cm (-10..+10 sobre el avance)
+  Sliders:   Avance_max_cm (tope del avance hacia el objeto), Ajuste_cm (-10..+10 sobre el avance),
+             Velocidad_% (5..100 de la velocidad maxima; avance final y subida a la mitad). [K] guarda.
   RViz:      MarkerArray /arm_camera/object_markers (y /manipulacion/objeto), frame base_link:
              cilindro verde = objeto, esfera/flecha naranja = donde quedara el centro de la pinza
   [Q]        salir
@@ -85,6 +86,8 @@ class Manipulacion(Node):
         env = pose_store.load_pose_config(CONFIG).get("safety_envelope", {})
         self.max_advance_cm = float(env.get("max_advance_cm", 30.0))
         self.advance_adjust_cm = float(env.get("advance_adjust_cm", 0.0))
+        # Velocidad de los movimientos (% de la maxima de MoveIt / joint_limits). Slider Velocidad_%.
+        self.speed_pct = float(np.clip(env.get("arm_speed_pct", 30), 5, 100))
         models = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models")
         self.detector = WristDetector(models)
         self.tracker = TargetTracker()
@@ -183,13 +186,14 @@ class Manipulacion(Node):
             plan = None
             if self.moveit.available():
                 plan = self.moveit.plan_to_joints([math.radians(v) for v in self.joints_deg],
-                                                  [math.radians(v) for v in target], vel_scale=0.25)
+                                                  [math.radians(v) for v in target], vel_scale=self.vel_scale())
             if plan:
                 self.status = f"Yendo a {LABELS[name]} (MoveIt)..."
                 self._execute(plan)
             else:
                 dmax = max(abs(a - b) for a, b in zip(target, self.joints_deg))
-                dur = float(np.clip(dmax / 20.0, 2.0, 10.0))  # ~20 grados/s
+                dps = 60.0 * self.vel_scale()  # 100 % = 60 grados/s, 30 % = 18 grados/s
+                dur = float(np.clip(dmax / max(dps, 3.0), 1.0, 20.0))
                 self.status = f"Yendo a {LABELS[name]} ({dur:.1f} s)..."
                 self.send_joints(target, dur)
                 time.sleep(dur + 0.3)
@@ -269,6 +273,9 @@ class Manipulacion(Node):
                 self.obj_base = self._object_in_base(box, z)
             time.sleep(0.03)
 
+    def vel_scale(self) -> float:
+        return float(np.clip(self.speed_pct / 100.0, 0.05, 1.0))
+
     def used_advance(self, z: float) -> float:
         """Avance real a usar (m): calibrado + ajuste, nunca mas que el tope."""
         adv = wg.advance_needed(z, self.calib) + self.advance_adjust_cm / 100.0
@@ -339,11 +346,13 @@ class Manipulacion(Node):
         env = cfg.setdefault("safety_envelope", {})
         env["max_advance_cm"] = round(self.max_advance_cm, 1)
         env["advance_adjust_cm"] = round(self.advance_adjust_cm, 1)
+        env["arm_speed_pct"] = int(round(self.speed_pct))
         tmp = CONFIG + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             yaml.safe_dump(cfg, f, sort_keys=False, allow_unicode=True)
         os.replace(tmp, CONFIG)
-        self.status = f"Guardado: tope {self.max_advance_cm:.0f} cm, ajuste {self.advance_adjust_cm:+.0f} cm."
+        self.status = (f"Guardado: tope {self.max_advance_cm:.0f} cm, ajuste {self.advance_adjust_cm:+.0f} cm, "
+                       f"velocidad {self.speed_pct:.0f} %.")
 
     def calibrate(self):
         if self.detection is None:
@@ -388,8 +397,10 @@ class Manipulacion(Node):
             quat = quat_from_matrix(R.tolist())
             self.status = "Agarre: planificando..."
             q_app = self.moveit.compute_ik(pose_from(app_tcp, quat), q_now)
-            plan = self.moveit.plan_to_joints(q_now, q_app, vel_scale=0.2) if q_app else None
-            line = self.moveit.cartesian_path(q_app, [pose_from(grasp_tcp, quat)]) if plan else None
+            plan = self.moveit.plan_to_joints(q_now, q_app, vel_scale=self.vel_scale()) if q_app else None
+            # el avance final y la subida van a la mitad de la velocidad elegida (mas control al agarrar)
+            line = self.moveit.cartesian_path(q_app, [pose_from(grasp_tcp, quat)],
+                                              vel_scale=self.vel_scale() / 2) if plan else None
             if not line:
                 self.status = "Agarre: sin solucion (objeto fuera de alcance o choque). No me muevo."
                 return
@@ -401,7 +412,8 @@ class Manipulacion(Node):
                 return
             self.gripper(GRIPPER_CLOSE_MM)
             time.sleep(1.5)
-            lift = self.moveit.cartesian_path(line[-1][0], [pose_from(grasp_tcp + np.array([0, 0, 0.03]), quat)])
+            lift = self.moveit.cartesian_path(line[-1][0], [pose_from(grasp_tcp + np.array([0, 0, 0.03]), quat)],
+                                              vel_scale=self.vel_scale() / 2)
             if lift:
                 self._execute(lift)
             self.status = "Agarre: listo."
@@ -457,7 +469,8 @@ class Manipulacion(Node):
         put("[T] ensenar 3 poses   [ENTER] guardar   [ESC] cancelar", (200, 200, 200), 0.5)
         put("[1][2][3] ir a pose   [O]/[C] pinza   [G] agarrar (MoveIt)", (200, 200, 200), 0.5)
         put(f"[M] calibrar distancia (Medido_cm = {self.measured_cm:.0f})   [Q] salir", (200, 200, 200), 0.5)
-        put(f"Avance: tope {self.max_advance_cm:.0f} cm, ajuste {self.advance_adjust_cm:+.0f} cm   [K] guardar", (200, 200, 200), 0.5)
+        put(f"Avance: tope {self.max_advance_cm:.0f} cm, ajuste {self.advance_adjust_cm:+.0f} cm | "
+            f"Velocidad {self.speed_pct:.0f} %   [K] guardar", (200, 200, 200), 0.5)
         y += 6
         for line in _wrap(self.wizard.message if self.wizard.active or not self.status else self.status, 52):
             put(line, (0, 230, 255), 0.5, 1, 22)
@@ -519,6 +532,8 @@ def main():
     cv2.resizeWindow(WINDOW, 1160, 520)
     cv2.createTrackbar("Medido_cm", WINDOW, 24, 80, lambda v: setattr(node, "measured_cm", float(max(3, v))))
     cv2.createTrackbar("Avance_max_cm", WINDOW, int(node.max_advance_cm), 50, lambda v: node.set_advance_limits(max_cm=v))
+    cv2.createTrackbar("Velocidad_%", WINDOW, int(node.speed_pct), 100,
+                       lambda v: setattr(node, "speed_pct", float(max(5, v))))
     cv2.createTrackbar("Ajuste_cm", WINDOW, int(node.advance_adjust_cm) + 10, 20,
                        lambda v: node.set_advance_limits(adjust_cm=v - 10))
     try:
