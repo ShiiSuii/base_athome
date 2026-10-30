@@ -36,13 +36,22 @@
 ### Orbbec DaBai DC1 (Jetson, muñeca del Piper) — `FABRICANTE` (familia DaBai; ficha DC1 no encontrada)
 - Luz estructurada estéreo, profundidad 640×400 @ 30 fps, **rango de trabajo 0,3–3 m**, precisión ±6 mm @ 1 m, FOV profundidad ~68°×45°; RGB 1920×1080. Fuente: listados de distribuidor, verificar con Orbbec.
 - **Implicación crítica para eye-in-hand:** por debajo de ~30 cm no hay profundidad. Estrategia: (1) "pose de observación" a 35–45 cm sobre el objeto, (2) estimar pose 3D y agarre, (3) aproximación final en lazo abierto (o con la D435 de la cabeza como verificación), (4) confirmar agarre con el feedback de la pinza (`gripper_state`) — no con la cámara.
-- Hoy se usa `stream_orbbec.py` propio que solo publica `/arm_camera/image_raw` (RGB). Para manipulación hace falta **profundidad registrada + intrínsecos** → migrar a `OrbbecSDK_ROS2` (`v2-main`) y verificar soporte DC1.
+- Hoy se usa `stream_orbbec.py` propio que solo publica `/arm_camera/image_raw` (RGB). **2026-10-30 `MEDIDO`:** no publicaba (buscaba `/dev/video6`); tras S-12 entrega 20 fps a 640×480 (máximo del modo UVC actual), 18,6 MB/s por el cable, 19 % de un núcleo. Para manipulación hace falta **profundidad registrada + intrínsecos** → migrar a `OrbbecSDK_ROS2` (`v2-main`) y verificar soporte DC1.
 - La luz estructurada se degrada con sol directo (Restaurant con ventanas) — `INFERIDO`.
 
 ### RØDE VideoMic GO II (Jetson USB) — `MEDIDO` (USB) / `FABRICANTE`
 - Micrófono shotgun supercardioide (direccional): excelente si apunta al hablante, malo para voces laterales. **Montarlo en la cabeza pan-tilt** hace que el "mirar a quien habla" del HRI (2×50) mejore también el ASR.
 - Ganancia fijada por script (`amixer Mic 18`). Agregar VAD (Silero) antes de Whisper para no transcribir ruido; medir SNR en la arena.
 - Hubo problemas de reconexión USB (commit `b9c2e77` "auto-reconnect USB mic").
+- **ASR medido en la Jetson (2026-10-30, `MEDIDO`)**: `ctranslate2 4.8.3` del pip **no tiene CUDA** (0 dispositivos) → Whisper corre en CPU int8 y la GPU queda ociosa. 5 frases sintéticas (espeak-ng, voz robótica: indicativo, no representa voces reales), `beam_size=1`, 4 hilos, con `whisper_node` corriendo en paralelo:
+
+  | Modelo | Latencia/frase | WER | WER con `initial_prompt` de nombres/bebidas* |
+  |---|---|---|---|
+  | `tiny` (en uso) | 0,90 s | 20 % ("Sophie here", "coat", "our interviews") | 7 % (1,3 s) |
+  | `base.en` | 1,46 s | 6 % | 4 % (1,6 s) |
+  | `small.en` | 4,37 s | 6 % | — |
+
+  *El prompt contenía los nombres de la prueba: resultado optimista, pero en la competencia las listas de nombres/bebidas se conocen de antemano (CompetitionTemplate). **Recomendación:** `whisper_model:=base.en language:=en` + prompt con las listas oficiales (nuevo argumento de launch `whisper_model`; default sigue `tiny`). Mejora mayor posible: ctranslate2 compilado con CUDA (tras HOME-11) para usar `small.en` en GPU.
 
 ## 3. Actuadores
 
@@ -66,7 +75,8 @@
 
 ## 4. Red y DDS
 - El enlace NUC↔Jetson debe ser **cableado** (el reglamento prohíbe redes propias y la WiFi de la arena no es confiable). RTT medido por WiFi doméstica 1,7–355 ms (muy variable) vs. esperado <1 ms por cable.
-- Relojes: desfase NUC↔Jetson **−0,2 ms** (`MEDIDO` con `scripts/net/clock_offset.py`), ambos NTP sincronizados. En la competencia sin Internet, configurar a la NUC como servidor de hora para la Jetson (chrony) — `INFERIDO`, decisión humana.
+- **Cable en uso (2026-10-30, `MEDIDO`)**: NUC `enp1s0` ↔ adaptador USB RTL8153 de la Jetson (el puerto integrado `enP8p1s0` no levanta carrier), 1 Gb/s full, RTT 0,2 ms, ≥660 Mb/s por SSH. La cámara de muñeca cruda ocupa ~150 Mb/s: entra, pero conviene comprimir si se suma la D435.
+- Relojes: desfase NUC↔Jetson **−0,2 ms** (2026-10-29) y **−11,9 ms** (2026-10-30 tras reinicio) (`MEDIDO` con `scripts/net/clock_offset.py`), ambos NTP sincronizados. En la competencia sin Internet, configurar a la NUC como servidor de hora para la Jetson (chrony) — `INFERIDO`, decisión humana.
 - Imágenes por DDS entre hosts: usar `image_transport` comprimido o procesar en el host dueño de la cámara; no enviar RGB-D crudo por la red.
 
 ## 5. Prioridades de optimización por puntos (resumen)

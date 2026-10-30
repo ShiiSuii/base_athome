@@ -40,6 +40,16 @@ def generate_launch_description():
         description='Language for Whisper ASR (auto for bilingual, en for English, es for Spanish)'
     )
 
+    # Medido en la Jetson 2026-10-30 (CPU int8, modo 25W, frases sinteticas):
+    # tiny 0.9 s/frase WER 20 %; base.en 1.5 s WER 6 %; small.en 4.4 s WER 6 %.
+    # Para competencia (ingles): whisper_model:=base.en language:=en.
+    # base.en/small.en son solo ingles: no usar con language:=auto/es.
+    whisper_model_arg = DeclareLaunchArgument(
+        'whisper_model',
+        default_value='tiny',
+        description='faster-whisper model: tiny (multilingue, rapido) | base.en | small.en'
+    )
+
     # 1. RealSense D435 Launch
     realsense_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([
@@ -80,7 +90,7 @@ def generate_launch_description():
         name='whisper_asr_node',
         output='screen',
         parameters=[{
-            'model_size': 'tiny',
+            'model_size': LaunchConfiguration('whisper_model'),
             'language': LaunchConfiguration('language'),
             'energy_threshold': 0.02,
             'silence_duration_sec': 1.0,
@@ -96,6 +106,7 @@ def generate_launch_description():
         pan_tilt_auto_torque_arg,
         enable_audio_arg,
         language_arg,
+        whisper_model_arg,
         realsense_launch,
         pan_tilt_node,
         whisper_node,
