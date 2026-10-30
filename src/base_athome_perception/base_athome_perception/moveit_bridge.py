@@ -12,7 +12,9 @@ from typing import List, Optional, Sequence, Tuple
 from geometry_msgs.msg import Pose, PoseStamped
 from moveit_msgs.msg import (Constraints, JointConstraint, MotionPlanRequest, PositionIKRequest,
                              RobotState, RobotTrajectory)
-from moveit_msgs.srv import GetCartesianPath, GetMotionPlan, GetPositionIK
+from moveit_msgs.msg import AllowedCollisionEntry, PlanningScene
+from moveit_msgs.srv import (ApplyPlanningScene, GetCartesianPath, GetMotionPlan, GetPlanningScene,
+                             GetPositionIK, GetStateValidity)
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 
@@ -78,6 +80,10 @@ class MoveItBridge:
         self.cli_ik = node.create_client(GetPositionIK, "/compute_ik")
         self.cli_plan = node.create_client(GetMotionPlan, "/plan_kinematic_path")
         self.cli_cart = node.create_client(GetCartesianPath, "/compute_cartesian_path")
+        self.cli_valid = node.create_client(GetStateValidity, "/check_state_validity")
+        self.cli_get_scene = node.create_client(GetPlanningScene, "/get_planning_scene")
+        self.cli_apply_scene = node.create_client(ApplyPlanningScene, "/apply_planning_scene")
+        self.allowed_pairs = set()  # pares liberados por solaparse ya en el estado medido
 
     def _to_model(self, pose: Pose) -> Pose:
         """Pose en base_link -> marco del modelo (base_footprint)."""
@@ -104,7 +110,48 @@ class MoveItBridge:
             raise RuntimeError(f"timeout en {cli.srv_name}")
         return fut.result()
 
+    def ensure_start_valid(self, start_rad: Sequence[float]) -> List[Tuple[str, str]]:
+        """Si el estado MEDIDO del brazo ya "choca" en el modelo (geometria del URDF imperfecta,
+        p.ej. link4/link5 contra torso_column mientras el brazo real no toca nada), MoveIt rechaza
+        todo plan. Se permiten SOLO esos pares (el resto de las colisiones se sigue chequeando).
+        Devuelve los pares liberados en esta llamada."""
+        req = GetStateValidity.Request()
+        req.robot_state = _robot_state(start_rad)
+        req.group_name = GROUP
+        res = self._call(self.cli_valid, req)
+        if res.valid:
+            return []
+        pairs = {tuple(sorted((c.contact_body_1, c.contact_body_2))) for c in res.contacts}
+        new = pairs - self.allowed_pairs
+        if not new:
+            return []
+        scene_req = GetPlanningScene.Request()
+        scene_req.components.components = scene_req.components.ALLOWED_COLLISION_MATRIX
+        acm = self._call(self.cli_get_scene, scene_req).scene.allowed_collision_matrix
+        for a, b in new:
+            for name in (a, b):
+                if name not in acm.entry_names:
+                    acm.entry_names.append(name)
+                    for e in acm.entry_values:
+                        e.enabled.append(False)
+                    acm.entry_values.append(AllowedCollisionEntry(enabled=[False] * len(acm.entry_names)))
+            ia, ib = acm.entry_names.index(a), acm.entry_names.index(b)
+            acm.entry_values[ia].enabled[ib] = True
+            acm.entry_values[ib].enabled[ia] = True
+        diff = PlanningScene()
+        diff.is_diff = True
+        diff.allowed_collision_matrix = acm
+        self._call(self.cli_apply_scene, ApplyPlanningScene.Request(scene=diff))
+        self.allowed_pairs |= new
+        self.node.get_logger().warn(f"MoveIt: el estado medido solapa en el modelo {sorted(new)}; "
+                                    "se ignoran SOLO esos pares (revisar geometria del URDF)")
+        return sorted(new)
+
     def compute_ik(self, pose: Pose, seed_rad: Sequence[float], avoid_collisions: bool = True) -> Optional[List[float]]:
+        try:
+            self.ensure_start_valid(seed_rad)
+        except Exception as e:
+            self.node.get_logger().warn(f'MoveIt: no pude verificar el estado inicial: {e}')
         req = GetPositionIK.Request()
         ik = PositionIKRequest()
         ik.group_name = GROUP
@@ -123,6 +170,10 @@ class MoveItBridge:
 
     def plan_to_joints(self, start_rad: Sequence[float], goal_rad: Sequence[float],
                        vel_scale: float = 0.3) -> Optional[List[Tuple[List[float], float]]]:
+        try:
+            self.ensure_start_valid(start_rad)
+        except Exception as e:
+            self.node.get_logger().warn(f'MoveIt: no pude verificar el estado inicial: {e}')
         req = GetMotionPlan.Request()
         m = MotionPlanRequest()
         m.group_name = GROUP
@@ -144,6 +195,10 @@ class MoveItBridge:
 
     def cartesian_path(self, start_rad: Sequence[float], waypoints: List[Pose], eef_step: float = 0.01,
                        min_fraction: float = 0.95, vel_scale: float = 0.15) -> Optional[List[Tuple[List[float], float]]]:
+        try:
+            self.ensure_start_valid(start_rad)
+        except Exception as e:
+            self.node.get_logger().warn(f'MoveIt: no pude verificar el estado inicial: {e}')
         req = GetCartesianPath.Request()
         req.header.frame_id = FRAME
         req.start_state = _robot_state(start_rad)
