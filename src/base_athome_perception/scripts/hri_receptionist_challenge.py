@@ -23,6 +23,8 @@ import datetime
 import json
 import math
 import os
+
+os.environ.setdefault("YOLO_OFFLINE", "1")  # ultralytics: nunca auto-instalar paquetes en el venv
 import queue
 import re
 import subprocess
@@ -74,6 +76,7 @@ except ImportError:
 from base_athome_perception.face_recognizer import DEFAULT_DB_DIR, FaceRecognizer, PersonProfile
 from base_athome_perception.guest_vocabulary import GuestVocabulary
 from base_athome_perception import seat_occupancy as seatocc
+from base_athome_perception import scene_analysis as scene
 from base_athome_perception.speaker import RoboCupSpeaker
 try:
     from base_athome_perception.person_pose_detector import PersonPoseDetector
@@ -229,6 +232,8 @@ class HriReceptionistChallengeNode(Node):
     STATE_DETECT_AND_OFFER_SEAT = 11
     STATE_CHECK_NEXT_GUEST = 12
     STATE_CHALLENGE_COMPLETE = 13
+    STATE_SCAN_SCENE = 14
+    STATE_WAIT_SEATED = 15
 
     STATE_NAMES = {
         STATE_INIT: "0/7: INICIALIZANDO SISTEMA",
@@ -245,7 +250,12 @@ class HriReceptionistChallengeNode(Node):
         STATE_DETECT_AND_OFFER_SEAT: "7/7: ASIGNANDO Y SENALANDO ASIENTO",
         STATE_CHECK_NEXT_GUEST: "CICLO: PREPARANDO SIGUIENTE INVITADO",
         STATE_CHALLENGE_COMPLETE: "EXITO: CHALLENGE COMPLETADA",
+        STATE_SCAN_SCENE: "6/7: ANALIZANDO LA SALA CON LA CABEZA",
+        STATE_WAIT_SEATED: "7/7: ESPERANDO QUE EL INVITADO SE SIENTE",
     }
+    # Estados en los que la cabeza sigue la cara del interlocutor
+    TRACKING_STATES = {STATE_WAIT_DOOR, STATE_GREET_AND_PROMPT, STATE_WAIT_NAME_DRINK, STATE_PROMPT_MISSING_INFO,
+                       STATE_CONFIRM_DETAILS, STATE_MEMORIZE_FACE}
 
     def __init__(
         self,
@@ -484,6 +494,12 @@ class HriReceptionistChallengeNode(Node):
 
         # Reconocimiento facial en un hilo propio: la ventana sigue a la tasa de la camara
         self.face_lock = threading.Lock()
+        self.scanning = False
+        self.furniture_model = None
+        self.scene_objects: List = []
+        self.seat_bearing_deg: Optional[float] = None
+        self.seated_hits = 0
+        self.seat_reminded = False
         self.face_dets_stamp = 0.0
         self.last_tracked_stamp = 0.0
         self.face_worker_stop = threading.Event()
@@ -1158,6 +1174,70 @@ class HriReceptionistChallengeNode(Node):
     def _caminfo_callback(self, msg: CameraInfo):
         self.cam_fx_cx = (float(msg.k[0]), float(msg.k[2]))
 
+    def _fx(self, img_w: int) -> float:
+        """Focal en pixeles (camera_info o FOV horizontal de la D435 color, ~69 grados)."""
+        if self.cam_fx_cx:
+            return self.cam_fx_cx[0]
+        return img_w / (2.0 * math.tan(math.radians(34.5)))
+
+    def _detect_furniture(self, frame: np.ndarray) -> List[Tuple[str, List[float], float]]:
+        """Sillas, sofas y bancos con YOLOv8n (COCO). Carga perezosa del modelo."""
+        if self.furniture_model is None:
+            try:
+                from ultralytics import YOLO
+                self.furniture_model = YOLO(os.path.join(self.models_dir, "yolov8n.pt"))
+            except Exception as e:
+                self.get_logger().warn(f"Detector de muebles no disponible: {e}", throttle_duration_sec=30.0)
+                self.furniture_model = False
+        if not self.furniture_model:
+            return []
+        names = {13: "bench", 56: "chair", 57: "couch"}
+        out = []
+        res = self.furniture_model.predict(frame, classes=list(names), conf=0.35, verbose=False, device="cpu")[0]
+        for b in res.boxes:
+            out.append((names[int(b.cls)], [float(v) for v in b.xyxy[0].tolist()], float(b.conf)))
+        return out
+
+    def analyze_scene(self) -> None:
+        """Barre la sala con el pan-tilt y arma la lista de personas/muebles vistos (self.scene_objects)."""
+        self.scanning = True
+        objs: List[scene.SeenObject] = []
+        try:
+            for pan in (-60.0, -30.0, 0.0, 30.0, 60.0):
+                self.move_head_to(pan, -10.0)
+                self.sleep_gui(1.4)  # dejar que lleguen detecciones nuevas en este angulo
+                with self.frame_lock:
+                    frame = self.latest_frame.copy() if self.latest_frame is not None else None
+                if frame is None:
+                    continue
+                with self.face_lock:
+                    poses = list(self.current_poses or [])
+                    faces = list(self.current_face_dets or [])
+                img_w = frame.shape[1]
+                fx_px, cx_px = self._fx(img_w), (self.cam_fx_cx[1] if self.cam_fx_cx else img_w / 2.0)
+                person_boxes = [list(map(float, d["bbox"][:4])) for d in poses]
+                for d, box in zip(poses, person_boxes):
+                    bearing, width = scene.bbox_bearing_width(box, pan, fx_px, cx_px, self.head_pan_sign)
+                    name = None
+                    for f in faces:  # cara reconocida dentro de la caja de la persona
+                        fx0, fy0, fw, fh = f["bbox"]
+                        if f.get("person_id") and box[0] <= fx0 + fw / 2 <= box[2] and box[1] <= fy0 + fh / 2 <= box[3]:
+                            name = f["name"]
+                    objs.append(scene.SeenObject("person", bearing, width,
+                                                 seated=str(d.get("posture", "")).upper().startswith("SENTAD"), name=name))
+                for kind, box, _ in self._detect_furniture(frame):
+                    bearing, width = scene.bbox_bearing_width(box, pan, fx_px, cx_px, self.head_pan_sign)
+                    objs.append(scene.SeenObject(kind, bearing, width, occupants=scene.occupants_in_image(box, person_boxes)))
+        finally:
+            self.scanning = False
+        self.scene_objects = scene.merge_views(objs)
+        # El anfitrion no tiene cara registrada: con el primer invitado, la unica persona sin nombre es el host
+        unnamed = [o for o in self.scene_objects if o.kind == "person" and not o.name]
+        if self.guest_index == 1 and len(unnamed) == 1:
+            unnamed[0].name = "Charlie"
+        summary = [(o.kind, round(o.bearing_deg), o.name or "", o.occupants) for o in self.scene_objects]
+        self.get_logger().info(f"🔎 Escena: {summary}")
+
     def scan_seats(self) -> Tuple[Dict[str, int], bool]:
         """Mira cada asiento del mapa semantico y cuenta personas en el (ocupacion, uso_profundidad)."""
         persons: List[Tuple[float, float]] = []
@@ -1224,23 +1304,16 @@ class HriReceptionistChallengeNode(Node):
             # (antes se aplicaba el mismo error en cada ciclo de ~50 Hz y sobreoscilaba)
             new_dets = dets_stamp != self.last_tracked_stamp
             self.last_tracked_stamp = dets_stamp
-            if self.pan_tilt_tracking and face_results and new_dets:
+            if (self.pan_tilt_tracking and not self.scanning and self.state in self.TRACKING_STATES
+                    and face_results and new_dets):
                 largest_face = max(face_results, key=lambda f: f["bbox"][2] * f["bbox"][3])
-                fx, fy, fw, fh = largest_face["bbox"]
-                cx = fx + fw / 2.0
-                cy = fy + fh / 2.0
+                bx, by, bw, bh = largest_face["bbox"]
                 img_h, img_w = frame.shape[:2]
-
-                err_x = (cx - img_w / 2.0) / (img_w / 2.0)
-                err_y = (cy - img_h / 2.0) / (img_h / 2.0)
-
-                # Control P suave
-                pan_step = np.clip(err_x * 1.5, -2.0, 2.0)
-                tilt_step = np.clip(err_y * 1.2, -1.5, 1.5)
-
-                self.target_pan_deg -= pan_step
-                self.target_tilt_deg -= tilt_step
-                self.move_head_to(self.target_pan_deg, self.target_tilt_deg)
+                fx_px = self._fx(img_w)
+                dpan, dtilt = scene.face_tracking_step(bx + bw / 2.0, by + bh / 2.0, img_w, img_h, fx_px, fx_px)
+                if dpan or dtilt:
+                    self.move_head_to(self.target_pan_deg + self.head_pan_sign * dpan,
+                                      self.target_tilt_deg + dtilt)
 
         # 2. Transición y Lógica de Estados
         if self.state == self.STATE_INIT:
@@ -1602,7 +1675,17 @@ class HriReceptionistChallengeNode(Node):
             self.say(follow_msg, emotion="happy", blocking=True)
 
             self.navigate_to_waypoint(self.living_room_wp)
-            self.state = self.STATE_FIND_HOST
+            self.state = self.STATE_SCAN_SCENE
+            self.state_start_time = now
+
+        elif self.state == self.STATE_SCAN_SCENE:
+            self.say("We have arrived. Let me take a look around.", emotion="thinking", blocking=True)
+            self.current_banner_text = "Analizando la sala: personas y asientos..."
+            self.analyze_scene()
+            host = next((o for o in self.scene_objects if o.kind == "person" and o.name == "Charlie"), None)
+            if host is not None:  # mirar al anfitrion para presentarlo
+                self.move_head_to(self.head_pan_sign * host.bearing_deg, -5.0)
+            self.state = self.STATE_INTRODUCE_GUESTS
             self.state_start_time = now
 
         elif self.state == self.STATE_FIND_HOST:
@@ -1649,6 +1732,13 @@ class HriReceptionistChallengeNode(Node):
                     for g in self.registered_guests[:-1]:
                         reserved[g.get("seat")] = reserved.get(g.get("seat"), 0) + 1
                 seat_target = seatocc.choose_free_seat(self.seats, occ, reserved)
+            visual_seat = scene.choose_seat(self.scene_objects)
+            self.seat_bearing_deg = None
+            if seat_target is not None and self._head_pan_to_seat(seat_target) is not None:
+                self.seat_bearing_deg = self.head_pan_sign * self._head_pan_to_seat(seat_target)
+            elif visual_seat is not None:
+                self.seat_bearing_deg = visual_seat.bearing_deg
+                seat_target = seat_target or visual_seat.kind
             if seat_target is None:
                 seat_idx = min(self.guest_index - 1, len(seat_keys) - 1)
                 seat_target = seat_keys[seat_idx] if seat_keys else "couch"
@@ -1667,19 +1757,64 @@ class HriReceptionistChallengeNode(Node):
             pose_gesture = seat_info.get("arm_gesture", "point_couch" if seat_target == "couch" else "point_chair")
             seat_label = seat_info.get("name", "couch" if seat_target == "couch" else "chair")
 
-            offer_msg = f"{self.current_name}, please have a seat right here on the {seat_label}."
+            if self.seat_bearing_deg is not None:
+                self.move_head_to(self.head_pan_sign * self.seat_bearing_deg, -10.0)
+            if self.scene_objects and (visual_seat is not None or not self.seats):
+                offer_msg = scene.describe_scene(self.scene_objects, self.current_name, visual_seat)
+            elif self.seat_bearing_deg is not None:
+                offer_msg = (f"{self.current_name}, the {seat_label} {scene.direction_words(self.seat_bearing_deg)} "
+                             f"is free. Please take a seat there.")
+            else:
+                offer_msg = f"{self.current_name}, please have a seat on the {seat_label}."
             self.say(offer_msg, emotion="happy", blocking=False)
 
             # Ejecutar gesto físico de señalamiento con el brazo
             self.move_arm_to_named_pose(pose_gesture, duration_s=2.0)
             self.sleep_gui(3.2)
             self.move_arm_to_named_pose("cube_stow", duration_s=1.8)
-
-            if self.guest_index >= 2:
-                self._introduce_guests_to_each_other()
-
-            self.state = self.STATE_CHECK_NEXT_GUEST
+            self.seated_hits = 0
+            self.seat_reminded = False
+            self.state = self.STATE_WAIT_SEATED
             self.state_start_time = now
+
+        elif self.state == self.STATE_WAIT_SEATED:
+            # No volver a la puerta hasta ver al invitado sentado en el asiento ofrecido
+            elapsed = now - self.state_start_time
+            bearing = self.seat_bearing_deg
+            if bearing is not None and abs(self.target_pan_deg - self.head_pan_sign * bearing) > 3.0:
+                self.move_head_to(self.head_pan_sign * bearing, -10.0)
+            with self.face_lock:
+                poses = list(self.current_poses or [])
+            seated = False
+            if frame is not None and poses:
+                img_w = frame.shape[1]
+                fx_px, cx_px = self._fx(img_w), (self.cam_fx_cx[1] if self.cam_fx_cx else img_w / 2.0)
+                bearings = [scene.bbox_bearing_width(d["bbox"], self.target_pan_deg, fx_px, cx_px, self.head_pan_sign)[0]
+                            for d in poses]
+                postures = [d.get("posture", "") for d in poses]
+                seated = scene.person_seated_at(bearing, bearings, postures) if bearing is not None else \
+                    any(str(p).upper().startswith("SENTAD") for p in postures)
+            if seated and now - self.last_pose_time < 1.0:
+                self.seated_hits += 1
+            elif not seated:
+                self.seated_hits = 0
+            if self.seated_hits >= 3:
+                self.say(f"Great, {self.current_name}. Make yourself comfortable.", emotion="happy", blocking=True)
+                if self.guest_index >= 2:
+                    self._introduce_guests_to_each_other()
+                self.state = self.STATE_CHECK_NEXT_GUEST
+                self.state_start_time = now
+            elif elapsed > 20.0 and not self.seat_reminded:
+                self.seat_reminded = True
+                where = scene.direction_words(bearing) if bearing is not None else "here"
+                self.say(f"{self.current_name}, please sit down on the free seat {where}.", emotion="speaking", blocking=True)
+            elif elapsed > 45.0 or self.force_advance:
+                self.force_advance = False
+                self.get_logger().warn("No vi al invitado sentarse a tiempo; continuo con el siguiente.")
+                if self.guest_index >= 2:
+                    self._introduce_guests_to_each_other()
+                self.state = self.STATE_CHECK_NEXT_GUEST
+                self.state_start_time = now
 
         elif self.state == self.STATE_CHECK_NEXT_GUEST:
             if self.guest_index < self.max_guests:

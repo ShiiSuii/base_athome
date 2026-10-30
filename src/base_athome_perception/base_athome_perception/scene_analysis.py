@@ -1,0 +1,147 @@
+#!/usr/bin/env python3
+"""Analisis de la sala barriendo con el pan-tilt (sin rutina pregrabada).
+
+En cada angulo de la cabeza se guardan personas (YOLO pose + nombre si la cara se
+reconoce) y muebles para sentarse (YOLO: chair, couch, bench). Todo se expresa en
+"rumbo respecto del robot" (grados, + = izquierda) para poder unir lo visto desde
+varios angulos y explicarle al invitado hacia donde ir. Geometria pura, testeable.
+"""
+import math
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Sequence
+
+SEAT_CLASSES = {"chair": 1, "couch": 2, "bench": 2}  # capacidad tipica
+
+
+@dataclass
+class SeenObject:
+    kind: str                  # "person" | "chair" | "couch" | "bench"
+    bearing_deg: float         # respecto del frente del robot, + = izquierda
+    width_deg: float
+    seated: bool = False
+    name: Optional[str] = None
+    distance_m: Optional[float] = None
+    occupants: int = 0
+    views: int = 1
+    extra: Dict = field(default_factory=dict)
+
+    @property
+    def capacity(self) -> int:
+        return SEAT_CLASSES.get(self.kind, 0)
+
+    @property
+    def free(self) -> int:
+        return max(0, self.capacity - self.occupants)
+
+
+def pixel_bearing(u: float, head_pan_deg: float, fx: float, cx: float, pan_sign: float = 1.0) -> float:
+    """Rumbo (grados, + izquierda) de la columna u vista con la cabeza en head_pan_deg."""
+    return pan_sign * head_pan_deg - math.degrees(math.atan2(u - cx, fx))
+
+
+def bbox_bearing_width(bbox: Sequence[float], head_pan_deg: float, fx: float, cx: float,
+                       pan_sign: float = 1.0):
+    b1 = pixel_bearing(bbox[0], head_pan_deg, fx, cx, pan_sign)
+    b2 = pixel_bearing(bbox[2], head_pan_deg, fx, cx, pan_sign)
+    return (b1 + b2) / 2.0, abs(b1 - b2)
+
+
+def overlap_frac(inner: Sequence[float], outer: Sequence[float]) -> float:
+    """Fraccion del area de `inner` que cae dentro de `outer` (cajas x1, y1, x2, y2)."""
+    ix1, iy1 = max(inner[0], outer[0]), max(inner[1], outer[1])
+    ix2, iy2 = min(inner[2], outer[2]), min(inner[3], outer[3])
+    inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+    area = max(1e-6, (inner[2] - inner[0]) * (inner[3] - inner[1]))
+    return inter / area
+
+
+def occupants_in_image(seat_bbox: Sequence[float], person_bboxes: Sequence[Sequence[float]],
+                       min_overlap: float = 0.3) -> int:
+    """Personas cuya parte inferior (cadera-piernas) se superpone con el mueble."""
+    n = 0
+    for p in person_bboxes:
+        lower = (p[0], p[1] + 0.5 * (p[3] - p[1]), p[2], p[3])
+        if overlap_frac(lower, seat_bbox) >= min_overlap:
+            n += 1
+    return n
+
+
+def merge_views(objs: List[SeenObject], tol_deg: float = 12.0) -> List[SeenObject]:
+    """Une el mismo objeto visto desde dos angulos de la cabeza (mismo tipo, rumbo cercano)."""
+    merged: List[SeenObject] = []
+    for o in sorted(objs, key=lambda x: x.bearing_deg):
+        m = next((x for x in merged if x.kind == o.kind
+                  and abs(x.bearing_deg - o.bearing_deg) <= max(tol_deg, (x.width_deg + o.width_deg) / 4)), None)
+        if m is None:
+            merged.append(o)
+            continue
+        k = m.views
+        m.bearing_deg = (m.bearing_deg * k + o.bearing_deg) / (k + 1)
+        m.width_deg = max(m.width_deg, o.width_deg)
+        m.occupants = max(m.occupants, o.occupants)
+        m.seated = m.seated or o.seated
+        m.name = m.name or o.name
+        m.distance_m = m.distance_m if m.distance_m is not None else o.distance_m
+        m.views = k + 1
+    return merged
+
+
+def choose_seat(objects: List[SeenObject]) -> Optional[SeenObject]:
+    """Mueble con lugar libre; prefiere el mas cercano al frente del robot."""
+    seats = [o for o in objects if o.capacity and o.free > 0]
+    return min(seats, key=lambda o: abs(o.bearing_deg)) if seats else None
+
+
+def direction_words(bearing_deg: float) -> str:
+    if bearing_deg > 45:
+        return "to your far left"
+    if bearing_deg > 12:
+        return "on your left"
+    if bearing_deg < -45:
+        return "to your far right"
+    if bearing_deg < -12:
+        return "on your right"
+    return "in front of you"
+
+
+def describe_scene(objects: List[SeenObject], guest_name: str, seat: Optional[SeenObject]) -> str:
+    people = [o for o in objects if o.kind == "person"]
+    parts = []
+    if people:
+        named = [p for p in people if p.name]
+        if named:
+            parts.append(" ".join(f"{p.name} is {'sitting' if p.seated else 'standing'} {direction_words(p.bearing_deg)}."
+                                  for p in named))
+        others = len(people) - len(named)
+        if others:
+            parts.append(f"I can see {others} more {'person' if others == 1 else 'people'} here.")
+    else:
+        parts.append("I do not see anyone sitting here yet.")
+    if seat is not None:
+        label = {"couch": "sofa"}.get(seat.kind, seat.kind)
+        parts.append(f"{guest_name}, the {label} {direction_words(seat.bearing_deg)} is free. Please take a seat there.")
+    else:
+        parts.append(f"{guest_name}, I could not find a free seat. Please feel free to sit wherever you like.")
+    return " ".join(parts)
+
+
+def person_seated_at(bearing_deg: float, poses_bearings: Sequence[float], postures: Sequence[str],
+                     tol_deg: float = 15.0) -> bool:
+    """Hay una persona SENTADA cerca del rumbo del asiento."""
+    return any(abs(b - bearing_deg) <= tol_deg and str(p).upper().startswith("SENTAD")
+               for b, p in zip(poses_bearings, postures))
+
+
+def face_tracking_step(face_cx: float, face_cy: float, img_w: int, img_h: int, fx: float, fy: float,
+                       gain: float = 0.6, deadband_deg: float = 2.0, max_step_deg: float = 8.0):
+    """Correccion (dpan, dtilt) en grados para llevar la cara al centro de la imagen.
+
+    dpan > 0 gira a la izquierda (cara a la izquierda del centro); dtilt > 0 sube.
+    """
+    ex = -math.degrees(math.atan2(face_cx - img_w / 2.0, fx))
+    ey = -math.degrees(math.atan2(face_cy - img_h / 2.0, fy))
+    def step(e):
+        if abs(e) < deadband_deg:
+            return 0.0
+        return max(-max_step_deg, min(max_step_deg, gain * e))
+    return step(ex), step(ey)
