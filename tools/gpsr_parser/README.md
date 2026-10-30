@@ -187,3 +187,13 @@ flowchart TD
     E --> H["pick / place -> MoveIt & Piper Arm Action Server"]
     E --> I["follow / guide -> Tracker de personas"]
 ```
+
+## Revisión del coordinador (Claude Code, 2026-10-30)
+
+- La métrica "primera acción válida 100 %" solo verifica que la acción pertenezca al vocabulario cerrado; **no mide corrección del plan**.
+- Pruebas manuales con fallas (HOME-15b):
+  - `go to the bedroom, find Angel and follow them` → solo `follow(them)`: se pierden `go_to(bedroom)` y `find_person(Angel)`.
+  - `could you please fetch the apple that is on the dining table and give it to Robin in the office` → falta `go_to(dining table)`, `find_object(apple)`, `pick(apple)`.
+  - `salute the person raising their left arm ...` → no genera la acción de saludo (`say`).
+- Correctos en la muestra: `bring me a coke from the kitchen`, `tell me how many people in the living room are wearing red shirts`.
+- Siguiente paso: dataset con planes esperados (del CommandGenerator, que conoce la estructura) y métrica de plan exacto.

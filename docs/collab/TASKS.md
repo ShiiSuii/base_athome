@@ -94,3 +94,5 @@ Jetson ENCENDIDA y conectada por Ethernet; AgileX Piper apagado; cámara de muñ
 - Refactor no altera interfaces públicas (topics/services/actions/frames y unidades) sin plan/aprobación.
 - Documentación de diseño, ejecución y rollback actualizada por integrador.
 - No cambios en navegación. No acceso Google. No ROS1. No pagos. No pushes no autorizados.
+| HOME-15a | run_8db8fe9ab48b | Antigravity | ctx_a61d1dad86ff | 2026-10-30 | INTEGRATED | merge 84b3c7c | parser GPSR offline, 34 tests; métrica de primera acción débil |
+| HOME-15b | — | por asignar | — | 2026-10-30 | READY_OFFLINE | — | corregir pasos perdidos en comandos compuestos; dataset con planes esperados y métrica de plan exacto |
