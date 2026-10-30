@@ -351,6 +351,8 @@ class HriReceptionistChallengeNode(Node):
         self.pub_arm_gripper = self.create_publisher(Float32, "/arm/gripper_cmd", 5)
         self.pub_joint_states = self.create_publisher(JointState, "/joint_states", 10)
         self.pub_voice_mute = self.create_publisher(Bool, "/voice/mute", 10)
+        self._mute_lock = threading.Lock()
+        self._mute_refs = 0
         self.pub_voice_prompt = self.create_publisher(String, "/voice/initial_prompt", 10)
 
         # Cliente para activar microfono /voice/listen_trigger
@@ -865,11 +867,12 @@ class HriReceptionistChallengeNode(Node):
         if not text:
             return
 
-        # 1. Silenciar microfono en la Jetson para evitar auto-escucha (anti-echo)
+        # 1. Silenciar microfono en la Jetson para evitar auto-escucha (anti-echo).
+        # Contador: con frases encoladas, el unmute llega recien al terminar la ultima.
+        with self._mute_lock:
+            self._mute_refs += 1
         if hasattr(self, "pub_voice_mute"):
-            mute_on = Bool()
-            mute_on.data = True
-            self.pub_voice_mute.publish(mute_on)
+            self.pub_voice_mute.publish(Bool(data=True))
 
         self.last_spoken_text = text
         self.current_banner_text = text
@@ -886,12 +889,15 @@ class HriReceptionistChallengeNode(Node):
         done_event = threading.Event()
 
         def _on_done():
+            if done_event.is_set():
+                return
             done_event.set()
-            if rclpy.ok() and hasattr(self, "pub_voice_mute"):
+            with self._mute_lock:
+                self._mute_refs = max(0, self._mute_refs - 1)
+                last = self._mute_refs == 0
+            if last and rclpy.ok() and hasattr(self, "pub_voice_mute"):
                 try:
-                    mute_off = Bool()
-                    mute_off.data = False
-                    self.pub_voice_mute.publish(mute_off)
+                    self.pub_voice_mute.publish(Bool(data=False))
                 except Exception:
                     pass
 
@@ -921,12 +927,20 @@ class HriReceptionistChallengeNode(Node):
         """Solicita al servicio de Whisper en la Jetson comenzar a escuchar."""
         if not rclpy.ok():
             return
+        # Nunca escuchar con el micro silenciado: re-enviar unmute (por si se perdio uno)
+        if self._mute_refs == 0:
+            self.pub_voice_mute.publish(Bool(data=False))
         try:
+            if not self.cli_mic_trigger.service_is_ready():
+                self.cli_mic_trigger.wait_for_service(timeout_sec=0.5)
             if self.cli_mic_trigger.service_is_ready():
-                req = Trigger.Request()
-                self.cli_mic_trigger.call_async(req)
-        except Exception:
-            pass
+                self.cli_mic_trigger.call_async(Trigger.Request())
+            else:
+                # Sin servicio igual se escucha: whisper_node detecta la voz por VAD
+                self.get_logger().warn("/voice/listen_trigger no disponible: escucha solo por deteccion de voz",
+                                       throttle_duration_sec=10.0)
+        except Exception as e:
+            self.get_logger().warn(f"Error disparando escucha: {e}", throttle_duration_sec=10.0)
 
     def _amcl_pose_cb(self, msg: PoseWithCovarianceStamped):
         q = msg.pose.pose.orientation
@@ -1282,7 +1296,7 @@ class HriReceptionistChallengeNode(Node):
             greeting = f"Hello! Welcome to our home. I am Robot. Please tell me your name, and your favorite drink."
             self.say(greeting, emotion="speaking", blocking=True)
             # Tono de turn-taking acustico para ceder el turno de habla al humano
-            self.speaker.play_beep(blocking=False)
+            self.speaker.play_beep(blocking=True)  # antes de abrir el micro: el beep no debe grabarse
             self.set_robot_emotion("listening")
             self.trigger_mic_listening()
             self.voice_text = None
@@ -1325,7 +1339,7 @@ class HriReceptionistChallengeNode(Node):
                     self.retry_count += 1
                     prompt_clarify = "I did not catch that. Please state clearly: My name is, and your drink."
                     self.say(prompt_clarify, emotion="speaking", blocking=True)
-                    self.speaker.play_beep(blocking=False)
+                    self.speaker.play_beep(blocking=True)  # antes de abrir el micro: el beep no debe grabarse
                     self.set_robot_emotion("listening")
                     self.trigger_mic_listening()
                     self.state_start_time = now
@@ -1342,7 +1356,7 @@ class HriReceptionistChallengeNode(Node):
                 else:
                     prompt_wait = "Please tell me your name and favorite drink."
                 self.say(prompt_wait, emotion="speaking", blocking=True)
-                self.speaker.play_beep(blocking=False)
+                self.speaker.play_beep(blocking=True)  # antes de abrir el micro: el beep no debe grabarse
                 self.set_robot_emotion("listening")
                 self.trigger_mic_listening()
                 self.state_start_time = now
@@ -1355,7 +1369,7 @@ class HriReceptionistChallengeNode(Node):
                 prompt_name = "I got your drink, but what is your name?"
                 self.say(prompt_name, emotion="speaking", blocking=True)
 
-            self.speaker.play_beep(blocking=False)
+            self.speaker.play_beep(blocking=True)  # antes de abrir el micro: el beep no debe grabarse
             self.set_robot_emotion("listening")
             self.trigger_mic_listening()
             self.voice_text = None

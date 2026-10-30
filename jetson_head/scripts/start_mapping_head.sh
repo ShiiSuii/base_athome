@@ -37,8 +37,11 @@ if [ "$LINK_OK" != "1" ]; then
     export CYCLONEDDS_URI='<CycloneDDS><Domain id="any"><General><Interfaces><NetworkInterface address="127.0.0.1"/></Interfaces><AllowMulticast>false</AllowMulticast></General><Discovery><ParticipantIndex>auto</ParticipantIndex><Peers><Peer address="127.0.0.1"/></Peers></Discovery></Domain></CycloneDDS>'
 fi
 
-# Calibracion optima de ganancia para microfono RØDE VideoMic GO II (+18dB)
-amixer -c 0 sset 'Mic' 18 2>/dev/null || true
+# Microfono RØDE VideoMic GO II siempre a maxima ganancia. El indice de tarjeta cambia
+# entre arranques (con JetPack 7 es la 2), asi que se busca por nombre. whisper_node
+# vuelve a fijarla cada vez que (re)abre el stream.
+RODE_CARD=$(awk '/RØDE|RODE|VideoMic/ {print $1; exit}' /proc/asound/cards)
+[ -n "$RODE_CARD" ] && amixer -c "$RODE_CARD" sset 'Mic' 100% cap >/dev/null 2>&1 || true
 
 # Asignacion de computo (docs/ASIGNACION_COMPUTO.md): la Jetson corre lo que esta
 # conectado a ella (Piper CAN, pan-tilt U2D2, DaBai, RØDE) y la inferencia con GPU.

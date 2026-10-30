@@ -17,6 +17,7 @@ Topicos / servicios:
 """
 import re
 import time
+import subprocess
 import collections
 import threading
 import numpy as np
@@ -61,6 +62,9 @@ class WhisperASRNode(Node):
         self.declare_parameter('min_utterance_sec', 0.5)
         self.declare_parameter('trigger_wait_sec', 7.0)
         self.declare_parameter('unmute_guard_sec', 0.45)
+        self.declare_parameter('max_mute_sec', 25.0)      # failsafe: ninguna frase del robot dura tanto
+        self.declare_parameter('max_ambient_rms', 0.04)
+        self.declare_parameter('mic_gain_percent', 100)    # siempre a maxima ganancia
         self.declare_parameter('beam_size', 3)
         self.declare_parameter('no_speech_threshold', 0.6)
         self.declare_parameter('min_avg_logprob', -1.1)
@@ -77,6 +81,10 @@ class WhisperASRNode(Node):
         self.min_utterance_sec = gp('min_utterance_sec').get_parameter_value().double_value
         self.trigger_wait_sec = gp('trigger_wait_sec').get_parameter_value().double_value
         self.unmute_guard_sec = gp('unmute_guard_sec').get_parameter_value().double_value
+        self.max_mute_sec = gp('max_mute_sec').get_parameter_value().double_value
+        self.max_ambient_rms = gp('max_ambient_rms').get_parameter_value().double_value
+        self.mic_gain_percent = gp('mic_gain_percent').get_parameter_value().integer_value
+        self.mute_since = 0.0
         self.beam_size = gp('beam_size').get_parameter_value().integer_value
         self.no_speech_threshold = gp('no_speech_threshold').get_parameter_value().double_value
         self.min_avg_logprob = gp('min_avg_logprob').get_parameter_value().double_value
@@ -143,6 +151,8 @@ class WhisperASRNode(Node):
     def mute_callback(self, msg: Bool):
         was_muted = self.muted
         self.muted = bool(msg.data)
+        if self.muted and not was_muted:
+            self.mute_since = time.time()
         now = time.time()
         if self.muted:
             self.last_mute_active = now
@@ -165,6 +175,21 @@ class WhisperASRNode(Node):
     # ------------------------------------------------------------------
     # Audio
     # ------------------------------------------------------------------
+    def set_max_gain(self):
+        """Pone la captura del RØDE al maximo con amixer (el indice de tarjeta cambia entre arranques)."""
+        try:
+            with open('/proc/asound/cards', encoding='utf-8', errors='ignore') as f:
+                cards = f.read()
+            m = re.search(r'^\s*(\d+)\s+\[[^\]]*\]:.*(?:RØDE|RODE|VideoMic)', cards, re.MULTILINE | re.IGNORECASE)
+            if not m:
+                return
+            card = m.group(1)
+            subprocess.run(['amixer', '-c', card, 'sset', 'Mic', f'{self.mic_gain_percent}%', 'cap'],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3)
+            self.get_logger().info(f'Ganancia del microfono (tarjeta {card}) en {self.mic_gain_percent}%')
+        except Exception as e:
+            self.get_logger().warn(f'No se pudo fijar la ganancia del microfono: {e}')
+
     def find_microphone_device(self):
         try:
             try:
@@ -204,8 +229,12 @@ class WhisperASRNode(Node):
         trigger_start_time = None
 
         audio_queue = collections.deque(maxlen=400)
+        stats = {'last_chunk': time.time(), 'overflows': 0}
 
         def callback(indata, frames, time_info, status):
+            stats['last_chunk'] = time.time()
+            if status and status.input_overflow:
+                stats['overflows'] += 1
             audio_queue.append(indata.copy())
 
         def reset_state():
@@ -225,7 +254,9 @@ class WhisperASRNode(Node):
                 time.sleep(2.0)
                 continue
             try:
+                self.set_max_gain()  # tambien tras una reconexion USB (la ganancia vuelve al default)
                 self.get_logger().info(f'Opening audio stream on device {mic_device} @ {self.capture_rate}Hz...')
+                stats['last_chunk'] = time.time()
                 with sd.InputStream(
                     device=mic_device,
                     samplerate=self.capture_rate,
@@ -239,8 +270,17 @@ class WhisperASRNode(Node):
 
                     while rclpy.ok() and self.is_running:
                         if not audio_queue:
+                            # Watchdog: si el driver deja de entregar audio, reabrir el stream
+                            if time.time() - stats['last_chunk'] > 2.0:
+                                self.get_logger().warn('Sin audio del microfono por >2 s: reabriendo el stream...')
+                                reset_state()
+                                break
                             time.sleep(0.005)
                             continue
+                        if stats['overflows']:
+                            self.get_logger().warn(f"Overflow de captura x{stats['overflows']} (USB saturado?)",
+                                                   throttle_duration_sec=10.0)
+                            stats['overflows'] = 0
 
                         chunk_48k = audio_queue.popleft().flatten()
                         chunk = self.to_16k(chunk_48k)
@@ -253,6 +293,10 @@ class WhisperASRNode(Node):
                         now = time.time()
 
                         # --- Anti-eco: el robot esta hablando ---
+                        if self.muted and now - self.mute_since > self.max_mute_sec:
+                            self.get_logger().warn(f'Mute activo hace >{self.max_mute_sec:.0f}s: se asume unmute perdido, vuelvo a escuchar.')
+                            self.muted = False
+                            self.guard_until = now + self.unmute_guard_sec
                         if self.muted:
                             self.last_mute_active = now
                         if self.muted or now < self.guard_until:
@@ -265,7 +309,8 @@ class WhisperASRNode(Node):
                         is_vad_speech = self.vad.is_speech(pcm_bytes, self.target_rate)
 
                         if not triggered:
-                            self.ambient_rms = 0.96 * self.ambient_rms + 0.04 * rms
+                            # Techo al ruido ambiente: tras un rato ruidoso el umbral no debe quedar inalcanzable
+                            self.ambient_rms = min(0.96 * self.ambient_rms + 0.04 * rms, self.max_ambient_rms)
                             speech_threshold = max(self.energy_threshold, self.ambient_rms * 1.30 + 0.012)
                         else:
                             speech_threshold = max(self.energy_threshold, self.ambient_rms * 1.15 + 0.008)

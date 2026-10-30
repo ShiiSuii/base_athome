@@ -59,7 +59,7 @@ if modinfo gs_usb >/dev/null 2>&1; then echo "gs_usb disponible en el kernel $(u
 run "echo gs_usb | sudo tee /etc/modules-load.d/gs_usb.conf >/dev/null"
 # Igual que la Jetson actual. Levanta can* a 1 Mbit/s al enchufar el adaptador: el
 # bus queda listo pero el Piper no se mueve sin /arm/set_enable con realimentacion.
-run "echo 'ACTION==\"add\", SUBSYSTEM==\"net\", KERNEL==\"can*\", RUN+=\"/sbin/ip link set %k type can bitrate 1000000\", RUN+=\"/sbin/ip link set %k txqueuelen 1000\", RUN+=\"/sbin/ip link set %k up\"' | sudo tee /etc/udev/rules.d/98-can-piper.rules >/dev/null"
+run "echo 'ACTION==\"add\", SUBSYSTEM==\"net\", KERNEL==\"can*\", DRIVERS==\"gs_usb\", RUN+=\"/sbin/ip link set %k type can bitrate 1000000\", RUN+=\"/sbin/ip link set %k txqueuelen 1000\", RUN+=\"/sbin/ip link set %k up\"' | sudo tee /etc/udev/rules.d/98-can-piper.rules >/dev/null"
 run "echo 'SUBSYSTEM==\"tty\", ATTRS{idVendor}==\"0403\", ATTRS{idProduct}==\"6014\", SYMLINK+=\"ttyU2D2\", MODE=\"0666\", ATTR{device/latency_timer}=\"1\"' | sudo tee /etc/udev/rules.d/99-dynamixel-u2d2.rules >/dev/null"
 run "sudo usermod -aG dialout,audio,video,plugdev $USER"
 run "sudo udevadm control --reload-rules"

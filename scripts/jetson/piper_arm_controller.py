@@ -8,6 +8,7 @@
 # ==============================================================================
 
 import json
+import os
 import math
 import threading
 import time
@@ -41,13 +42,28 @@ GRIPPER_MIN_MM = 0.0
 DEFAULT_HOME_DEG = [86.28, 173.91, -164.0, 66.98, 0.69, -146.41]
 DEFAULT_READY_DEG = [30.96, 182.68, -98.68, 37.30, -75.12, -95.86]
 
+def find_gs_usb_interface():
+    """Nombre de la interfaz SocketCAN cuyo driver es gs_usb (adaptador USB del Piper)."""
+    base = '/sys/class/net'
+    try:
+        for iface in sorted(os.listdir(base)):
+            drv = os.path.join(base, iface, 'device', 'driver')
+            if iface.startswith('can') and os.path.islink(drv) and os.path.basename(os.readlink(drv)) == 'gs_usb':
+                return iface
+    except OSError:
+        pass
+    return None
+
+
 class PiperArmController(Node):
     """Nodo ROS 2 para control continuo y cinematica del brazo Piper."""
 
     def __init__(self):
         super().__init__('piper_arm_controller')
 
-        self.declare_parameter('can_port', 'can0')
+        # 'auto': la interfaz del adaptador USB gs_usb. Con JetPack 7 el CAN integrado (mttcan,
+        # sin transceptor) aparece como can0 y el adaptador del Piper como can1.
+        self.declare_parameter('can_port', 'auto')
         self.declare_parameter('control_rate_hz', 50.0)
         # Seguro por defecto: no habilitar motores al arrancar. Habilitar con
         # /arm/set_enable o /arm/enable, o lanzar con -p auto_enable:=true.
@@ -57,6 +73,8 @@ class PiperArmController(Node):
         self.declare_parameter('feedback_timeout_s', 0.5)
 
         self.can_port = self.get_parameter('can_port').value
+        if self.can_port == 'auto':
+            self.can_port = find_gs_usb_interface() or 'can0'
         self.rate_hz = float(self.get_parameter('control_rate_hz').value)
         self.auto_enable = bool(self.get_parameter('auto_enable').value)
         self.feedback_timeout_s = float(self.get_parameter('feedback_timeout_s').value)
@@ -72,6 +90,8 @@ class PiperArmController(Node):
         # Publicadores ROS 2
         # /joint_states para robot_state_publisher y RViz2
         self.pub_joint_states = self.create_publisher(JointState, '/joint_states', 10)
+        # Solo el brazo, medido: fuente para joint_state_publisher (source_list) y consumidores
+        self.pub_arm_joint_states = self.create_publisher(JointState, '/arm/joint_states', 10)
         self.pub_end_pose = self.create_publisher(PoseStamped, '/arm/current_pose', 10)
         self.pub_status = self.create_publisher(String, '/arm/status', 10)
 
@@ -211,6 +231,8 @@ class PiperArmController(Node):
         js.velocity = [0.0] * 8
         js.effort = [0.0] * 8
         self.pub_joint_states.publish(js)
+        if self.feedback_ok():  # no publicar ceros como si fueran medidas (S-11)
+            self.pub_arm_joint_states.publish(js)
 
         # 2. /arm/current_pose
         ps = PoseStamped()

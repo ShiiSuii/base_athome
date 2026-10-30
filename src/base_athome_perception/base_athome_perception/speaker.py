@@ -94,9 +94,13 @@ class RoboCupSpeaker:
         """Detiene inmediatamente cualquier locucion en curso y limpia la cola."""
         while not self._queue.empty():
             try:
-                self._queue.get_nowait()
+                _, done_cb = self._queue.get_nowait()
             except queue.Empty:
                 break
+            try:
+                done_cb()  # p.ej. des-silenciar el microfono
+            except Exception:
+                pass
 
         if self._current_process and self._current_process.poll() is None:
             try:

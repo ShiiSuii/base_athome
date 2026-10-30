@@ -49,6 +49,7 @@ alias camara_muneca='_ros && ros2 run rqt_image_view rqt_image_view /arm_camera/
 
 ayuda_robot() {
     cat <<'EOF'
+Workspace:     ws | devel | sws  (= source install/setup.bash)
 Herramientas:  urdf_editor | gpsr "<comando>" | puerta | compilar | editor_mapa
 Red/Jetson:    jetson (ssh) | red_jetson | deploy_jetson[_dry] | jetson_stats
 Cabeza:        head_start | head_stop | head_restart | head_status | head_logs
@@ -62,3 +63,8 @@ alias ayuda='ayuda_robot'
 # --- Receptionist / memoria de personas ---
 alias limpiar_memoria='_ros && ros2 service call /hri/clear_memory std_srvs/srv/Trigger'
 alias memoria_personas='python3 -c "import json,os;d=json.load(open(os.path.expanduser(\"~/.local/share/base_athome/faces_database/profiles.json\")));[print(k,v[\"name\"],\"persistente\" if v[\"attributes\"].get(\"persistent\") else v[\"attributes\"].get(\"session_id\"),v[\"samples_count\"]) for k,v in d.items()]"'
+
+# --- Cargar el workspace (equivalente ROS 2 de "source devel/setup.bash" de ROS 1) ---
+alias ws='source /opt/ros/jazzy/setup.bash && source $WS_ATHOME/install/setup.bash && echo "workspace cargado: $WS_ATHOME/install"'
+alias devel='ws'
+alias sws='ws'
