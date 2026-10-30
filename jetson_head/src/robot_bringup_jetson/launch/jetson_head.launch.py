@@ -5,6 +5,7 @@ from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 from ament_index_python.packages import get_package_share_directory
 
 
@@ -19,6 +20,12 @@ def generate_launch_description():
         'enable_pan_tilt',
         default_value='true',
         description='Launch ROBOTIS Pan-Tilt controller node'
+    )
+
+    pan_tilt_auto_torque_arg = DeclareLaunchArgument(
+        'pan_tilt_auto_torque',
+        default_value='false',
+        description='Habilitar torque del pan-tilt al detectar los servos (si no, usar /pan_tilt/set_torque)'
     )
 
     enable_audio_arg = DeclareLaunchArgument(
@@ -61,6 +68,7 @@ def generate_launch_description():
             'protocol_version': 2.0,
             'pan_id': 1,
             'tilt_id': 2,
+            'auto_torque': ParameterValue(LaunchConfiguration('pan_tilt_auto_torque'), value_type=bool),
         }],
         condition=IfCondition(LaunchConfiguration('enable_pan_tilt'))
     )
@@ -72,7 +80,7 @@ def generate_launch_description():
         name='whisper_asr_node',
         output='screen',
         parameters=[{
-            'model_size': 'base.en',
+            'model_size': 'tiny',
             'language': LaunchConfiguration('language'),
             'energy_threshold': 0.02,
             'silence_duration_sec': 1.0,
@@ -85,6 +93,7 @@ def generate_launch_description():
     return LaunchDescription([
         enable_camera_arg,
         enable_pan_tilt_arg,
+        pan_tilt_auto_torque_arg,
         enable_audio_arg,
         language_arg,
         realsense_launch,

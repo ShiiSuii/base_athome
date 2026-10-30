@@ -20,6 +20,14 @@ for i in {1..30}; do
     sleep 1
 done
 
+# Sin enlace Ethernet, el cyclonedds.xml (ligado a enP8p1s0) impide crear
+# cualquier nodo. Caer a DDS solo-localhost: los nodos arrancan pero no son
+# alcanzables (ni comandables) desde la WiFi u otros hosts.
+if [ "$(cat /sys/class/net/enP8p1s0/carrier 2>/dev/null)" != "1" ]; then
+    echo "[Jetson Bringup] AVISO: enP8p1s0 sin enlace. DDS en modo solo-localhost."
+    export CYCLONEDDS_URI='<CycloneDDS><Domain id="any"><General><Interfaces><NetworkInterface address="127.0.0.1"/></Interfaces><AllowMulticast>false</AllowMulticast></General><Discovery><ParticipantIndex>auto</ParticipantIndex><Peers><Peer address="127.0.0.1"/></Peers></Discovery></Domain></CycloneDDS>'
+fi
+
 # Calibracion optima de ganancia para microfono RØDE VideoMic GO II (+18dB)
 amixer -c 0 sset 'Mic' 18 2>/dev/null || true
 
@@ -28,5 +36,6 @@ echo '[Jetson Bringup] Iniciando: RealSense D435 + Pan-Tilt + Whisper Audio + Pi
 # Iniciar controlador CAN del brazo Piper y camara de muneca Orbbec DaBai
 pgrep -f piper_arm_controller.py >/dev/null || nohup python3 /home/ubuntu/piper_arm_controller.py > /tmp/piper_arm_controller.log 2>&1 < /dev/null &
 pgrep -f stream_orbbec.py >/dev/null || nohup python3 /home/ubuntu/stream_orbbec.py > /tmp/stream_orbbec.log 2>&1 < /dev/null &
+pkill -f stream_zed.py 2>/dev/null || true
 
-exec ros2 launch robot_bringup_jetson jetson_head.launch.py enable_audio:=true language:=auto
+exec ros2 launch robot_bringup_jetson jetson_head.launch.py enable_camera:=false enable_audio:=true language:=auto

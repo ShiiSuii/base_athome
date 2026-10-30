@@ -7,6 +7,7 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from geometry_msgs.msg import Vector3
+from std_srvs.srv import SetBool
 
 from dynamixel_sdk import PortHandler, PacketHandler, COMM_SUCCESS
 
@@ -46,6 +47,9 @@ class PanTiltNode(Node):
         self.declare_parameter('tilt_center_tick', 2048)
         self.declare_parameter('ticks_per_rad', 651.8986)
         self.declare_parameter('publish_rate_hz', 20.0)
+        # Seguro por defecto: no habilitar torque (ni escribir EEPROM) al detectar
+        # los servos. Habilitar con /pan_tilt/set_torque o -p auto_torque:=true.
+        self.declare_parameter('auto_torque', False)
 
         self.device_name = self.get_parameter('device_name').value
         self.baudrate = self.get_parameter('baudrate').value
@@ -59,6 +63,8 @@ class PanTiltNode(Node):
         self.pan_center = self.get_parameter('pan_center_tick').value
         self.tilt_center = self.get_parameter('tilt_center_tick').value
         self.ticks_per_rad = self.get_parameter('ticks_per_rad').value
+        self.torque_requested = bool(self.get_parameter('auto_torque').value)
+        self.torque_enabled = False
 
         # Load Calibration File if present
         calib_file = os.path.expanduser('~/athome_ws/src/pan_tilt_controller/config/pan_tilt_params.yaml')
@@ -98,6 +104,7 @@ class PanTiltNode(Node):
         self.pub_legacy_joint_states = self.create_publisher(JointState, '/pan_tilt/joint_states', 10)
         self.sub_cmd = self.create_subscription(JointState, '/pan_tilt/command', self.cmd_callback, 10)
         self.sub_deg = self.create_subscription(Vector3, '/pan_tilt/target_degrees', self.deg_callback, 10)
+        self.srv_torque = self.create_service(SetBool, '/pan_tilt/set_torque', self.srv_torque_cb)
 
         self.init_hardware()
 
@@ -149,7 +156,8 @@ class PanTiltNode(Node):
             return
         try:
             # Check for HW Errors on Protocol 2.0 servos and auto-recover
-            if self.protocol_version >= 2.0:
+            # (solo si se pidio torque: el reboot es una escritura al servo)
+            if self.protocol_version >= 2.0 and self.torque_requested:
                 for sid in [self.pan_id, self.tilt_id]:
                     hw, h_res, _ = self.packet_handler.read1ByteTxRx(self.port_handler, sid, ADDR_HW_ERROR_P2)
                     if h_res == COMM_SUCCESS and hw != 0:
@@ -162,8 +170,11 @@ class PanTiltNode(Node):
 
             if p_res == COMM_SUCCESS and t_res == COMM_SUCCESS:
                 self.get_logger().info(f'Servos detected: Pan (ID {self.pan_id}) Model: {p_model}, Tilt (ID {self.tilt_id}) Model: {t_model}')
-                self.enable_torque()
                 self.is_connected = True
+                if self.torque_requested:
+                    self.enable_torque()
+                else:
+                    self.get_logger().info('Torque deshabilitado (auto_torque=false). Usar /pan_tilt/set_torque.')
             else:
                 self.get_logger().warn('Pan-Tilt servos not responding. Ensure 12V power is turned on.', throttle_duration_sec=5.0)
                 self.is_connected = False
@@ -202,8 +213,33 @@ class PanTiltNode(Node):
                 self.packet_handler.write2ByteTxRx(self.port_handler, self.tilt_id, ADDR_MOVING_SPEED_P1, 150)
                 self.packet_handler.write1ByteTxRx(self.port_handler, self.pan_id, ADDR_TORQUE_ENABLE_P1, 1)
                 self.packet_handler.write1ByteTxRx(self.port_handler, self.tilt_id, ADDR_TORQUE_ENABLE_P1, 1)
+            self.torque_enabled = True
         except Exception as e:
             self.get_logger().error(f'Error enabling torque: {e}')
+
+    def disable_torque(self):
+        addr = ADDR_TORQUE_ENABLE_P2 if self.protocol_version >= 2.0 else ADDR_TORQUE_ENABLE_P1
+        for sid in [self.pan_id, self.tilt_id]:
+            self.packet_handler.write1ByteTxRx(self.port_handler, sid, addr, 0)
+        self.torque_enabled = False
+
+    def srv_torque_cb(self, req, resp):
+        self.torque_requested = bool(req.data)
+        if not self.is_connected or self.port_handler is None:
+            resp.success = not req.data
+            resp.message = 'Servos no conectados; se aplicara al reconectar' if req.data else 'Torque deshabilitado'
+            return resp
+        try:
+            if req.data:
+                self.enable_torque()
+            else:
+                self.disable_torque()
+            resp.success = self.torque_enabled == bool(req.data)
+            resp.message = 'Torque habilitado' if self.torque_enabled else 'Torque deshabilitado'
+        except Exception as e:
+            resp.success = False
+            resp.message = f'Error: {e}'
+        return resp
 
     def deg_callback(self, msg: Vector3):
         pan_rad = math.radians(msg.x)
@@ -224,7 +260,7 @@ class PanTiltNode(Node):
         self.target_pan_rad = max(self.pan_min_rad, min(self.pan_max_rad, pan_rad))
         self.target_tilt_rad = max(self.tilt_min_rad, min(self.tilt_max_rad, tilt_rad))
 
-        if not self.is_connected or self.port_handler is None:
+        if not self.is_connected or self.port_handler is None or not self.torque_enabled:
             return
 
         pan_tick = int(self.pan_center + self.target_pan_rad * self.ticks_per_rad)
@@ -264,9 +300,11 @@ class PanTiltNode(Node):
                     self.current_tilt_rad = (t_pos - self.tilt_center) / self.ticks_per_rad
                 else:
                     self.is_connected = False
+                    self.torque_enabled = False
                     self.get_logger().warn('Lost communication with servos. Retrying...', throttle_duration_sec=5.0)
             except Exception as e:
                 self.is_connected = False
+                self.torque_enabled = False
                 self.get_logger().warn(f'Exception reading servos: {e}', throttle_duration_sec=5.0)
 
         # Publish joint state continuously

@@ -354,7 +354,8 @@ class FaceRecognizer:
         best_score = -1.0
 
         for profile in self.profiles.values():
-            if not profile.features:
+            # Perfiles con embeddings sinteticos (sin captura real) no participan del matching
+            if not profile.features or profile.attributes.get("synthetic"):
                 continue
 
             # 1. Similitudes con todas las muestras biometricas de la persona
@@ -451,8 +452,17 @@ class FaceRecognizer:
             existing_profile.last_seen = now
             existing_profile.last_seen_date = now_str
             existing_profile.sighting_count += 1
+            incoming_synthetic = bool((attributes or {}).get("synthetic"))
+            was_synthetic = bool(existing_profile.attributes.get("synthetic"))
+            if was_synthetic and not incoming_synthetic:
+                # Llegan muestras reales: descartar los embeddings sinteticos previos
+                existing_profile.features = []
+            elif incoming_synthetic and not was_synthetic:
+                # Nunca mezclar embeddings sinteticos en un perfil real
+                features = []
             if attributes:
                 existing_profile.attributes.update(attributes)
+            existing_profile.attributes["synthetic"] = was_synthetic and incoming_synthetic
 
             # Agregar hasta un maximo de 15 muestras biometricas
             for feat in features:

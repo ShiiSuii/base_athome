@@ -374,6 +374,7 @@ class HriReceptionistChallengeNode(Node):
 
         # Grabación biométrica
         self.recording_samples: List[np.ndarray] = []
+        self.samples_synthetic = False
         self.best_thumbnail: Optional[np.ndarray] = None
         self.best_sharpness: float = 0.0
         self.target_sample_count = 10
@@ -522,7 +523,7 @@ class HriReceptionistChallengeNode(Node):
             self.recognizer.enroll_person(
                 name="Charlie",
                 features=[dummy_feat],
-                attributes={"role": "host", "favorite_drink": "Water", "seat": "sofa_left"},
+                attributes={"role": "host", "favorite_drink": "Water", "seat": "sofa_left", "synthetic": True},
             )
             self.get_logger().info("Perfil del anfitrion 'Charlie' registrado en la memoria.")
 
@@ -687,6 +688,7 @@ class HriReceptionistChallengeNode(Node):
                     dummy_f = np.random.randn(1, 128).astype(np.float32)
                     dummy_f /= np.linalg.norm(dummy_f)
                     self.recording_samples.append(dummy_f)
+                    self.samples_synthetic = True
                 self.state_start_time = time.time() - 10.0
         elif key in [ord("t"), ord("T")]:
             try:
@@ -1186,6 +1188,7 @@ class HriReceptionistChallengeNode(Node):
             self.set_robot_emotion("thinking")
 
             self.recording_samples = []
+            self.samples_synthetic = False
             self.best_thumbnail = None
             self.best_sharpness = 0.0
             self.last_sample_time = now
@@ -1248,6 +1251,7 @@ class HriReceptionistChallengeNode(Node):
                         "seat": seat_assigned,
                         "guest_index": self.guest_index,
                         "thumbnail_path": thumb_rel_path,
+                        "synthetic": self.samples_synthetic,
                     },
                 )
 
@@ -1293,6 +1297,7 @@ class HriReceptionistChallengeNode(Node):
                     dummy_f = np.random.randn(1, 128).astype(np.float32)
                     dummy_f /= np.linalg.norm(dummy_f)
                     self.recording_samples.append(dummy_f)
+                    self.samples_synthetic = True
 
                 pid, is_new = self.recognizer.enroll_person(
                     name=self.current_name,
@@ -1303,6 +1308,7 @@ class HriReceptionistChallengeNode(Node):
                         "favorite_drink": self.current_drink,
                         "seat": seat_assigned,
                         "guest_index": self.guest_index,
+                        "synthetic": self.samples_synthetic,
                     },
                 )
                 guest_record = {
