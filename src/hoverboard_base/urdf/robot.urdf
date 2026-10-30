@@ -363,7 +363,8 @@
     <parent link="pan_link"/>
     <child link="tilt_link"/>
     <origin rpy="0 0 0" xyz="0 0 0.05"/>
-    <axis xyz="0 1 0"/>
+    <!-- tilt + = cabeza ARRIBA (convencion del pan_tilt_node: pan + izquierda, tilt + arriba) -->
+    <axis xyz="0 -1 0"/>
     <limit effort="2.5" lower="-0.7854" upper="0.7854" velocity="3.14"/>
   </joint>
   <joint name="camera_mount_joint" type="fixed">

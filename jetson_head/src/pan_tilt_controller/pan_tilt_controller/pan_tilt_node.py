@@ -52,6 +52,10 @@ class PanTiltNode(Node):
         # Seguro por defecto: no habilitar torque (ni escribir EEPROM) al detectar
         # los servos. Habilitar con /pan_tilt/set_torque o -p auto_torque:=true.
         self.declare_parameter('auto_torque', False)
+        # Sentido de cada eje: convencion de la interfaz = pan + izquierda, tilt + arriba.
+        # Medido 2026-10-30: con el montaje actual ambos servos giraban al reves -> -1.
+        self.declare_parameter('pan_direction', -1.0)
+        self.declare_parameter('tilt_direction', -1.0)
 
         self.device_name = self.get_parameter('device_name').value
         self.baudrate = self.get_parameter('baudrate').value
@@ -90,6 +94,12 @@ class PanTiltNode(Node):
                 self.get_logger().info(f'Loaded calibration: pan_center={self.pan_center}, tilt_center={self.tilt_center}')
             except Exception as e:
                 self.get_logger().warn(f'Could not load calibration file: {e}')
+
+        # Los limites de los parametros son FISICOS (ticks del servo). Pasarlos a la convencion logica.
+        self.pan_dir = 1.0 if float(self.get_parameter('pan_direction').value) >= 0 else -1.0
+        self.tilt_dir = 1.0 if float(self.get_parameter('tilt_direction').value) >= 0 else -1.0
+        self.pan_min_rad, self.pan_max_rad = sorted((self.pan_dir * self.pan_min_rad, self.pan_dir * self.pan_max_rad))
+        self.tilt_min_rad, self.tilt_max_rad = sorted((self.tilt_dir * self.tilt_min_rad, self.tilt_dir * self.tilt_max_rad))
 
         self.port_handler = None
         self.packet_handler = PacketHandler(self.protocol_version)
@@ -271,8 +281,8 @@ class PanTiltNode(Node):
         if not self.is_connected or self.port_handler is None or not self.torque_enabled:
             return
 
-        pan_tick = int(self.pan_center + self.target_pan_rad * self.ticks_per_rad)
-        tilt_tick = int(self.tilt_center + self.target_tilt_rad * self.ticks_per_rad)
+        pan_tick = int(self.pan_center + self.pan_dir * self.target_pan_rad * self.ticks_per_rad)
+        tilt_tick = int(self.tilt_center + self.tilt_dir * self.target_tilt_rad * self.ticks_per_rad)
 
         try:
             if self.protocol_version >= 2.0:
@@ -304,8 +314,8 @@ class PanTiltNode(Node):
                 if p_res == COMM_SUCCESS and t_res == COMM_SUCCESS:
                     if p_pos > 2147483647: p_pos -= 4294967296
                     if t_pos > 2147483647: t_pos -= 4294967296
-                    self.current_pan_rad = (p_pos - self.pan_center) / self.ticks_per_rad
-                    self.current_tilt_rad = (t_pos - self.tilt_center) / self.ticks_per_rad
+                    self.current_pan_rad = self.pan_dir * (p_pos - self.pan_center) / self.ticks_per_rad
+                    self.current_tilt_rad = self.tilt_dir * (t_pos - self.tilt_center) / self.ticks_per_rad
                 else:
                     self.is_connected = False
                     self.torque_enabled = False
