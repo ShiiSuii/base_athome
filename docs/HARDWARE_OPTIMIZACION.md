@@ -15,8 +15,15 @@
   - **Recomendación:** evaluar `MAXN_SUPER` solo si la fuente de 19 V de la Jetson en el robot soporta el consumo pico (MAXN no tiene tope de potencia) y la temperatura se mantiene (hoy ~50 °C en reposo, consumo ~6 W). Cambiarlo es `sudo nvpmodel -m 2` (+ reboot); es decisión humana.
 - Reposo: RAM 739 MB, CPU ~2 %. Hay margen amplio.
 - **Optimizaciones de software:**
-  1. **TensorRT FP16/INT8** para YOLO (Ultralytics exporta `.engine`): típicamente varias veces más rápido que PyTorch en Orin (`INFERIDO`; medir). PyTorch ni siquiera está instalado en el python del sistema.
-  2. **Whisper**: hoy `model_size: tiny` multilingüe vía faster-whisper/CTranslate2 (ver `audio_asr`). En Orin, `small` o `base.en` con CUDA FP16 da mucha mejor precisión con latencia aceptable; medir RTF (real-time factor) con grabaciones de prueba antes de cambiar. Para HRI 2026.2 basta inglés → modelos `.en` son más precisos a igual tamaño.
+  1. **TensorRT FP16 para YOLO — `MEDIDO` 2026-10-30** (modo 25W, `trtexec`, entrada 640×640, batch 1, sin pre/post-proceso):
+
+     | Modelo | Jetson GPU TensorRT FP16 | NUC CPU (PyTorch, ultralytics) |
+     |---|---|---|
+     | `yolov8n` detección | **4,3 ms** (234 inf/s) | 38 ms |
+     | `yolov8n-seg` | **5,0 ms** (198 inf/s) | — |
+
+     ≈9× más rápido y libera la CPU de la NUC (Nav2/SLAM/HRI). Engines en la Jetson: `~/models/yolo/*_fp16.engine` (reconstruir con `jetson_head/scripts/build_yolo_trt.sh`; un engine solo vale para la misma versión de TensorRT/JetPack → **rehacer tras HOME-11**). Falta: nodo ROS 2 que consuma `/arm_camera/image_raw` y publique detecciones (requiere bindings python de TensorRT + CUDA: `tensorrt` 10.3 está, `pycuda`/`cuda-python` no). PyTorch no está instalado en el python del sistema.
+  2. **Whisper**: hoy `model_size: tiny` multilingüe vía faster-whisper/CTranslate2 en **CPU** (el ctranslate2 del pip no trae CUDA). Medición tiny vs base.en vs small.en en la sección del micrófono: recomendado `base.en`. Para HRI 2026.2 basta inglés → modelos `.en` son más precisos a igual tamaño.
   3. Evitar copias de imagen CPU↔GPU: usar `cv_bridge` una vez y pipelines CUDA/NVMM donde se pueda.
   4. zram ya activo (6×634 MB) + swapfile; para modelos grandes preferir no depender de swap en microSD.
 - **Almacenamiento:** arranca desde **microSD 116 GB** → lenta y propensa a corrupción por cortes de energía. **Recomendación fuerte:** en la migración a JetPack 7.2.1 instalar en un **NVMe M.2** (el devkit tiene ranura M.2 Key M) — mejora tiempos de carga de modelos y robustez; además permite conservar la microSD actual como rollback.
