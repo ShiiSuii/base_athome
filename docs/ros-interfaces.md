@@ -11,8 +11,11 @@
 | `/joy` | Joy | joy_node | `teleop_joy` | NUC |
 | `navigate_to_pose` | action NavigateToPose | Nav2 | HRI receptionist (`_check_nav2_ready`) | NUC |
 | `/waypoint_markers` | MarkerArray | `waypoint_navigator` | RViz | NUC |
-| `/joint_states` | JointState | **dos publicadores**: `pan_tilt_node` y `piper_arm_controller.py` (subconjuntos de joints) | `robot_state_publisher` | Jetson |
-| `/pan_tilt/joint_states` | JointState | `pan_tilt_node` (legado) | — | Jetson |
+| `/joint_states` | JointState | `joint_state_publisher` (agrega fuentes) o drivers hardware | `robot_state_publisher` | NUC/Jetson |
+| `/arm/joint_states` | JointState | `piper_arm_controller.py` (joints medidos del brazo `joint1..joint8` a 50 Hz con CAN) | `joint_state_publisher` | Jetson |
+| `/pan_tilt/joint_states` | JointState | `pan_tilt_node` (joints medidos `pan_joint`, `tilt_joint` a 20 Hz) | `joint_state_publisher` | Jetson |
+| `/torso/joint_states` | JointState | driver elevador / scripts HRI / manipulación (`torso_lift_joint`) | `joint_state_publisher` | NUC |
+| `/arm/joint_states_cmd` | JointState | `manipulacion_autonoma.py`, `hri_receptionist_challenge.py` (pose objetivo para visualización) | RViz (opcional) | NUC |
 | `/pan_tilt/command`, `/pan_tilt/target_degrees` | JointState, Vector3 | HRI / tracking | `pan_tilt_node` | Jetson |
 | `/arm/joint_cmd`, `/arm/gripper_cmd`, `/arm/enable` | JointState, Float32, Bool | `manipulacion_autonoma.py`, teach recorder | `piper_arm_controller.py` | Jetson |
 | `/arm/current_pose`, `/arm/status` | PoseStamped, String | `piper_arm_controller.py` | manipulación | Jetson |

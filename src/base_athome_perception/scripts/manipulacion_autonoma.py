@@ -172,7 +172,8 @@ class ManipulacionAutonomaNode(Node):
         self.pub_pan_tilt_cmd = self.create_publisher(Vector3, "/pan_tilt/target_degrees", 5)
         self.pub_enable = self.create_publisher(Bool, "/arm/enable", 5)
         self.pub_rviz_markers = self.create_publisher(MarkerArray, "/arm_camera/object_markers", 10)
-        self.pub_joint_states = self.create_publisher(JointState, "/joint_states", 10)
+        self.pub_torso_joint_states = self.create_publisher(JointState, "/torso/joint_states", 10)
+        self.pub_arm_joint_states_cmd = self.create_publisher(JointState, "/arm/joint_states_cmd", 10)
         self.timer_joint_states = self.create_timer(0.04, self._publish_joint_states)
 
         # Buffers de imágenes
@@ -262,35 +263,84 @@ class ManipulacionAutonomaNode(Node):
         """Asegura que robot_state_publisher esté activo para publicar los TFs del robot en RViz."""
         try:
             res = subprocess.run(["pgrep", "-f", "robot_state_publisher"], capture_output=True, text=True)
-            if res.returncode != 0 or not res.stdout.strip():
-                urdf_path = "/home/athome/base_athome_ws/src/hoverboard_base/urdf/robot.urdf"
-                if os.path.exists(urdf_path):
+            if res.returncode == 0 and res.stdout.strip():
+                if hasattr(self, 'get_logger'):
+                    self.get_logger().info("robot_state_publisher ya está activo; omitiendo inicio duplicado.")
+                return
+
+            urdf_path = None
+            try:
+                from ament_index_python.packages import get_package_share_directory
+                pkg_path = get_package_share_directory('hoverboard_base')
+                cand = os.path.join(pkg_path, 'urdf', 'robot.urdf')
+                if os.path.exists(cand):
+                    urdf_path = cand
+            except Exception:
+                pass
+
+            if not urdf_path:
+                candidates = [
+                    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "hoverboard_base", "urdf", "robot.urdf")),
+                    "/home/athome/base_athome_ws/src/hoverboard_base/urdf/robot.urdf",
+                ]
+                for cand in candidates:
+                    if os.path.exists(cand):
+                        urdf_path = cand
+                        break
+
+            if urdf_path and os.path.exists(urdf_path):
+                with open(urdf_path, "r", encoding="utf-8") as infp:
+                    robot_desc = infp.read()
+                if hasattr(self, 'get_logger'):
                     self.get_logger().info("Iniciando robot_state_publisher para visualizacion del URDF en RViz...")
-                    self._rsp_proc = subprocess.Popen(
-                        ["ros2", "run", "robot_state_publisher", "robot_state_publisher", urdf_path],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                    )
+                self._rsp_proc = subprocess.Popen(
+                    [
+                        "ros2", "run", "robot_state_publisher", "robot_state_publisher",
+                        "--ros-args", "-p", f"robot_description:={robot_desc}"
+                    ],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            else:
+                if hasattr(self, 'get_logger'):
+                    self.get_logger().warn(f"No se encontró archivo URDF para robot_state_publisher: {urdf_path}")
         except Exception as e:
-            self.get_logger().warn(f"No se pudo verificar/iniciar robot_state_publisher: {e}")
+            if hasattr(self, 'get_logger'):
+                self.get_logger().warn(f"No se pudo verificar/iniciar robot_state_publisher: {e}")
 
     def _publish_joint_states(self):
-        """Publica el estado actual de todas las articulaciones (torso + brazo 6-DOF + pinza) a /joint_states."""
-        js = JointState()
-        js.header.stamp = self.get_clock().now().to_msg()
-        js.name = [
-            "torso_lift_joint",
-            "joint1", "joint2", "joint3", "joint4", "joint5", "joint6",
-            "joint7", "joint8"
-        ]
-        joints = self.arm_joints_deg if (self.arm_joints_deg and len(self.arm_joints_deg) >= 6) else self.pose_pre_grasp
-        q_rad = [math.radians(float(d)) for d in joints[:6]]
-        finger_m = max(0.0, min(0.0525, (float(self.gripper_opening_mm) / 1000.0) / 2.0))
-        # torso_lift_joint en 0.0 (fin de carrera superior); dedos simétricos
-        js.position = [0.0] + q_rad + [finger_m, -finger_m]
-        js.velocity = [0.0] * 9
-        js.effort = [0.0] * 9
-        self.pub_joint_states.publish(js)
+        """Publica torso_lift_joint a /torso/joint_states y pose comandada del brazo a /arm/joint_states_cmd."""
+        try:
+            now = self.get_clock().now().to_msg()
+
+            # 1. Torso lift joint -> /torso/joint_states (un solo dueño por joint)
+            js_torso = JointState()
+            js_torso.header.stamp = now
+            js_torso.name = ["torso_lift_joint"]
+            js_torso.position = [0.0]
+            js_torso.velocity = [0.0]
+            js_torso.effort = [0.0]
+            if hasattr(self, 'pub_torso_joint_states') and self.pub_torso_joint_states:
+                self.pub_torso_joint_states.publish(js_torso)
+
+            # 2. Brazo 6-DOF + pinza -> SOLO a /arm/joint_states_cmd (pose comandada para visualización)
+            js_arm = JointState()
+            js_arm.header.stamp = now
+            js_arm.name = [
+                "joint1", "joint2", "joint3", "joint4", "joint5", "joint6",
+                "joint7", "joint8"
+            ]
+            joints = self.arm_joints_deg if (self.arm_joints_deg and len(self.arm_joints_deg) >= 6) else self.pose_pre_grasp
+            q_rad = [math.radians(float(d)) for d in joints[:6]]
+            finger_m = max(0.0, min(0.0525, (float(self.gripper_opening_mm) / 1000.0) / 2.0))
+            js_arm.position = q_rad + [finger_m, -finger_m]
+            js_arm.velocity = [0.0] * 8
+            js_arm.effort = [0.0] * 8
+            if hasattr(self, 'pub_arm_joint_states_cmd') and self.pub_arm_joint_states_cmd:
+                self.pub_arm_joint_states_cmd.publish(js_arm)
+        except Exception as e:
+            if hasattr(self, 'get_logger'):
+                self.get_logger().warn(f"Error en _publish_joint_states: {e}")
 
     def destroy_node(self):
         if hasattr(self, "_rsp_proc") and self._rsp_proc is not None:
