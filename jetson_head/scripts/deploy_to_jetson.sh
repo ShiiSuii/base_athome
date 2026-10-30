@@ -13,7 +13,7 @@ set -euo pipefail
 JETSON="${JETSON:-ubuntu@10.42.0.12}"
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 # DEPLOY_SCRIPTS permite desplegar un subconjunto (separado por espacios).
-read -r -a SCRIPTS <<< "${DEPLOY_SCRIPTS:-piper_arm_controller.py start_head.sh start_mapping_head.sh stream_orbbec.py}"
+read -r -a SCRIPTS <<< "${DEPLOY_SCRIPTS:-piper_arm_controller.py start_head.sh start_mapping_head.sh stream_orbbec.py yolo_trt.py yolo_trt_node.py build_yolo_trt.sh bootstrap_jazzy.sh jetson-head.service}"
 APPLY=false
 [ "${1:-}" = "--apply" ] && APPLY=true
 
@@ -39,6 +39,6 @@ for s in "${SCRIPTS[@]}"; do
 done
 
 if $APPLY; then
-    ssh "$JETSON" 'source /opt/ros/humble/setup.bash && cd ~/athome_ws && colcon build --symlink-install 2>&1 | tail -5'
+    ssh "$JETSON" 'source $(ls -d /opt/ros/jazzy /opt/ros/humble 2>/dev/null | head -1)/setup.bash && cd ~/athome_ws && colcon build --symlink-install 2>&1 | tail -5'
     echo "Listo. Revisar y reiniciar a mano si corresponde: sudo systemctl restart jetson-head"
 fi
