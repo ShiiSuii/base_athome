@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Base@Home URDF Editor (preview)</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <!-- Librerias vendoreadas localmente: sin CDN en tiempo de ejecucion. -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "/static/vendor/three/build/three.module.js",
+      "three/examples/jsm/": "/static/vendor/three/examples/jsm/",
+      "three/addons/": "/static/vendor/three/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <header>
+    <h1>Base@Home URDF Editor</h1>
+    <span id="status" class="status">cargando…</span>
+    <div class="actions">
+      <button id="restore" type="button">Restaurar</button>
+      <input id="label" type="text" placeholder="etiqueta (opcional)" maxlength="40" pattern="[A-Za-z0-9_-]+">
+      <button id="export" type="button">Guardar candidato</button>
+    </div>
+  </header>
+  <main>
+    <aside id="params"></aside>
+    <section id="viewer"></section>
+    <aside id="side">
+      <h2>Avisos</h2>
+      <ul id="warnings"></ul>
+      <h2>Diff properties.xacro</h2>
+      <pre id="diff">(sin cambios)</pre>
+      <h2>check_urdf</h2>
+      <pre id="check"></pre>
+    </aside>
+  </main>
+  <footer>Datos solo simulados / No conectado a motores · no publica /robot_description · 127.0.0.1</footer>
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>

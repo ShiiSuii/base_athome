@@ -1,0 +1,31 @@
+{
+  "_comment": "Whitelist explicita de propiedades editables en PREVIEW. Todo lo que no figure en 'editable' es solo lectura. Unidades SI (metros). Ver tools/urdf_editor/README.md.",
+  "schema_version": 1,
+  "editable": {
+    "chassis_length":  {"group": "Base",             "label": "Largo chasis",            "unit": "m", "min": 0.30, "max": 0.80, "step": 0.005},
+    "chassis_width":   {"group": "Base",             "label": "Ancho chasis",            "unit": "m", "min": 0.30, "max": 0.80, "step": 0.005},
+    "chassis_height":  {"group": "Base",             "label": "Alto chasis",             "unit": "m", "min": 0.02, "max": 0.20, "step": 0.005},
+    "column_height":   {"group": "Columna/Elevador", "label": "Altura columna",          "unit": "m", "min": 0.80, "max": 1.80, "step": 0.01},
+    "column_width":    {"group": "Columna/Elevador", "label": "Ancho columna",           "unit": "m", "min": 0.03, "max": 0.15, "step": 0.005},
+    "carriage_length": {"group": "Columna/Elevador", "label": "Largo carriage",          "unit": "m", "min": 0.10, "max": 0.40, "step": 0.005},
+    "carriage_width":  {"group": "Columna/Elevador", "label": "Ancho carriage",          "unit": "m", "min": 0.15, "max": 0.60, "step": 0.005},
+    "carriage_height": {"group": "Columna/Elevador", "label": "Alto carriage",           "unit": "m", "min": 0.01, "max": 0.08, "step": 0.005},
+    "prism_size_x":    {"group": "Busto",            "label": "Cubo/prisma X (fondo)",   "unit": "m", "min": 0.10, "max": 0.45, "step": 0.005},
+    "prism_size_y":    {"group": "Busto",            "label": "Cubo/prisma Y (ancho)",   "unit": "m", "min": 0.15, "max": 0.60, "step": 0.005},
+    "prism_size_z":    {"group": "Busto",            "label": "Cubo/prisma Z (alto)",    "unit": "m", "min": 0.15, "max": 0.60, "step": 0.005},
+    "head_base_z":     {"group": "Cabeza/Camaras",   "label": "Altura base pan-tilt",    "unit": "m", "min": 0.00, "max": 0.30, "step": 0.005,
+                        "warning": "Afecta TF de la RealSense/pan-tilt y la calibracion: solo candidato, requiere revision humana."}
+  },
+  "protected": {
+    "track_width":         "Trocha cinematica calibrada (odometria/Nav2).",
+    "wheel_radius":        "Radio efectivo calibrado (odometria/Nav2).",
+    "wheel_width":         "Geometria de rueda ligada a la base diferencial.",
+    "wheel_offset_x":      "Posicion de ruedas ligada a la cinematica de la base.",
+    "laser_offset_x":      "Extrinseco LiDAR usado por navegacion.",
+    "laser_offset_y":      "Extrinseco LiDAR usado por navegacion.",
+    "laser_offset_z":      "Extrinseco LiDAR usado por navegacion.",
+    "torso_lift_top_z":    "Limite fisico del elevador.",
+    "torso_switch_stroke": "Limite fisico del elevador (fines de carrera).",
+    "torso_floor_stroke":  "Limite fisico del elevador."
+  }
+}
