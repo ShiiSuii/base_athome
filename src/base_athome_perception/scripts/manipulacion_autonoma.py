@@ -465,33 +465,52 @@ class ManipulacionAutonomaNode(Node):
         except Exception as e:
             self.get_logger().error(f"Error guardando pose en YAML: {e}")
 
-    def toggle_teaching_pose(self, target_pose: str):
-        """
-        Activa/confirma el modo de enseñanza con la mano para una pose ('home', 'pre_grasp', 'post_grasp').
-        Al activar: desactiva el torque de los motores (/arm/enable -> False) para moverlo con la mano.
-        Al confirmar: lee las articulaciones actuales, las guarda en YAML y reactiva el torque.
-        """
+    # ------------------------------------------------------------------ ensenanza
+    # Modo ensenanza: el brazo queda LIBRE (sin torque) todo el tiempo que dure, para poder
+    # moverlo a mano y guardar HOME, PRE-GRASP y POST-GRASP una tras otra. Al salir se
+    # bloquea en la posicion donde quedo (el controlador sincroniza el setpoint con la medida).
+    TEACH_KEYS = {ord("1"): "home", ord("h"): "home", ord("2"): "pre_grasp", ord("p"): "pre_grasp",
+                  ord("3"): "post_grasp", ord("b"): "post_grasp"}
+
+    def enter_teach_mode(self):
+        if self.is_teaching_mode:
+            return
+        self.is_teaching_mode = True
+        self.teaching_target = None
+        self.auto_state = self.AUTO_IDLE
+        self.set_arm_torque(False)
+        self.status_message = ("BRAZO LIBRE: movelo a mano. Guardar: [1] HOME  [2] PRE-GRASP  [3] POST-GRASP. "
+                               "[T]/[ENTER] terminar y bloquear.")
+        self.say("Teach mode. The arm is free. Move it by hand and press one, two or three to save.")
+
+    def save_current_as(self, pose_name: str):
+        """Guarda la posicion MEDIDA actual como pose, sin cambiar el torque (se pueden guardar varias)."""
+        if not getattr(self, "arm_feedback_ok", True):
+            self.status_message = "NO SE GUARDO: sin datos reales del brazo (feedback CAN)."
+            return
+        self.teaching_target = pose_name
+        self.save_named_pose(pose_name, self.arm_joints_deg, self.gripper_opening_mm)
+        if self.is_teaching_mode:
+            self.status_message += "  | Sigue LIBRE: guarda otra o [T]/[ENTER] para terminar."
+
+    def exit_teach_mode(self):
         if not self.is_teaching_mode:
-            self.is_teaching_mode = True
-            self.teaching_target = target_pose
-            self.set_arm_torque(False)
-            self.status_message = f"MODO ENSENANZA [{target_pose.upper()}]: Mueva el brazo con la mano y presione [ENTER] para guardar (o [ESC] cancelar)."
-            self.say(f"Teach mode for {target_pose} activated. Move the arm and press Enter to save.")
+            return
+        self.set_arm_torque(True)
+        self.is_teaching_mode = False
+        self.teaching_target = None
+        self.status_message = "Ensenanza terminada: brazo bloqueado en su posicion actual."
+        self.say("Teach mode finished. Arm locked.")
+
+    # Compatibilidad con llamadas antiguas
+    def toggle_teaching_pose(self, target_pose: str):
+        if not self.is_teaching_mode:
+            self.enter_teach_mode()
         else:
-            save_target = self.teaching_target or target_pose
-            self.set_arm_torque(True)
-            self.is_teaching_mode = False
-            self.save_named_pose(save_target, self.arm_joints_deg, self.gripper_opening_mm)
-            self.teaching_target = None
+            self.save_current_as(target_pose)
 
     def cancel_teaching_mode(self):
-        """Cancela el modo de enseñanza reactivando el torque sin guardar."""
-        if self.is_teaching_mode:
-            self.set_arm_torque(True)
-            self.is_teaching_mode = False
-            self.teaching_target = None
-            self.status_message = "Modo ensenanza cancelado. Motores reactivados."
-            self.say("Teach mode cancelled. Arm torque restored.")
+        self.exit_teach_mode()
 
     # --------------------------------------------------------------------------
     # CALLBACKS DE SENSORES
@@ -1318,17 +1337,15 @@ class ManipulacionAutonomaNode(Node):
         print("   CALIBRAR DISTANCIA: medir con cinta del centro de la pinza a la cara del objeto,")
         print("   poner ese valor en Medido_cm y apretar [M] (2 distancias distintas = mejor).")
         print("   MOVIMIENTOS:")
-        print("   * [2] o [h]       : Ir a posicion HOME                                 ")
-        print("   * [3] o [p]       : Ir a PRE-GRASP con pinza abierta (105 mm)          ")
-        print("   * [4] o [b]       : Ir a POST-GRASP con pinza sosteniendo el objeto    ")
-        print("   * [ESPACIO] o [G] : Agarre autonomo en linea recta hacia la lata       ")
+        print("   * [1] o [h]       : Ir a HOME                                          ")
+        print("   * [2] o [p]       : Ir a PRE-GRASP (pinza abierta)                     ")
+        print("   * [3] o [b]       : Ir a POST-GRASP                                    ")
+        print("   * [ESPACIO] o [G] : Agarre autonomo                                    ")
         print("--------------------------------------------------------------------------")
-        print("   MODO ENSENANZA CON LA MANO (Desactiva torque para mover con la mano):  ")
-        print("   * [H] (Shift+H)   : Enseñar posicion HOME                              ")
-        print("   * [P] (Shift+P)   : Enseñar posicion PRE-GRASP                         ")
-        print("   * [B] (Shift+B)   : Enseñar posicion POST-GRASP                        ")
-        print("   * [ENTER]         : Guardar posicion ensenada en YAML y activar torque ")
-        print("   * [ESC]           : Cancelar modo ensenanza y reactivar torque         ")
+        print("   MODO ENSENANZA (el brazo queda LIBRE hasta salir):                     ")
+        print("   * [T] o [E]       : Entrar / salir (al salir se bloquea donde quedo)   ")
+        print("   * [1] [2] [3]     : Guardar posicion actual como HOME / PRE / POST     ")
+        print("   * [ENTER] o [ESC] : Terminar ensenanza                                 ")
         print("--------------------------------------------------------------------------")
         print(f"   * Distancia_Extra : +{self.distancia_gripper_cm:.1f} cm [Slider o teclas + / -]    ")
         print(f"   * Velocidad_%     : {self.arm_speed_pct}% [Slider o teclas 9 / 0]                 ")
@@ -1356,14 +1373,23 @@ class ManipulacionAutonomaNode(Node):
 
             elif key == 27:  # ESC
                 if self.is_teaching_mode:
-                    self.cancel_teaching_mode()
+                    self.exit_teach_mode()
                 else:
                     self._running = False
                     break
 
-            elif key == 13:  # ENTER: Guardar pose que se esté enseñando
+            elif key in [ord("t"), ord("T"), ord("e"), ord("E")]:  # entrar/salir del modo ensenanza
                 if self.is_teaching_mode:
-                    self.toggle_teaching_pose(self.teaching_target or "pre_grasp")
+                    self.exit_teach_mode()
+                else:
+                    self.enter_teach_mode()
+
+            elif key == 13:  # ENTER: terminar ensenanza
+                if self.is_teaching_mode:
+                    self.exit_teach_mode()
+
+            elif self.is_teaching_mode and key in self.TEACH_KEYS:
+                self.save_current_as(self.TEACH_KEYS[key])
 
             elif key in [ord("+"), ord("=")]:
                 self.distancia_gripper_cm = min(15.0, round(self.distancia_gripper_cm + 0.5, 1))
@@ -1388,37 +1414,18 @@ class ManipulacionAutonomaNode(Node):
             elif key in [ord("k"), ord("K")]:
                 self.save_configuration()
 
-            # Mover a posiciones guardadas
-            elif key in [ord("2"), ord("h")]:
-                if self.is_teaching_mode:
-                    self.toggle_teaching_pose("home")
-                else:
-                    self.auto_state = self.AUTO_IDLE
-                    self.mover_a_home()
+            # Mover a posiciones guardadas (fuera del modo ensenanza)
+            elif key in [ord("1"), ord("h")]:
+                self.auto_state = self.AUTO_IDLE
+                self.mover_a_home()
 
-            elif key in [ord("3"), ord("p")]:
-                if self.is_teaching_mode:
-                    self.toggle_teaching_pose("pre_grasp")
-                else:
-                    self.auto_state = self.AUTO_IDLE
-                    self.mover_a_pre_grasp()
+            elif key in [ord("2"), ord("p")]:
+                self.auto_state = self.AUTO_IDLE
+                self.mover_a_pre_grasp()
 
-            elif key in [ord("4"), ord("b")]:
-                if self.is_teaching_mode:
-                    self.toggle_teaching_pose("post_grasp")
-                else:
-                    self.auto_state = self.AUTO_IDLE
-                    self.mover_a_post_grasp()
-
-            # Activar Modo Enseñanza con la mano (Shift o teclas dedicadas)
-            elif key == ord("H"):
-                self.toggle_teaching_pose("home")
-
-            elif key in [ord("P"), ord("E"), ord("e")]:
-                self.toggle_teaching_pose("pre_grasp")
-
-            elif key in [ord("B"), ord("Y"), ord("y")]:
-                self.toggle_teaching_pose("post_grasp")
+            elif key in [ord("3"), ord("4"), ord("b")]:
+                self.auto_state = self.AUTO_IDLE
+                self.mover_a_post_grasp()
 
             elif key in [ord("m"), ord("M")]:  # calibrar distancia con la medida de la cinta (Medido_cm)
                 self.calibrate_distance()
@@ -1438,9 +1445,7 @@ class ManipulacionAutonomaNode(Node):
                     self.status_message = f"Pinza CERRADA a {GRIPPER_CLOSE_GRASP_MM:.0f} mm."
 
             elif key in [ord(" "), ord("g"), ord("G")]:
-                if self.is_teaching_mode:
-                    self.toggle_teaching_pose(self.teaching_target or "pre_grasp")
-                else:
+                if not self.is_teaching_mode:
                     self.start_autonomous_grasp()
 
         cv2.destroyAllWindows()
