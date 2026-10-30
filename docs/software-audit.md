@@ -1,0 +1,35 @@
+# Auditoría de software (HOME-03, primera pasada)
+
+Base: `main` @ `1da2388`, 2026-10-29. Análisis estático + tests offline en NUC (`ROS_DOMAIN_ID=77`). Navegación revisada solo en lectura; **ningún cambio propuesto aquí toca Nav2/SLAM/AMCL/base**.
+
+## Hallazgos priorizados
+
+| ID | Sev. | Problema | Evidencia | Propuesta | Estado |
+|---|---|---|---|---|---|
+| S-01 | **Crítica** | El controlador Piper habilita el brazo al arrancar (`auto_enable=True`) y transmite `MotionCtrl_2`/`JointCtrl` a 50 Hz con el setpoint leído al inicio. Si el brazo estaba desenergizado, ese setpoint son ceros del SDK; `is_enabled=True` se fijaba incluso con `auto_enable=False`. Lo lanza `jetson-head.service` en cada boot. | `jetson_head/scripts/piper_arm_controller.py:52,112-122,253-266`; `start_mapping_head.sh:29` | `auto_enable=False` por defecto, `is_enabled = auto_enable`, sin `MotionCtrl_2` inicial si no se habilita. Las consumidoras ya habilitan explícitamente (`manipulacion_autonoma.py:173`, `piper_teach_recorder.py:246`). | **Implementado en rama, UNIT_PASS, no desplegado** |
+| S-02 | Alta | CycloneDDS en la Jetson ligado a `enP8p1s0` sin fallback → si falla el cable, todos los nodos de la cabeza mueren en bucle. | journal `jetson-head`; `~/cyclonedds.xml` | Replicar en `start_mapping_head.sh` el fallback por carrier que ya usa `~/.bashrc` de la NUC, o `NetworkInterface autodetermine` + peers. Requiere aprobación (cambio de red/servicio en host). | Propuesto |
+| S-03 | Alta | Pan-tilt rehace `reboot` de servos con error y **habilita torque automáticamente** apenas responden (al dar 12 V), dentro del timer de reconexión. | `pan_tilt_node.py:150-166,174-205` | Parámetro `auto_torque` (default `false`) + servicio de habilitación; coordinar con el flujo HRI antes de cambiar el default. | Propuesto |
+| S-04 | Alta | HRI Receptionist **registra perfiles con embeddings aleatorios** (`np.random.randn`) como si fueran reales: anfitrión "Charlie" y fallback por timeout. Provoca falsos positivos/negativos y no se distinguen de perfiles medidos. | `hri_receptionist_challenge.py:515-526,684-689,1290-1295` | Marcar perfiles `synthetic=True`, excluirlos del matching, y registrar al anfitrión con una captura real o como "desconocido". | Propuesto |
+| S-05 | Media | Código duplicado: `scripts/jetson/` y `jetson_head/scripts/` contienen los mismos 4 scripts; el desplegado en la Jetson no está bajo Git y diverge (`model_size tiny` vs `base.en`; `enable_camera:=false`). | `diff` documentado en `jetson-inventory.md` | Una única fuente (`jetson_head/`), script de despliegue reproducible (rsync + colcon) y versión registrada. | Propuesto |
+| S-06 | Media | 29 archivos con rutas absolutas `/home/athome` o `/home/ubuntu` (incluye `nav2_bringup.launch.py` y el mapa por defecto `/home/athome/mapa_base_athome.yaml`). | `git grep -lE "/home/(athome|ubuntu)"` | Fuera de navegación: `get_package_share_directory`/parámetros. Navegación: solo documentar. | Propuesto |
+| S-07 | Media | Excepciones silenciadas (`except Exception: pass`) en el bucle de control del Piper (lectura de sensores y envío CAN) → si falla la lectura se publican en `/joint_states` valores viejos/HOME como si fueran medidos. | `piper_arm_controller.py:130-158,253-268` | Contar fallos, publicar `/arm/status` degradado, no publicar joint_states sin lectura válida. | Propuesto |
+| S-08 | Media | Sin tests funcionales en ningún paquete; los linters ament fallan en todos (`audio_asr` 29 flake8, `pan_tilt_controller` 169, `hoverboard_base` 145, `robot_bringup_jetson` 6). `base_athome_perception` no tiene `test/`. | salida de `pytest` en esta sesión | CI offline (HOME-16) y tests de lógica de estados HRI con mocks. | Propuesto |
+| S-09 | Media | Jetson (Humble) y NUC (Jazzy) con distintas distros ROS 2 compartiendo dominio 10 → compatibilidad de mensajes no garantizada. | inventarios | Migración HOME-11. | BLOCKED_APPROVAL |
+| S-10 | Baja | `base_athome_perception/setup.py` expone `scripts.*` como console_scripts (incluye uno llamado `manipulacion_autonoma.py`); los alias de `~/.bashrc` ejecutan los scripts directamente con un venv de `/home/athome`. | `setup.py:28-35`, `~/.bashrc:185-224` | Normalizar entry points cuando se toque el paquete. | Propuesto |
+
+### Seguridad del repositorio (fuera de código)
+
+- **El remoto `origin` de la NUC tiene un token personal de GitHub incrustado en la URL** (`git remote -v`). No se copia aquí. Recomendación: revocar ese token en GitHub y reconfigurar el remoto con credential helper o SSH. No se cambió nada.
+
+## Verificaciones ejecutadas
+
+| Verificación | Resultado | Etiqueta |
+|---|---|---|
+| `xacro src/hoverboard_base/urdf/robot.urdf.xacro` → `check_urdf` | OK, raíz `base_footprint`, 30 joints (11 móviles: `torso_lift_joint`, `pan/tilt_joint`, `joint1..8`); idéntico al `robot.urdf` versionado salvo comentario de cabecera | STATIC |
+| `pytest` de linters ament por paquete | fallan (ver S-08) | STATIC |
+| `jetson_head/scripts/tests/test_piper_arm_controller_safety.py` | 2/2 pasan con el fix; el test de default seguro **falla contra el código original** | UNIT |
+| Búsqueda de ROS 1 | solo menciones en `src/urg_node/CHANGELOG.rst` (histórico) | STATIC |
+
+## No verificado
+
+Comportamiento real con Piper, Dynamixel, cámaras, audio; DDS inter-host; rendimiento (CPU/latencia) — no hay baseline medido.

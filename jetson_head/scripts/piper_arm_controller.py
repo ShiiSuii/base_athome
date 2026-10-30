@@ -49,7 +49,9 @@ class PiperArmController(Node):
 
         self.declare_parameter('can_port', 'can0')
         self.declare_parameter('control_rate_hz', 50.0)
-        self.declare_parameter('auto_enable', True)
+        # Seguro por defecto: no habilitar motores al arrancar. Habilitar con
+        # /arm/set_enable o /arm/enable, o lanzar con -p auto_enable:=true.
+        self.declare_parameter('auto_enable', False)
 
         self.can_port = self.get_parameter('can_port').value
         self.rate_hz = float(self.get_parameter('control_rate_hz').value)
@@ -115,15 +117,19 @@ class PiperArmController(Node):
                 self.piper.GripperCtrl(0, 1000, 0x03, 0)
                 time.sleep(0.1)
 
-            for _ in range(15):
-                self.piper.MotionCtrl_2(0x01, 0x01, 50, 0x00)
-                time.sleep(0.02)
+                for _ in range(15):
+                    self.piper.MotionCtrl_2(0x01, 0x01, 50, 0x00)
+                    time.sleep(0.02)
 
-            self.is_enabled = True
+            # Sin auto_enable no se transmite JointCtrl en el bucle de control:
+            # evita sostener un setpoint obsoleto (p.ej. ceros leidos con el brazo
+            # desenergizado) cuando el Piper recibe alimentacion.
+            self.is_enabled = self.auto_enable
             self.read_sensors()
             self.target_joints_deg = list(self.current_joints_deg)
             self.target_gripper_mm = float(self.current_gripper_mm)
-            self.get_logger().info(f"Brazo habilitado. Posicion: {self.current_joints_deg}, Pinza: {self.current_gripper_mm:.1f} mm")
+            estado = "habilitado" if self.is_enabled else "DESHABILITADO (usar /arm/set_enable)"
+            self.get_logger().info(f"Brazo {estado}. Posicion: {self.current_joints_deg}, Pinza: {self.current_gripper_mm:.1f} mm")
         except Exception as e:
             self.get_logger().error(f"Error inicializando hardware Piper: {e}")
 
