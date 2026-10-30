@@ -35,7 +35,9 @@ safety_envelope:
   wrist_camera_right_offset_m: 0.008
   grasp_forward_cm: 35.0
   grasp_height_offset_cm: 7.7
-  dabai_extra_advance_cm: 8.0
+  # Ajuste fino extra del avance (cm). Era 8.0 cuando el avance base era ~0 por el bug de la
+  # resta fija de 27 cm; ahora el avance base ya llega al centro del objeto.
+  dabai_extra_advance_cm: 0.0
   dabai_center_zone_px: 80
   arm_speed_pct: 30
   dabai_lateral_offset_mm: 14.4
@@ -45,8 +47,6 @@ safety_envelope:
     y: 0.34
     z: 7.14
 named_poses:
-  # home = pose de reposo REAL medida por CAN el 2026-10-30 (brazo colgando como un hombro).
-  # La pose anterior (joint4 +102.6, joint6 -99.9) esta ~200 grados lejos en joint4: no usar.
   home:
     joints_deg:
     - 86.97
@@ -68,18 +68,16 @@ named_poses:
     - -99.91
     gripper_mm: 105.0
     timestamp: '2026-10-24 20:05:10'
-  # pre_grasp y post_grasp se grabaron con el montaje anterior: VOLVER A ENSENAR con el modo
-  # de ensenanza de manipulacion_autonoma (mover a mano + ENTER) antes de usarlas.
   pre_grasp:
     joints_deg:
-    - 58.1
-    - 169.44
-    - -68.31
-    - 68.15
-    - -74.94
-    - -79.41
+    - 70.85
+    - 179.21
+    - -81.13
+    - -102.54
+    - 72.23
+    - 94.03
     gripper_mm: 105.0
-    timestamp: '2026-10-27 15:27:12'
+    timestamp: '2026-10-30 14:29:55'
   post_grasp:
     joints_deg:
     - 42.9
@@ -90,3 +88,17 @@ named_poses:
     - -96.89
     gripper_mm: 50.0
     timestamp: '2026-10-27 14:00:00'
+# Calibracion de distancia de la camara de muneca (wrist_geometry.WristCalib).
+# avance = a * Z_est + b. Medicion 2026-10-30: caja YOLO 143 px (Z_est 25.4 cm), cinta 24 cm del
+# centro de la pinza a la cara de la lata -> avance real 27.75 cm. Recalibrar con [M] en manipulacion.
+wrist_camera_calibration:
+  a: 1.0
+  b: 0.0235
+  focal_px: 485.0
+  cx_px: 320.0
+  cy_px: 240.0
+  object_diameter_m: 0.075
+  grasp_center_back_m: 0.02
+  camera_above_axis_m: 0.0
+  samples:
+  - [0.2544, 0.2775]

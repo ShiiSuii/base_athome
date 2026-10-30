@@ -45,7 +45,10 @@ VENV_SITE_PACKAGES = "/home/athome/ros2_vision_venv/lib/python3.12/site-packages
 if os.path.exists(VENV_SITE_PACKAGES) and VENV_SITE_PACKAGES not in sys.path:
     sys.path.insert(0, VENV_SITE_PACKAGES)
 
+os.environ.setdefault("YOLO_OFFLINE", "1")  # ultralytics: nunca auto-instalar paquetes en el venv
 from ultralytics import YOLO
+
+from base_athome_perception import wrist_geometry as wg
 
 # Cinemática oficial del Brazo Piper 6-DOF
 from base_athome_perception.piper_kinematics import (
@@ -69,7 +72,8 @@ GRIPPER_CLOSE_GRASP_MM = 50.0
 DABAI_CENTER_X_PX = 320.0          # Centro óptico horizontal
 DABAI_FOCAL_PX = 485.0             # Longitud focal en píxeles
 OBJECT_DIAMETER_M = 0.075          # Diámetro de la lata de Pringles (7.5 cm)
-DABAI_GRASP_ZONE_DIST_M = 0.270    # Distancia lente -> centro de los dedos (27.0 cm con los 8cm extra)
+# (Eliminado) DABAI_GRASP_ZONE_DIST_M = 0.270: restar 27 cm fijos dejaba el objeto "dentro" de la pinza.
+# Ahora: avance = a * Z_est + b, calibrable con cinta metrica (wrist_geometry.WristCalib, tecla [M]).
 
 # Matriz intrínseca para pose estimation de ArUco
 CAMERA_MATRIX = np.array([[DABAI_FOCAL_PX, 0.0, DABAI_CENTER_X_PX],
@@ -225,6 +229,7 @@ class ManipulacionAutonomaNode(Node):
         self.dist_to_can_m: float = 0.0
         self.lateral_err_m: float = 0.0
         self.dist_fwd_remaining_m: float = 0.0
+        self.vertical_err_m: float = 0.0
         self.last_det_time: float = 0.0
         self.det_fps: float = 0.0
 
@@ -376,7 +381,9 @@ class ManipulacionAutonomaNode(Node):
         self.pose_home = [72.09, 176.5, -155.15, 102.62, -31.51, -99.91]
         self.pose_pre_grasp = [42.9, 180.83, -89.01, 60.57, -74.02, -96.89]
         self.pose_post_grasp = list(self.pose_pre_grasp)
-        self.distancia_gripper_cm: float = 5.0    # Ajuste de avance extra del gripper hacia el objeto
+        self.distancia_gripper_cm: float = 0.0    # Ajuste FINO extra (el avance real sale de la calibracion)
+        self.wrist_calib = wg.WristCalib()
+        self.measured_cm: float = 24.0            # ultima distancia medida con cinta (trackbar Medido_cm)
         self.arm_speed_pct: int = 40              # Velocidad suave del brazo (40%)
 
         if os.path.exists(CONFIG_FILE_PATH):
@@ -390,6 +397,8 @@ class ManipulacionAutonomaNode(Node):
                         self.arm_speed_pct = int(np.clip(int(env["arm_speed_pct"]), 15, 100))
                     if "aruco_marker_size_mm" in env:
                         self.marker_size_mm = float(env["aruco_marker_size_mm"])
+                    if "wrist_camera_calibration" in data:
+                        self.wrist_calib = wg.WristCalib.from_dict(data["wrist_camera_calibration"])
                     poses = data.get("named_poses", {})
                     if "home" in poses:
                         self.pose_home = list(poses["home"].get("joints_deg", self.pose_home))
@@ -415,6 +424,7 @@ class ManipulacionAutonomaNode(Node):
                 data["safety_envelope"] = {}
             data["safety_envelope"]["dabai_extra_advance_cm"] = round(float(self.distancia_gripper_cm), 1)
             data["safety_envelope"]["arm_speed_pct"] = int(self.arm_speed_pct)
+            data["wrist_camera_calibration"] = self.wrist_calib.to_dict()
             with open(CONFIG_FILE_PATH, "w", encoding="utf-8") as f:
                 yaml.dump(data, f, default_flow_style=False, sort_keys=False)
             self.get_logger().info(f"Guardado en YAML: DistanciaGripper=+{self.distancia_gripper_cm:.1f}cm")
@@ -718,21 +728,20 @@ class ManipulacionAutonomaNode(Node):
                     self.dabai_cy = float(det["cy"])
                     self.dabai_width_px = float(det["width"])
 
+                cal = self.wrist_calib
                 if det.get("type") == "aruco":
                     self.dist_to_can_m = float(np.clip(det["dist_m"], 0.08, 0.75))
                     self.lateral_err_m = float(det["lateral_err_m"])
                     self.detection_source = f"ArUco ID {det['aruco_id']}"
                 else:
-                    # Distancia estimada desde la lente de la DaBai hasta la lata
-                    self.dist_to_can_m = float(
-                        np.clip((OBJECT_DIAMETER_M * DABAI_FOCAL_PX) / self.dabai_width_px, 0.15, 0.65)
-                    )
-                    err_px = self.dabai_cx - DABAI_CENTER_X_PX
-                    self.lateral_err_m = -float((err_px / DABAI_FOCAL_PX) * self.dist_to_can_m)
+                    # Distancia lente -> objeto estimada por tamano aparente (sesgada: la caja incluye la tapa)
+                    self.dist_to_can_m = float(np.clip(wg.size_distance(self.dabai_width_px, cal), 0.10, 0.80))
+                    self.lateral_err_m, _ = wg.lateral_offsets(self.dabai_cx, self.dabai_cy, self.dist_to_can_m, cal)
                     self.detection_source = "Cilindro (YOLO/Color)"
+                _, self.vertical_err_m = wg.lateral_offsets(self.dabai_cx, self.dabai_cy, self.dist_to_can_m, cal)
 
-                # Distancia restante para que la lata quede entre los dedos
-                self.dist_fwd_remaining_m = float(max(0.0, self.dist_to_can_m - DABAI_GRASP_ZONE_DIST_M))
+                # Cuanto debe avanzar el CENTRO de la pinza hasta el centro del objeto (calibrado con cinta)
+                self.dist_fwd_remaining_m = float(wg.advance_needed(self.dist_to_can_m, cal))
 
                 # Posición 3D del objeto (frame hombro) para RViz: solo se recalcula con el brazo QUIETO,
                 # así la lata queda fija sobre la mesa en RViz mientras el brazo se mueve.
@@ -740,19 +749,11 @@ class ManipulacionAutonomaNode(Node):
                     try:
                         q_rad = np.array([math.radians(d) for d in joints_at_capture[:6]], dtype=float)
                         tcp_mm, R = self.kinematics_solver.forward_kinematics(q_rad)
-                        tool_z = R[:, 2]
-                        fwd = np.array([tool_z[0], tool_z[1], 0.0], dtype=float)
-                        n = float(np.linalg.norm(fwd))
-                        fwd = fwd / n if n > 1e-4 else np.array([1.0, 0.0, 0.0])
-                        left = np.array([-fwd[1], fwd[0], 0.0], dtype=float)
-                        obj_m = (np.asarray(tcp_mm, dtype=float) / 1000.0) \
-                            + self.dist_fwd_remaining_m * fwd + self.lateral_err_m * left
-
-                        # Anclar la altura Z del objeto a la mesa física (76 cm + 10.5 cm mitad de lata = 86.5 cm desde el piso)
-                        # En frame hombro (Z hombro = 1.065 m), Z_obj = 0.865 - 1.065 = -0.200 m
-                        TABLE_HEIGHT_M = 0.76
-                        CAN_HEIGHT_M = 0.21
-                        obj_m[2] = (TABLE_HEIGHT_M + CAN_HEIGHT_M / 2.0) - SHOULDER_IN_BASE_LINK_M[2]
+                        # Centro del objeto: centro de la pinza + avance real sobre el eje de la herramienta
+                        # + desvio lateral/vertical visto en la imagen (sin suponer la altura de la mesa)
+                        obj_m = wg.object_center(np.asarray(tcp_mm, dtype=float) / 1000.0, R,
+                                                 self.dist_fwd_remaining_m, self.lateral_err_m,
+                                                 self.vertical_err_m, self.wrist_calib)
 
                         self.target_3d_arm = (float(obj_m[0]), float(obj_m[1]), float(obj_m[2]))
                         self.is_in_reach, _ = is_in_safe_cartesian_box(*self.target_3d_arm)
@@ -788,11 +789,7 @@ class ManipulacionAutonomaNode(Node):
         CAN_CENTER_Z_M = TABLE_HEIGHT_M + CAN_HEIGHT_M / 2.0  # 0.865 m
 
         # Posición del centro de la lata en base_link (apoyada sobre la mesa física a 76 cm)
-        obj_base = np.array([
-            SHOULDER_IN_BASE_LINK_M[0] + float(self.target_3d_arm[0]),
-            SHOULDER_IN_BASE_LINK_M[1] + float(self.target_3d_arm[1]),
-            CAN_CENTER_Z_M
-        ], dtype=float)
+        obj_base = SHOULDER_IN_BASE_LINK_M + np.asarray(self.target_3d_arm, dtype=float)
 
         try:
             tcp_mm, _ = self.kinematics_solver.forward_kinematics(
@@ -868,7 +865,7 @@ class ManipulacionAutonomaNode(Node):
         tbl.action = Marker.ADD
         tbl.pose.position.x = float(obj_base[0])
         tbl.pose.position.y = float(obj_base[1])
-        tbl.pose.position.z = float(TABLE_HEIGHT_M - 0.015)
+        tbl.pose.position.z = float(obj_base[2] - CAN_HEIGHT_M / 2.0 - 0.015)  # mesa bajo el objeto estimado
         tbl.pose.orientation.w = 1.0
         tbl.scale.x = 0.60
         tbl.scale.y = 0.60
@@ -1264,6 +1261,23 @@ class ManipulacionAutonomaNode(Node):
     def _on_dist_slider(self, val_mm: int):
         self.distancia_gripper_cm = float(val_mm) / 10.0
 
+    def _on_measured_slider(self, val_cm: int):
+        self.measured_cm = float(max(3, val_cm))
+
+    def calibrate_distance(self):
+        """[M]: usa la distancia medida con cinta (trackbar Medido_cm) para recalibrar el avance."""
+        if self.target_2d_wrist is None or self.dabai_width_px <= 0:
+            self.status_message = "CALIBRAR: no veo el objeto. Poner la lata frente a la pinza."
+            return
+        z = float(self.dist_to_can_m)
+        wg.add_measurement(self.wrist_calib, z, self.measured_cm / 100.0)
+        self.save_configuration()
+        self.status_message = (f"CALIBRADO: Z_est={z*100:.1f}cm medido={self.measured_cm:.0f}cm -> "
+                               f"avance={wg.advance_needed(z, self.wrist_calib)*100:.1f}cm "
+                               f"(a={self.wrist_calib.a:.2f} b={self.wrist_calib.b*100:+.1f}cm, "
+                               f"{len(self.wrist_calib.samples)} muestras)")
+        self.get_logger().info(self.status_message)
+
     def _on_speed_slider(self, val_pct: int):
         self.arm_speed_pct = int(np.clip(val_pct, 15, 100))
 
@@ -1284,6 +1298,13 @@ class ManipulacionAutonomaNode(Node):
             self._on_dist_slider,
         )
         cv2.createTrackbar(
+            "Medido_cm",  # distancia medida con cinta: centro de la pinza -> CARA del objeto
+            window_name,
+            int(round(self.measured_cm)),
+            80,
+            self._on_measured_slider,
+        )
+        cv2.createTrackbar(
             "Velocidad_%",
             window_name,
             int(round(self.arm_speed_pct)),
@@ -1294,6 +1315,8 @@ class ManipulacionAutonomaNode(Node):
         print("==========================================================================")
         print("   ROBOT @HOME - MANIPULACION AUTONOMA SIMPLIFICADA (CAMARA 8CM ATRAS)    ")
         print("--------------------------------------------------------------------------")
+        print("   CALIBRAR DISTANCIA: medir con cinta del centro de la pinza a la cara del objeto,")
+        print("   poner ese valor en Medido_cm y apretar [M] (2 distancias distintas = mejor).")
         print("   MOVIMIENTOS:")
         print("   * [2] o [h]       : Ir a posicion HOME                                 ")
         print("   * [3] o [p]       : Ir a PRE-GRASP con pinza abierta (105 mm)          ")
@@ -1397,6 +1420,8 @@ class ManipulacionAutonomaNode(Node):
             elif key in [ord("B"), ord("Y"), ord("y")]:
                 self.toggle_teaching_pose("post_grasp")
 
+            elif key in [ord("m"), ord("M")]:  # calibrar distancia con la medida de la cinta (Medido_cm)
+                self.calibrate_distance()
             elif key in [ord("o"), ord("O")]:
                 g_msg = Float32()
                 g_msg.data = float(GRIPPER_MAX_OPEN_MM)

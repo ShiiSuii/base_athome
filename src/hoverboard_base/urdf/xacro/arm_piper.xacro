@@ -334,8 +334,11 @@
   <joint name="arm_camera_mount_joint" type="fixed">
     <parent link="gripper_base"/>
     <child link="arm_camera_link"/>
-    <!-- Camara del brazo montada 8cm hacia atras y perfectamente centrada (y=0.0) -->
-    <origin xyz="0.025 0.0 0.00" rpy="0 0 0"/>
+    <!-- DaBai de muneca: mira hacia ADELANTE sobre el eje de avance de la pinza (z de gripper_base),
+         2.5 cm hacia +x de gripper_base (los dedos se ven abajo en la imagen) y ~8 cm detras de
+         las yemas (TCP a 0.1358 m). Antes el rpy era 0 0 0 y la camara miraba de costado (eje x).
+         rpy verificado: optical z = z pinza, optical x = y pinza, optical y = -x pinza. -->
+    <origin xyz="0.025 0.0 0.056" rpy="3.14159 -1.5708 0"/>
   </joint>
 
   <!-- Marco Óptico Orbbec DaBai (Estándar ROS: Z adelante, X derecha, Y abajo) -->
