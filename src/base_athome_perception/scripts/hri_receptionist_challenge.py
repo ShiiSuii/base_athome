@@ -41,7 +41,7 @@ from rclpy.node import Node
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy, qos_profile_sensor_data
 from geometry_msgs.msg import Vector3, PoseStamped, PoseWithCovarianceStamped
-from sensor_msgs.msg import Image, JointState
+from sensor_msgs.msg import CameraInfo, Image, JointState
 from std_msgs.msg import String, Float32, Bool
 from std_srvs.srv import SetBool, Trigger
 
@@ -73,6 +73,7 @@ except ImportError:
 # Base@Home Perception Modules
 from base_athome_perception.face_recognizer import DEFAULT_DB_DIR, FaceRecognizer, PersonProfile
 from base_athome_perception.guest_vocabulary import GuestVocabulary
+from base_athome_perception import seat_occupancy as seatocc
 from base_athome_perception.speaker import RoboCupSpeaker
 try:
     from base_athome_perception.person_pose_detector import PersonPoseDetector
@@ -391,6 +392,15 @@ class HriReceptionistChallengeNode(Node):
                 self.create_subscription(Image, top, self.image_callback, qos_cam)
             )
 
+        # Profundidad alineada + intrinsecos: ubicar personas en el mapa (ocupacion de asientos)
+        self.depth_lock = threading.Lock()
+        self.latest_depth_m: Optional[np.ndarray] = None
+        self.cam_fx_cx: Optional[Tuple[float, float]] = None
+        self.create_subscription(Image, "/camera/camera/aligned_depth_to_color/image_raw",
+                                 self._depth_callback, qos_profile_sensor_data)
+        self.create_subscription(CameraInfo, "/camera/camera/color/camera_info",
+                                 self._caminfo_callback, qos_profile_sensor_data)
+
         # Suscriptor a Whisper ASR
         self.sub_voice = self.create_subscription(
             String, "/voice/transcription", self.voice_callback, 10
@@ -482,8 +492,22 @@ class HriReceptionistChallengeNode(Node):
 
         self.get_logger().info("HriReceptionistChallengeNode inicializado. Esperando sensores y pre-vuelo...")
 
+    @staticmethod
+    def _rs_service_installed() -> bool:
+        return subprocess.run(["systemctl", "--user", "cat", "realsense-nuc"],
+                              capture_output=True).returncode == 0
+
     def _ensure_camera_running(self):
-        """Verifica si la RealSense D435 está conectada y si el driver está activo; si no, lo inicia."""
+        """Verifica si la RealSense D435 está conectada y si el driver está activo; si no, lo inicia.
+
+        Si existe el servicio realsense-nuc (driver unico supervisado), se usa ese.
+        """
+        if self._rs_service_installed():
+            if subprocess.run(["systemctl", "--user", "is-active", "--quiet", "realsense-nuc"]).returncode != 0:
+                self.get_logger().info("📷 Iniciando servicio realsense-nuc...")
+                subprocess.run(["systemctl", "--user", "start", "realsense-nuc"])
+                self.cam_last_restart = time.time()
+            return
         try:
             out = subprocess.check_output(["pgrep", "-f", RS_PROC_PATTERN], text=True)
             if out.strip():
@@ -517,10 +541,13 @@ class HriReceptionistChallengeNode(Node):
             return
         running = subprocess.run(["pgrep", "-f", RS_PROC_PATTERN], capture_output=True).returncode == 0
         gap = now - ref
-        if running and gap < 10.0:
+        if running and gap < 15.0:
             return  # puede ser un hipo: esperar un poco antes de reiniciar
         self.get_logger().warn(f"📷 Camara sin frames hace {gap:.1f}s (driver {'colgado' if running else 'caido'}). Reiniciando driver...")
         self.cam_last_restart = now
+        if self._rs_service_installed():
+            subprocess.run(["systemctl", "--user", "restart", "realsense-nuc"])
+            return
         if running:
             subprocess.run(["pkill", "-f", RS_PROC_PATTERN])
             time.sleep(2.0)
@@ -1115,6 +1142,55 @@ class HriReceptionistChallengeNode(Node):
         except Exception as e:
             self.get_logger().warn(f"Error procesando frame de camara: {e}")
 
+    def _depth_callback(self, msg: Image):
+        try:
+            if msg.encoding in ("16UC1", "mono16"):
+                d = np.frombuffer(msg.data, dtype=np.uint16).reshape(msg.height, msg.width).astype(np.float32) / 1000.0
+            elif msg.encoding == "32FC1":
+                d = np.frombuffer(msg.data, dtype=np.float32).reshape(msg.height, msg.width).copy()
+            else:
+                return
+            with self.depth_lock:
+                self.latest_depth_m = d
+        except Exception:
+            pass
+
+    def _caminfo_callback(self, msg: CameraInfo):
+        self.cam_fx_cx = (float(msg.k[0]), float(msg.k[2]))
+
+    def scan_seats(self) -> Tuple[Dict[str, int], bool]:
+        """Mira cada asiento del mapa semantico y cuenta personas en el (ocupacion, uso_profundidad)."""
+        persons: List[Tuple[float, float]] = []
+        fallback: Dict[str, int] = {}
+        used_depth = False
+        for key in self.seats:
+            pan = self._head_pan_to_seat(key)
+            if pan is not None:
+                self.move_head_to(pan, -10.0)
+            self.sleep_gui(1.6)  # dejar que el detector de poses procese varios frames nuevos
+            with self.face_lock:
+                poses = list(self.current_poses or [])
+            with self.depth_lock:
+                depth = self.latest_depth_m
+            img_w = self.latest_frame.shape[1] if self.latest_frame is not None else 640
+            if depth is not None and self.cam_fx_cx and self.robot_pose is not None and pan is not None:
+                fx, cx = self.cam_fx_cx
+                for det in poses:
+                    z = seatocc.depth_at_bbox(depth, det["bbox"])
+                    if z is not None:
+                        u = (det["bbox"][0] + det["bbox"][2]) / 2.0
+                        persons.append(seatocc.person_map_position(
+                            u, z, fx, cx, self.robot_pose, math.radians(pan), self.head_pan_sign))
+                        used_depth = True
+            fallback[key] = seatocc.image_fallback_occupied(
+                [d["bbox"] for d in poses], [d.get("posture", "") for d in poses], img_w)
+        if used_depth:
+            occ = seatocc.seat_occupancy(self.seats, seatocc.merge_nearby(persons))
+        else:
+            occ = fallback
+        self.get_logger().info(f"🪑 Ocupacion de asientos ({'profundidad+mapa' if used_depth else 'imagen'}): {occ}")
+        return occ, used_depth
+
     def voice_callback(self, msg: String):
         text = msg.data.strip()
         if text:
@@ -1562,10 +1638,30 @@ class HriReceptionistChallengeNode(Node):
             self.state_start_time = now
 
         elif self.state == self.STATE_DETECT_AND_OFFER_SEAT:
-            # Inspección de asientos y gesto de señalamiento con el brazo Piper
+            # Inspección de asientos: mirar cada uno, contar personas y ofrecer uno con lugar libre
             seat_keys = list(self.seats.keys()) if self.seats else ["couch", "chair"]
-            seat_idx = min(self.guest_index - 1, len(seat_keys) - 1)
-            seat_target = seat_keys[seat_idx] if seat_keys else "couch"
+            seat_target = None
+            if self.seats:
+                self.current_banner_text = "Revisando que asientos estan libres..."
+                occ, used_depth = self.scan_seats()
+                reserved = {}
+                if not used_depth:  # sin ubicar personas en el mapa: contar tambien a quienes ya sentamos
+                    for g in self.registered_guests[:-1]:
+                        reserved[g.get("seat")] = reserved.get(g.get("seat"), 0) + 1
+                seat_target = seatocc.choose_free_seat(self.seats, occ, reserved)
+            if seat_target is None:
+                seat_idx = min(self.guest_index - 1, len(seat_keys) - 1)
+                seat_target = seat_keys[seat_idx] if seat_keys else "couch"
+            # Registrar el asiento real del invitado (antes era un valor provisional por indice)
+            if self.registered_guests:
+                self.registered_guests[-1]["seat"] = seat_target
+                pid = self.registered_guests[-1].get("person_id")
+                if pid in self.recognizer.profiles:
+                    self.recognizer.profiles[pid].attributes["seat"] = seat_target
+                    self.recognizer.save_metadata_only()
+            pan = self._head_pan_to_seat(seat_target)
+            if pan is not None:
+                self.move_head_to(pan, -10.0)  # mirar el asiento mientras lo ofrece
 
             seat_info = self.seats.get(seat_target, {}) if self.seats else {}
             pose_gesture = seat_info.get("arm_gesture", "point_couch" if seat_target == "couch" else "point_chair")

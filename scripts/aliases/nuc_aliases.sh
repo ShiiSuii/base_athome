@@ -53,6 +53,7 @@ Workspace:     ws | devel | sws  (= source install/setup.bash)
 Herramientas:  urdf_editor | gpsr "<comando>" | puerta | compilar | editor_mapa
 Red/Jetson:    jetson (ssh) | red_jetson | deploy_jetson[_dry] | jetson_stats
 Cabeza:        head_start | head_stop | head_restart | head_status | head_logs
+Manipulacion:  manipulacion (RViz+brazo) | rviz_manipulacion | agarrar_botella | teach_record
 Receptionist:  receptionist | hri_sim | limpiar_memoria | memoria_personas
 ROS (lectura): topicos | nodos | brazo_estado | pantilt_conectado | voz | detecciones | camara_muneca[_hz]
 Existentes:    mapeo2d | navegacion | rviznav | lidar | receptionist | rostros | cara | piper | stepper ...
@@ -68,3 +69,16 @@ alias memoria_personas='python3 -c "import json,os;d=json.load(open(os.path.expa
 alias ws='source /opt/ros/jazzy/setup.bash && source $WS_ATHOME/install/setup.bash && echo "workspace cargado: $WS_ATHOME/install"'
 alias devel='ws'
 alias sws='ws'
+
+# --- Manipulacion (brazo Piper + camara de muneca) ---
+unalias manipulacion 2>/dev/null
+manipulacion() {  # abre RViz con el URDF (si no esta abierto) y lanza la manipulacion autonoma
+    _ros
+    if ! pgrep -f "^/opt/ros/jazzy/lib/robot_state_publisher/robot_state_publisher" >/dev/null; then
+        (DISPLAY="${DISPLAY:-:1}" ros2 launch hoverboard_base view_robot.launch.py > /tmp/view_robot.log 2>&1 &)
+        sleep 3
+    fi
+    DISPLAY="${DISPLAY:-:1}" /home/athome/ros2_vision_venv/bin/python3 "$WS_ATHOME/src/base_athome_perception/scripts/manipulacion_autonoma.py" "$@"
+}
+alias manipular='manipulacion'
+alias rviz_manipulacion='_ros && DISPLAY="${DISPLAY:-:1}" ros2 launch hoverboard_base view_robot.launch.py'

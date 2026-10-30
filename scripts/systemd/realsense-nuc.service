@@ -1,0 +1,19 @@
+# Servicio de usuario: driver unico de la RealSense de la NUC, reiniciado si se cae.
+# Instalar (lo hace un humano):
+#   mkdir -p ~/.config/systemd/user && cp ~/base_athome_ws/scripts/systemd/realsense-nuc.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now realsense-nuc
+#   sudo loginctl enable-linger athome     # opcional: que arranque sin sesion grafica
+[Unit]
+Description=RealSense D435 (NUC) - driver unico supervisado
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/home/athome/base_athome_ws/scripts/start_realsense_nuc.sh
+Restart=always
+RestartSec=3
+KillMode=mixed
+TimeoutStopSec=8
+
+[Install]
+WantedBy=default.target

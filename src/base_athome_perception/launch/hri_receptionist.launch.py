@@ -14,8 +14,9 @@ def generate_launch_description():
 
     start_camera_arg = DeclareLaunchArgument(
         'start_camera',
-        default_value='true',
-        description='Iniciar driver de la camara RealSense D435 en la NUC'
+        default_value='false',
+        description='Iniciar otro driver de la RealSense (no recomendado: el nodo ya asegura un driver unico, '
+                    'via servicio realsense-nuc o autoarranque)'
     )
     topic_arg = DeclareLaunchArgument(
         'topic',
