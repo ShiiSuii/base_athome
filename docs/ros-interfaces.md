@@ -40,5 +40,6 @@ Jetson con `jetson-head.service` activo; Piper y pan-tilt **sin potencia**. `ros
 | `/pan_tilt/joint_states` | 19.8 Hz | con servos sin responder publica **0.0** (ver S-11) |
 | `/voice/mic_level` / `/voice/status` | 5.0 / 2.0 Hz | whisper `tiny`, micrófono RØDE detectado |
 | `/arm_camera/image_raw` | **5 Hz → 20 Hz** tras el fix S-12 | 640×480 bgr8, 18.6 MB/s por el enlace |
+| `/arm_camera/detections` (nuevo, manual) | 24.6 Hz | `vision_msgs/Detection2DArray` de `yolo_trt_node.py` (YOLOv8n TensorRT FP16 en la GPU de la Jetson); no arranca con el servicio |
 
 `ros2 node list` vacío desde la NUC por la incompatibilidad Humble↔Jazzy de `ros_discovery_info` (ver `network-topology.md`). No se usó `pub`, `service call` ni `send_goal`.
