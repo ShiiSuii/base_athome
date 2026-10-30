@@ -92,3 +92,20 @@ def test_auto_torque_keeps_previous_behaviour():
         assert any(c[0] == 'write1ByteTxRx' and c[1][2:] == (64, 1) for c in packet.method_calls)
     finally:
         node.destroy_node()
+
+
+def test_connected_flag_published_latched_on_change():
+    node, packet = make_node()
+    try:
+        sent = []
+        node.pub_connected.publish = lambda m: sent.append(m.data)
+        node.timer_callback()
+        node.timer_callback()
+        assert sent == [True]
+        packet.read4ByteTxRx.return_value = (0, 1, 0)  # deja de responder
+        packet.ping.return_value = (0, 1, 0)
+        node.timer_callback()
+        node.timer_callback()
+        assert sent == [True, False]
+    finally:
+        node.destroy_node()

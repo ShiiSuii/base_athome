@@ -7,7 +7,9 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from geometry_msgs.msg import Vector3
+from std_msgs.msg import Bool
 from std_srvs.srv import SetBool
+from rclpy.qos import QoSProfile, DurabilityPolicy
 
 from dynamixel_sdk import PortHandler, PacketHandler, COMM_SUCCESS
 
@@ -105,6 +107,12 @@ class PanTiltNode(Node):
         self.sub_cmd = self.create_subscription(JointState, '/pan_tilt/command', self.cmd_callback, 10)
         self.sub_deg = self.create_subscription(Vector3, '/pan_tilt/target_degrees', self.deg_callback, 10)
         self.srv_torque = self.create_service(SetBool, '/pan_tilt/set_torque', self.srv_torque_cb)
+        # Los joint_states se publican siempre (TF de la cabeza); con servos sin
+        # respuesta son la ultima posicion conocida (0.0 al arrancar), no medidas.
+        # Los consumidores deben chequear /pan_tilt/connected (latched).
+        latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self.pub_connected = self.create_publisher(Bool, '/pan_tilt/connected', latched)
+        self._published_connected = None
 
         self.init_hardware()
 
@@ -306,6 +314,10 @@ class PanTiltNode(Node):
                 self.is_connected = False
                 self.torque_enabled = False
                 self.get_logger().warn(f'Exception reading servos: {e}', throttle_duration_sec=5.0)
+
+        if self.is_connected != self._published_connected:
+            self._published_connected = self.is_connected
+            self.pub_connected.publish(Bool(data=bool(self.is_connected)))
 
         # Publish joint state continuously
         msg = JointState()
