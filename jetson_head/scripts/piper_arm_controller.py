@@ -52,10 +52,16 @@ class PiperArmController(Node):
         # Seguro por defecto: no habilitar motores al arrancar. Habilitar con
         # /arm/set_enable o /arm/enable, o lanzar con -p auto_enable:=true.
         self.declare_parameter('auto_enable', False)
+        # Rechazar habilitar si no llega realimentacion CAN reciente: con el brazo
+        # sin potencia el SDK devuelve ceros y el setpoint inicial seria la pose 0.
+        self.declare_parameter('feedback_timeout_s', 0.5)
 
         self.can_port = self.get_parameter('can_port').value
         self.rate_hz = float(self.get_parameter('control_rate_hz').value)
         self.auto_enable = bool(self.get_parameter('auto_enable').value)
+        self.feedback_timeout_s = float(self.get_parameter('feedback_timeout_s').value)
+        self._last_fb_stamp = None
+        self._last_fb_mono = None
 
         self.get_logger().info(f"Iniciando PiperArmController en {self.can_port} a {self.rate_hz} Hz...")
 
@@ -136,7 +142,12 @@ class PiperArmController(Node):
     def read_sensors(self):
         """Lee encoders de articulaciones, pinza y pose cartesiana."""
         try:
-            j_msg = self.piper.GetArmJointMsgs().joint_state
+            j_full = self.piper.GetArmJointMsgs()
+            stamp = getattr(j_full, 'time_stamp', 0)
+            if isinstance(stamp, (int, float)) and stamp > 0 and stamp != self._last_fb_stamp:
+                self._last_fb_stamp = stamp
+                self._last_fb_mono = time.monotonic()
+            j_msg = j_full.joint_state
             self.current_joints_deg = [
                 j_msg.joint_1 / 1000.0,
                 j_msg.joint_2 / 1000.0,
@@ -162,6 +173,11 @@ class PiperArmController(Node):
             ]
         except Exception:
             pass
+
+    def feedback_ok(self) -> bool:
+        """True si llego una trama de articulaciones nueva en los ultimos feedback_timeout_s."""
+        return (self._last_fb_mono is not None
+                and time.monotonic() - self._last_fb_mono < self.feedback_timeout_s)
 
     def euler_to_quaternion(self, roll_deg: float, pitch_deg: float, yaw_deg: float) -> Tuple[float, float, float, float]:
         """Convierte angulos Euler en grados a cuaternion (x, y, z, w)."""
@@ -215,6 +231,8 @@ class PiperArmController(Node):
         stat_msg = String()
         stat_msg.data = json.dumps({
             "is_moving": self.active_trajectory is not None,
+            "enabled": self.is_enabled,
+            "feedback_ok": self.feedback_ok(),
             "gripper_mm": round(self.current_gripper_mm, 2),
             "xyz_mm": [round(v, 1) for v in self.current_xyz_mm],
             "joints_deg": [round(v, 2) for v in self.current_joints_deg]
@@ -330,11 +348,16 @@ class PiperArmController(Node):
     def enable_cb(self, msg: Bool):
         self.set_arm_enable(msg.data)
 
-    def set_arm_enable(self, enable: bool):
+    def set_arm_enable(self, enable: bool) -> bool:
         with self.lock:
-            self.is_enabled = enable
             if enable:
                 self.read_sensors()
+                if not self.feedback_ok():
+                    self.get_logger().warn("Habilitacion RECHAZADA: sin realimentacion CAN reciente del Piper "
+                                           "(¿brazo sin potencia?). No se envio ningun comando.")
+                    return False
+            self.is_enabled = enable
+            if enable:
                 self.target_joints_deg = list(self.current_joints_deg)
                 self.target_gripper_mm = float(self.current_gripper_mm)
                 self.active_trajectory = None
@@ -351,6 +374,7 @@ class PiperArmController(Node):
                 self.autonomous_sequence = None
                 self.piper.DisableArm(7)
                 self.get_logger().info("Brazo DESHABILITADO (modo manual libre)")
+        return True
 
     # --- Secuencia Autonoma de Agarre de Pringles ---
     def start_grasp_sequence(self):
@@ -433,9 +457,11 @@ class PiperArmController(Node):
         return resp
 
     def srv_enable_cb(self, req, resp):
-        self.set_arm_enable(req.data)
-        resp.success = True
-        resp.message = f"Brazo {'habilitado' if req.data else 'deshabilitado'}."
+        resp.success = self.set_arm_enable(req.data)
+        if resp.success:
+            resp.message = f"Brazo {'habilitado' if req.data else 'deshabilitado'}."
+        else:
+            resp.message = "Rechazado: sin realimentacion CAN reciente del Piper (¿brazo sin potencia?)."
         return resp
 
 

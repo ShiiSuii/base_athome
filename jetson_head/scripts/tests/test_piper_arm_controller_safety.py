@@ -88,3 +88,54 @@ def test_explicit_auto_enable_keeps_previous_behaviour():
     finally:
         node.running = False
         node.destroy_node()
+
+
+def with_live_feedback(fake):
+    """Simula tramas CAN nuevas: time_stamp creciente en cada lectura."""
+    joints = types.SimpleNamespace(**{f'joint_{i}': 10000 * i for i in range(1, 7)})
+    fake.GetArmJointMsgs.side_effect = lambda: types.SimpleNamespace(time_stamp=time.time(), joint_state=joints)
+    return fake
+
+
+def test_enable_rejected_without_can_feedback():
+    fake = make_fake_piper()
+    fake.GetArmJointMsgs.return_value.time_stamp = 0  # SDK sin tramas: brazo sin potencia
+    module = load_controller(fake)
+    node = make_node(module)
+    try:
+        assert node.set_arm_enable(True) is False
+        time.sleep(0.2)
+        assert node.is_enabled is False
+        assert motion_calls(fake) == []
+    finally:
+        node.running = False
+        node.destroy_node()
+
+
+def test_enable_rejected_when_feedback_goes_stale():
+    fake = make_fake_piper()
+    fake.GetArmJointMsgs.return_value.time_stamp = 123.0  # una trama vieja y luego nada
+    module = load_controller(fake)
+    node = make_node(module, {'feedback_timeout_s': 0.1})
+    try:
+        time.sleep(0.25)
+        assert node.feedback_ok() is False
+        assert node.set_arm_enable(True) is False
+        assert motion_calls(fake) == []
+    finally:
+        node.running = False
+        node.destroy_node()
+
+
+def test_enable_with_live_feedback_syncs_setpoint_to_measured_pose():
+    fake = with_live_feedback(make_fake_piper())
+    module = load_controller(fake)
+    node = make_node(module)
+    try:
+        time.sleep(0.1)
+        assert node.set_arm_enable(True) is True
+        assert node.is_enabled is True
+        assert node.target_joints_deg == [10.0, 20.0, 30.0, 40.0, 50.0, 60.0]
+    finally:
+        node.running = False
+        node.destroy_node()
