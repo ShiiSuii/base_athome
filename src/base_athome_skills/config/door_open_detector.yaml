@@ -1,0 +1,9 @@
+door_open_detector:
+  ros__parameters:
+    scan_topic: /scan
+    window_deg: 20.0
+    center_deg: 0.0          # ajustar si el Hokuyo no apunta al frente (ver TF base_link->laser)
+    calibration_scans: 10
+    max_closed_distance_m: 1.5
+    open_margin_m: 0.6
+    open_scans_required: 5
