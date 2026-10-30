@@ -54,6 +54,7 @@ Herramientas:  urdf_editor | gpsr "<comando>" | puerta | compilar | editor_mapa
 Red/Jetson:    jetson (ssh) | red_jetson | deploy_jetson[_dry] | jetson_stats
 Cabeza:        head_start | head_stop | head_restart | head_status | head_logs
 Manipulacion:  manipulacion (incluye MoveIt) | manipulacion_avanzada | rviz_manipulacion | agarrar_botella | teach_record
+Misiones:      mision | mision_sim | mision_pedir "<pedido>" | mision_estado
 Receptionist:  receptionist | hri_sim | limpiar_memoria | memoria_personas
 ROS (lectura): topicos | nodos | brazo_estado | pantilt_conectado | voz | detecciones | camara_muneca[_hz]
 Existentes:    mapeo2d | navegacion | rviznav | lidar | receptionist | rostros | cara | piper | stepper ...
@@ -85,3 +86,9 @@ alias manipulacion_avanzada='_ros && DISPLAY="${DISPLAY:-:1}" /home/athome/ros2_
 alias manipular='manipulacion'
 alias rviz_manipulacion='_ros && DISPLAY="${DISPLAY:-:1}" ros2 launch hoverboard_base view_robot.launch.py'
 alias moveit_brazo='_ros && ros2 launch base_athome_moveit_config move_group.launch.py'  # IK/planificacion para [I] en manipulacion
+
+# --- Secuenciador de misiones (maquina de estados: puerta, invitado, objeto, sala) ---
+alias mision='_ros && DISPLAY="${DISPLAY:-:1}" /home/athome/ros2_vision_venv/bin/python3 $WS_ATHOME/src/base_athome_perception/scripts/mission_sequencer.py'
+alias mision_sim='mision --sim'
+mision_pedir() { _ros && ros2 topic pub --once /mission/command std_msgs/msg/String "{data: '$*'}"; }  # mision_pedir do the mission
+alias mision_estado='_ros && ros2 topic echo /mission/status'
