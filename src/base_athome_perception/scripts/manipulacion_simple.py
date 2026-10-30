@@ -9,7 +9,7 @@ Una sola ventana: video de la camara de MUNECA (no la de la cabeza) + panel de t
   [ESC]      cancelar la ensenanza (bloquea el brazo) / salir si no hay ensenanza
   [1][2][3]  ir a HOME / PRE-GRASP / POST-GRASP guardadas
   [O] [C]    abrir / cerrar pinza
-  [G]        agarrar el objeto visto con cinematica inversa (MoveIt; antes: moveit_brazo)
+  [G]        agarrar el objeto visto con cinematica inversa (MoveIt arranca solo con este script)
   [M]        calibrar distancia con la cinta (Medido_cm = centro de la pinza -> cara del objeto)
   [Q]        salir
 
@@ -20,6 +20,8 @@ El brazo lo maneja piper_arm_controller (Jetson): /arm/status (medido), /arm/set
 import json
 import math
 import os
+import signal
+import subprocess
 import threading
 import time
 from typing import List, Optional
@@ -31,7 +33,9 @@ import numpy as np
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
+from builtin_interfaces.msg import Duration
 from sensor_msgs.msg import Image, JointState
+from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from std_msgs.msg import Float32, String
 from std_srvs.srv import SetBool
 
@@ -63,6 +67,7 @@ class Manipulacion(Node):
         self.create_subscription(String, "/arm/status", self._status_cb, 10)
         self.create_subscription(Image, "/arm_camera/image_raw", self._image_cb, qos_profile_sensor_data)
         self.pub_joint = self.create_publisher(JointState, "/arm/joint_cmd", 5)
+        self.pub_traj = self.create_publisher(JointTrajectory, "/arm/joint_trajectory", 2)
         self.pub_gripper = self.create_publisher(Float32, "/arm/gripper_cmd", 5)
         self.cli_enable = self.create_client(SetBool, "/arm/set_enable")
 
@@ -73,6 +78,8 @@ class Manipulacion(Node):
         self.detection = None  # (bbox, z_est)
         self.kin = PiperKinematicsSolver()
         self.moveit = MoveItBridge(self)
+        self.move_group_proc = None
+        threading.Thread(target=self._ensure_move_group, daemon=True).start()
         self.yolo = None
         self.wizard = TeachWizard(self.set_torque, self.save_pose)
         threading.Thread(target=self._vision_loop, daemon=True).start()
@@ -175,17 +182,48 @@ class Manipulacion(Node):
         finally:
             self.busy = False
 
+    def _ensure_move_group(self):
+        """MoveIt dentro del mismo comando: si no hay move_group corriendo, lo lanza y lo cierra al salir."""
+        if self.moveit.cli_ik.wait_for_service(timeout_sec=1.5):
+            return
+        self.status = "Iniciando MoveIt..."
+        env = dict(os.environ)
+        log = open("/tmp/move_group_manipulacion.log", "w")
+        self.move_group_proc = subprocess.Popen(
+            ["ros2", "launch", "base_athome_moveit_config", "move_group.launch.py"],
+            stdout=log, stderr=subprocess.STDOUT, env=env, start_new_session=True)
+        ok = self.moveit.cli_ik.wait_for_service(timeout_sec=40.0)
+        self.status = "MoveIt listo." if ok else "MoveIt no arranco (ver /tmp/move_group_manipulacion.log)."
+
+    def stop_move_group(self):
+        if self.move_group_proc is not None and self.move_group_proc.poll() is None:
+            try:
+                os.killpg(os.getpgid(self.move_group_proc.pid), signal.SIGINT)
+                self.move_group_proc.wait(timeout=5)
+            except Exception:
+                pass
+
     def _execute(self, points) -> bool:
-        prev = 0.0
-        for q, t in decimate(points, min_dt=0.3)[1:]:
+        """Manda la trayectoria COMPLETA al controlador (la sigue continua a 50 Hz: sin temblar)."""
+        pts = decimate(points, min_dt=0.05)
+        if len(pts) < 2:
+            return True
+        msg = JointTrajectory()
+        msg.joint_names = [f"joint{i}" for i in range(1, 7)]
+        for q, t in pts[1:]:
+            p = JointTrajectoryPoint()
+            p.positions = [float(v) for v in q]
+            p.time_from_start = Duration(sec=int(t), nanosec=int((t % 1.0) * 1e9))
+            msg.points.append(p)
+        self.pub_traj.publish(msg)
+        t_end = time.time() + pts[-1][1] + 0.5
+        while time.time() < t_end:
             if self.abort:
+                # detener: mantener la posicion actual medida
+                self.send_joints(list(self.joints_deg), 0.6)
                 self.status = "Movimiento cancelado."
                 return False
-            dur = max(0.3, t - prev)
-            self.send_joints([math.degrees(v) for v in q], dur)
-            time.sleep(dur)
-            prev = t
-        time.sleep(0.3)
+            time.sleep(0.05)
         return True
 
     # ---------------------------------------------------------------- vision
@@ -243,7 +281,7 @@ class Manipulacion(Node):
             self.status = "Agarre: no veo el objeto en la camara de muneca."
             return
         if not self.moveit.available():
-            self.status = "Agarre: MoveIt no esta corriendo. Abri otra terminal con 'moveit_brazo'."
+            self.status = "Agarre: MoveIt todavia no esta listo (arranca solo, esperar unos segundos)."
             return
         threading.Thread(target=self._grasp_worker, daemon=True).start()
 
@@ -396,6 +434,7 @@ def main():
     finally:
         if node.wizard.active:
             node.wizard.cancel()
+        node.stop_move_group()
         cv2.destroyAllWindows()
         node.destroy_node()
         if rclpy.ok():

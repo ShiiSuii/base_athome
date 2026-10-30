@@ -18,6 +18,7 @@ from typing import Dict, List, Optional, Tuple
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
+from trajectory_msgs.msg import JointTrajectory
 from geometry_msgs.msg import PoseStamped, Point, Quaternion
 from std_msgs.msg import Float32, String, Bool
 from std_srvs.srv import Trigger, SetBool
@@ -75,6 +76,9 @@ class PiperArmController(Node):
         # sin potencia el SDK devuelve ceros y el setpoint inicial seria la pose 0.
         self.declare_parameter('feedback_timeout_s', 0.5)
         self.declare_parameter('reconnect_timeout_s', 5.0)
+        # Velocidad (%) del planificador interno del Piper al seguir setpoints transmitidos a 50 Hz.
+        # Muy baja (antes 24 %) => el brazo queda atras del setpoint, frena y acelera: tiembla.
+        self.declare_parameter('stream_speed_pct', 60)
 
         self.can_port = self.get_parameter('can_port').value
         if self.can_port == 'auto':
@@ -83,6 +87,8 @@ class PiperArmController(Node):
         self.auto_enable = bool(self.get_parameter('auto_enable').value)
         self.feedback_timeout_s = float(self.get_parameter('feedback_timeout_s').value)
         self.reconnect_timeout_s = float(self.get_parameter('reconnect_timeout_s').value)
+        self.stream_speed_pct = int(self.get_parameter('stream_speed_pct').value)
+        self.timed_traj = None  # {'t0', 'times': [...], 'points': [[deg]*6, ...]}
         self._had_feedback = False
         self.lost_feedback = False
         self._last_fb_stamp = None
@@ -104,6 +110,9 @@ class PiperArmController(Node):
 
         # Subscriptores de Control
         self.sub_joint_cmd = self.create_subscription(JointState, '/arm/joint_cmd', self.joint_cmd_cb, 5)
+        # Trayectoria completa con tiempos (p.ej. de MoveIt): se sigue de forma continua a 50 Hz,
+        # sin frenar entre puntos (enviar tramos sueltos por joint_cmd hacia temblar al brazo).
+        self.sub_traj = self.create_subscription(JointTrajectory, '/arm/joint_trajectory', self.trajectory_cb, 2)
         self.sub_gripper_cmd = self.create_subscription(Float32, '/arm/gripper_cmd', self.gripper_cmd_cb, 5)
         self.sub_enable = self.create_subscription(Bool, '/arm/enable', self.enable_cb, 5)
 
@@ -243,6 +252,14 @@ class PiperArmController(Node):
         if self.feedback_ok():
             self.pub_joint_states.publish(js)
             self.pub_arm_joint_states.publish(js)
+        # torso_lift_joint fijo en 0 (elevador arriba) hasta que exista un nodo del elevador: sin este
+        # joint el robot_state_publisher no publica TF de cubo, cabeza ni brazo (no se veian en RViz).
+        if self.tick_counter % 5 == 0:
+            torso = JointState()
+            torso.header.stamp = now
+            torso.name = ['torso_lift_joint']
+            torso.position = [0.0]
+            self.pub_joint_states.publish(torso)
 
         # 2. /arm/current_pose
         ps = PoseStamped()
@@ -297,8 +314,20 @@ class PiperArmController(Node):
                 if self.autonomous_sequence is not None:
                     self.update_autonomous_sequence(t_start)
 
-                is_moving = self.active_trajectory is not None
-                if is_moving:
+                if self.timed_traj is not None:
+                    tt = self.timed_traj
+                    el = t_start - tt['t0']
+                    times, pts = tt['times'], tt['points']
+                    if el >= times[-1]:
+                        self.target_joints_deg = list(pts[-1])
+                        self.timed_traj = None
+                    else:
+                        k = max(0, next(i for i, t in enumerate(times) if t > el) - 1)
+                        span = max(1e-3, times[k + 1] - times[k])
+                        a = min(1.0, max(0.0, (el - times[k]) / span))
+                        self.target_joints_deg = [pts[k][j] + a * (pts[k + 1][j] - pts[k][j]) for j in range(6)]
+                is_moving = self.active_trajectory is not None or self.timed_traj is not None
+                if self.active_trajectory is not None:
                     traj = self.active_trajectory
                     elapsed = t_start - traj['start_time']
                     duration = max(0.1, traj['duration'])
@@ -323,7 +352,7 @@ class PiperArmController(Node):
                         # Si está en movimiento: transmitir a 50 Hz cada ciclo
                         # Si está en reposo (hold): transmitir MotionCtrl cada 2 ciclos (25Hz) y JointCtrl cada 5 ciclos (10Hz)
                         if is_moving or (self.tick_counter % 2 == 0):
-                            spd = 24 if is_moving else 10
+                            spd = self.stream_speed_pct if is_moving else 10
                             self.piper.MotionCtrl_2(0x01, 0x01, spd, 0x00)
 
                         if is_moving or (self.tick_counter % 5 == 0):
@@ -338,12 +367,35 @@ class PiperArmController(Node):
             t_sleep = max(0.001, period - t_spent)
             time.sleep(t_sleep)
 
+    def trajectory_cb(self, msg: JointTrajectory):
+        """Trayectoria temporizada: se arranca desde el setpoint actual para no dar saltos."""
+        try:
+            idx = [msg.joint_names.index(f'joint{i}') for i in range(1, 7)]
+        except ValueError:
+            self.get_logger().warn("joint_trajectory sin joint1..joint6: ignorada")
+            return
+        times, pts = [0.0], []
+        with self.lock:
+            pts.append(list(self.target_joints_deg if self.is_enabled else self.current_joints_deg))
+            for p in msg.points:
+                t = p.time_from_start.sec + p.time_from_start.nanosec * 1e-9
+                if t <= times[-1]:
+                    continue
+                times.append(t)
+                pts.append([p.positions[i] * RAD_TO_DEG for i in idx])
+            if len(pts) < 2:
+                return
+            self.active_trajectory = None
+            self.timed_traj = {'t0': time.time(), 'times': times, 'points': pts}
+        self.get_logger().info(f"Trayectoria recibida: {len(pts) - 1} puntos, {times[-1]:.2f} s")
+
     def plan_trajectory(self, target_deg: List[float], duration: float = 2.0, target_gripper: Optional[float] = None):
         """Inicia una trayectoria suave interpolada hacia target_deg."""
         with self.lock:
             g_target = self.target_gripper_mm if target_gripper is None else target_gripper
+            self.timed_traj = None
             self.active_trajectory = {
-                'start_deg': list(self.current_joints_deg),
+                'start_deg': list(self.target_joints_deg if self.is_enabled else self.current_joints_deg),
                 'target_deg': list(target_deg),
                 'start_gripper': float(self.current_gripper_mm),
                 'target_gripper': float(g_target),
@@ -357,8 +409,9 @@ class PiperArmController(Node):
             if self.active_trajectory is not None:
                 self.active_trajectory['target_gripper'] = float(target_gripper_mm)
                 return
+            self.timed_traj = None
             self.active_trajectory = {
-                'start_deg': list(self.current_joints_deg),
+                'start_deg': list(self.target_joints_deg if self.is_enabled else self.current_joints_deg),
                 'target_deg': list(self.target_joints_deg),
                 'start_gripper': float(self.current_gripper_mm),
                 'target_gripper': float(target_gripper_mm),

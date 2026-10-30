@@ -4,6 +4,7 @@ Ejecutar en un dominio ROS aislado, nunca en el operativo (10):
     ROS_DOMAIN_ID=77 python3 -m pytest -q jetson_head/scripts/tests
 """
 import importlib.util
+import math
 import os
 import sys
 import time
@@ -136,6 +137,37 @@ def test_enable_with_live_feedback_syncs_setpoint_to_measured_pose():
         assert node.set_arm_enable(True) is True
         assert node.is_enabled is True
         assert node.target_joints_deg == [10.0, 20.0, 30.0, 40.0, 50.0, 60.0]
+    finally:
+        node.running = False
+        node.destroy_node()
+
+
+def test_timed_trajectory_is_followed_continuously():
+    from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+    from builtin_interfaces.msg import Duration
+    fake = with_live_feedback(make_fake_piper())
+    module = load_controller(fake)
+    node = make_node(module)
+    try:
+        time.sleep(0.1)
+        assert node.set_arm_enable(True)
+        start = list(node.target_joints_deg)
+        goal = [v + 5.0 for v in start]
+        msg = JointTrajectory()
+        msg.joint_names = [f'joint{i}' for i in range(1, 7)]
+        for frac, t in ((0.5, 0.2), (1.0, 0.4)):
+            p = JointTrajectoryPoint()
+            p.positions = [math.radians(s + frac * (g - s)) for s, g in zip(start, goal)]
+            p.time_from_start = Duration(sec=0, nanosec=int(t * 1e9))
+            msg.points.append(p)
+        fake.JointCtrl.reset_mock()
+        node.trajectory_cb(msg)
+        time.sleep(0.2)
+        mid = node.target_joints_deg[0]
+        assert start[0] < mid < goal[0]          # interpolando, sin saltar al final
+        time.sleep(0.4)
+        assert node.target_joints_deg == pytest.approx(goal, abs=1e-6)
+        assert fake.JointCtrl.call_count >= 15   # transmision continua a 50 Hz mientras se mueve
     finally:
         node.running = False
         node.destroy_node()
