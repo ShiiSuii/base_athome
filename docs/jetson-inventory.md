@@ -1,5 +1,7 @@
 # Inventario Jetson Orin Nano (HOME-10)
 
+> **Actualización 2026-10-30 13:00 — MIGRADA (HOME-11):** JetPack 7.2.1 / Jetson Linux R39.2.1, **Ubuntu 24.04.4, kernel 6.8.12-tegra, ROS 2 Jazzy**. Flasheada desde la NUC por USB-C en recovery (`l4t_initrd_flash.sh`, microSD + QSPI), autorizado por el usuario. Usuario `ubuntu`, IP fija `10.42.0.12` en el adaptador USB (`robot-nuc`), internet vía NAT de la NUC, NTP OK. `gs_usb` compilado desde Linux 6.8.12 (`/lib/modules/.../updates/`). Venv `~/robot_venv`. `jetson-head` y `jetson-performance` habilitados. Lo de abajo describe el sistema anterior (JetPack 6.2.3).
+
 Fecha: 2026-10-29 ~23:40 (-03). Recolectado por Claude Code vía SSH desde la NUC, solo comandos de lectura.
 Etiquetas: `JETSON_CONFIRMED` = salida de comando real; `SOLO_DOCUMENTADO`; `PENDIENTE`.
 

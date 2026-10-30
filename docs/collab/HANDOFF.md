@@ -91,3 +91,11 @@
 - Hallazgos: S-11 (joint states 0.0 falsos cuando el hardware no responde), S-13 (Humble↔Jazzy rompe `ros2 node list`; refuerza HOME-11).
 - No probado: interfaces de actuadores (sin potencia), RealSense (no está en la Jetson; verificar en la NUC).
 - 10:30 — Más trabajo en la Jetson: Piper rechaza habilitar sin realimentación CAN reciente (S-11 parcial, archivo desplegado, efectivo al reiniciar el servicio); argumento `whisper_model` (medido: `base.en` 6 % WER vs `tiny` 20 %); YOLOv8n TensorRT FP16 en GPU (4,3 ms; nodo `yolo_trt_node.py` 24,5 Hz con la cámara real, manual). Instalado `cuda-python==12.6.0` (`--user`). Incidente: un export de ultralytics actualizó numpy en `~/ros2_vision_venv` de la NUC y rompió `cv2`; revertido y verificado (8 tests de percepción OK).
+
+### HANDOFF 2026-10-30 ~13:00 — Claude Code — Jetson migrada a JetPack 7.2.1 + Jazzy
+
+- Flasheo por USB-C desde la NUC (recovery, `flash_jetson_r39.sh`); microSD borrada con autorización explícita del usuario. QSPI actualizado a r39.
+- Bootstrap Jazzy + venv + `gs_usb` 6.8 + udev + red. `jetson-head` **habilitado** por pedido del usuario: Piper deshabilitado (`feedback_ok=false`), pan-tilt `connected=false` (sin 12 V), DaBai 30 Hz, Whisper `base.en`.
+- `ros2 node list` desde la NUC lista los 4 nodos (S-13 resuelto).
+- Asignación de cómputo: `docs/ASIGNACION_COMPUTO.md`. Alias: `ayuda` en NUC y Jetson.
+- Sudo sin contraseña temporal en la NUC: `/etc/sudoers.d/99-jetson-flash-temp` → borrar al terminar.
