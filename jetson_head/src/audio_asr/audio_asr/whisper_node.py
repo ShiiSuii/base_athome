@@ -64,6 +64,10 @@ class WhisperASRNode(Node):
         # Ventana fija tras /voice/listen_trigger: graba completa (no corta en la primera pausa)
         # y recien al final transcribe y filtra. Si sigue hablando, se extiende hasta max_utterance_sec.
         self.declare_parameter('listen_window_sec', 6.0)
+        # Solo transcribir cuando alguien lo pide (/voice/listen_trigger). En modo continuo cada ruido
+        # de la sala se transcribia: varias transcripciones simultaneas tardaban 5-10 s y el pedido real
+        # del receptionist llegaba tarde (logs del 2026-10-30).
+        self.declare_parameter('continuous', False)
         self.declare_parameter('unmute_guard_sec', 0.45)
         self.declare_parameter('max_mute_sec', 25.0)      # failsafe: ninguna frase del robot dura tanto
         self.declare_parameter('max_ambient_rms', 0.15)  # con ganancia maxima el ruido de sala es alto: dejar adaptar
@@ -84,6 +88,8 @@ class WhisperASRNode(Node):
         self.min_utterance_sec = gp('min_utterance_sec').get_parameter_value().double_value
         self.trigger_wait_sec = gp('trigger_wait_sec').get_parameter_value().double_value
         self.listen_window_sec = gp('listen_window_sec').get_parameter_value().double_value
+        self.continuous = gp('continuous').get_parameter_value().bool_value
+        self.transcribe_lock = threading.Lock()
         self.unmute_guard_sec = gp('unmute_guard_sec').get_parameter_value().double_value
         self.max_mute_sec = gp('max_mute_sec').get_parameter_value().double_value
         self.max_ambient_rms = gp('max_ambient_rms').get_parameter_value().double_value
@@ -345,6 +351,8 @@ class WhisperASRNode(Node):
                             self.get_logger().info(f'Escuchando ventana fija de {self.listen_window_sec:.1f} s...')
                             ring_buffer.clear()
 
+                        if not triggered and not self.continuous:
+                            continue  # modo bajo demanda: no se graba nada hasta /voice/listen_trigger
                         if not triggered:
                             ring_buffer.append((chunk, is_speech))
                             num_voiced = len([f for f, speech in ring_buffer if speech])
@@ -421,6 +429,9 @@ class WhisperASRNode(Node):
     # ------------------------------------------------------------------
     def transcribe_worker(self, audio_data, t_start):
         t0 = time.time()
+        if not self.transcribe_lock.acquire(blocking=False):
+            self.get_logger().warn('Ya hay una transcripcion en curso: se descarta este audio.')
+            return
         try:
             lang = None if self.language.lower() in ['auto', 'none', '', 'multi', 'bi'] else self.language
             if self.model_size.endswith('.en'):
@@ -431,9 +442,16 @@ class WhisperASRNode(Node):
                 language=lang,
                 initial_prompt=self.initial_prompt,
                 beam_size=self.beam_size,
-                vad_filter=False,
+                # VAD de faster-whisper (Silero, incluido): recorta silencio/ruido de la ventana fija
+                vad_filter=True,
+                vad_parameters={"min_silence_duration_ms": 400, "speech_pad_ms": 250},
                 condition_on_previous_text=False,
                 no_speech_threshold=self.no_speech_threshold,
+                # Una sola pasada sin "temperature fallback": las re-decodificaciones ante ruido
+                # (alucinaciones que se repiten) llegaban a 8-10 s en la Jetson
+                temperature=0.0,
+                without_timestamps=True,
+                max_new_tokens=64,
             )
             segments = list(segments)
 
@@ -458,7 +476,13 @@ class WhisperASRNode(Node):
             dt = time.time() - t0
 
             norm = re.sub(r'\s+', ' ', text.lower()).strip()
+            # Eco del initial_prompt: con silencio Whisper "lee" la lista de nombres/bebidas
+            prompt_words = set(re.findall(r'[a-z]+', self.initial_prompt.lower())) - {'and', 'the', 'my', 'is', 'name', 'favorite', 'drink'}
+            heard = re.findall(r'[a-z]+', norm)
+            prompt_echo = len(heard) >= 4 and sum(w in prompt_words for w in heard) / len(heard) > 0.8 \
+                and len({w for w in heard if w in prompt_words}) >= 4
             is_junk = (
+                prompt_echo or
                 not text
                 or norm in HALLUCINATIONS
                 or not re.search(r'[a-zA-Z\u00c0-\u017f]{2,}', text)
@@ -482,6 +506,7 @@ class WhisperASRNode(Node):
         except Exception as e:
             self.get_logger().error(f'Transcription error: {e}')
         finally:
+            self.transcribe_lock.release()
             self.set_status('IDLE')
 
 
