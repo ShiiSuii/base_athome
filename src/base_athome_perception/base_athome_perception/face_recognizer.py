@@ -1,9 +1,17 @@
 #!/usr/bin/env python3
 # ==============================================================================
-# Base@Home - Sistema de Memoria Biometrica y Reconocimiento Facial Multi-Persona
-# Inspirado en estandares RoboCup @Home (UNAM Justina, Homer Koblenz, TU/e)
-# Motor: OpenCV DNN SSD ResNet-10 + SFace (Embeddings Biometricos 128-D)
-# Compatible con ROS 2 Jazzy y Python 3.12
+# Base@Home - Memoria biometrica y reconocimiento facial multi-persona
+#
+# Pipeline (como ros4hri hri_face_detect + identificacion, Apache-2.0, solo diseno):
+#   YuNet (caja + 5 puntos) -> alineacion SFace.alignCrop -> embedding SFace 128-D
+#   -> similitud coseno contra perfiles. Si YuNet no esta disponible se usa el
+#   detector SSD ResNet-10 sin alineacion (menos preciso).
+#
+# Memoria en dos niveles:
+#   - persistente: personas que deben recordarse entre ejecuciones (p.ej. el host)
+#   - temporal (de sesion): invitados de la prueba en curso. Solo se comparan los
+#     perfiles persistentes y los de la sesion actual, asi un invitado de una
+#     corrida anterior no se confunde con uno nuevo. clear_session() los borra.
 # ==============================================================================
 
 from dataclasses import dataclass, field
@@ -11,16 +19,35 @@ import datetime
 import json
 import os
 import pickle
+import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
 
+MAX_SAMPLES = 15
+PLACEHOLDER_NAMES = {"", "desconocido", "unknown", "guest", "me llamo", "followed by"}
+DEFAULT_DB_DIR = os.path.expanduser("~/.local/share/base_athome/faces_database")
+
+
+def _now_str(ts: float) -> str:
+    return datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _valid_feat(f) -> bool:
+    return f is not None and getattr(f, "size", 0) == 128
+
+
+def _unit(f: np.ndarray) -> np.ndarray:
+    v = f.reshape(1, 128).astype(np.float32)
+    n = float(np.linalg.norm(v))
+    return v / n if n > 1e-6 else v
+
 
 @dataclass
 class PersonProfile:
-    """Perfil biometrico y de memoria de una persona registrada en RoboCup @Home."""
+    """Perfil biometrico y de memoria de una persona."""
 
     person_id: str
     name: str
@@ -37,24 +64,24 @@ class PersonProfile:
     thumbnail_img: Optional[np.ndarray] = field(default=None, repr=False)
     _last_sighting_recorded: float = field(default=0.0, repr=False)
 
-    def update_centroid(self) -> None:
-        """Calcula el vector biometrico medio (centroide normalizado) de la persona."""
-        valid_feats = []
-        for f in self.features:
-            if f is not None and getattr(f, "size", 0) == 128:
-                valid_feats.append(f.reshape(1, 128).astype(np.float32))
-        self.features = valid_feats
+    @property
+    def persistent(self) -> bool:
+        return bool(self.attributes.get("persistent", False))
 
+    @property
+    def session_id(self) -> str:
+        return str(self.attributes.get("session_id", ""))
+
+    def update_centroid(self) -> None:
+        """Vector medio normalizado de las muestras validas."""
+        self.features = [f.reshape(1, 128).astype(np.float32) for f in self.features if _valid_feat(f)]
         if self.features:
-            feats_array = np.vstack(self.features)
-            mean_vec = np.mean(feats_array, axis=0, keepdims=True)
+            mean_vec = np.mean(np.vstack([_unit(f) for f in self.features]), axis=0, keepdims=True)
             norm = float(np.linalg.norm(mean_vec))
-            if norm > 1e-6:
-                self.centroid = (mean_vec / norm).astype(np.float32)
-            else:
-                self.centroid = self.features[0].copy()
+            self.centroid = (mean_vec / norm).astype(np.float32) if norm > 1e-6 else self.features[0].copy()
         else:
             self.centroid = None
+        self.samples_count = len(self.features)
 
     def to_metadata_dict(self) -> Dict[str, Any]:
         return {
@@ -72,358 +99,317 @@ class PersonProfile:
 
 
 class FaceRecognizer:
-    """Motor de deteccion, reconocimiento y memoria facial multi-persona para RoboCup @Home."""
+    """Deteccion, reconocimiento y memoria facial multi-persona (thread-safe)."""
 
     def __init__(
         self,
         caffe_proto_path: str,
         caffe_model_path: str,
         sface_model_path: str,
-        db_path: str,
+        db_path: str = DEFAULT_DB_DIR,
         conf_thresh: float = 0.55,
-        cosine_thresh: float = 0.52,
+        cosine_thresh: Optional[float] = None,
+        yunet_model_path: Optional[str] = None,
+        session_id: Optional[str] = None,
     ):
         self.caffe_proto_path = caffe_proto_path
         self.caffe_model_path = caffe_model_path
         self.sface_model_path = sface_model_path
         self.conf_thresh = conf_thresh
-        # Umbral robusto contra falsos positivos: 0.52 (evita colisiones inter-persona)
-        self.cosine_thresh = cosine_thresh
+        self.lock = threading.RLock()
 
-        # Directorio de persistencia de la base de datos de memoria
+        # Directorio de persistencia (fuera del repo por defecto: contiene biometria)
         if db_path.endswith(".pkl") or db_path.endswith(".json"):
-            base_dir = os.path.dirname(os.path.abspath(db_path))
-            self.db_dir = os.path.join(base_dir, "faces_database")
+            self.db_dir = os.path.join(os.path.dirname(os.path.abspath(db_path)), "faces_database")
             self.legacy_pkl_path = db_path
         else:
             self.db_dir = os.path.abspath(db_path)
             self.legacy_pkl_path = os.path.join(os.path.dirname(self.db_dir), "faces_db.pkl")
-
         self.metadata_file = os.path.join(self.db_dir, "profiles.json")
         self.features_file = os.path.join(self.db_dir, "features.pkl")
         self.thumbnails_dir = os.path.join(self.db_dir, "thumbnails")
-
         os.makedirs(self.thumbnails_dir, exist_ok=True)
 
-        # 1. Cargar Detector Facial Deep Learning SSD ResNet-10
-        if not os.path.exists(self.caffe_proto_path) or not os.path.exists(self.caffe_model_path):
-            raise FileNotFoundError(f"Modelos Caffe no encontrados: {self.caffe_proto_path}")
-        self.detector_net = cv2.dnn.readNetFromCaffe(self.caffe_proto_path, self.caffe_model_path)
+        # 1. Detector: YuNet (con 5 landmarks para alinear) o SSD ResNet-10 de respaldo
+        self.yunet = None
+        self.yunet_size = (0, 0)
+        for path in self._yunet_candidates(yunet_model_path, caffe_proto_path):
+            try:
+                self.yunet = cv2.FaceDetectorYN.create(path, "", (320, 320), conf_thresh, 0.3, 50)
+                self.yunet.detect(np.zeros((320, 320, 3), np.uint8))  # falla aqui si el modelo no es compatible
+                self.yunet_model_path = path
+                break
+            except Exception:
+                self.yunet = None
+        self.detector_net = None
+        if self.yunet is None:
+            if not os.path.exists(caffe_proto_path) or not os.path.exists(caffe_model_path):
+                raise FileNotFoundError(f"Ni YuNet ni el detector Caffe disponibles: {caffe_proto_path}")
+            self.detector_net = cv2.dnn.readNetFromCaffe(caffe_proto_path, caffe_model_path)
 
-        # 2. Cargar Extractor Facial Deep Learning SFace (128-D)
-        if not os.path.exists(self.sface_model_path):
-            raise FileNotFoundError(f"Modelo SFace no encontrado: {self.sface_model_path}")
-        self.sface = cv2.FaceRecognizerSF.create(self.sface_model_path, "")
+        # 2. Extractor SFace 128-D
+        if not os.path.exists(sface_model_path):
+            raise FileNotFoundError(f"Modelo SFace no encontrado: {sface_model_path}")
+        self.sface = cv2.FaceRecognizerSF.create(sface_model_path, "")
 
-        # 3. Diccionario de perfiles en memoria: { person_id: PersonProfile }
+        # Umbral coseno: OpenCV Zoo recomienda 0.363 con caras alineadas; con recorte
+        # sin alinear las similitudes son mas bajas y ruidosas -> umbral mas alto.
+        if cosine_thresh is None:
+            cosine_thresh = 0.40 if self.aligned else 0.52
+        self.cosine_thresh = cosine_thresh
+
+        self.session_id = session_id or f"session_{datetime.datetime.now():%Y%m%d_%H%M%S}"
         self.profiles: Dict[str, PersonProfile] = {}
         self.load_database()
 
+    # ------------------------------------------------------------------ util
+    @staticmethod
+    def _yunet_candidates(explicit: Optional[str], caffe_proto_path: str) -> List[str]:
+        models_dir = os.path.dirname(os.path.abspath(caffe_proto_path))
+        names = ["face_detection_yunet_2023mar.onnx", "face_detection_yunet_2022mar.onnx"]
+        cands = [explicit] if explicit else []
+        cands += [os.path.join(models_dir, n) for n in names]
+        return [c for c in cands if c and os.path.exists(c)]
+
+    @property
+    def aligned(self) -> bool:
+        return self.yunet is not None
+
     @property
     def known_faces(self) -> Dict[str, List[np.ndarray]]:
-        """Compatibilidad retroactiva con implementaciones previas."""
-        return {p.name: p.features for p in self.profiles.values()}
+        """Compatibilidad retroactiva."""
+        with self.lock:
+            return {p.name: list(p.features) for p in self.profiles.values()}
 
+    def _in_scope(self, p: PersonProfile) -> bool:
+        """Perfiles que participan del reconocimiento: persistentes o de la sesion actual."""
+        return p.persistent or p.session_id == self.session_id
+
+    def session_profiles(self) -> List[PersonProfile]:
+        with self.lock:
+            return [p for p in self.profiles.values() if self._in_scope(p)]
+
+    # ----------------------------------------------------------- persistencia
     def load_database(self) -> None:
-        """Carga la base de datos de perfiles y caracteristicas biometricas desde disco."""
-        self.profiles = {}
-
-        # Comprobar si existe la nueva estructura (profiles.json + features.pkl)
-        if os.path.exists(self.metadata_file) and os.path.exists(self.features_file):
-            try:
-                with open(self.metadata_file, "r", encoding="utf-8") as f:
-                    meta_dict = json.load(f)
-
-                with open(self.features_file, "rb") as f:
-                    feats_dict = pickle.load(f)
-
-                for pid, meta in meta_dict.items():
-                    feats = feats_dict.get(pid, [])
-                    thumb_img = None
-                    thumb_path = os.path.join(self.db_dir, meta.get("thumbnail_file", ""))
-                    if os.path.exists(thumb_path):
-                        thumb_img = cv2.imread(thumb_path)
-
-                    profile = PersonProfile(
-                        person_id=pid,
-                        name=meta["name"],
-                        enrolled_at=meta.get("enrolled_at", time.time()),
-                        enrolled_date=meta.get("enrolled_date", ""),
-                        last_seen=meta.get("last_seen", time.time()),
-                        last_seen_date=meta.get("last_seen_date", ""),
-                        sighting_count=meta.get("sighting_count", 1),
-                        thumbnail_file=meta.get("thumbnail_file", ""),
-                        samples_count=len(feats),
-                        attributes=meta.get("attributes", {}),
-                        features=feats,
-                        thumbnail_img=thumb_img,
-                        _last_sighting_recorded=meta.get("last_seen", time.time()),
-                    )
-                    profile.update_centroid()
-                    self.profiles[pid] = profile
-
-                total_samples = sum(len(p.features) for p in self.profiles.values())
-                print(f"[FaceRecognizer] Memoria cargada: {len(self.profiles)} perfiles, {total_samples} muestras biometricas.")
-                return
-            except Exception as e:
-                print(f"[FaceRecognizer] Error cargando memoria ({e}), verificando respaldo...")
-
-        # Migracion automatica si solo existe faces_db.pkl legado
-        if self.legacy_pkl_path and self.legacy_pkl_path.endswith(".pkl") and os.path.exists(self.legacy_pkl_path):
-            try:
-                with open(self.legacy_pkl_path, "rb") as f:
-                    legacy_data = pickle.load(f)
-                if isinstance(legacy_data, dict):
-                    print(f"[FaceRecognizer] Migrando base de datos legada ({len(legacy_data)} nombres)...")
-                    idx = 1
-                    now = time.time()
-                    now_str = datetime.datetime.fromtimestamp(now).strftime("%Y-%m-%d %H:%M:%S")
-                    for name, feats in legacy_data.items():
-                        if name.lower() in ["desconocido", "unknown", "me llamo", "followed by"]:
-                            continue
-                        pid = f"person_{idx:03d}"
-                        prof = PersonProfile(
-                            person_id=pid,
-                            name=name,
-                            enrolled_at=now,
-                            enrolled_date=now_str,
-                            last_seen=now,
-                            last_seen_date=now_str,
-                            sighting_count=1,
-                            thumbnail_file="",
-                            samples_count=len(feats) if isinstance(feats, list) else 1,
-                            features=feats if isinstance(feats, list) else [feats],
-                            _last_sighting_recorded=now,
-                        )
-                        prof.update_centroid()
-                        self.profiles[pid] = prof
-                        idx += 1
-                    self.save_database()
-                    print(f"[FaceRecognizer] Migracion exitosa a formato RoboCup @Home: {len(self.profiles)} perfiles.")
-            except Exception as e:
-                print(f"[FaceRecognizer] Error migrando archivo legado: {e}")
-
-    def save_database(self) -> None:
-        """Persiste perfiles (JSON) y vectores biometricos (PKL) de forma atomica."""
-        try:
-            os.makedirs(self.thumbnails_dir, exist_ok=True)
-
-            meta_dict = {}
-            feats_dict = {}
-
-            for pid, p in self.profiles.items():
-                meta_dict[pid] = p.to_metadata_dict()
-                feats_dict[pid] = p.features
-
-            # 1. Guardar metadata en JSON
-            temp_meta = self.metadata_file + ".tmp"
-            with open(temp_meta, "w", encoding="utf-8") as f:
-                json.dump(meta_dict, f, indent=2, ensure_ascii=False)
-            os.replace(temp_meta, self.metadata_file)
-
-            # 2. Guardar vectores en PKL
-            temp_feats = self.features_file + ".tmp"
-            with open(temp_feats, "wb") as f:
-                pickle.dump(feats_dict, f)
-            os.replace(temp_feats, self.features_file)
-
-            # 3. Compatibilidad con legacy_pkl_path
-            if self.legacy_pkl_path:
+        with self.lock:
+            self.profiles = {}
+            if os.path.exists(self.metadata_file) and os.path.exists(self.features_file):
                 try:
-                    with open(self.legacy_pkl_path, "wb") as f:
-                        pickle.dump(self.known_faces, f)
-                except Exception:
-                    pass
+                    with open(self.metadata_file, "r", encoding="utf-8") as f:
+                        meta_dict = json.load(f)
+                    with open(self.features_file, "rb") as f:
+                        feats_dict = pickle.load(f)
+                    for pid, meta in meta_dict.items():
+                        thumb_img = None
+                        thumb_path = os.path.join(self.db_dir, meta.get("thumbnail_file", "") or "_")
+                        if os.path.isfile(thumb_path):
+                            thumb_img = cv2.imread(thumb_path)
+                        attrs = meta.get("attributes", {}) or {}
+                        # Perfiles anteriores a la memoria de sesion: host persistente, resto temporal viejo
+                        attrs.setdefault("persistent", attrs.get("role") == "host")
+                        attrs.setdefault("session_id", "legacy")
+                        profile = PersonProfile(
+                            person_id=pid,
+                            name=meta["name"],
+                            enrolled_at=meta.get("enrolled_at", time.time()),
+                            enrolled_date=meta.get("enrolled_date", ""),
+                            last_seen=meta.get("last_seen", time.time()),
+                            last_seen_date=meta.get("last_seen_date", ""),
+                            sighting_count=meta.get("sighting_count", 1),
+                            thumbnail_file=meta.get("thumbnail_file", ""),
+                            attributes=attrs,
+                            features=list(feats_dict.get(pid, [])),
+                            thumbnail_img=thumb_img,
+                            _last_sighting_recorded=meta.get("last_seen", time.time()),
+                        )
+                        profile.update_centroid()
+                        self.profiles[pid] = profile
+                    total = sum(len(p.features) for p in self.profiles.values())
+                    print(f"[FaceRecognizer] Memoria cargada: {len(self.profiles)} perfiles, {total} muestras "
+                          f"({len(self.session_profiles())} activos en {self.session_id}).")
+                    return
+                except Exception as e:
+                    print(f"[FaceRecognizer] Error cargando memoria ({e}); se intenta el formato legado.")
 
-        except Exception as e:
-            print(f"[FaceRecognizer] Error persistiendo base de datos: {e}")
-
-    def save_metadata_only(self) -> None:
-        """Persiste rapidamente solo la metadata (para contadores de avistamiento y timestamps)."""
-        try:
-            meta_dict = {pid: p.to_metadata_dict() for pid, p in self.profiles.items()}
-            temp_meta = self.metadata_file + ".tmp"
-            with open(temp_meta, "w", encoding="utf-8") as f:
-                json.dump(meta_dict, f, indent=2, ensure_ascii=False)
-            os.replace(temp_meta, self.metadata_file)
-        except Exception:
-            pass
+            if self.legacy_pkl_path.endswith(".pkl") and os.path.exists(self.legacy_pkl_path):
+                try:
+                    with open(self.legacy_pkl_path, "rb") as f:
+                        legacy = pickle.load(f)
+                    if isinstance(legacy, dict):
+                        now = time.time()
+                        for i, (name, feats) in enumerate(legacy.items(), start=1):
+                            if name.strip().lower() in PLACEHOLDER_NAMES:
+                                continue
+                            pid = f"person_{i:03d}"
+                            prof = PersonProfile(pid, name, now, _now_str(now), now, _now_str(now),
+                                                 attributes={"persistent": False, "session_id": "legacy"},
+                                                 features=feats if isinstance(feats, list) else [feats],
+                                                 _last_sighting_recorded=now)
+                            prof.update_centroid()
+                            self.profiles[pid] = prof
+                        self.save_database()
+                        print(f"[FaceRecognizer] Migrados {len(self.profiles)} perfiles del formato legado.")
+                except Exception as e:
+                    print(f"[FaceRecognizer] Error migrando archivo legado: {e}")
 
     @staticmethod
+    def _atomic_write(path: str, data: bytes) -> None:
+        tmp = path + ".tmp"
+        with open(tmp, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+
+    def save_database(self) -> None:
+        """Persiste perfiles (JSON) y vectores (PKL) de forma atomica."""
+        with self.lock:
+            try:
+                os.makedirs(self.thumbnails_dir, exist_ok=True)
+                meta = {pid: p.to_metadata_dict() for pid, p in self.profiles.items()}
+                feats = {pid: p.features for pid, p in self.profiles.items()}
+                self._atomic_write(self.metadata_file, json.dumps(meta, indent=2, ensure_ascii=False).encode("utf-8"))
+                self._atomic_write(self.features_file, pickle.dumps(feats))
+            except Exception as e:
+                print(f"[FaceRecognizer] Error persistiendo base de datos: {e}")
+
+    def save_metadata_only(self) -> None:
+        with self.lock:
+            try:
+                meta = {pid: p.to_metadata_dict() for pid, p in self.profiles.items()}
+                self._atomic_write(self.metadata_file, json.dumps(meta, indent=2, ensure_ascii=False).encode("utf-8"))
+            except Exception:
+                pass
+
+    # ------------------------------------------------------------- vision
+    @staticmethod
     def assess_face_quality(image: np.ndarray, bbox: Tuple[int, int, int, int]) -> Tuple[bool, float, str]:
-        """Evalua la calidad de una deteccion facial (nitidez, tamano, bordes)."""
+        """Calidad de una deteccion (tamano, bordes, nitidez)."""
         x, y, w, h = bbox
         if w < 50 or h < 50:
             return False, 0.0, "Rostro demasiado pequeno"
-
         img_h, img_w = image.shape[:2]
         if x < 0 or y < 0 or (x + w) > img_w or (y + h) > img_h:
             return False, 0.0, "Rostro fuera de los margenes"
-
-        crop = image[y : y + h, x : x + w]
+        crop = image[y:y + h, x:x + w]
         if crop.size == 0:
             return False, 0.0, "Recorte vacio"
-
-        gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
-        lap_var = float(cv2.Laplacian(gray, cv2.CV_64F).var())
-
+        lap_var = float(cv2.Laplacian(cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY), cv2.CV_64F).var())
         if lap_var < 30.0:
             return False, lap_var, "Muestra borrosa (desenfoque)"
-
         return True, lap_var, "Excelente calidad"
 
-    def detect_faces(self, image: np.ndarray) -> List[Tuple[int, int, int, int, float]]:
-        """Detecta rostros usando DNN SSD ResNet-10. Retorna lista de (x, y, w, h, score)."""
+    def _detect(self, image: np.ndarray) -> List[Tuple[Tuple[int, int, int, int, float], Optional[np.ndarray]]]:
+        """[(x, y, w, h, score), fila YuNet de 15 valores o None]."""
         h, w = image.shape[:2]
-        blob = cv2.dnn.blobFromImage(
-            cv2.resize(image, (300, 300)),
-            scalefactor=1.0,
-            size=(300, 300),
-            mean=(104.0, 177.0, 123.0),
-        )
+        out = []
+        if self.yunet is not None:
+            if self.yunet_size != (w, h):
+                self.yunet.setInputSize((w, h))
+                self.yunet_size = (w, h)
+            _, faces = self.yunet.detect(image)
+            if faces is not None:
+                for row in faces:
+                    x, y, bw, bh = (int(v) for v in row[:4])
+                    x1, y1 = max(0, x), max(0, y)
+                    x2, y2 = min(w, x + bw), min(h, y + bh)
+                    if x2 - x1 > 25 and y2 - y1 > 25:
+                        out.append(((x1, y1, x2 - x1, y2 - y1, float(row[14])), row))
+            return out
+        blob = cv2.dnn.blobFromImage(cv2.resize(image, (300, 300)), 1.0, (300, 300), (104.0, 177.0, 123.0))
         self.detector_net.setInput(blob)
-        detections = self.detector_net.forward()
+        det = self.detector_net.forward()
+        for i in range(det.shape[2]):
+            conf = float(det[0, 0, i, 2])
+            if conf > self.conf_thresh:
+                x1, y1, x2, y2 = (det[0, 0, i, 3:7] * np.array([w, h, w, h])).astype(int)
+                x1, y1, x2, y2 = max(0, x1), max(0, y1), min(w, x2), min(h, y2)
+                if x2 - x1 > 25 and y2 - y1 > 25:
+                    out.append(((x1, y1, x2 - x1, y2 - y1, conf), None))
+        return out
 
-        faces = []
-        for i in range(detections.shape[2]):
-            confidence = float(detections[0, 0, i, 2])
-            if confidence > self.conf_thresh:
-                box = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
-                x1, y1, x2, y2 = box.astype("int")
+    def detect_faces(self, image: np.ndarray) -> List[Tuple[int, int, int, int, float]]:
+        """Compatibilidad: lista de (x, y, w, h, score)."""
+        return [box for box, _ in self._detect(image)]
 
-                x1 = max(0, x1)
-                y1 = max(0, y1)
-                x2 = min(w, x2)
-                y2 = min(h, y2)
-                bw = x2 - x1
-                bh = y2 - y1
-
-                if bw > 25 and bh > 25:
-                    faces.append((x1, y1, bw, bh, confidence))
-
-        return faces
-
-    def extract_feature(self, image: np.ndarray, bbox: Tuple[int, int, int, int]) -> Optional[np.ndarray]:
-        """Recorta un cuadrado 1:1 centrado y extrae el vector biometrico de 128-D con SFace sin deformaciones."""
+    def extract_feature(self, image: np.ndarray, bbox: Tuple[int, int, int, int],
+                        landmarks: Optional[np.ndarray] = None) -> Optional[np.ndarray]:
+        """Embedding SFace. Con landmarks YuNet usa alignCrop (recomendado por OpenCV)."""
+        if landmarks is not None:
+            try:
+                return self.sface.feature(self.sface.alignCrop(image, landmarks))
+            except Exception:
+                pass
         x, y, w, h = bbox
         img_h, img_w = image.shape[:2]
-
-        cx = x + w / 2.0
-        cy = y + h / 2.0
-        # Recorte cuadrado centrado con 12% de margen
         side = int(max(w, h) * 1.12)
         half = side // 2
-
-        x1 = int(cx - half)
-        y1 = int(cy - half)
-        x2 = x1 + side
-        y2 = y1 + side
-
-        # Padding seguro para no distorsionar las proporciones faciales
-        pad_left = max(0, -x1)
-        pad_top = max(0, -y1)
-        pad_right = max(0, x2 - img_w)
-        pad_bottom = max(0, y2 - img_h)
-
-        src_x1 = max(0, x1)
-        src_y1 = max(0, y1)
-        src_x2 = min(img_w, x2)
-        src_y2 = min(img_h, y2)
-
-        face_crop = image[src_y1:src_y2, src_x1:src_x2]
-        if pad_left > 0 or pad_top > 0 or pad_right > 0 or pad_bottom > 0:
-            face_crop = cv2.copyMakeBorder(
-                face_crop, pad_top, pad_bottom, pad_left, pad_right, cv2.BORDER_CONSTANT, value=[0, 0, 0]
-            )
-
-        if face_crop.size == 0 or face_crop.shape[0] < 20 or face_crop.shape[1] < 20:
+        x1, y1 = int(x + w / 2.0 - half), int(y + h / 2.0 - half)
+        x2, y2 = x1 + side, y1 + side
+        crop = image[max(0, y1):min(img_h, y2), max(0, x1):min(img_w, x2)]
+        pads = (max(0, -y1), max(0, y2 - img_h), max(0, -x1), max(0, x2 - img_w))
+        if any(pads):
+            crop = cv2.copyMakeBorder(crop, *pads, cv2.BORDER_CONSTANT, value=[0, 0, 0])
+        if crop.size == 0 or crop.shape[0] < 20 or crop.shape[1] < 20:
             return None
+        return self.sface.feature(cv2.resize(crop, (112, 112)))
 
-        # Redimensionar al tamano de entrada de SFace (112x112) preservando 1:1
-        face_aligned = cv2.resize(face_crop, (112, 112))
-        feature = self.sface.feature(face_aligned)
-        return feature
+    def similarity(self, a: np.ndarray, b: np.ndarray) -> float:
+        return float(self.sface.match(a.reshape(1, 128).astype(np.float32), b.reshape(1, 128).astype(np.float32),
+                                      cv2.FaceRecognizerSF_FR_COSINE))
+
+    def _profile_score(self, feature: np.ndarray, profile: PersonProfile) -> float:
+        scores = sorted((self.similarity(feature, kf) for kf in profile.features if _valid_feat(kf)), reverse=True)
+        if not scores:
+            return -1.0
+        top_k = float(np.mean(scores[:min(2, len(scores))]))  # robusto a un outlier
+        if profile.centroid is not None:
+            return 0.60 * top_k + 0.40 * self.similarity(feature, profile.centroid)
+        return top_k
 
     def recognize_face(self, feature: np.ndarray) -> Tuple[str, float, Optional[str]]:
-        """Compara un embedding contra los perfiles guardados usando Similitud Coseno, Top-K y Centroide."""
-        if not self.profiles or feature is None or getattr(feature, "size", 0) != 128:
+        """(nombre, similitud, person_id) del mejor perfil en alcance, o 'Desconocido'."""
+        if not _valid_feat(feature):
             return "Desconocido", 0.0, None
-
-        feature_norm = feature.reshape(1, 128).astype(np.float32)
-        best_profile: Optional[PersonProfile] = None
-        best_score = -1.0
-
-        for profile in self.profiles.values():
-            # Perfiles con embeddings sinteticos (sin captura real) no participan del matching
-            if not profile.features or profile.attributes.get("synthetic"):
-                continue
-
-            # 1. Similitudes con todas las muestras biometricas de la persona
-            scores = []
-            for known_feat in profile.features:
-                if known_feat is not None and getattr(known_feat, "size", 0) == 128:
-                    kf = known_feat.reshape(1, 128).astype(np.float32)
-                    try:
-                        scores.append(float(self.sface.match(feature_norm, kf, cv2.FaceRecognizerSF_FR_COSINE)))
-                    except Exception:
-                        pass
-
-            if not scores:
-                continue
-
-            # 2. Promedio robusto de las 2 mejores muestras (elimina falsos positivos por un unico outlier)
-            sorted_scores = sorted(scores, reverse=True)
-            k = min(2, len(sorted_scores))
-            top_k_score = float(np.mean(sorted_scores[:k]))
-
-            # 3. Similitud con el vector centroide del perfil (identidad media)
-            if profile.centroid is not None and getattr(profile.centroid, "size", 0) == 128:
-                cent = profile.centroid.reshape(1, 128).astype(np.float32)
-                try:
-                    centroid_score = float(self.sface.match(feature_norm, cent, cv2.FaceRecognizerSF_FR_COSINE))
-                    composite_score = 0.60 * top_k_score + 0.40 * centroid_score
-                except Exception:
-                    composite_score = top_k_score
-            else:
-                composite_score = top_k_score
-
-            if composite_score > best_score:
-                best_score = composite_score
-                best_profile = profile
-
-        # Criterio estricto de identificacion: Similitud compuesta >= 0.52
-        if best_profile is not None and best_score >= self.cosine_thresh:
-            return best_profile.name, max(0.0, float(best_score)), best_profile.person_id
-
-        return "Desconocido", max(0.0, float(best_score)), None
+        best, best_score = None, -1.0
+        with self.lock:
+            candidates = [p for p in self.profiles.values()
+                          if self._in_scope(p) and p.features and not p.attributes.get("synthetic")]
+            for p in candidates:
+                s = self._profile_score(feature, p)
+                if s > best_score:
+                    best, best_score = p, s
+        if best is not None and best_score >= self.cosine_thresh:
+            return best.name, max(0.0, best_score), best.person_id
+        return "Desconocido", max(0.0, best_score), None
 
     def detect_and_recognize(self, image: np.ndarray) -> List[Dict]:
-        """Detecta todos los rostros en la imagen y retorna identificaciones, cajas y calidad."""
-        detected = self.detect_faces(image)
         results = []
-
-        for (x, y, w, h, score) in detected:
-            feature = self.extract_feature(image, (x, y, w, h))
-            is_valid, q_score, q_reason = self.assess_face_quality(image, (x, y, w, h))
-
-            if feature is not None:
-                name, similarity, person_id = self.recognize_face(feature)
-            else:
-                name, similarity, person_id = "Desconocido", 0.0, None
-
+        for (x, y, w, h, score), lm in self._detect(image):
+            feature = self.extract_feature(image, (x, y, w, h), lm)
+            ok, q_score, q_reason = self.assess_face_quality(image, (x, y, w, h))
+            name, sim, pid = self.recognize_face(feature) if feature is not None else ("Desconocido", 0.0, None)
             results.append({
-                "bbox": [x, y, w, h],
-                "det_score": score,
-                "name": name,
-                "similarity": similarity,
-                "person_id": person_id,
-                "feature": feature,
-                "quality_valid": is_valid,
-                "quality_score": q_score,
-                "quality_reason": q_reason,
+                "bbox": [x, y, w, h], "det_score": score, "name": name, "similarity": sim,
+                "person_id": pid, "feature": feature, "landmarks": lm,
+                "quality_valid": ok, "quality_score": q_score, "quality_reason": q_reason,
             })
-
         return results
+
+    # ------------------------------------------------------------- memoria
+    def _new_pid(self) -> str:
+        i = len(self.profiles) + 1
+        while f"person_{i:03d}" in self.profiles:
+            i += 1
+        return f"person_{i:03d}"
+
+    def _write_thumbnail(self, pid: str, img: Optional[np.ndarray]) -> Tuple[str, Optional[np.ndarray]]:
+        if img is None or getattr(img, "size", 0) == 0:
+            return "", None
+        thumb = cv2.resize(img, (140, 140))
+        rel = f"thumbnails/{pid}.jpg"
+        cv2.imwrite(os.path.join(self.db_dir, rel), thumb)
+        return rel, thumb
 
     def enroll_person(
         self,
@@ -431,209 +417,158 @@ class FaceRecognizer:
         features: List[np.ndarray],
         thumbnail_img: Optional[np.ndarray] = None,
         attributes: Optional[Dict] = None,
+        persistent: bool = False,
     ) -> Tuple[str, bool]:
-        """Registra o actualiza una persona con multiples muestras biometricas y foto de perfil."""
-        name = name.strip().title()
-        if not name or not features:
+        """Registra o actualiza una persona. Devuelve (person_id, es_nuevo).
+
+        - Solo se fusiona con un perfil del mismo nombre que este en alcance
+          (persistente o de esta sesion); un homonimo de una corrida anterior no se toca.
+        - Si el homonimo en alcance tiene una cara distinta (similitud < umbral) se
+          crea otro perfil: el nombre pudo entenderse mal y no hay que mezclar caras.
+        - Muestras sinteticas nunca se mezclan con reales.
+        """
+        name = (name or "").strip().title()
+        feats = [f for f in features if _valid_feat(f)]
+        if not name or name.lower() in PLACEHOLDER_NAMES or not feats:
             return "", False
-
+        attrs = dict(attributes or {})
+        attrs["persistent"] = bool(persistent or attrs.get("persistent", False))
+        attrs["session_id"] = self.session_id
+        incoming_synthetic = bool(attrs.get("synthetic"))
         now = time.time()
-        now_str = datetime.datetime.fromtimestamp(now).strftime("%Y-%m-%d %H:%M:%S")
 
-        existing_profile: Optional[PersonProfile] = None
-        for p in self.profiles.values():
-            if p.name.lower() == name.lower():
-                existing_profile = p
-                break
+        with self.lock:
+            existing = next((p for p in self.profiles.values()
+                             if p.name.lower() == name.lower() and self._in_scope(p)), None)
+            if existing is not None and existing.features and not incoming_synthetic \
+                    and not existing.attributes.get("synthetic"):
+                probe = PersonProfile("probe", name, now, "", now, "", features=list(feats))
+                probe.update_centroid()
+                if self._profile_score(probe.centroid, existing) < self.cosine_thresh:
+                    print(f"[FaceRecognizer] '{name}' ya existe con otra cara: se crea un perfil separado.")
+                    existing = None
 
-        if existing_profile is not None:
-            # Actualizar perfil existente con nuevas muestras biometricas diversas
-            pid = existing_profile.person_id
-            existing_profile.last_seen = now
-            existing_profile.last_seen_date = now_str
-            existing_profile.sighting_count += 1
-            incoming_synthetic = bool((attributes or {}).get("synthetic"))
-            was_synthetic = bool(existing_profile.attributes.get("synthetic"))
-            if was_synthetic and not incoming_synthetic:
-                # Llegan muestras reales: descartar los embeddings sinteticos previos
-                existing_profile.features = []
-            elif incoming_synthetic and not was_synthetic:
-                # Nunca mezclar embeddings sinteticos en un perfil real
-                features = []
-            if attributes:
-                existing_profile.attributes.update(attributes)
-            existing_profile.attributes["synthetic"] = was_synthetic and incoming_synthetic
+            if existing is not None:
+                p = existing
+                was_synthetic = bool(p.attributes.get("synthetic"))
+                if was_synthetic and not incoming_synthetic:
+                    p.features = []  # llegan muestras reales: descartar las sinteticas
+                elif incoming_synthetic and not was_synthetic:
+                    feats = []  # nunca mezclar sinteticas en un perfil real
+                p.attributes.update(attrs)
+                p.attributes["synthetic"] = was_synthetic and incoming_synthetic
+                p.attributes["persistent"] = p.persistent or attrs["persistent"]
+                p.features = (p.features + feats)[-MAX_SAMPLES:]  # FIFO: conserva las mas recientes
+                p.update_centroid()
+                p.last_seen, p.last_seen_date = now, _now_str(now)
+                p.sighting_count += 1
+                rel, thumb = self._write_thumbnail(p.person_id, thumbnail_img)
+                if rel:
+                    p.thumbnail_file, p.thumbnail_img = rel, thumb
+                self.save_database()
+                print(f"[FaceRecognizer] Perfil actualizado '{name}' ({len(p.features)} muestras).")
+                return p.person_id, False
 
-            # Agregar hasta un maximo de 15 muestras biometricas
-            for feat in features:
-                if len(existing_profile.features) < 15:
-                    existing_profile.features.append(feat)
-
-            existing_profile.update_centroid()
-
-            if thumbnail_img is not None and thumbnail_img.size > 0:
-                thumb_resized = cv2.resize(thumbnail_img, (140, 140))
-                rel_path = f"thumbnails/{pid}.jpg"
-                abs_path = os.path.join(self.db_dir, rel_path)
-                cv2.imwrite(abs_path, thumb_resized)
-                existing_profile.thumbnail_file = rel_path
-                existing_profile.thumbnail_img = thumb_resized
-
+            pid = self._new_pid()
+            rel, thumb = self._write_thumbnail(pid, thumbnail_img)
+            p = PersonProfile(pid, name, now, _now_str(now), now, _now_str(now), thumbnail_file=rel,
+                              attributes=attrs, features=feats[-MAX_SAMPLES:], thumbnail_img=thumb,
+                              _last_sighting_recorded=now)
+            p.update_centroid()
+            self.profiles[pid] = p
             self.save_database()
-            print(f"[FaceRecognizer] Perfil actualizado para '{name}' ({len(existing_profile.features)} muestras).")
-            return pid, False
-
-        else:
-            # Crear nuevo perfil de persona
-            pid = f"person_{len(self.profiles) + 1:03d}"
-            while pid in self.profiles:
-                next_idx = int(pid.split("_")[1]) + 1
-                pid = f"person_{next_idx:03d}"
-
-            rel_thumb = ""
-            thumb_cache = None
-            if thumbnail_img is not None and thumbnail_img.size > 0:
-                thumb_resized = cv2.resize(thumbnail_img, (140, 140))
-                rel_thumb = f"thumbnails/{pid}.jpg"
-                abs_path = os.path.join(self.db_dir, rel_thumb)
-                cv2.imwrite(abs_path, thumb_resized)
-                thumb_cache = thumb_resized
-
-            profile = PersonProfile(
-                person_id=pid,
-                name=name,
-                enrolled_at=now,
-                enrolled_date=now_str,
-                last_seen=now,
-                last_seen_date=now_str,
-                sighting_count=1,
-                thumbnail_file=rel_thumb,
-                samples_count=len(features),
-                attributes=attributes or {},
-                features=list(features),
-                thumbnail_img=thumb_cache,
-                _last_sighting_recorded=now,
-            )
-            profile.update_centroid()
-            self.profiles[pid] = profile
-            self.save_database()
-            print(f"[FaceRecognizer] ¡Nuevo perfil registrado con exito: '{name}' [ID: {pid}]!")
+            scope = "persistente" if p.persistent else f"temporal ({self.session_id})"
+            print(f"[FaceRecognizer] Nuevo perfil '{name}' [{pid}] {scope}.")
             return pid, True
 
-    def enroll_face(self, image: np.ndarray, name: str) -> bool:
-        """Compatibilidad: Registra una persona a partir de un fotograma."""
-        faces = self.detect_faces(image)
-        if not faces:
+    def enroll_face(self, image: np.ndarray, name: str, persistent: bool = False) -> bool:
+        dets = self._detect(image)
+        if not dets:
             return False
-
-        largest = max(faces, key=lambda f: f[2] * f[3])
-        x, y, w, h, _ = largest
-        feature = self.extract_feature(image, (x, y, w, h))
+        (x, y, w, h, _), lm = max(dets, key=lambda d: d[0][2] * d[0][3])
+        feature = self.extract_feature(image, (x, y, w, h), lm)
         if feature is None:
             return False
-
-        crop = image[max(0, y) : min(image.shape[0], y + h), max(0, x) : min(image.shape[1], x + w)]
-        pid, _ = self.enroll_person(name, [feature], thumbnail_img=crop)
+        crop = image[max(0, y):y + h, max(0, x):x + w]
+        pid, _ = self.enroll_person(name, [feature], thumbnail_img=crop, persistent=persistent)
         return bool(pid)
 
     def enroll_feature(self, feature: np.ndarray, name: str) -> bool:
-        """Compatibilidad: Registra directamente un feature."""
         if feature is None:
             return False
         pid, _ = self.enroll_person(name, [feature])
         return bool(pid)
 
     def update_sighting(self, identifier: str, min_interval_sec: float = 20.0) -> bool:
-        """Actualiza el contador de encuentros de una persona si ha transcurrido el intervalo minimo."""
-        target: Optional[PersonProfile] = None
-        if identifier in self.profiles:
-            target = self.profiles[identifier]
-        else:
-            for p in self.profiles.values():
-                if p.name.lower() == identifier.lower():
-                    target = p
-                    break
-
-        if target is None:
+        with self.lock:
+            target = self.profiles.get(identifier) or next(
+                (p for p in self.profiles.values() if p.name.lower() == identifier.lower() and self._in_scope(p)), None)
+            if target is None:
+                return False
+            now = time.time()
+            target.last_seen, target.last_seen_date = now, _now_str(now)
+            if now - target._last_sighting_recorded >= min_interval_sec:
+                target.sighting_count += 1
+                target._last_sighting_recorded = now
+                self.save_metadata_only()
+                return True
             return False
 
-        now = time.time()
-        target.last_seen = now
-        target.last_seen_date = datetime.datetime.fromtimestamp(now).strftime("%Y-%m-%d %H:%M:%S")
+    def get_known_profiles(self, scope_only: bool = True) -> List[Dict[str, Any]]:
+        """Resumen de perfiles (por defecto solo los activos: persistentes + sesion actual)."""
+        with self.lock:
+            profs = [p for p in self.profiles.values() if self._in_scope(p) or not scope_only]
+            return [{
+                "id": p.person_id, "name": p.name, "enrolled_date": p.enrolled_date,
+                "last_seen": p.last_seen, "last_seen_date": p.last_seen_date,
+                "sighting_count": p.sighting_count, "samples_count": len(p.features),
+                "thumbnail_img": p.thumbnail_img, "attributes": p.attributes,
+                "persistent": p.persistent,
+            } for p in profs]
 
-        # Verificar si constituye un nuevo encuentro para no saturar el contador
-        if now - target._last_sighting_recorded >= min_interval_sec:
-            target.sighting_count += 1
-            target._last_sighting_recorded = now
-            self.save_metadata_only()
-            return True
-
-        return False
-
-    def get_known_profiles(self) -> List[Dict[str, Any]]:
-        """Retorna resumen de todos los perfiles cargados para renderizado visual."""
-        result = []
-        for p in self.profiles.values():
-            result.append({
-                "id": p.person_id,
-                "name": p.name,
-                "enrolled_date": p.enrolled_date,
-                "last_seen": p.last_seen,
-                "last_seen_date": p.last_seen_date,
-                "sighting_count": p.sighting_count,
-                "samples_count": len(p.features),
-                "thumbnail_img": p.thumbnail_img,
-                "attributes": p.attributes,
-            })
-        return result
+    def _remove(self, pid: str) -> Optional[PersonProfile]:
+        p = self.profiles.pop(pid, None)
+        if p and p.thumbnail_file:
+            try:
+                os.remove(os.path.join(self.db_dir, p.thumbnail_file))
+            except OSError:
+                pass
+        return p
 
     def delete_person(self, identifier: str) -> bool:
-        """Elimina un perfil especifico de la memoria."""
-        pid_to_remove = None
-        if identifier in self.profiles:
-            pid_to_remove = identifier
-        else:
-            for p in self.profiles.values():
-                if p.name.lower() == identifier.lower():
-                    pid_to_remove = p.person_id
-                    break
-
-        if pid_to_remove and pid_to_remove in self.profiles:
-            profile = self.profiles.pop(pid_to_remove)
-            if profile.thumbnail_file:
-                thumb_path = os.path.join(self.db_dir, profile.thumbnail_file)
-                if os.path.exists(thumb_path):
-                    try:
-                        os.remove(thumb_path)
-                    except Exception:
-                        pass
+        with self.lock:
+            pid = identifier if identifier in self.profiles else next(
+                (p.person_id for p in self.profiles.values() if p.name.lower() == identifier.lower()), None)
+            if pid is None:
+                return False
+            p = self._remove(pid)
             self.save_database()
-            print(f"[FaceRecognizer] Perfil '{profile.name}' eliminado de la memoria.")
+            print(f"[FaceRecognizer] Perfil '{p.name}' eliminado.")
             return True
-        return False
+
+    def clear_session(self) -> int:
+        """Borra la memoria temporal (todos los perfiles no persistentes). Devuelve cuantos borro."""
+        with self.lock:
+            temp = [pid for pid, p in self.profiles.items() if not p.persistent]
+            for pid in temp:
+                self._remove(pid)
+            self.save_database()
+        print(f"[FaceRecognizer] Memoria temporal vaciada: {len(temp)} perfiles.")
+        return len(temp)
 
     def clear_database(self) -> None:
-        """Borra todos los perfiles guardados y limpia el directorio de miniaturas."""
-        self.profiles.clear()
-        if os.path.exists(self.metadata_file):
-            try:
-                os.remove(self.metadata_file)
-            except Exception:
-                pass
-        if os.path.exists(self.features_file):
-            try:
-                os.remove(self.features_file)
-            except Exception:
-                pass
-        if os.path.exists(self.legacy_pkl_path):
-            try:
-                os.remove(self.legacy_pkl_path)
-            except Exception:
-                pass
-        if os.path.exists(self.thumbnails_dir):
-            for f in os.listdir(self.thumbnails_dir):
+        """Borra todos los perfiles (persistentes incluidos) y sus miniaturas."""
+        with self.lock:
+            self.profiles.clear()
+            for path in (self.metadata_file, self.features_file, self.legacy_pkl_path):
                 try:
-                    os.remove(os.path.join(self.thumbnails_dir, f))
-                except Exception:
+                    os.remove(path)
+                except OSError:
                     pass
+            if os.path.isdir(self.thumbnails_dir):
+                for f in os.listdir(self.thumbnails_dir):
+                    try:
+                        os.remove(os.path.join(self.thumbnails_dir, f))
+                    except OSError:
+                        pass
         print("[FaceRecognizer] Memoria biometrica completamente vaciada.")

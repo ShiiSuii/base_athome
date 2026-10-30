@@ -52,8 +52,13 @@ ayuda_robot() {
 Herramientas:  urdf_editor | gpsr "<comando>" | puerta | compilar | editor_mapa
 Red/Jetson:    jetson (ssh) | red_jetson | deploy_jetson[_dry] | jetson_stats
 Cabeza:        head_start | head_stop | head_restart | head_status | head_logs
+Receptionist:  receptionist | hri_sim | limpiar_memoria | memoria_personas
 ROS (lectura): topicos | nodos | brazo_estado | pantilt_conectado | voz | detecciones | camara_muneca[_hz]
 Existentes:    mapeo2d | navegacion | rviznav | lidar | receptionist | rostros | cara | piper | stepper ...
 EOF
 }
 alias ayuda='ayuda_robot'
+
+# --- Receptionist / memoria de personas ---
+alias limpiar_memoria='_ros && ros2 service call /hri/clear_memory std_srvs/srv/Trigger'
+alias memoria_personas='python3 -c "import json,os;d=json.load(open(os.path.expanduser(\"~/.local/share/base_athome/faces_database/profiles.json\")));[print(k,v[\"name\"],\"persistente\" if v[\"attributes\"].get(\"persistent\") else v[\"attributes\"].get(\"session_id\"),v[\"samples_count\"]) for k,v in d.items()]"'

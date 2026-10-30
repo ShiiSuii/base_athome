@@ -39,7 +39,7 @@ import yaml
 import rclpy
 from rclpy.node import Node
 from rclpy.executors import MultiThreadedExecutor
-from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
+from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy, qos_profile_sensor_data
 from geometry_msgs.msg import Vector3, PoseStamped, PoseWithCovarianceStamped
 from sensor_msgs.msg import Image, JointState
 from std_msgs.msg import String, Float32, Bool
@@ -53,9 +53,9 @@ except ImportError:
         def imgmsg_to_cv2(self, img_msg, desired_encoding="bgr8"):
             im = np.frombuffer(img_msg.data, dtype=np.uint8)
             im = im.reshape((img_msg.height, img_msg.width, -1))
-            if desired_encoding == "bgr8" and im.shape[2] == 3:
-                return im
-            return im
+            if desired_encoding == "bgr8" and img_msg.encoding == "rgb8":
+                return cv2.cvtColor(im, cv2.COLOR_RGB2BGR)
+            return im.copy()
 
 # Nav2 BasicNavigator
 try:
@@ -71,7 +71,8 @@ except ImportError:
     NAV2_AVAILABLE = False
 
 # Base@Home Perception Modules
-from base_athome_perception.face_recognizer import FaceRecognizer, PersonProfile
+from base_athome_perception.face_recognizer import DEFAULT_DB_DIR, FaceRecognizer, PersonProfile
+from base_athome_perception.guest_vocabulary import GuestVocabulary
 from base_athome_perception.speaker import RoboCupSpeaker
 try:
     from base_athome_perception.person_pose_detector import PersonPoseDetector
@@ -113,8 +114,24 @@ STOP_WORDS = {
 }
 
 
-def extract_name_and_drink(text: str) -> Tuple[Optional[str], Optional[str]]:
-    """Extrae (nombre, bebida) a partir de una frase hablada en inglés o español."""
+def extract_name_and_drink(text: str, vocab=None) -> Tuple[Optional[str], Optional[str]]:
+    """Extrae (nombre, bebida) a partir de una frase hablada en inglés o español.
+
+    Con `vocab` (GuestVocabulary) se priorizan los nombres/bebidas oficiales de la
+    competencia y se corrigen errores del ASR por similitud ("Morgen" -> "Morgan").
+    """
+    name, drink = _extract_raw(text)
+    if vocab is not None:
+        official = vocab.find_name_in(text)
+        if official:
+            name = official
+        elif name:
+            name = vocab.match_name(name) or name
+        drink = vocab.match_drink(text) or drink
+    return name, drink
+
+
+def _extract_raw(text: str) -> Tuple[Optional[str], Optional[str]]:
     text_clean = text.strip()
     name = None
     drink = None
@@ -171,6 +188,10 @@ def extract_name_and_drink(text: str) -> Tuple[Optional[str], Optional[str]]:
 
     return name, drink
 
+
+# Ruta del ejecutable en la linea de comandos del driver real (evita coincidir con shells
+# que solo mencionan el nombre, p.ej. un "pgrep realsense2_camera_node" en otra terminal)
+RS_PROC_PATTERN = r"^/opt/ros/[a-z]+/lib/realsense2_camera/realsense2_camera_node"
 
 # ------------------------------------------------------------------------------
 # CONSTANTES DE POSES Y GESTOS DEL BRAZO PIPER
@@ -253,7 +274,10 @@ class HriReceptionistChallengeNode(Node):
         self.models_dir = os.path.join(self.pkg_dir, "models")
         self.config_dir = os.path.join(self.pkg_dir, "config")
         self.resources_dir = os.path.join(self.pkg_dir, "resources")
-        self.db_dir = os.path.join(self.config_dir, "faces_database")
+        # Biometria fuera del repo (no versionar caras). Migra la base vieja una vez.
+        self.db_dir = os.environ.get("ATHOME_FACES_DB", DEFAULT_DB_DIR)
+        self._migrate_legacy_db(os.path.join(self.config_dir, "faces_database"), self.db_dir)
+        self.session_id = f"receptionist_{datetime.datetime.now():%Y%m%d_%H%M%S}"
 
         # 1. Inicializar Sintesis de Voz Neuronal y Beep
         piper_bin = "/home/athome/piper_bin/piper/piper"
@@ -275,8 +299,14 @@ class HriReceptionistChallengeNode(Node):
             sface_model_path=sface_model,
             db_path=self.db_dir,
             conf_thresh=0.55,
-            cosine_thresh=0.52,
+            session_id=self.session_id,  # invitados = memoria temporal de esta sesion
         )
+        self.get_logger().info(
+            f"Memoria facial: {self.db_dir} | detector {'YuNet+alineacion' if self.recognizer.aligned else 'SSD sin alinear'}"
+            f" | umbral {self.recognizer.cosine_thresh:.2f} | sesion {self.session_id}")
+        self.vocab = GuestVocabulary()
+        self.get_logger().info(f"Vocabulario de invitados: {len(self.vocab.names)} nombres, "
+                               f"{len(self.vocab.drinks)} bebidas ({self.vocab.source})")
 
         # Pre-cargar o registrar perfil del Host ("Charlie") si no existe
         self._ensure_host_registered()
@@ -325,6 +355,12 @@ class HriReceptionistChallengeNode(Node):
 
         # Cliente para activar microfono /voice/listen_trigger
         self.cli_mic_trigger = self.create_client(Trigger, "/voice/listen_trigger")
+        # Boton/servicio para vaciar la memoria temporal de personas
+        self.srv_clear_memory = self.create_service(Trigger, "/hri/clear_memory", self._srv_clear_memory)
+        self.clear_memory_requested = False
+        self.clear_button_rect = None  # (x1, y1, x2, y2) en la ventana HUD
+        # Sesgar Whisper hacia nombres/bebidas oficiales (latched para nodos que arranquen despues)
+        self.timer_prompt = self.create_timer(5.0, self._publish_voice_prompt)
 
         # 6. Suscriptores ROS 2
         self.bridge = CvBridge()
@@ -332,11 +368,8 @@ class HriReceptionistChallengeNode(Node):
         self.latest_frame: Optional[np.ndarray] = None
         self.last_frame_time: float = 0.0
 
-        qos_cam = QoSProfile(
-            reliability=QoSReliabilityPolicy.RELIABLE,
-            history=QoSHistoryPolicy.KEEP_LAST,
-            depth=5,
-        )
+        # Best effort + depth 1: nunca se acumulan frames viejos ni se frena al publicador
+        qos_cam = qos_profile_sensor_data
 
         candidate_topics = [
             "/camera/camera/color/image_raw",
@@ -433,14 +466,24 @@ class HriReceptionistChallengeNode(Node):
         self.last_face_time = 0.0
         self.last_pose_time = 0.0
         self.cam_proc: Optional[subprocess.Popen] = None
+        self.cam_last_restart = 0.0
         self._ensure_camera_running()
+        self.timer_cam_watchdog = self.create_timer(1.0, self._camera_watchdog)
+
+        # Reconocimiento facial en un hilo propio: la ventana sigue a la tasa de la camara
+        self.face_lock = threading.Lock()
+        self.face_dets_stamp = 0.0
+        self.last_tracked_stamp = 0.0
+        self.face_worker_stop = threading.Event()
+        self.face_worker = threading.Thread(target=self._face_worker_loop, daemon=True)
+        self.face_worker.start()
 
         self.get_logger().info("HriReceptionistChallengeNode inicializado. Esperando sensores y pre-vuelo...")
 
     def _ensure_camera_running(self):
         """Verifica si la RealSense D435 está conectada y si el driver está activo; si no, lo inicia."""
         try:
-            out = subprocess.check_output(["pgrep", "-f", "realsense2_camera_node"], text=True)
+            out = subprocess.check_output(["pgrep", "-f", RS_PROC_PATTERN], text=True)
             if out.strip():
                 return
         except Exception:
@@ -455,17 +498,106 @@ class HriReceptionistChallengeNode(Node):
                     "source /home/athome/base_athome_ws/install/setup.bash 2>/dev/null && "
                     "exec ros2 launch base_athome_bringup realsense_nuc.launch.py'"
                 )
-                self.cam_proc = subprocess.Popen(cmd, shell=True, preexec_fn=os.setsid)
+                log = open("/tmp/realsense_nuc.log", "ab")
+                self.cam_proc = subprocess.Popen(cmd, shell=True, start_new_session=True,
+                                                 stdout=log, stderr=subprocess.STDOUT)
+                self.cam_last_restart = time.time()
         except Exception as e:
             self.get_logger().warn(f"No se pudo autoiniciar realsense2_camera_node: {e}")
 
-    def destroy_node(self):
-        if hasattr(self, 'cam_proc') and self.cam_proc is not None:
+    def _camera_watchdog(self):
+        """Si la camara deja de mandar frames: relanza el driver (como mucho cada 20 s)."""
+        now = time.time()
+        ref = self.last_frame_time if self.last_frame_time > 0.0 else self.session_start_time + 4.0
+        if now - ref < 4.0:
+            return
+        if now - self.cam_last_restart < 20.0:
+            return
+        running = subprocess.run(["pgrep", "-f", RS_PROC_PATTERN], capture_output=True).returncode == 0
+        gap = now - ref
+        if running and gap < 10.0:
+            return  # puede ser un hipo: esperar un poco antes de reiniciar
+        self.get_logger().warn(f"📷 Camara sin frames hace {gap:.1f}s (driver {'colgado' if running else 'caido'}). Reiniciando driver...")
+        self.cam_last_restart = now
+        if running:
+            subprocess.run(["pkill", "-f", RS_PROC_PATTERN])
+            time.sleep(2.0)
+        self._ensure_camera_running()
+
+    def _face_worker_loop(self):
+        """Procesa el ultimo frame disponible (~10 Hz) sin bloquear la GUI ni la maquina de estados."""
+        last_count = -1
+        while not self.face_worker_stop.is_set():
+            with self.frame_lock:
+                frame = self.latest_frame
+                count = self.frame_count
+            if frame is None or count == last_count:
+                time.sleep(0.02)
+                continue
+            last_count = count
+            t0 = time.time()
             try:
-                import signal
-                os.killpg(os.getpgid(self.cam_proc.pid), signal.SIGTERM)
-            except Exception:
-                pass
+                dets = self.recognizer.detect_and_recognize(frame)
+                poses = None
+                if self.pose_detector is not None and t0 - self.last_pose_time >= 0.28:
+                    self.last_pose_time = t0
+                    poses = self.pose_detector.detect_poses(frame)
+                with self.face_lock:
+                    self.current_face_dets = dets
+                    self.face_dets_stamp = t0
+                    if poses is not None:
+                        self.current_poses = poses
+            except Exception as e:
+                self.get_logger().warn(f"Error en reconocimiento facial: {e}", throttle_duration_sec=5.0)
+            time.sleep(max(0.0, 0.1 - (time.time() - t0)))
+
+    def _publish_voice_prompt(self):
+        self.pub_voice_prompt.publish(String(data=self.vocab.whisper_prompt()))
+
+    def _srv_clear_memory(self, req, resp):
+        self.clear_memory_requested = True
+        resp.success = True
+        resp.message = "Memoria temporal de personas: limpieza solicitada."
+        return resp
+
+    def clear_temporary_memory(self):
+        """Vacia invitados de la memoria (perfiles no persistentes) y reinicia la prueba al invitado 1."""
+        n = self.recognizer.clear_session()
+        self.registered_guests = []
+        self.guest_index = 1
+        self.current_name = None
+        self.current_drink = None
+        self.recording_samples = []
+        self.best_thumbnail = None
+        self._init_session_storage()
+        self.current_banner_text = f"Memoria temporal limpia ({n} personas borradas)"
+        self.get_logger().info(f"🧹 Memoria temporal de personas limpiada: {n} perfiles.")
+
+    def on_mouse(self, event, x, y, flags, param):
+        if event == cv2.EVENT_LBUTTONDOWN and self.clear_button_rect is not None:
+            x1, y1, x2, y2 = self.clear_button_rect
+            if x1 <= x <= x2 and y1 <= y <= y2:
+                self.clear_memory_requested = True
+
+    @staticmethod
+    def _migrate_legacy_db(old_dir: str, new_dir: str) -> None:
+        if os.path.isfile(os.path.join(new_dir, "profiles.json")) or not os.path.isfile(os.path.join(old_dir, "profiles.json")):
+            return
+        import shutil
+        os.makedirs(new_dir, exist_ok=True)
+        for item in ("profiles.json", "features.pkl", "thumbnails"):
+            src = os.path.join(old_dir, item)
+            if os.path.isdir(src):
+                shutil.copytree(src, os.path.join(new_dir, item), dirs_exist_ok=True)
+            elif os.path.isfile(src):
+                shutil.copy2(src, new_dir)
+        print(f"[HRI] Memoria facial migrada de {old_dir} a {new_dir}")
+
+    def destroy_node(self):
+        # El driver de la RealSense queda corriendo a proposito: relanzarlo en cada corrida
+        # era una causa de cortes (USB re-enumerando). Para cerrarlo: pkill -f realsense2_camera_node
+        if hasattr(self, "face_worker_stop"):
+            self.face_worker_stop.set()
         super().destroy_node()
 
     # --------------------------------------------------------------------------
@@ -523,7 +655,7 @@ class HriReceptionistChallengeNode(Node):
 
     def _ensure_host_registered(self) -> None:
         """Asegura que el perfil del anfitrión ('Charlie') exista en la memoria."""
-        host_exists = any(p.name.lower() == "charlie" for p in self.recognizer.profiles.values())
+        host_exists = any(p.name.lower() == "charlie" for p in self.recognizer.session_profiles())
         if not host_exists:
             # Crear perfil formal del anfitrión
             dummy_feat = np.random.randn(1, 128).astype(np.float32)
@@ -532,6 +664,7 @@ class HriReceptionistChallengeNode(Node):
                 name="Charlie",
                 features=[dummy_feat],
                 attributes={"role": "host", "favorite_drink": "Water", "seat": "sofa_left", "synthetic": True},
+                persistent=True,
             )
             self.get_logger().info("Perfil del anfitrion 'Charlie' registrado en la memoria.")
 
@@ -699,13 +832,18 @@ class HriReceptionistChallengeNode(Node):
                     self.samples_synthetic = True
                 self.state_start_time = time.time() - 10.0
         elif key in [ord("t"), ord("T")]:
-            try:
-                sim_text = input("\n🎙️ [Simular Respuesta de Voz]: ")
-                if sim_text.strip():
-                    self.voice_text = sim_text.strip()
-                    self.get_logger().info(f"🎙️ [Manual Texto]: '{self.voice_text}'")
-            except Exception:
-                pass
+            def _read_text():  # en otro hilo: input() no debe congelar la camara
+                try:
+                    sim_text = input("\n🎙️ [Simular Respuesta de Voz]: ")
+                    if sim_text.strip():
+                        self.voice_text = sim_text.strip()
+                        self.get_logger().info(f"🎙️ [Manual Texto]: '{self.voice_text}'")
+                except Exception:
+                    pass
+            threading.Thread(target=_read_text, daemon=True).start()
+        elif key in [ord("m"), ord("M")]:
+            print("\n[Memoria]: Limpiando memoria temporal de personas...")
+            self.clear_memory_requested = True
         elif key in [ord("g"), ord("G")]:
             print("\n[Arm]: Probando gesto de senalamiento...")
             self.move_arm_to_named_pose("point_couch", duration_s=1.5)
@@ -984,24 +1122,19 @@ class HriReceptionistChallengeNode(Node):
         with self.frame_lock:
             frame = self.latest_frame.copy() if self.latest_frame is not None else None
 
-        # 1. Detección Facial y Seguimiento de Cabezal (Throttling para preservar GIL y CPU)
-        face_results = self.current_face_dets
+        # 1. Detección Facial (la hace _face_worker_loop en otro hilo) y seguimiento de cabezal
+        if self.clear_memory_requested:
+            self.clear_memory_requested = False
+            self.clear_temporary_memory()
+        with self.face_lock:
+            face_results = list(self.current_face_dets)
+            dets_stamp = self.face_dets_stamp
         if frame is not None:
-            if now - self.last_face_time >= 0.07:
-                self.last_face_time = now
-                self.current_face_dets = self.recognizer.detect_and_recognize(frame)
-            face_results = self.current_face_dets
-
-            # Detección de poses humanas en background throttled a ~3-4 Hz
-            if self.pose_detector is not None and (now - self.last_pose_time >= 0.28):
-                self.last_pose_time = now
-                try:
-                    self.current_poses = self.pose_detector.detect_poses(frame)
-                except Exception:
-                    pass
-
-            # Seguimiento suave del rostro con Pan-Tilt
-            if self.pan_tilt_tracking and face_results:
+            # Seguimiento suave del rostro con Pan-Tilt: un paso por deteccion nueva
+            # (antes se aplicaba el mismo error en cada ciclo de ~50 Hz y sobreoscilaba)
+            new_dets = dets_stamp != self.last_tracked_stamp
+            self.last_tracked_stamp = dets_stamp
+            if self.pan_tilt_tracking and face_results and new_dets:
                 largest_face = max(face_results, key=lambda f: f["bbox"][2] * f["bbox"][3])
                 fx, fy, fw, fh = largest_face["bbox"]
                 cx = fx + fw / 2.0
@@ -1165,7 +1298,7 @@ class HriReceptionistChallengeNode(Node):
                 self.voice_text = None
                 self.set_robot_emotion("thinking")
 
-                extracted_name, extracted_drink = extract_name_and_drink(speech)
+                extracted_name, extracted_drink = extract_name_and_drink(speech, self.vocab)
                 self.get_logger().info(
                     f"NLP Parser: \"{speech}\" -> Nombre: '{extracted_name}', Bebida: '{extracted_drink}'"
                 )
@@ -1255,7 +1388,10 @@ class HriReceptionistChallengeNode(Node):
                 q_score = target.get("quality_score", 0.0)
 
                 # Tasa de captura controlada (~7 Hz)
-                if feat is not None and q_valid and (now - self.last_sample_time >= 0.14):
+                same_person = True
+                if feat is not None and self.recording_samples:
+                    same_person = self.recognizer.similarity(feat, self.recording_samples[0]) >= 0.30
+                if feat is not None and q_valid and same_person and (now - self.last_sample_time >= 0.14):
                     self.last_sample_time = now
                     self.recording_samples.append(feat)
 
@@ -1278,20 +1414,6 @@ class HriReceptionistChallengeNode(Node):
                 else:
                     seat_assigned = "couch" if self.guest_index == 1 else "chair"
 
-                # Guardar miniatura recortada en disco (thumbnails/)
-                thumb_rel_path = ""
-                pid_clean = f"guest_{self.guest_index}_{int(now)}"
-                if self.best_thumbnail is not None and self.best_thumbnail.size > 0:
-                    thumb_dir = os.path.join(self.db_dir, "thumbnails")
-                    os.makedirs(thumb_dir, exist_ok=True)
-                    thumb_filename = f"{pid_clean}.jpg"
-                    thumb_abs_path = os.path.join(thumb_dir, thumb_filename)
-                    try:
-                        cv2.imwrite(thumb_abs_path, self.best_thumbnail)
-                        thumb_rel_path = os.path.join("thumbnails", thumb_filename)
-                    except Exception as e:
-                        self.get_logger().warn(f"No se pudo guardar miniatura facial: {e}")
-
                 pid, is_new = self.recognizer.enroll_person(
                     name=self.current_name,
                     features=self.recording_samples,
@@ -1301,7 +1423,6 @@ class HriReceptionistChallengeNode(Node):
                         "favorite_drink": self.current_drink,
                         "seat": seat_assigned,
                         "guest_index": self.guest_index,
-                        "thumbnail_path": thumb_rel_path,
                         "synthetic": self.samples_synthetic,
                     },
                 )
@@ -1315,7 +1436,7 @@ class HriReceptionistChallengeNode(Node):
                     "biometric_samples": len(self.recording_samples),
                     "best_sharpness": round(float(self.best_sharpness), 2),
                     "registered_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "thumbnail_path": thumb_rel_path,
+                    "thumbnail_path": self.recognizer.profiles[pid].thumbnail_file if pid in self.recognizer.profiles else "",
                 }
                 self.registered_guests.append({
                     "name": self.current_name,
@@ -1543,12 +1664,18 @@ class HriReceptionistChallengeNode(Node):
         cv2.rectangle(canvas, (px, 0), (canvas_w, canvas_h), (25, 28, 36), -1)
         cv2.line(canvas, (px, 0), (px, canvas_h), (0, 200, 255), 2)
 
-        cv2.putText(canvas, "MEMORIA BIOMETRICA", (px + 15, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 255), 2)
+        cv2.putText(canvas, "MEMORIA", (px + 15, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 255), 2)
         cv2.line(canvas, (px + 10, 36), (canvas_w - 10, 36), (60, 70, 85), 1)
 
         # Listado de invitados y anfitrión
         py = 55
-        profiles = list(self.recognizer.profiles.values())
+        # Boton "limpiar memoria temporal" (click, tecla M o servicio /hri/clear_memory)
+        bx1, by1, bx2, by2 = px + 150, 12, canvas_w - 10, 34
+        cv2.rectangle(canvas, (bx1, by1), (bx2, by2), (40, 40, 160), -1)
+        cv2.rectangle(canvas, (bx1, by1), (bx2, by2), (90, 90, 255), 1)
+        cv2.putText(canvas, "LIMPIAR [M]", (bx1 + 12, by2 - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
+        self.clear_button_rect = (bx1, by1, bx2, by2)
+        profiles = self.recognizer.session_profiles()
         for prof in profiles:
             p_name = prof.name
             attrs = prof.attributes
@@ -1663,6 +1790,7 @@ def main():
 
     if not args.no_gui:
         cv2.namedWindow(node.window_name, cv2.WINDOW_AUTOSIZE)
+        cv2.setMouseCallback(node.window_name, node.on_mouse)
 
     print("\n" + "=" * 70)
     print("🤖 ROBOCUP @HOME - HRI RECEPTIONIST CHALLENGE")
@@ -1672,6 +1800,7 @@ def main():
     print("   [R]               : Forzar escucha de microfono (/voice/listen_trigger)")
     print("   [G]               : Probar gesto de senalamiento con brazo Piper")
     print("   [N]               : Omitir navegacion actual")
+    print("   [M] / boton LIMPIAR : Limpiar memoria temporal de personas (invitados)")
     print("   [Q / ESC]         : Salir limpiamente y guardar memoria")
     print("=" * 70 + "\n")
 

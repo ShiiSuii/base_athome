@@ -4,6 +4,7 @@
 """
 import os
 import sys
+import threading
 from unittest import mock
 
 import numpy as np
@@ -21,6 +22,9 @@ def make_recognizer():
     rec = FaceRecognizer.__new__(FaceRecognizer)
     rec.profiles = {}
     rec.cosine_thresh = 0.52
+    rec.lock = threading.RLock()
+    rec.session_id = 'test_session'
+    rec.db_dir = '/nonexistent'
     rec.sface = mock.Mock()
     rec.sface.match.side_effect = lambda a, b, _: (a @ b.T).item()
     rec.save_database = mock.Mock()

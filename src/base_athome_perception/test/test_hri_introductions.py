@@ -73,3 +73,27 @@ def test_single_guest_does_nothing(node_cls):
     n.registered_guests = n.registered_guests[:1]
     n._introduce_guests_to_each_other()
     assert n.log == []
+
+
+def test_extract_uses_competition_vocabulary(node_cls):
+    import importlib.util as u
+    spec = u.spec_from_file_location('hri_mod', SCRIPT)
+    mod = u.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    from base_athome_perception.guest_vocabulary import GuestVocabulary
+    vocab = GuestVocabulary(data_dirs=['/nonexistent'])  # lista incorporada
+    assert mod.extract_name_and_drink('hi, my name is Morgen and I like iced tea', vocab) == ('Morgan', 'Iced Tea')
+    assert mod.extract_name_and_drink('I am Jules, coffee please', vocab) == ('Jules', 'Coffee')
+
+
+def test_clear_temporary_memory_resets_guests(node_cls):
+    from unittest import mock
+    n = make(node_cls)
+    n.recognizer = mock.Mock()
+    n.recognizer.clear_session.return_value = 2
+    n._init_session_storage = mock.Mock()
+    n.get_logger = mock.Mock()
+    n.guest_index = 2
+    n.clear_temporary_memory()
+    assert n.registered_guests == [] and n.guest_index == 1
+    n.recognizer.clear_session.assert_called_once()

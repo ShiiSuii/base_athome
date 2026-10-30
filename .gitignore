@@ -33,3 +33,6 @@ venv/
 *.pt
 *.pkl
 
+
+# Biometria (memoria facial): nunca versionar. Vive en ~/.local/share/base_athome/faces_database
+src/base_athome_perception/config/faces_database/
