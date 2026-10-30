@@ -12,7 +12,8 @@ set -euo pipefail
 
 JETSON="${JETSON:-ubuntu@10.42.0.12}"
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
-SCRIPTS=(piper_arm_controller.py start_head.sh start_mapping_head.sh stream_orbbec.py)
+# DEPLOY_SCRIPTS permite desplegar un subconjunto (separado por espacios).
+read -r -a SCRIPTS <<< "${DEPLOY_SCRIPTS:-piper_arm_controller.py start_head.sh start_mapping_head.sh stream_orbbec.py}"
 APPLY=false
 [ "${1:-}" = "--apply" ] && APPLY=true
 
