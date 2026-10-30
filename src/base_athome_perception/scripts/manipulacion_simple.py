@@ -9,7 +9,8 @@ Una sola ventana: video de la camara de MUNECA (no la de la cabeza) + panel de t
   [ESC]      cancelar la ensenanza (bloquea el brazo) / salir si no hay ensenanza
   [1][2][3]  ir a HOME / PRE-GRASP / POST-GRASP guardadas
   [O] [C]    abrir / cerrar pinza
-  [G]        agarrar el objeto visto con cinematica inversa (MoveIt arranca solo con este script)
+  [A]        alinear la pinza con el objeto (centrarlo en el eje) sin agarrar
+  [G]        agarrar: primero alinea, luego cinematica inversa (MoveIt arranca solo con este script)
   [M]        calibrar distancia con la cinta (Medido_cm = centro de la pinza -> cara del objeto)
   Sliders:   Avance_max_cm (tope del avance hacia el objeto), Ajuste_cm (-10..+10 sobre el avance),
              Velocidad_% (5..100 de la velocidad maxima; avance final y subida a la mitad). [K] guarda.
@@ -381,10 +382,78 @@ class Manipulacion(Node):
             return
         threading.Thread(target=self._grasp_worker, daemon=True).start()
 
+    def _fresh_detection(self, after: float, timeout_s: float = 2.5):
+        """Espera una deteccion tomada DESPUES de `after` (brazo quieto) y la devuelve."""
+        t_end = time.time() + timeout_s
+        while time.time() < t_end and not self.abort:
+            if self.detection is not None and self.tracker.last_seen > after:
+                return self.detection
+            time.sleep(0.05)
+        return None
+
+    def align_with_object(self, max_iter: int = 5) -> bool:
+        """Centra el objeto en el eje de la pinza con pequenos movimientos laterales/verticales.
+
+        En cada vuelta: deteccion nueva con el brazo quieto -> desvio izquierda/arriba -> camino
+        cartesiano corto en el plano perpendicular al avance (misma orientacion, sin acercarse).
+        Termina cuando el desvio es < 0.8 cm lateral y < 1.2 cm vertical.
+        """
+        if not self.enabled and not self.set_torque(True):
+            return False
+        t_ref = time.time()
+        for i in range(1, max_iter + 1):
+            det = self._fresh_detection(after=t_ref + 0.3)
+            if det is None:
+                self.status = "Alineacion: perdi el objeto de vista."
+                return False
+            (x1, y1, x2, y2), z = det
+            left, up = wg.lateral_offsets((x1 + x2) / 2, (y1 + y2) / 2, z, self.calib)
+            if wg.is_aligned(left, up):
+                self.status = f"Alineado con el objeto ({i - 1} correcciones)."
+                return True
+            q_now = [math.radians(v) for v in self.joints_deg]
+            tcp_mm, R = self.kin.forward_kinematics(np.array(q_now))
+            # corregir el 80 % del desvio por vuelta: converge sin pasarse por el ruido de la deteccion
+            new_tcp = SHOULDER_IN_BASE + tcp_mm / 1000.0 + 0.8 * wg.alignment_offset(R, left, up)
+            self.status = f"Alineando ({i}/{max_iter}): lateral {left * 100:+.1f} cm, vertical {up * 100:+.1f} cm"
+            path = self.moveit.cartesian_path(q_now, [pose_from(new_tcp, quat_from_matrix(R.tolist()))],
+                                              vel_scale=self.vel_scale() / 2, min_fraction=0.9)
+            if not path:
+                self.status = "Alineacion: no puedo moverme lateralmente desde aca."
+                return False
+            if not self._execute(path):
+                return False
+            time.sleep(0.4)  # dejar que se asiente la imagen
+            t_ref = time.time()
+        self.status = "Alineacion: no converge, sigo con la mejor posicion."
+        return True
+
+    def align_only(self):
+        if self.busy or self.wizard.active:
+            return
+        if self.detection is None or not self.moveit.available():
+            self.status = "Alinear: necesito ver el objeto y MoveIt listo."
+            return
+
+        def run():
+            self.busy, self.abort = True, False
+            try:
+                self.align_with_object()
+            finally:
+                self.busy = False
+        threading.Thread(target=run, daemon=True).start()
+
     def _grasp_worker(self):
         self.busy, self.abort = True, False
         try:
-            (x1, y1, x2, y2), z = self.detection
+            # 1) Alinear la pinza con el objeto antes de calcular la cinematica inversa
+            if not self.align_with_object():
+                return
+            det = self._fresh_detection(after=time.time() - 0.1)
+            if det is None:
+                self.status = "Agarre: perdi el objeto despues de alinear."
+                return
+            (x1, y1, x2, y2), z = det
             q_now = [math.radians(v) for v in self.joints_deg]
             tcp_mm, R = self.kin.forward_kinematics(np.array(q_now))
             adv = self.used_advance(z)  # calibrado + ajuste, limitado por Avance_max_cm
@@ -467,7 +536,7 @@ class Manipulacion(Node):
                 put(f"{mark}[{i}] {LABELS[name]:<10} (sin guardar)", (60, 160, 255))
         y += 8
         put("[T] ensenar 3 poses   [ENTER] guardar   [ESC] cancelar", (200, 200, 200), 0.5)
-        put("[1][2][3] ir a pose   [O]/[C] pinza   [G] agarrar (MoveIt)", (200, 200, 200), 0.5)
+        put("[1][2][3] ir a pose  [O]/[C] pinza  [A] alinear  [G] agarrar", (200, 200, 200), 0.5)
         put(f"[M] calibrar distancia (Medido_cm = {self.measured_cm:.0f})   [Q] salir", (200, 200, 200), 0.5)
         put(f"Avance: tope {self.max_advance_cm:.0f} cm, ajuste {self.advance_adjust_cm:+.0f} cm | "
             f"Velocidad {self.speed_pct:.0f} %   [K] guardar", (200, 200, 200), 0.5)
@@ -506,6 +575,8 @@ class Manipulacion(Node):
             self.grasp()
         elif key in (ord("m"), ord("M")):
             self.calibrate()
+        elif key in (ord("a"), ord("A")):
+            self.align_only()
         elif key in (ord("k"), ord("K")):
             self.save_advance_limits()
         return True

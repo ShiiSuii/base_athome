@@ -106,3 +106,23 @@ def object_center(tcp: Sequence[float], R_tool: np.ndarray, advance_m: float, le
     up = np.cross(approach, left)
     grasp_center = tcp - calib.grasp_center_back_m * approach
     return grasp_center + advance_m * approach + left_m * left + up_m * up
+
+
+def alignment_offset(R_tool: np.ndarray, left_m: float, up_m: float) -> np.ndarray:
+    """Desplazamiento del TCP (mismo marco que R_tool) para centrar el objeto en el eje de la pinza.
+
+    Se mueve solo en el plano perpendicular al eje de avance (izquierda/arriba como en
+    object_center), sin acercarse al objeto ni cambiar la orientacion.
+    """
+    approach = np.asarray(R_tool, dtype=float)[:, 2]
+    approach = approach / max(1e-9, np.linalg.norm(approach))
+    left = np.cross([0.0, 0.0, 1.0], approach)
+    if np.linalg.norm(left) < 1e-3:
+        left = np.asarray(R_tool, dtype=float)[:, 1]
+    left = left / np.linalg.norm(left)
+    up = np.cross(approach, left)
+    return left_m * left + up_m * up
+
+
+def is_aligned(left_m: float, up_m: float, tol_lateral_m: float = 0.008, tol_vertical_m: float = 0.012) -> bool:
+    return abs(left_m) <= tol_lateral_m and abs(up_m) <= tol_vertical_m

@@ -57,3 +57,11 @@ def test_calib_roundtrip_dict():
     c.samples = [(0.25, 0.27)]
     d = wg.WristCalib.from_dict(c.to_dict())
     assert d.a == pytest.approx(1.1) and d.samples == [(0.25, 0.27)]
+
+
+def test_alignment_offset_is_perpendicular_to_approach():
+    R = np.column_stack([[0, 0, -1], [0, 1, 0], [1, 0, 0]])  # avance = +x
+    d = wg.alignment_offset(R, left_m=0.03, up_m=-0.01)
+    assert d == pytest.approx([0.0, 0.03, -0.01])
+    assert float(np.dot(d, R[:, 2])) == pytest.approx(0.0)
+    assert wg.is_aligned(0.005, 0.01) and not wg.is_aligned(0.02, 0.0)

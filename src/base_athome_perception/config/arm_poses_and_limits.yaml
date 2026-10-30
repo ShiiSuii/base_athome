@@ -37,15 +37,15 @@ safety_envelope:
   grasp_height_offset_cm: 7.7
   dabai_extra_advance_cm: 0.0
   dabai_center_zone_px: 80
-  arm_speed_pct: 30
+  arm_speed_pct: 25
   dabai_lateral_offset_mm: 14.4
   aruco_marker_size_mm: 30.0
   aruco_target_grasp_cm:
     x: -1.44
     y: 0.34
     z: 7.14
-  max_advance_cm: 23.0
-  advance_adjust_cm: 0.0
+  max_advance_cm: 30.0
+  advance_adjust_cm: -7.0
 named_poses:
   home:
     joints_deg:
