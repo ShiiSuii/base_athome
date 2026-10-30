@@ -18,8 +18,8 @@ from sensor_msgs.msg import JointState
 
 ARM_JOINTS = [f"joint{i}" for i in range(1, 7)]
 GROUP = "arm"
-# Marco del modelo (raiz del URDF). base_footprint == base_link (base_joint identidad); usarlo
-# evita depender de TF (move_group no puede transformar si no hay robot_state_publisher).
+# Marco del modelo (raiz del URDF). Usarlo evita depender de TF (move_group no transforma sin
+# robot_state_publisher). Las poses de entrada se dan en base_link y se desplazan con base_joint.
 FRAME = "base_footprint"
 TIP = "tcp_link"
 
@@ -55,13 +55,38 @@ def decimate(points: List[Tuple[List[float], float]], min_dt: float = 0.25) -> L
     return out
 
 
+def base_link_offset_in_model_frame() -> List[float]:
+    """Traslacion base_footprint -> base_link leida del URDF (base_joint). Los objetivos se calculan
+    en base_link y move_group trabaja en el marco del modelo (base_footprint) sin TF."""
+    try:
+        import xml.etree.ElementTree as ET
+        from ament_index_python.packages import get_package_share_directory
+        urdf = get_package_share_directory("hoverboard_base") + "/urdf/robot.urdf"
+        for j in ET.parse(urdf).getroot().findall("joint"):
+            if j.get("name") == "base_joint" and j.find("origin") is not None:
+                return [float(v) for v in j.find("origin").get("xyz", "0 0 0").split()]
+    except Exception:
+        pass
+    return [0.0, 0.0, 0.0]
+
+
 class MoveItBridge:
     def __init__(self, node: Node, timeout_s: float = 2.0):
         self.node = node
         self.timeout_s = timeout_s
+        self.offset = base_link_offset_in_model_frame()
         self.cli_ik = node.create_client(GetPositionIK, "/compute_ik")
         self.cli_plan = node.create_client(GetMotionPlan, "/plan_kinematic_path")
         self.cli_cart = node.create_client(GetCartesianPath, "/compute_cartesian_path")
+
+    def _to_model(self, pose: Pose) -> Pose:
+        """Pose en base_link -> marco del modelo (base_footprint)."""
+        p = Pose()
+        p.orientation = pose.orientation
+        p.position.x = pose.position.x + self.offset[0]
+        p.position.y = pose.position.y + self.offset[1]
+        p.position.z = pose.position.z + self.offset[2]
+        return p
 
     def available(self) -> bool:
         return self.cli_ik.service_is_ready() and self.cli_plan.service_is_ready()
@@ -86,7 +111,7 @@ class MoveItBridge:
         ik.robot_state = _robot_state(seed_rad)
         ik.avoid_collisions = avoid_collisions
         ik.ik_link_name = TIP
-        ik.pose_stamped = PoseStamped(pose=pose)
+        ik.pose_stamped = PoseStamped(pose=self._to_model(pose))
         ik.pose_stamped.header.frame_id = FRAME
         ik.timeout.nanosec = int(0.2e9)
         req.ik_request = ik
@@ -124,7 +149,7 @@ class MoveItBridge:
         req.start_state = _robot_state(start_rad)
         req.group_name = GROUP
         req.link_name = TIP
-        req.waypoints = waypoints
+        req.waypoints = [self._to_model(w) for w in waypoints]
         req.max_step = eef_step
         req.avoid_collisions = True
         req.max_velocity_scaling_factor = 0.15

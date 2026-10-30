@@ -31,7 +31,9 @@
   <joint name="base_joint" type="fixed">
     <parent link="base_footprint"/>
     <child link="base_link"/>
-    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <!-- base_footprint (piso) 6 cm debajo de base_link (pedido 2026-10-30). Las posiciones relativas
+         a base_link (sensores, brazo) no cambian; solo la altura del robot respecto del piso. -->
+    <origin xyz="0 0 0.06" rpy="0 0 0"/>
   </joint>
 
   <!-- Macro para ruedas -->

@@ -78,8 +78,10 @@ manipulacion() {  # abre RViz con el URDF (si no esta abierto) y lanza la manipu
         (DISPLAY="${DISPLAY:-:1}" ros2 launch hoverboard_base view_robot.launch.py > /tmp/view_robot.log 2>&1 &)
         sleep 3
     fi
-    DISPLAY="${DISPLAY:-:1}" /home/athome/ros2_vision_venv/bin/python3 "$WS_ATHOME/src/base_athome_perception/scripts/manipulacion_autonoma.py" "$@"
+    DISPLAY="${DISPLAY:-:1}" /home/athome/ros2_vision_venv/bin/python3 "$WS_ATHOME/src/base_athome_perception/scripts/manipulacion_simple.py" "$@"
 }
+# Version anterior (con camara de cabeza, sliders y agarre en linea recta)
+alias manipulacion_avanzada='_ros && DISPLAY="${DISPLAY:-:1}" /home/athome/ros2_vision_venv/bin/python3 $WS_ATHOME/src/base_athome_perception/scripts/manipulacion_autonoma.py'
 alias manipular='manipulacion'
 alias rviz_manipulacion='_ros && DISPLAY="${DISPLAY:-:1}" ros2 launch hoverboard_base view_robot.launch.py'
 alias moveit_brazo='_ros && ros2 launch base_athome_moveit_config move_group.launch.py'  # IK/planificacion para [I] en manipulacion
