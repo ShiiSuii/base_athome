@@ -8,6 +8,8 @@ Fecha base: 2026-10-29. Este documento define pendientes, NO asegura que se haya
 
 **NUEVO ORDEN:** primero conocimiento exhaustivo del robot y auditoría/refactor seguro; después tareas de HRI, editor URDF, manipulación y migración Jetson según dependencias. Ver `docs/AUDITORIA_ARQUITECTURA.md`.
 
+> **Actualización 2026-10-30:** reglamento 2026.2 leído completo (`docs/RULEBOOK_2026_2_ANALISIS.md`): pruebas = HRI, Pick and Place, GPSR, Doing Laundry, Restaurant + Final. *Give Me a Hand* no existe en 2026.2. El cable NUC↔Jetson no tiene link (la Jetson se accedió por WiFi).
+
 ## Estado inicial y restricciones
 
 - NUC con Ubuntu 24.04 + ROS 2 Jazzy; navegación existente declarada operativa por el usuario. **Congelada para modificaciones.**
@@ -19,24 +21,24 @@ Fecha base: 2026-10-29. Este documento define pendientes, NO asegura que se haya
 ## P0-A. Comprensión profunda de la arquitectura de hardware y software
 
 - [ ] `TODO` Leer árbol de código de punta a punta: `src/`, `firmware/`, `jetson_head/`, `scripts/`, `launch/`, YAML, dependencias, URDF/Xacro, README y logs guardados.
-- [ ] `TODO` Crear `docs/hardware.md`: inventario de NUC, Jetson, motores de base, LiDAR, RealSense, Piper, Orbbec, Dynamixel, RØDE, pantalla, ESP32-S3 y elevador con modelos, buses, conectores, host propietario y estado `VERIFICADO_CODIGO / DOCUMENTADO / NUC_CONFIRMADO / PENDIENTE`.
-- [ ] `TODO` Crear `docs/power-domains.md`: reconstruir baterías, BMS, fusibles, step-down y distribución por subsistema. Registrar como hipótesis toda configuración histórica no corroborada; no energizar ni medir peligrosamente.
-- [ ] `TODO` Crear `docs/architecture.md`: arquitectura por host, buses, flujo extremo a extremo de tareas, diagrama de bloques y dependencias entre percepción, HRI, navegación (solo lectura), manipulación y elevador.
-- [ ] `TODO` Crear `docs/ros-interfaces.md`: cada nodo, paquete, launch, topic, tipo, QoS, servicio, action, TF, frecuencia/timeout esperado, publisher/consumer y dependencia física.
+- [x] `IN_PROGRESS` Crear `docs/hardware.md`: inventario de NUC, Jetson, motores de base, LiDAR, RealSense, Piper, Orbbec, Dynamixel, RØDE, pantalla, ESP32-S3 y elevador con modelos, buses, conectores, host propietario y estado `VERIFICADO_CODIGO / DOCUMENTADO / NUC_CONFIRMADO / PENDIENTE`.
+- [x] `IN_PROGRESS` (sin evidencia eléctrica) Crear `docs/power-domains.md`: reconstruir baterías, BMS, fusibles, step-down y distribución por subsistema. Registrar como hipótesis toda configuración histórica no corroborada; no energizar ni medir peligrosamente.
+- [x] `DONE` (1ª pasada) Crear `docs/architecture.md`: arquitectura por host, buses, flujo extremo a extremo de tareas, diagrama de bloques y dependencias entre percepción, HRI, navegación (solo lectura), manipulación y elevador.
+- [x] `IN_PROGRESS` (estático) Crear `docs/ros-interfaces.md`: cada nodo, paquete, launch, topic, tipo, QoS, servicio, action, TF, frecuencia/timeout esperado, publisher/consumer y dependencia física.
 - [ ] `TODO` Localizar firmware, comandos seriales/CAN, límites, feedback y watchdogs para documentar sus contratos **sin controlarlos**.
-- [ ] `TODO` Guardar evidencia de diagnósticos no invasivos de NUC y Jetson por SSH y separar resultados de software y pruebas de actuadores pendientes.
-- [ ] `TODO` Documentar y comprobar cable Ethernet NUC↔Jetson, IP/hosts, SSH, rutas, MTU, CycloneDDS, `ROS_DOMAIN_ID`, sincronización temporal y prueba ROS 2 aislada, siguiendo `docs/RED_ETHERNET.md`.
+- [x] `DONE` (Jetson por WiFi) Guardar evidencia de diagnósticos no invasivos de NUC y Jetson por SSH y separar resultados de software y pruebas de actuadores pendientes.
+- [ ] `BLOCKED` (sin carrier; herramienta lista) Documentar y comprobar cable Ethernet NUC↔Jetson, IP/hosts, SSH, rutas, MTU, CycloneDDS, `ROS_DOMAIN_ID`, sincronización temporal y prueba ROS 2 aislada, siguiendo `docs/RED_ETHERNET.md`.
 
 **Aceptación:** un desarrollador nuevo puede explicar qué hace cada subsistema, cómo se comunica, cómo se alimenta y qué ejecuta cada host; todo dato no verificado está identificado como tal. Ninguna activación de hardware ni cambio a navegación.
 
 ## P0-B. Auditoría de calidad y reorganización del código
 
-- [ ] `TODO` Crear `docs/software-audit.md` con mapa de dependencias, duplicaciones, rutas absolutas, valores mágicos, config dispersa, procesos que compiten por sensores, acoplamiento y riesgos.
+- [x] `DONE` (1ª pasada) Crear `docs/software-audit.md` con mapa de dependencias, duplicaciones, rutas absolutas, valores mágicos, config dispersa, procesos que compiten por sensores, acoplamiento y riesgos.
 - [ ] `TODO` Revisar estructura ROS: responsabilidades de paquetes, launch, configuración, separación drivers/lógica/HRI/UI y dependencias Python/C++ (sin romper APIs).
 - [ ] `TODO` Revisar callbacks bloqueantes, concurrency, QoS, reconexión, excepciones, gestión de recursos, logging, timeouts, watchdogs, estados de fallo y seguridad.
 - [ ] `TODO` Medir baseline solo donde sea seguro y posible en NUC y Jetson: CPU/RAM, latencia y tiempos de proceso; lo que requiera sensores y actuadores apagados queda `HARDWARE_BLOCKED`.
 - [ ] `TODO` Priorizar oportunidades de optimización con impacto/beneficio/riesgo; crear tests de regresión antes de refactorizar y cambios incrementales por PR.
-- [ ] `TODO` Añadir mocks y tests offline para evitar que importar módulos intente abrir CAN, serial, cámaras o controlar actuadores.
+- [x] `IN_PROGRESS` (Piper, pan-tilt, HRI, puerta) Añadir mocks y tests offline para evitar que importar módulos intente abrir CAN, serial, cámaras o controlar actuadores.
 - [ ] `TODO` Documentar cambios de estructura e instalación en el mismo PR; evitar mover archivos sin pruebas de imports, entrypoints y launch.
 
 **Aceptación:** backlog de mejoras justificado, primeras correcciones seguras con pruebas offline y comparación antes/después. No reorganizaciones masivas sin revisión, sin tocar navegación.
@@ -45,8 +47,8 @@ Fecha base: 2026-10-29. Este documento define pendientes, NO asegura que se haya
 
 - [ ] `TODO` Contrastar arquitectura e inventario inicial de P0-A con el checkout y la NUC; mapear nodos, topics, services, actions y TF; conservar arquitectura actual.
 - [ ] `TODO` Auditar la ejecución de Receptionist, ownership de RealSense/Orbbec, argumentos de launch, modos de simulación y rutas absolutas.
-- [ ] `TODO` Revisar estados articulares del pan-tilt y brazo: diferenciar target vs encoder/feedback.
-- [ ] `TODO` Comprobar si las funciones de reconocimiento facial hacen enrolamiento real o usan placeholders; separar datos ficticios de personas reales.
+- [ ] `IN_PROGRESS` (S-07 documentado) Revisar estados articulares del pan-tilt y brazo: diferenciar target vs encoder/feedback.
+- [x] `DONE` (S-04 corregido) Comprobar si las funciones de reconocimiento facial hacen enrolamiento real o usan placeholders; separar datos ficticios de personas reales.
 - [ ] `TODO` Añadir smoke tests reproducibles sin encender motores ni modificar Nav2.
 
 **Aceptación:** mapa verificable de arquitectura y comandos de comprobación con evidencia, riesgos conocidos y documentación actualizada.
@@ -66,10 +68,10 @@ Fecha base: 2026-10-29. Este documento define pendientes, NO asegura que se haya
 
 ## P1-B. Editor visual URDF (localhost)
 
-- [ ] `TODO` Auditar Xacro y su pipeline real de generación URDF antes de crear el editor.
+- [x] `DONE` Auditar Xacro y su pipeline real de generación URDF antes de crear el editor.
 - [ ] `TODO` Panel web editable con preview 3D, selección de partes, medidas en m/cm, controles `deshacer`, `restaurar`, `guardar preset`.
 - [ ] `TODO` Separar parámetros de geometría visual editables y parámetros calibrados protegidos.
-- [ ] `TODO` API local que genera URDF con Xacro real, valida sintaxis/topología/medidas y preserva las expresiones derivadas.
+- [x] `OFFLINE_DONE` (HOME-04) API local que genera URDF con Xacro real, valida sintaxis/topología/medidas y preserva las expresiones derivadas.
 - [ ] `TODO` Generación de candidatura exportable sin aplicar cambios a modelo de producción ni publicarlos a `/robot_description`.
 - [ ] `TODO` Tests backend/frontend con valores inválidos, path traversal, ausencia de meshes y diferencias respecto al modelo original.
 

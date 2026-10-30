@@ -38,7 +38,7 @@ ROS 2 exclusivo. Navegación/Nav2/SLAM/AMCL/control de base **solo lectura**. NU
 | HOME-10 | P0 | Jetson ENCENDIDA: acceso SSH sobre Ethernet, inventario real, compatibilidad JetPack 7.2.1, backup verificable, instalación de dependencias reversibles y plan de rollback | Claude | HOME-01E | READY_OFFLINE |
 | HOME-11 | P0 | Jetson: migración Ubuntu 24.04/JetPack oficial, ROS2 Jazzy y paquetes; software autorizado, paso de flash/borrado sujeto a aprobación específica + respaldo | Claude (humano para gate de borrado) | HOME-10 | BLOCKED_APPROVAL |
 | HOME-12 | P2 | HRI 2026.2: timbre/golpes, nombre libre, registro consentido, seguir a persona | Antigravity | HOME-06 | TODO |
-| HOME-13 | P2 | Give Me a Hand: estudio scoring, integración habilidades, mocks | Claude | HOME-06,08 | TODO |
+| HOME-13 | P2 | ~~Give Me a Hand~~ (no existe en 2026.2) → Doing Laundry: estudio de factibilidad con un brazo | Claude | HOME-08 | TODO |
 | HOME-14 | P2 | Pick and Place Challenge: escenario reproducible, puntuación, objeto, detección y agarre | Claude + Antigravity (por subtask) | HOME-09 | TODO |
 | HOME-15 | P2 | GPSR y orquestación habilidades: parser, scheduler, fallbacks, simulación | Claude | HOME-02,06 | TODO |
 | HOME-16 | P2 | CI offline: lint, typechecks, tests, Xacro, docs; evitar acciones en host robot | Antigravity | HOME-03 | READY_OFFLINE |
@@ -69,14 +69,19 @@ ROS 2 exclusivo. Navegación/Nav2/SLAM/AMCL/control de base **solo lectura**. NU
 
 | ID | Run Task ID real | Agente | Worktree / branch | Inicio | Estado | PR/commit | Nota |
 |---|---|---|---|---|---|---|---|
-| HOME-00 | sin Run | Claude | `claude/home-00-audit` | 2026-10-29 | OFFLINE_DONE | local | reconocimiento Git/Orca/hosts |
-| HOME-01 | sin Run | Claude | `claude/home-00-audit` | 2026-10-29 | IN_PROGRESS | local | hardware.md/power-domains.md parciales |
-| HOME-01E | sin Run | Claude | — | 2026-10-29 | BLOCKED_HARDWARE | — | cable Ethernet sin carrier en ambos lados; retomar 2026-10-30 |
-| HOME-02 | sin Run | Claude | `claude/home-00-audit` | 2026-10-29 | IN_PROGRESS | local | ros-interfaces.md estático |
-| HOME-03 | sin Run | Claude | `claude/home-00-audit` | 2026-10-29 | IN_REVIEW | local | software-audit.md, fix S-01 UNIT_PASS |
-| HOME-04 | — | Antigravity | — | — | READY_OFFLINE | — | no despachado: falta autorización humana |
-| HOME-10 | sin Run | Claude | — | 2026-10-29 | IN_PROGRESS | — | inventario + respaldo técnico; falta imagen completa |
-| HOME-11 | — | Claude + humano | — | — | BLOCKED_APPROVAL | — | requiere reflasheo; ver jetson-inventory.md |
+| HOME-00 | run_8db8fe9ab48b | Claude | `claude/home-00-audit` | 2026-10-29 | OFFLINE_DONE | local | reconocimiento Git/Orca/hosts |
+| HOME-01 | run_8db8fe9ab48b | Claude | `claude/home-00-audit` | 2026-10-30 | IN_PROGRESS | local | hardware.md, power-domains.md, HARDWARE_OPTIMIZACION.md |
+| HOME-01E | run_8db8fe9ab48b | Claude | — | 2026-10-29 | BLOCKED_HARDWARE | local | cable sin carrier; herramienta `scripts/net/check_nuc_jetson_link.sh` + runbook listos |
+| HOME-02 | run_8db8fe9ab48b | Claude | `claude/home-00-audit` | 2026-10-29 | IN_PROGRESS | local | ros-interfaces.md estático; tasas reales al tener link |
+| HOME-03 | run_8db8fe9ab48b | Claude | `claude/home-00-audit` | 2026-10-30 | IN_REVIEW | local | S-01..S-05 implementados con tests; S-01/S-03 desplegados en Jetson |
+| HOME-04 | task_dd025d65b38a | Antigravity→Claude worker (cuota) | `ShiiSuii/home-04-urdf-editor` | 2026-10-30 | OFFLINE_DONE | 3a957f1 (merge 3640193) | 45 tests; falta prueba visual en navegador |
+| HOME-06a | task_d7971ec8bb2a | Antigravity (Gemini 3.8 Flash) | `ShiiSuii/home-06a-hri-gap` | 2026-10-30 | OFFLINE_DONE | 39aced5 | gap analysis HRI 2026.2 |
+| HOME-06b | — | Claude | `claude/home-00-audit` | 2026-10-30 | OFFLINE_DONE | f56238d | presentación mutua con mirada + torque pan-tilt; 5 tests |
+| HOME-10 | run_8db8fe9ab48b | Claude | — | 2026-10-30 | IN_PROGRESS | — | inventario, respaldo técnico, deploy de fixes de seguridad |
+| HOME-11 | — | Claude + humano | — | — | BLOCKED_APPROVAL | — | reflasheo; recomendado NVMe nuevo |
+| HOME-13 | — | — | — | — | CANCELADA | — | "Give Me a Hand" no existe en 2026.2 → reemplazar por Doing Laundry |
+| HOME-15a | task_02674e4e224b | Antigravity (Gemini 3.8 Flash) | `antigravity-home-15a-gpsr` | 2026-10-30 | IN_PROGRESS | — | parser GPSR offline + dataset CommandGenerator |
+| HOME-19 | — | Claude | `claude/home-00-audit` | 2026-10-30 | SIM_PASS | e37d199 | señal de inicio por puerta abierta (`base_athome_skills`) |
 
 ## Bloqueos de hardware declarados
 
