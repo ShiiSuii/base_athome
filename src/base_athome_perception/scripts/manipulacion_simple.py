@@ -11,6 +11,9 @@ Una sola ventana: video de la camara de MUNECA (no la de la cabeza) + panel de t
   [O] [C]    abrir / cerrar pinza
   [G]        agarrar el objeto visto con cinematica inversa (MoveIt arranca solo con este script)
   [M]        calibrar distancia con la cinta (Medido_cm = centro de la pinza -> cara del objeto)
+  Sliders:   Avance_max_cm (tope del avance hacia el objeto) y Ajuste_cm (-10..+10 sobre el avance)
+  RViz:      MarkerArray /arm_camera/object_markers (y /manipulacion/objeto), frame base_link:
+             cilindro verde = objeto, esfera/flecha naranja = donde quedara el centro de la pinza
   [Q]        salir
 
 El brazo lo maneja piper_arm_controller (Jetson): /arm/status (medido), /arm/set_enable,
@@ -36,7 +39,9 @@ from rclpy.qos import qos_profile_sensor_data
 from builtin_interfaces.msg import Duration
 from sensor_msgs.msg import Image, JointState
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
-from std_msgs.msg import Float32, String
+from std_msgs.msg import ColorRGBA, Float32, String
+from visualization_msgs.msg import Marker, MarkerArray
+from geometry_msgs.msg import Point
 from std_srvs.srv import SetBool
 
 from base_athome_perception import pose_store
@@ -44,6 +49,7 @@ from base_athome_perception import wrist_geometry as wg
 from base_athome_perception.moveit_bridge import MoveItBridge, decimate, pose_from, quat_from_matrix
 from base_athome_perception.piper_kinematics import PiperKinematicsSolver
 from base_athome_perception.teach_wizard import LABELS, POSES, TeachWizard
+from base_athome_perception.wrist_detector import TargetTracker, WristDetector
 
 CONFIG = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config", "arm_poses_and_limits.yaml")
 SHOULDER_IN_BASE = np.array([0.005, 0.175, 1.065])  # arm_base_link en base_link (URDF), mismos ejes
@@ -76,11 +82,22 @@ class Manipulacion(Node):
         self.calib = wg.WristCalib.from_dict(pose_store.load_pose_config(CONFIG).get("wrist_camera_calibration"))
         self.measured_cm = 24.0
         self.detection = None  # (bbox, z_est)
+        env = pose_store.load_pose_config(CONFIG).get("safety_envelope", {})
+        self.max_advance_cm = float(env.get("max_advance_cm", 30.0))
+        self.advance_adjust_cm = float(env.get("advance_adjust_cm", 0.0))
+        models = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models")
+        self.detector = WristDetector(models)
+        self.tracker = TargetTracker()
+        self.det_label = ""
+        self.obj_base = None  # centro del objeto en base_link (para RViz y agarre)
+        # Tambien en /arm_camera/object_markers: ese topico ya esta en las configuraciones de RViz
+        self.pub_markers = self.create_publisher(MarkerArray, "/manipulacion/objeto", 5)
+        self.pub_markers_compat = self.create_publisher(MarkerArray, "/arm_camera/object_markers", 5)
+        self.create_timer(0.1, self._publish_markers)
         self.kin = PiperKinematicsSolver()
         self.moveit = MoveItBridge(self)
         self.move_group_proc = None
         threading.Thread(target=self._ensure_move_group, daemon=True).start()
-        self.yolo = None
         self.wizard = TeachWizard(self.set_torque, self.save_pose)
         threading.Thread(target=self._vision_loop, daemon=True).start()
 
@@ -234,29 +251,99 @@ class Manipulacion(Node):
             if frame is None:
                 time.sleep(0.05)
                 continue
-            if self.yolo is None:
-                try:
-                    from ultralytics import YOLO
-                    models = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models")
-                    self.yolo = YOLO(os.path.join(models, "yolov8n.pt"))
-                except Exception as e:
-                    self.get_logger().warn(f"YOLO no disponible: {e}")
-                    self.yolo = False
-            if not self.yolo:
+            try:
+                dets = self.detector.detect(frame)
+            except Exception as e:
+                self.get_logger().warn(f"Detector: {e}", throttle_duration_sec=10.0)
                 time.sleep(0.5)
                 continue
-            res = self.yolo.predict(frame, imgsz=320, conf=0.28, classes=[39, 41, 75], verbose=False, device="cpu")[0]
-            best = None
-            for b in res.boxes:
-                x1, y1, x2, y2 = (float(v) for v in b.xyxy[0].tolist())
-                if x2 - x1 >= 25 and y2 - y1 >= 40 and (best is None or float(b.conf) > best[1]):
-                    best = ((x1, y1, x2, y2), float(b.conf))
-            if best:
-                (x1, y1, x2, y2), _ = best
-                self.detection = ((x1, y1, x2, y2), wg.size_distance(x2 - x1, self.calib))
-            else:
+            tr = self.tracker.update(dets)
+            if tr is None:
                 self.detection = None
-            time.sleep(0.1)
+                self.obj_base = None
+            else:
+                box, width = tr
+                z = wg.size_distance(width, self.calib)
+                self.detection = (box, z)
+                self.det_label = f"{self.tracker.label} {self.tracker.conf:.2f} ({self.detector.source})"
+                self.obj_base = self._object_in_base(box, z)
+            time.sleep(0.03)
+
+    def used_advance(self, z: float) -> float:
+        """Avance real a usar (m): calibrado + ajuste, nunca mas que el tope."""
+        adv = wg.advance_needed(z, self.calib) + self.advance_adjust_cm / 100.0
+        return float(np.clip(adv, 0.0, self.max_advance_cm / 100.0))
+
+    def _object_in_base(self, box, z):
+        with self.lock:
+            q = list(self.joints_deg)
+        tcp_mm, R = self.kin.forward_kinematics(np.array([math.radians(v) for v in q]))
+        x1, y1, x2, y2 = box
+        left, up = wg.lateral_offsets((x1 + x2) / 2, (y1 + y2) / 2, z, self.calib)
+        obj = wg.object_center(tcp_mm / 1000.0, R, wg.advance_needed(z, self.calib), left, up, self.calib)
+        return SHOULDER_IN_BASE + obj
+
+    def _publish_markers(self):
+        ma = MarkerArray()
+        now = self.get_clock().now().to_msg()
+
+        def mk(mid, mtype):
+            m = Marker()
+            m.header.frame_id = "base_link"
+            m.header.stamp = now
+            m.ns = "arm_target"
+            m.id = mid
+            m.type = mtype
+            m.action = Marker.ADD if self.obj_base is not None else Marker.DELETE
+            m.pose.orientation.w = 1.0
+            m.lifetime.nanosec = 500_000_000
+            return m
+        cyl, grasp, arrow, txt = mk(0, Marker.CYLINDER), mk(1, Marker.SPHERE), mk(2, Marker.ARROW), mk(3, Marker.TEXT_VIEW_FACING)
+        if self.obj_base is not None and self.detection is not None:
+            o = self.obj_base
+            cyl.pose.position.x, cyl.pose.position.y, cyl.pose.position.z = map(float, o)
+            cyl.scale.x = cyl.scale.y = self.calib.object_diameter_m
+            cyl.scale.z = 0.20
+            cyl.color = ColorRGBA(r=0.1, g=0.9, b=0.3, a=0.85)
+            with self.lock:
+                q = list(self.joints_deg)
+            tcp_mm, R = self.kin.forward_kinematics(np.array([math.radians(v) for v in q]))
+            tcp = SHOULDER_IN_BASE + tcp_mm / 1000.0
+            app = R[:, 2] / np.linalg.norm(R[:, 2])
+            gc = tcp - self.calib.grasp_center_back_m * app
+            stop = gc + self.used_advance(self.detection[1]) * app  # donde quedara el centro de la pinza
+            grasp.pose.position.x, grasp.pose.position.y, grasp.pose.position.z = map(float, stop)
+            grasp.scale.x = grasp.scale.y = grasp.scale.z = 0.025
+            grasp.color = ColorRGBA(r=1.0, g=0.6, b=0.0, a=0.95)
+            arrow.points = [Point(x=float(gc[0]), y=float(gc[1]), z=float(gc[2])),
+                            Point(x=float(stop[0]), y=float(stop[1]), z=float(stop[2]))]
+            arrow.scale.x, arrow.scale.y, arrow.scale.z = 0.008, 0.016, 0.02
+            arrow.color = ColorRGBA(r=1.0, g=0.6, b=0.0, a=0.9)
+            txt.pose.position.x, txt.pose.position.y, txt.pose.position.z = float(o[0]), float(o[1]), float(o[2]) + 0.15
+            txt.scale.z = 0.04
+            txt.color = ColorRGBA(r=1.0, g=1.0, b=1.0, a=1.0)
+            txt.text = f"avance {self.used_advance(self.detection[1]) * 100:.0f} cm (tope {self.max_advance_cm:.0f})"
+        ma.markers = [cyl, grasp, arrow, txt]
+        self.pub_markers.publish(ma)
+        self.pub_markers_compat.publish(ma)
+
+    def set_advance_limits(self, max_cm=None, adjust_cm=None):
+        if max_cm is not None:
+            self.max_advance_cm = float(max_cm)
+        if adjust_cm is not None:
+            self.advance_adjust_cm = float(adjust_cm)
+
+    def save_advance_limits(self):
+        import yaml
+        cfg = pose_store.load_pose_config(CONFIG)
+        env = cfg.setdefault("safety_envelope", {})
+        env["max_advance_cm"] = round(self.max_advance_cm, 1)
+        env["advance_adjust_cm"] = round(self.advance_adjust_cm, 1)
+        tmp = CONFIG + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            yaml.safe_dump(cfg, f, sort_keys=False, allow_unicode=True)
+        os.replace(tmp, CONFIG)
+        self.status = f"Guardado: tope {self.max_advance_cm:.0f} cm, ajuste {self.advance_adjust_cm:+.0f} cm."
 
     def calibrate(self):
         if self.detection is None:
@@ -291,11 +378,12 @@ class Manipulacion(Node):
             (x1, y1, x2, y2), z = self.detection
             q_now = [math.radians(v) for v in self.joints_deg]
             tcp_mm, R = self.kin.forward_kinematics(np.array(q_now))
-            adv = wg.advance_needed(z, self.calib)
+            adv = self.used_advance(z)  # calibrado + ajuste, limitado por Avance_max_cm
             left, up = wg.lateral_offsets((x1 + x2) / 2, (y1 + y2) / 2, z, self.calib)
             obj = SHOULDER_IN_BASE + wg.object_center(tcp_mm / 1000.0, R, adv, left, up, self.calib)
             approach = R[:, 2] / np.linalg.norm(R[:, 2])
             grasp_tcp = obj + self.calib.grasp_center_back_m * approach
+            self.get_logger().info(f"Agarre: avance usado {adv * 100:.1f} cm (tope {self.max_advance_cm:.0f} cm)")
             app_tcp = grasp_tcp - 0.10 * approach
             quat = quat_from_matrix(R.tolist())
             self.status = "Agarre: planificando..."
@@ -334,8 +422,10 @@ class Manipulacion(Node):
         elif self.detection:
             (x1, y1, x2, y2), z = self.detection
             cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
-            cv2.putText(frame, f"avance {wg.advance_needed(z, self.calib) * 100:.1f} cm", (int(x1), max(20, int(y1) - 8)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+            cv2.putText(frame, f"avance {self.used_advance(z) * 100:.1f} cm (tope {self.max_advance_cm:.0f})",
+                        (int(x1), max(20, int(y1) - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+            cv2.putText(frame, self.det_label, (int(x1), min(frame.shape[0] - 8, int(y2) + 20)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
         h = frame.shape[0]
         panel = np.full((max(h, 480), 520, 3), 28, np.uint8)
         y = 30
@@ -367,6 +457,7 @@ class Manipulacion(Node):
         put("[T] ensenar 3 poses   [ENTER] guardar   [ESC] cancelar", (200, 200, 200), 0.5)
         put("[1][2][3] ir a pose   [O]/[C] pinza   [G] agarrar (MoveIt)", (200, 200, 200), 0.5)
         put(f"[M] calibrar distancia (Medido_cm = {self.measured_cm:.0f})   [Q] salir", (200, 200, 200), 0.5)
+        put(f"Avance: tope {self.max_advance_cm:.0f} cm, ajuste {self.advance_adjust_cm:+.0f} cm   [K] guardar", (200, 200, 200), 0.5)
         y += 6
         for line in _wrap(self.wizard.message if self.wizard.active or not self.status else self.status, 52):
             put(line, (0, 230, 255), 0.5, 1, 22)
@@ -402,6 +493,8 @@ class Manipulacion(Node):
             self.grasp()
         elif key in (ord("m"), ord("M")):
             self.calibrate()
+        elif key in (ord("k"), ord("K")):
+            self.save_advance_limits()
         return True
 
 
@@ -425,6 +518,9 @@ def main():
     cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(WINDOW, 1160, 520)
     cv2.createTrackbar("Medido_cm", WINDOW, 24, 80, lambda v: setattr(node, "measured_cm", float(max(3, v))))
+    cv2.createTrackbar("Avance_max_cm", WINDOW, int(node.max_advance_cm), 50, lambda v: node.set_advance_limits(max_cm=v))
+    cv2.createTrackbar("Ajuste_cm", WINDOW, int(node.advance_adjust_cm) + 10, 20,
+                       lambda v: node.set_advance_limits(adjust_cm=v - 10))
     try:
         while rclpy.ok():
             cv2.imshow(WINDOW, node.draw())
