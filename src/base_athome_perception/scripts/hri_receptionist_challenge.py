@@ -202,8 +202,10 @@ RS_PROC_PATTERN = r"^/opt/ros/[a-z]+/lib/realsense2_camera/realsense2_camera_nod
 # ------------------------------------------------------------------------------
 
 ARM_GESTURE_POSES = {
-    'home': [72.09, 176.5, -155.15, 102.62, -31.51, -99.91],
-    'cube_stow': [72.09, 176.5, -155.15, 102.62, -31.51, -99.91],
+    # Reposo real medido por CAN (2026-10-30). Los gestos 'point_*'/'wave' son del montaje anterior:
+    # volver a ensenarlos antes de usar --arm-gestures.
+    'home': [86.97, 172.87, -162.63, -99.89, -0.68, 44.98],
+    'cube_stow': [86.97, 172.87, -162.63, -99.89, -0.68, 44.98],
     'point_couch': [45.0, 155.0, -75.0, 50.0, -50.0, -80.0],
     'point_chair': [25.0, 150.0, -70.0, 35.0, -45.0, -80.0],
     'wave_hello': [60.0, 130.0, -110.0, 80.0, -10.0, -90.0],

@@ -45,7 +45,20 @@ safety_envelope:
     y: 0.34
     z: 7.14
 named_poses:
+  # home = pose de reposo REAL medida por CAN el 2026-10-30 (brazo colgando como un hombro).
+  # La pose anterior (joint4 +102.6, joint6 -99.9) esta ~200 grados lejos en joint4: no usar.
   home:
+    joints_deg:
+    - 86.97
+    - 172.87
+    - -162.63
+    - -99.89
+    - -0.68
+    - 44.98
+    gripper_mm: 24.6
+    timestamp: '2026-10-30 14:07:00'
+    source: measured_can
+  home_legacy_2026_10_24:
     joints_deg:
     - 72.09
     - 176.5
@@ -55,6 +68,8 @@ named_poses:
     - -99.91
     gripper_mm: 105.0
     timestamp: '2026-10-24 20:05:10'
+  # pre_grasp y post_grasp se grabaron con el montaje anterior: VOLVER A ENSENAR con el modo
+  # de ensenanza de manipulacion_autonoma (mover a mano + ENTER) antes de usarlas.
   pre_grasp:
     joints_deg:
     - 58.1

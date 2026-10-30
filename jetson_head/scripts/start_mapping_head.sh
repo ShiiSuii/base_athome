@@ -55,7 +55,11 @@ YOLO_ENGINE="${YOLO_ENGINE:-/home/ubuntu/models/yolo/yolov8n_fp16.engine}"
 echo "[Jetson Bringup] Iniciando: Pan-Tilt + Whisper ($WHISPER_MODEL/$ASR_LANGUAGE) + Piper CAN + DaBai + YOLO TensorRT"
 
 # Iniciar controlador CAN del brazo Piper y camara de muneca Orbbec DaBai
-pgrep -f piper_arm_controller.py >/dev/null || nohup python3 /home/ubuntu/piper_arm_controller.py > /tmp/piper_arm_controller.log 2>&1 < /dev/null &
+# Lazo de relanzado: el controlador sale si pierde la realimentacion CAN (adaptador re-enumerado)
+if ! pgrep -f "python3 /home/ubuntu/piper_arm_controller.py" >/dev/null; then
+    : > /tmp/piper_arm_controller.log
+    nohup bash -c 'while true; do python3 /home/ubuntu/piper_arm_controller.py >> /tmp/piper_arm_controller.log 2>&1; sleep 2; done' < /dev/null >/dev/null 2>&1 &
+fi
 pgrep -f stream_orbbec.py >/dev/null || nohup python3 /home/ubuntu/stream_orbbec.py > /tmp/stream_orbbec.log 2>&1 < /dev/null &
 if [ "$ENABLE_YOLO" = "1" ] && [ -f "$YOLO_ENGINE" ]; then
     pgrep -f yolo_trt_node.py >/dev/null || nohup python3 /home/ubuntu/yolo_trt_node.py --ros-args -p engine_path:="$YOLO_ENGINE" > /tmp/yolo_trt_node.log 2>&1 < /dev/null &

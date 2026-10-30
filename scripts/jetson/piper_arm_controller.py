@@ -11,6 +11,7 @@ import json
 import os
 import math
 import threading
+import sys
 import time
 from typing import Dict, List, Optional, Tuple
 
@@ -39,7 +40,9 @@ GRIPPER_MAX_MM = 105.0
 GRIPPER_MIN_MM = 0.0
 
 # Pose Home/Stow y Pre-Grasp calibradas (grados)
-DEFAULT_HOME_DEG = [86.28, 173.91, -164.0, 66.98, 0.69, -146.41]
+# Reposo real medido por CAN el 2026-10-30 (brazo colgando). El valor anterior tenia joint4 +67 y
+# joint6 -146: a ~170 grados del reposo actual.
+DEFAULT_HOME_DEG = [86.97, 172.87, -162.63, -99.89, -0.68, 44.98]
 DEFAULT_READY_DEG = [30.96, 182.68, -98.68, 37.30, -75.12, -95.86]
 
 def find_gs_usb_interface():
@@ -71,6 +74,7 @@ class PiperArmController(Node):
         # Rechazar habilitar si no llega realimentacion CAN reciente: con el brazo
         # sin potencia el SDK devuelve ceros y el setpoint inicial seria la pose 0.
         self.declare_parameter('feedback_timeout_s', 0.5)
+        self.declare_parameter('reconnect_timeout_s', 5.0)
 
         self.can_port = self.get_parameter('can_port').value
         if self.can_port == 'auto':
@@ -78,6 +82,9 @@ class PiperArmController(Node):
         self.rate_hz = float(self.get_parameter('control_rate_hz').value)
         self.auto_enable = bool(self.get_parameter('auto_enable').value)
         self.feedback_timeout_s = float(self.get_parameter('feedback_timeout_s').value)
+        self.reconnect_timeout_s = float(self.get_parameter('reconnect_timeout_s').value)
+        self._had_feedback = False
+        self.lost_feedback = False
         self._last_fb_stamp = None
         self._last_fb_mono = None
 
@@ -273,6 +280,18 @@ class PiperArmController(Node):
 
             self.read_sensors()
             self.publish_telemetry()
+
+            # Si la realimentacion se pierde despues de haber funcionado (p.ej. el adaptador USB-CAN
+            # se re-enumero), el socket queda muerto: salir para que el lazo del start script
+            # relance el controlador sobre la interfaz nueva.
+            if self.feedback_ok():
+                self._had_feedback = True
+            elif self._had_feedback and self._last_fb_mono is not None and \
+                    time.monotonic() - self._last_fb_mono > self.reconnect_timeout_s:
+                self.get_logger().error("Realimentacion CAN perdida: saliendo para reconectar.")
+                self.running = False
+                self.lost_feedback = True
+                break
 
             with self.lock:
                 if self.autonomous_sequence is not None:
@@ -494,14 +513,22 @@ def main(args=None):
     rclpy.init(args=args)
     node = PiperArmController()
     try:
-        rclpy.spin(node)
+        while rclpy.ok() and node.running:
+            rclpy.spin_once(node, timeout_sec=0.1)
     except KeyboardInterrupt:
         pass
     finally:
         node.running = False
-        node.piper.DisconnectPort()
+        lost = node.lost_feedback
+        try:
+            node.piper.DisconnectPort()
+        except Exception:
+            pass
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
+    if lost:
+        sys.exit(3)
 
 if __name__ == '__main__':
     main()
