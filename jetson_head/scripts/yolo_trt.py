@@ -87,7 +87,10 @@ class TRTEngine:
 
     def __init__(self, engine_path: str):
         import tensorrt as trt
-        from cuda import cudart
+        try:  # cuda-python >= 12.8 / 13 (JetPack 7)
+            from cuda.bindings import runtime as cudart
+        except ImportError:  # cuda-python 12.6 (JetPack 6)
+            from cuda import cudart
         self.cudart = cudart
         self.logger = trt.Logger(trt.Logger.WARNING)
         with open(engine_path, 'rb') as f:

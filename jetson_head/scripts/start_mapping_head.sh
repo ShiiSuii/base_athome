@@ -40,11 +40,26 @@ fi
 # Calibracion optima de ganancia para microfono RØDE VideoMic GO II (+18dB)
 amixer -c 0 sset 'Mic' 18 2>/dev/null || true
 
-echo '[Jetson Bringup] Iniciando: RealSense D435 + Pan-Tilt + Whisper Audio + Piper CAN + DaBai Camera'
+# Asignacion de computo (docs/ASIGNACION_COMPUTO.md): la Jetson corre lo que esta
+# conectado a ella (Piper CAN, pan-tilt U2D2, DaBai, RØDE) y la inferencia con GPU.
+# La RealSense D435 esta en la NUC (enable_camera:=false aca).
+# Overrides por entorno (p.ej. en un drop-in de systemd):
+WHISPER_MODEL="${WHISPER_MODEL:-base.en}"   # base.en: 6% WER vs tiny 20% (medido)
+ASR_LANGUAGE="${ASR_LANGUAGE:-en}"          # base.en es solo ingles; para demos en espanol: tiny + auto
+ENABLE_YOLO="${ENABLE_YOLO:-1}"
+YOLO_ENGINE="${YOLO_ENGINE:-/home/ubuntu/models/yolo/yolov8n_fp16.engine}"
+
+echo "[Jetson Bringup] Iniciando: Pan-Tilt + Whisper ($WHISPER_MODEL/$ASR_LANGUAGE) + Piper CAN + DaBai + YOLO TensorRT"
 
 # Iniciar controlador CAN del brazo Piper y camara de muneca Orbbec DaBai
 pgrep -f piper_arm_controller.py >/dev/null || nohup python3 /home/ubuntu/piper_arm_controller.py > /tmp/piper_arm_controller.log 2>&1 < /dev/null &
 pgrep -f stream_orbbec.py >/dev/null || nohup python3 /home/ubuntu/stream_orbbec.py > /tmp/stream_orbbec.log 2>&1 < /dev/null &
+if [ "$ENABLE_YOLO" = "1" ] && [ -f "$YOLO_ENGINE" ]; then
+    pgrep -f yolo_trt_node.py >/dev/null || nohup python3 /home/ubuntu/yolo_trt_node.py --ros-args -p engine_path:="$YOLO_ENGINE" > /tmp/yolo_trt_node.log 2>&1 < /dev/null &
+else
+    echo "[Jetson Bringup] YOLO deshabilitado o falta $YOLO_ENGINE (build_yolo_trt.sh)"
+fi
 pkill -f stream_zed.py 2>/dev/null || true
 
-exec ros2 launch robot_bringup_jetson jetson_head.launch.py enable_camera:=false enable_audio:=true language:=auto
+exec ros2 launch robot_bringup_jetson jetson_head.launch.py enable_camera:=false enable_audio:=true \
+    language:="$ASR_LANGUAGE" whisper_model:="$WHISPER_MODEL"

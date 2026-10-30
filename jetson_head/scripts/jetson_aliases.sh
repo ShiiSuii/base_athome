@@ -1,0 +1,15 @@
+# Alias de Base@Home en la Jetson. Se carga desde ~/.bashrc:
+#   [ -f ~/jetson_aliases.sh ] && source ~/jetson_aliases.sh
+alias head_start='sudo systemctl start jetson-head'
+alias head_stop='sudo systemctl stop jetson-head'
+alias head_restart='sudo systemctl restart jetson-head'
+alias head_status='systemctl is-active jetson-head; pgrep -af "piper_arm|stream_orbbec|yolo_trt|pan_tilt|whisper" | cut -c1-120'
+alias head_logs='journalctl -u jetson-head -f -o cat'
+alias piper_log='tail -f /tmp/piper_arm_controller.log'
+alias orbbec_log='tail -f /tmp/stream_orbbec.log'
+alias yolo_log='tail -f /tmp/yolo_trt_node.log'
+alias compilar='(cd ~/athome_ws && source /opt/ros/jazzy/setup.bash && colcon build --symlink-install) && source ~/athome_ws/install/setup.bash'
+alias yolo_engines='~/build_yolo_trt.sh ~/models/yolo/*.onnx'
+alias can_estado='ip -details -statistics link show can0'
+alias stats='tegrastats --interval 1000'
+alias ayuda='echo "head_start|head_stop|head_restart|head_status|head_logs  piper_log|orbbec_log|yolo_log  compilar  yolo_engines  can_estado  stats"'

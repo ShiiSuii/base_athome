@@ -49,7 +49,7 @@ step "2. Entorno Python del robot (PEP 668: venv con acceso a rclpy del sistema)
 run "python3 -m venv --system-site-packages $VENV"
 # Versiones del respaldo 2026-10-29 (pip3_freeze.txt) salvo donde Jazzy/py3.12 obliga a cambiar
 run "$VENV/bin/pip install --upgrade pip"
-run "$VENV/bin/pip install piper_sdk==0.6.2 python-can==4.6.1 dynamixel-sdk==4.1.0 sounddevice==0.5.6 faster-whisper==1.2.1 PyYAML"
+run "$VENV/bin/pip install piper_sdk==0.6.2 python-can==4.6.1 dynamixel-sdk==4.1.0 sounddevice==0.5.6 faster-whisper==1.2.1 PyYAML webrtcvad-wheels"
 echo "AVISO: ctranslate2 del pip no trae CUDA en aarch64 -> Whisper en CPU (igual que hoy). GPU: compilar ctranslate2 para CUDA 13 (tarea aparte)."
 echo "AVISO: cuda-python debe coincidir con CUDA 13 del JetPack 7.2.1: instalar 'cuda-python~=13.0' en $VENV tras verificar 'nvcc --version'."
 
@@ -83,7 +83,7 @@ EOF"
 
 step "5. Workspace de la cabeza (colcon, Jazzy)"
 if [ -d "$WS/src" ]; then
-  run "cd $WS && source /opt/ros/$ROS_DISTRO_TARGET/setup.bash && colcon build --symlink-install"
+  run "cd $WS && set +u && source /opt/ros/$ROS_DISTRO_TARGET/setup.bash && colcon build --symlink-install; set -u"
 else
   echo "Falta $WS/src: desplegar desde la NUC primero (deploy_to_jetson.sh)"
 fi
