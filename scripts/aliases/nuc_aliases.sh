@@ -53,7 +53,7 @@ Workspace:     ws | devel | sws  (= source install/setup.bash)
 Herramientas:  urdf_editor | gpsr "<comando>" | puerta | compilar | editor_mapa
 Red/Jetson:    jetson (ssh) | red_jetson | deploy_jetson[_dry] | jetson_stats
 Cabeza:        head_start | head_stop | head_restart | head_status | head_logs
-Manipulacion:  manipulacion (RViz+brazo) | rviz_manipulacion | agarrar_botella | teach_record
+Manipulacion:  moveit_brazo (antes de [I]) | manipulacion (RViz+brazo) | rviz_manipulacion | agarrar_botella | teach_record
 Receptionist:  receptionist | hri_sim | limpiar_memoria | memoria_personas
 ROS (lectura): topicos | nodos | brazo_estado | pantilt_conectado | voz | detecciones | camara_muneca[_hz]
 Existentes:    mapeo2d | navegacion | rviznav | lidar | receptionist | rostros | cara | piper | stepper ...
@@ -82,3 +82,4 @@ manipulacion() {  # abre RViz con el URDF (si no esta abierto) y lanza la manipu
 }
 alias manipular='manipulacion'
 alias rviz_manipulacion='_ros && DISPLAY="${DISPLAY:-:1}" ros2 launch hoverboard_base view_robot.launch.py'
+alias moveit_brazo='_ros && ros2 launch base_athome_moveit_config move_group.launch.py'  # IK/planificacion para [I] en manipulacion

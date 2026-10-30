@@ -49,6 +49,7 @@ os.environ.setdefault("YOLO_OFFLINE", "1")  # ultralytics: nunca auto-instalar p
 from ultralytics import YOLO
 
 from base_athome_perception import wrist_geometry as wg
+from base_athome_perception.moveit_bridge import MoveItBridge, decimate, pose_from, quat_from_matrix
 
 # Cinemática oficial del Brazo Piper 6-DOF
 from base_athome_perception.piper_kinematics import (
@@ -205,6 +206,9 @@ class ManipulacionAutonomaNode(Node):
 
         # Solucionador cinemático oficial
         self.kinematics_solver = PiperKinematicsSolver()
+        self.moveit = MoveItBridge(self)  # requiere move_group (alias moveit_brazo)
+        self.moveit_busy = False
+        self.moveit_abort = False
 
         # Modelo YOLOv8 ultraligero
         self.get_logger().info("Cargando modelo YOLOv8 ultraligero...")
@@ -971,6 +975,99 @@ class ManipulacionAutonomaNode(Node):
     # --------------------------------------------------------------------------
     # SECUENCIA DE MANIPULACIÓN AUTÓNOMA DETERMINISTA
     # --------------------------------------------------------------------------
+    # ------------------------------------------------------------- MoveIt
+    APPROACH_BACKOFF_M = 0.10   # punto de aproximacion: 10 cm antes del agarre, sobre el eje
+    LIFT_M = 0.03
+
+    def _execute_points(self, points, label: str) -> bool:
+        """Ejecuta una trayectoria de MoveIt enviando tramos a /arm/joint_cmd y esperando cada uno."""
+        segs = decimate(points, min_dt=0.3)
+        prev_t = 0.0
+        for q, t in segs[1:]:
+            if not self._running or self.moveit_abort:
+                self.status_message = f"MoveIt [{label}]: cancelado"
+                return False
+            dur = max(0.3, t - prev_t)
+            self.send_arm_joint_goal([math.degrees(v) for v in q], duration_s=dur)
+            time.sleep(dur)
+            prev_t = t
+        time.sleep(0.4)
+        return True
+
+    def grasp_with_moveit(self):
+        """Agarre por cinematica inversa con MoveIt (en un hilo: no congela la ventana).
+
+        1) objetivo = centro del objeto estimado por la camara de muneca (calibrado con cinta);
+        2) IK del punto de aproximacion (10 cm antes) con la orientacion actual de la pinza y plan
+           articular sin colisiones con el cuerpo del robot; 3) avance recto (camino cartesiano);
+        4) cerrar pinza; 5) subir 3 cm; 6) ir a POST-GRASP. Si algo no tiene solucion, no se mueve.
+        """
+        if self.moveit_busy:
+            return
+        if self.target_3d_arm is None:
+            self.status_message = "MoveIt: no veo el objeto (necesito la deteccion de la camara de muneca)."
+            return
+        if not getattr(self, "arm_feedback_ok", True):
+            self.status_message = "MoveIt: sin datos reales del brazo."
+            return
+        self.moveit_abort = False
+        threading.Thread(target=self._grasp_with_moveit_worker, daemon=True).start()
+
+    def _grasp_with_moveit_worker(self):
+        self.moveit_busy = True
+        try:
+            if not self.moveit.available():
+                self.status_message = "MoveIt no disponible: abrir otra terminal con 'moveit_brazo'."
+                return
+            q_now = [math.radians(d) for d in self.arm_joints_deg[:6]]
+            tcp_mm, R = self.kinematics_solver.forward_kinematics(np.array(q_now))
+            approach = R[:, 2] / np.linalg.norm(R[:, 2])
+            obj = SHOULDER_IN_BASE_LINK_M + np.asarray(self.target_3d_arm, dtype=float)
+            # El centro del objeto debe quedar en el centro de la pinza (grasp_center_back detras de las yemas)
+            grasp_tcp = obj + self.wrist_calib.grasp_center_back_m * approach
+            approach_tcp = grasp_tcp - self.APPROACH_BACKOFF_M * approach
+            quat = quat_from_matrix(R.tolist())
+            self.status_message = f"MoveIt: planificando hacia objeto en {np.round(obj, 3).tolist()}"
+
+            q_app = self.moveit.compute_ik(pose_from(approach_tcp, quat), q_now)
+            if q_app is None:
+                self.status_message = "MoveIt: SIN SOLUCION de IK para la aproximacion (objeto fuera de alcance?)."
+                return
+            plan = self.moveit.plan_to_joints(q_now, q_app, vel_scale=max(0.1, self.arm_speed_pct / 100.0))
+            if plan is None:
+                self.status_message = "MoveIt: no encontre un camino sin colisiones hasta la aproximacion."
+                return
+            line = self.moveit.cartesian_path(q_app, [pose_from(grasp_tcp, quat)])
+            if line is None:
+                self.status_message = "MoveIt: el avance recto final no es alcanzable (no me muevo)."
+                return
+            # Todo planificado: recien ahora se mueve
+            self.pub_gripper_cmd.publish(Float32(data=float(GRIPPER_MAX_OPEN_MM)))
+            self.status_message = "MoveIt: yendo a la aproximacion..."
+            if not self._execute_points(plan, "aproximacion"):
+                return
+            self.status_message = "MoveIt: avance recto hacia el objeto..."
+            if not self._execute_points(line, "avance"):
+                return
+            self.pub_gripper_cmd.publish(Float32(data=float(GRIPPER_CLOSE_GRASP_MM)))
+            time.sleep(1.5)
+            q_grasp = line[-1][0]
+            lift = self.moveit.cartesian_path(q_grasp, [pose_from(grasp_tcp + np.array([0.0, 0.0, self.LIFT_M]), quat)])
+            if lift is not None:
+                self._execute_points(lift, "subir")
+            post = self.moveit.plan_to_joints(lift[-1][0] if lift else q_grasp,
+                                              [math.radians(d) for d in self.pose_post_grasp])
+            if post is not None:
+                self.status_message = "MoveIt: llevando el objeto a POST-GRASP..."
+                self._execute_points(post, "post_grasp")
+            self.status_message = "MoveIt: agarre terminado."
+            self.say("Grasp finished.")
+        except Exception as e:
+            self.status_message = f"MoveIt: error {e}"
+            self.get_logger().error(self.status_message)
+        finally:
+            self.moveit_busy = False
+
     def start_autonomous_grasp(self):
         """Inicia la rutina autónoma de agarre paso a paso."""
         self.align_attempts = 0
@@ -1340,7 +1437,8 @@ class ManipulacionAutonomaNode(Node):
         print("   * [1] o [h]       : Ir a HOME                                          ")
         print("   * [2] o [p]       : Ir a PRE-GRASP (pinza abierta)                     ")
         print("   * [3] o [b]       : Ir a POST-GRASP                                    ")
-        print("   * [ESPACIO] o [G] : Agarre autonomo                                    ")
+        print("   * [ESPACIO] o [G] : Agarre autonomo (linea recta, sin MoveIt)          ")
+        print("   * [I]             : Agarre con cinematica inversa MoveIt (alias moveit_brazo)")
         print("--------------------------------------------------------------------------")
         print("   MODO ENSENANZA (el brazo queda LIBRE hasta salir):                     ")
         print("   * [T] o [E]       : Entrar / salir (al salir se bloquea donde quedo)   ")
@@ -1372,7 +1470,9 @@ class ManipulacionAutonomaNode(Node):
                 break
 
             elif key == 27:  # ESC
-                if self.is_teaching_mode:
+                if self.moveit_busy:
+                    self.moveit_abort = True
+                elif self.is_teaching_mode:
                     self.exit_teach_mode()
                 else:
                     self._running = False
@@ -1426,6 +1526,10 @@ class ManipulacionAutonomaNode(Node):
             elif key in [ord("3"), ord("4"), ord("b")]:
                 self.auto_state = self.AUTO_IDLE
                 self.mover_a_post_grasp()
+
+            elif key in [ord("i"), ord("I")]:  # agarre con cinematica inversa (MoveIt)
+                if not self.is_teaching_mode:
+                    self.grasp_with_moveit()
 
             elif key in [ord("m"), ord("M")]:  # calibrar distancia con la medida de la cinta (Medido_cm)
                 self.calibrate_distance()
