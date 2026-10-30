@@ -4,6 +4,7 @@
 
 Una sola ventana: video de la camara de MUNECA (no la de la cabeza) + panel de texto.
 
+  [4][5][6]  ensenar SOLO HOME / PRE-GRASP / POST-GRASP (brazo libre, [ENTER] guarda y bloquea)
   [T]        ensenar poses: el brazo queda LIBRE; llevalo a HOME y [ENTER], luego a
              PRE-GRASP y [ENTER], luego a POST-GRASP y [ENTER]. Al final se bloquea.
   [ESC]      cancelar la ensenanza (bloquea el brazo) / salir si no hay ensenanza
@@ -524,7 +525,8 @@ class Manipulacion(Node):
         y += 6
         if self.wizard.active:
             cv2.rectangle(panel, (8, y - 22), (512, y + 62), (0, 110, 220), -1)
-            put(f"ENSENANDO {LABELS[self.wizard.current]}  ({self.wizard.index + 1}/3)", (255, 255, 255), 0.7, 2, 30)
+            put(f"ENSENANDO {LABELS[self.wizard.current]}  ({self.wizard.index + 1}/{len(self.wizard.sequence)})",
+                (255, 255, 255), 0.7, 2, 30)
             put("Mueve el brazo a mano y presiona ENTER", (255, 255, 255), 0.6, 1, 40)
         for i, name in enumerate(POSES, start=1):
             p = self.poses.get(name)
@@ -536,7 +538,8 @@ class Manipulacion(Node):
             else:
                 put(f"{mark}[{i}] {LABELS[name]:<10} (sin guardar)", (60, 160, 255))
         y += 8
-        put("[T] ensenar 3 poses   [ENTER] guardar   [ESC] cancelar", (200, 200, 200), 0.5)
+        put("[T] ensenar las 3   [4][5][6] ensenar solo HOME/PRE/POST", (200, 200, 200), 0.5)
+        put("[ENTER] guardar   [ESC] cancelar", (200, 200, 200), 0.5)
         put("[1][2][3] ir a pose  [O]/[C] pinza  [A] alinear  [G] agarrar", (200, 200, 200), 0.5)
         put(f"[M] calibrar distancia (Medido_cm = {self.measured_cm:.0f})   [Q] salir", (200, 200, 200), 0.5)
         put(f"Avance: tope {self.max_advance_cm:.0f} cm, ajuste {self.advance_adjust_cm:+.0f} cm | "
@@ -562,6 +565,9 @@ class Manipulacion(Node):
         elif key in (ord("t"), ord("T")):
             if not self.busy:
                 self.wizard.start()
+        elif key in (ord("4"), ord("5"), ord("6")):  # ensenar SOLO una pose: 4 HOME, 5 PRE, 6 POST
+            if not self.busy and not self.wizard.active:
+                self.wizard.start(only=POSES[key - ord("4")])
         elif key in (13, 10):
             with self.lock:
                 q, g, fb = list(self.joints_deg), self.gripper_mm, self.feedback_ok

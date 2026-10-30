@@ -44,8 +44,8 @@ safety_envelope:
     x: -1.44
     y: 0.34
     z: 7.14
-  max_advance_cm: 23.0
-  advance_adjust_cm: 0.0
+  max_advance_cm: 24.0
+  advance_adjust_cm: -8.0
 named_poses:
   home:
     joints_deg:

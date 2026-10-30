@@ -28,7 +28,7 @@ def test_three_enters_save_three_poses_and_lock_at_end():
         w.confirm(Q, g)
     assert [s[0] for s in log['saved']] == ['home', 'pre_grasp', 'post_grasp']
     assert log['torque'] == [False, True] and not w.active
-    assert 'Listo' in w.message
+    assert 'Listo' in w.message and 'POST-GRASP' in w.message
 
 
 def test_arm_stays_free_between_poses():
@@ -59,3 +59,11 @@ def test_cancel_locks_and_reports_saved():
     w.confirm(Q, 0.0)
     w.cancel()
     assert log['torque'] == [False, True] and not w.active and 'HOME' in w.message
+
+
+def test_teach_only_post_grasp():
+    w, log = make()
+    w.start(only='post_grasp')
+    assert w.current == 'post_grasp' and log['torque'] == [False]
+    w.confirm(Q, 50.0)
+    assert [s[0] for s in log['saved']] == ['post_grasp'] and log['torque'] == [False, True] and not w.active

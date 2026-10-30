@@ -25,6 +25,7 @@ class TeachWizard:
         self._save = save
         self.index: Optional[int] = None
         self.saved: List[str] = []
+        self.sequence = list(POSES)  # poses a ensenar en esta sesion (todas o una sola)
         self.message = "Presiona [T] para ensenar HOME, PRE-GRASP y POST-GRASP."
 
     @property
@@ -33,11 +34,13 @@ class TeachWizard:
 
     @property
     def current(self) -> Optional[str]:
-        return POSES[self.index] if self.active else None
+        return self.sequence[self.index] if self.active else None
 
-    def start(self) -> None:
+    def start(self, only: Optional[str] = None) -> None:
+        """Ensena las 3 poses en orden, o solo `only` ('home' | 'pre_grasp' | 'post_grasp')."""
         if self.active:
             return
+        self.sequence = [only] if only in POSES else list(POSES)
         self.saved = []
         self.index = 0
         self._set_torque(False)
@@ -45,8 +48,9 @@ class TeachWizard:
 
     def _prompt(self) -> None:
         name = self.current
-        self.message = (f"Paso {self.index + 1}/3: mueve el brazo a {LABELS[name]} con la mano y presiona [ENTER]. "
-                        f"{HINTS[name]}")
+        n = len(self.sequence)
+        step = f"Paso {self.index + 1}/{n}: " if n > 1 else "Solo esta pose: "
+        self.message = f"{step}mueve el brazo a {LABELS[name]} con la mano y presiona [ENTER]. {HINTS[name]}"
 
     def confirm(self, joints_deg: Sequence[float], gripper_mm: float, feedback_ok: bool = True) -> None:
         if not self.active:
@@ -61,10 +65,11 @@ class TeachWizard:
             return
         self.saved.append(name)
         self.index += 1
-        if self.index >= len(POSES):
+        if self.index >= len(self.sequence):
             self.index = None
             self._set_torque(True)
-            self.message = "Listo: HOME, PRE-GRASP y POST-GRASP guardadas. Brazo bloqueado donde quedo."
+            names = ", ".join(LABELS[s] for s in self.saved)
+            self.message = f"Listo: {names} guardada(s). Brazo bloqueado donde quedo."
         else:
             self._prompt()
 
