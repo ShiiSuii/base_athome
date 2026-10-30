@@ -35,8 +35,6 @@ safety_envelope:
   wrist_camera_right_offset_m: 0.008
   grasp_forward_cm: 35.0
   grasp_height_offset_cm: 7.7
-  # Ajuste fino extra del avance (cm). Era 8.0 cuando el avance base era ~0 por el bug de la
-  # resta fija de 27 cm; ahora el avance base ya llega al centro del objeto.
   dabai_extra_advance_cm: 0.0
   dabai_center_zone_px: 80
   arm_speed_pct: 30
@@ -70,14 +68,14 @@ named_poses:
     timestamp: '2026-10-24 20:05:10'
   pre_grasp:
     joints_deg:
-    - 70.85
-    - 179.21
-    - -81.13
-    - -102.54
-    - 72.23
-    - 94.03
+    - 86.25
+    - 170.06
+    - -157.82
+    - -88.0
+    - -4.87
+    - 36.98
     gripper_mm: 105.0
-    timestamp: '2026-10-30 14:29:55'
+    timestamp: '2026-10-30 14:46:20'
   post_grasp:
     joints_deg:
     - 42.9
@@ -88,9 +86,6 @@ named_poses:
     - -96.89
     gripper_mm: 50.0
     timestamp: '2026-10-27 14:00:00'
-# Calibracion de distancia de la camara de muneca (wrist_geometry.WristCalib).
-# avance = a * Z_est + b. Medicion 2026-10-30: caja YOLO 143 px (Z_est 25.4 cm), cinta 24 cm del
-# centro de la pinza a la cara de la lata -> avance real 27.75 cm. Recalibrar con [M] en manipulacion.
 wrist_camera_calibration:
   a: 1.0
   b: 0.0235
@@ -101,4 +96,5 @@ wrist_camera_calibration:
   grasp_center_back_m: 0.02
   camera_above_axis_m: 0.0
   samples:
-  - [0.2544, 0.2775]
+  - - 0.2544
+    - 0.2775

@@ -96,7 +96,7 @@ class TeachPanel:
         )
         cv2.putText(
             canvas,
-            "ENSEÑAR POSES",
+            "ENSENAR POSES",
             (x0 + 12, curr_y + 19),
             self.FONT,
             0.55,
@@ -187,7 +187,7 @@ class TeachPanel:
             )
             cv2.putText(
                 canvas,
-                "MOVÉ EL BRAZO A MANO",
+                "BRAZO LIBRE: MOVELO A MANO",
                 (x0 + 12, curr_y + 15),
                 self.FONT,
                 0.48,
@@ -223,7 +223,7 @@ class TeachPanel:
             self._add_button(
                 canvas=canvas,
                 name="cancel",
-                label="CANCELAR",
+                label="TERMINAR",
                 rect=(x0 + 13 + btn_w, curr_y, btn_w, btn_h),
                 action=("cancel", None),
                 enabled=True,
@@ -403,7 +403,7 @@ class TeachPanel:
             self._add_button(
                 canvas=canvas,
                 name=f"teach_{pose_name}",
-                label="ENSEÑAR",
+                label="GRABAR",
                 rect=(x1 - 10 - ens_w, btn_py, ens_w, 20),
                 action=("teach", pose_name),
                 enabled=feedback_ok,
@@ -462,7 +462,7 @@ class TeachPanel:
         curr_y += 16
         cv2.putText(
             canvas,
-            "1/2/3: IR | !/@/#: ENS | Ent: GUARDAR",
+            "T: libre | 1/2/3: grabar o ir",
             (x0 + 10, curr_y),
             self.FONT,
             0.45,
@@ -473,7 +473,7 @@ class TeachPanel:
         curr_y += 16
         cv2.putText(
             canvas,
-            "Esc: CANCEL | L: LIBERAR | K: BLOQUEAR",
+            "Enter: fin | I: MoveIt | M: calib",
             (x0 + 10, curr_y),
             self.FONT,
             0.45,

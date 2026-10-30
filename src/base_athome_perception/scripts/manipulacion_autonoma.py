@@ -49,6 +49,7 @@ os.environ.setdefault("YOLO_OFFLINE", "1")  # ultralytics: nunca auto-instalar p
 from ultralytics import YOLO
 
 from base_athome_perception import wrist_geometry as wg
+from base_athome_perception.teach_panel import TeachPanel
 from base_athome_perception.moveit_bridge import MoveItBridge, decimate, pose_from, quat_from_matrix
 
 # Cinemática oficial del Brazo Piper 6-DOF
@@ -387,6 +388,8 @@ class ManipulacionAutonomaNode(Node):
         self.pose_post_grasp = list(self.pose_pre_grasp)
         self.distancia_gripper_cm: float = 0.0    # Ajuste FINO extra (el avance real sale de la calibracion)
         self.wrist_calib = wg.WristCalib()
+        self._saved_gripper = {}
+        self._saved_stamp = {}
         self.measured_cm: float = 24.0            # ultima distancia medida con cinta (trackbar Medido_cm)
         self.arm_speed_pct: int = 40              # Velocidad suave del brazo (40%)
 
@@ -404,6 +407,8 @@ class ManipulacionAutonomaNode(Node):
                     if "wrist_camera_calibration" in data:
                         self.wrist_calib = wg.WristCalib.from_dict(data["wrist_camera_calibration"])
                     poses = data.get("named_poses", {})
+                    self._saved_gripper = {k: float(v.get("gripper_mm", 0.0)) for k, v in poses.items() if isinstance(v, dict)}
+                    self._saved_stamp = {k: str(v.get("timestamp", "")) for k, v in poses.items() if isinstance(v, dict)}
                     if "home" in poses:
                         self.pose_home = list(poses["home"].get("joints_deg", self.pose_home))
                     if "pre_grasp" in poses:
@@ -1377,6 +1382,63 @@ class ManipulacionAutonomaNode(Node):
     def _on_dist_slider(self, val_mm: int):
         self.distancia_gripper_cm = float(val_mm) / 10.0
 
+    # ------------------------------------------------------------ panel de poses
+    def _panel_state(self) -> dict:
+        saved = {}
+        for name, q in (("home", self.pose_home), ("pre_grasp", self.pose_pre_grasp), ("post_grasp", self.pose_post_grasp)):
+            saved[name] = {"joints_deg": list(q), "gripper_mm": self._saved_gripper.get(name, 0.0),
+                           "timestamp": self._saved_stamp.get(name, "")}
+        return {
+            "feedback_ok": bool(getattr(self, "arm_feedback_ok", True)),
+            "torque_on": not self.is_teaching_mode,
+            "teaching": (self.teaching_target or "brazo libre") if self.is_teaching_mode else None,
+            "current_joints_deg": list(self.arm_joints_deg[:6]),
+            "current_gripper_mm": float(self.gripper_opening_mm),
+            "saved_poses": saved,
+        }
+
+    def _with_teach_panel(self, hud: np.ndarray) -> np.ndarray:
+        h, w = hud.shape[:2]
+        out = np.full((max(h, 560), w + 370, 3), 18, dtype=np.uint8)
+        out[:h, :w] = hud
+        self._panel_x0 = w + 5
+        try:
+            self.teach_panel.render(out, self._panel_x0, 8, self._panel_state())
+        except Exception as e:
+            self.get_logger().warn(f"Panel de poses: {e}", throttle_duration_sec=10.0)
+        return out
+
+    def _on_mouse(self, event, x, y, flags, param):
+        if event != cv2.EVENT_LBUTTONDOWN or self._panel_x0 is None:
+            return
+        act = self.teach_panel.handle_click(x, y)
+        if act is None:
+            return
+        kind, pose = act
+        if kind == "go":
+            if self.is_teaching_mode:
+                self.status_message = "Primero termina la ensenanza (TERMINAR) para mover el brazo."
+                return
+            self.auto_state = self.AUTO_IDLE
+            {"home": self.mover_a_home, "pre_grasp": self.mover_a_pre_grasp,
+             "post_grasp": self.mover_a_post_grasp}[pose]()
+        elif kind == "teach":
+            if not self.is_teaching_mode:
+                self.enter_teach_mode()
+                self.teaching_target = pose
+                self.status_message = f"BRAZO LIBRE: llevalo a {pose.upper()} y toca GUARDAR (o GRABAR en esa pose)."
+            else:
+                self.save_current_as(pose)
+        elif kind == "save":
+            if self.is_teaching_mode and self.teaching_target in ("home", "pre_grasp", "post_grasp"):
+                self.save_current_as(self.teaching_target)
+            else:
+                self.status_message = "Elegi la pose con su boton GRABAR."
+        elif kind in ("cancel", "torque_on"):
+            self.exit_teach_mode()
+        elif kind == "torque_off":
+            self.enter_teach_mode()
+
     def _on_measured_slider(self, val_cm: int):
         self.measured_cm = float(max(3, val_cm))
 
@@ -1403,7 +1465,10 @@ class ManipulacionAutonomaNode(Node):
     def run(self):
         window_name = self._window_name
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(window_name, 1280, 650)
+        cv2.resizeWindow(window_name, 1280 + 370, 650)
+        self.teach_panel = TeachPanel(width_px=360)
+        self._panel_x0 = None
+        cv2.setMouseCallback(window_name, self._on_mouse)
 
         # Trackbar único de ajuste de distancia del gripper (0 mm a 150 mm)
         cv2.createTrackbar(
@@ -1459,7 +1524,7 @@ class ManipulacionAutonomaNode(Node):
                 self.publish_rviz_3d_markers()
             self.update_autonomous_state_machine(now)
 
-            canvas = self.draw_hud()
+            canvas = self._with_teach_panel(self.draw_hud())
             cv2.imshow(window_name, canvas)
 
             key = cv2.waitKey(25) & 0xFF
