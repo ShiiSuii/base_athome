@@ -230,8 +230,11 @@ class PiperArmController(Node):
         js.position = j_rad + [half_open_m, -half_open_m]
         js.velocity = [0.0] * 8
         js.effort = [0.0] * 8
-        self.pub_joint_states.publish(js)
-        if self.feedback_ok():  # no publicar ceros como si fueran medidas (S-11)
+        # Solo posiciones MEDIDAS: sin realimentacion CAN no se publica nada (antes se publicaban
+        # ceros y RViz mostraba el brazo en una pose falsa). Con realimentacion, RViz sigue al
+        # brazo real aunque se lo mueva a mano (deshabilitado = motores libres).
+        if self.feedback_ok():
+            self.pub_joint_states.publish(js)
             self.pub_arm_joint_states.publish(js)
 
         # 2. /arm/current_pose

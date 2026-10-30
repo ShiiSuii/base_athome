@@ -173,6 +173,10 @@ class ManipulacionAutonomaNode(Node):
         self.pub_enable = self.create_publisher(Bool, "/arm/enable", 5)
         self.pub_rviz_markers = self.create_publisher(MarkerArray, "/arm_camera/object_markers", 10)
         self.pub_torso_joint_states = self.create_publisher(JointState, "/torso/joint_states", 10)
+        # torso_lift_joint tambien en /joint_states: el robot_state_publisher de la navegacion no usa
+        # joint_state_publisher y sin este joint no hay TF de cabeza, camara ni brazo. Unico dueno del torso
+        # hasta que exista un nodo del elevador.
+        self.pub_joint_states_torso = self.create_publisher(JointState, "/joint_states", 10)
         self.pub_arm_joint_states_cmd = self.create_publisher(JointState, "/arm/joint_states_cmd", 10)
         self.timer_joint_states = self.create_timer(0.04, self._publish_joint_states)
 
@@ -322,6 +326,8 @@ class ManipulacionAutonomaNode(Node):
             js_torso.effort = [0.0]
             if hasattr(self, 'pub_torso_joint_states') and self.pub_torso_joint_states:
                 self.pub_torso_joint_states.publish(js_torso)
+                if getattr(self, 'pub_joint_states_torso', None):
+                    self.pub_joint_states_torso.publish(js_torso)
 
             # 2. Brazo 6-DOF + pinza -> SOLO a /arm/joint_states_cmd (pose comandada para visualización)
             js_arm = JointState()
@@ -516,7 +522,9 @@ class ManipulacionAutonomaNode(Node):
             self.arm_is_moving = bool(payload.get("is_moving", False))
             self.gripper_opening_mm = float(payload.get("gripper_mm", self.gripper_opening_mm))
             joints = payload.get("joints_deg", [])
-            if len(joints) >= 6:
+            # Sin realimentacion CAN el controlador reporta ceros: no tomarlos como posicion real
+            self.arm_feedback_ok = bool(payload.get("feedback_ok", True))
+            if len(joints) >= 6 and self.arm_feedback_ok:
                 self.arm_joints_deg = [float(v) for v in joints[:6]]
         except Exception as e:
             self.get_logger().warn(f"Error leyendo /arm/status: {e}", throttle_duration_sec=5.0)

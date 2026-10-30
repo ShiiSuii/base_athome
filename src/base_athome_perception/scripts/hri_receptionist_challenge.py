@@ -265,6 +265,7 @@ class HriReceptionistChallengeNode(Node):
         sim_nav: bool = False,
         no_gui: bool = False,
         max_guests: int = 2,
+        arm_gestures: bool = False,
     ):
         super().__init__("hri_receptionist_challenge_node")
 
@@ -273,6 +274,10 @@ class HriReceptionistChallengeNode(Node):
         self.sim_nav = sim_nav
         self.no_gui = no_gui
         self.max_guests = max_guests
+        self.arm_gestures = arm_gestures
+        # Estado MEDIDO del brazo (/arm/status del controlador en la Jetson)
+        self.arm_feedback_ok = False
+        self.arm_enabled = False
 
         self.get_logger().info("==================================================")
         self.get_logger().info("🚀 INICIANDO ROBOCUP @HOME HRI RECEPTIONIST CHALLENGE")
@@ -361,6 +366,10 @@ class HriReceptionistChallengeNode(Node):
         self.pub_arm_joint = self.create_publisher(JointState, "/arm/joint_cmd", 5)
         self.pub_arm_gripper = self.create_publisher(Float32, "/arm/gripper_cmd", 5)
         self.pub_torso_joint_states = self.create_publisher(JointState, "/torso/joint_states", 10)
+        # torso_lift_joint tambien en /joint_states: el robot_state_publisher de la navegacion no usa
+        # joint_state_publisher y sin este joint no hay TF de cabeza, camara ni brazo. Unico dueno del torso
+        # hasta que exista un nodo del elevador.
+        self.pub_joint_states_torso = self.create_publisher(JointState, "/joint_states", 10)
         self.pub_arm_joint_states_cmd = self.create_publisher(JointState, "/arm/joint_states_cmd", 10)
         self.pub_voice_mute = self.create_publisher(Bool, "/voice/mute", 10)
         self._mute_lock = threading.Lock()
@@ -402,6 +411,8 @@ class HriReceptionistChallengeNode(Node):
             self.sub_cam_list.append(
                 self.create_subscription(Image, top, self.image_callback, qos_cam)
             )
+
+        self.create_subscription(String, "/arm/status", self._arm_status_cb, 10)
 
         # Profundidad alineada + intrinsecos: ubicar personas en el mapa (ocupacion de asientos)
         self.depth_lock = threading.Lock()
@@ -478,7 +489,6 @@ class HriReceptionistChallengeNode(Node):
 
         # Iniciar posición Home del brazo y emoción neutral
         self.set_robot_emotion("neutral")
-        self.move_arm_to_named_pose("cube_stow", duration_s=1.5)
 
         # Estado de la GUI OpenCV
         self.window_name = "RoboCup @Home - HRI Receptionist Challenge"
@@ -1049,10 +1059,19 @@ class HriReceptionistChallengeNode(Node):
         if pose_name not in ARM_GESTURE_POSES:
             self.get_logger().warn(f"Pose de brazo desconocida: {pose_name}")
             return
+        # El brazo NO se manda a poses fijas salvo que se pida (--arm-gestures) y haya
+        # realimentacion real: las poses grabadas no corresponden a como esta montado hoy.
+        if not self.arm_gestures:
+            self.get_logger().info(f"[Brazo] gesto '{pose_name}' omitido (brazo pasivo; usar --arm-gestures)",
+                                   throttle_duration_sec=30.0)
+            return
+        if not (self.arm_feedback_ok and self.arm_enabled):
+            self.get_logger().warn(f"[Brazo] gesto '{pose_name}' omitido: brazo sin realimentacion o deshabilitado",
+                                   throttle_duration_sec=10.0)
+            return
 
         target_deg = ARM_GESTURE_POSES[pose_name]
         self.current_arm_pose_name = pose_name
-        self.arm_joints_deg = list(target_deg)
 
         if not rclpy.ok():
             return
@@ -1085,6 +1104,8 @@ class HriReceptionistChallengeNode(Node):
             js_torso.effort = [0.0]
             if hasattr(self, 'pub_torso_joint_states') and self.pub_torso_joint_states:
                 self.pub_torso_joint_states.publish(js_torso)
+                if getattr(self, 'pub_joint_states_torso', None):
+                    self.pub_joint_states_torso.publish(js_torso)
 
             # 2. Brazo (pose de gesto comandada) -> SOLO a /arm/joint_states_cmd (nunca /joint_states)
             js_arm = JointState()
@@ -1161,6 +1182,19 @@ class HriReceptionistChallengeNode(Node):
                 self.frame_count += 1
         except Exception as e:
             self.get_logger().warn(f"Error procesando frame de camara: {e}")
+
+    def _arm_status_cb(self, msg: String):
+        """Posicion real del brazo: con realimentacion, la visualizacion sigue al brazo (aunque se mueva a mano)."""
+        try:
+            st = json.loads(msg.data)
+        except Exception:
+            return
+        self.arm_feedback_ok = bool(st.get("feedback_ok", False))
+        self.arm_enabled = bool(st.get("enabled", False))
+        joints = st.get("joints_deg", [])
+        if self.arm_feedback_ok and len(joints) >= 6:
+            self.arm_joints_deg = [float(v) for v in joints[:6]]
+            self.current_arm_pose_name = "medida"
 
     def _depth_callback(self, msg: Image):
         try:
@@ -2012,6 +2046,8 @@ def main():
     parser.add_argument("--sim-nav", action="store_true", help="Simula navegacion sin mover la base fisica")
     parser.add_argument("--no-gui", action="store_true", help="Desactiva ventana grafica HUD OpenCV")
     parser.add_argument("--max-guests", type=int, default=2, help="Cantidad de invitados a recibir")
+    parser.add_argument("--arm-gestures", action="store_true",
+                        help="Permitir gestos del brazo (solo con realimentacion CAN y brazo habilitado)")
     args = parser.parse_args()
 
     rclpy.init()
@@ -2023,6 +2059,7 @@ def main():
         sim_nav=args.sim_nav,
         no_gui=args.no_gui,
         max_guests=args.max_guests,
+        arm_gestures=args.arm_gestures,
     )
 
     executor = MultiThreadedExecutor(num_threads=4)
