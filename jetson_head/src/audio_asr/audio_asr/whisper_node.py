@@ -314,6 +314,8 @@ class WhisperASRNode(Node):
                             self.last_mute_active = now
                         if self.muted or now < self.guard_until:
                             if triggered or voiced_frames:
+                                if triggered:
+                                    self.get_logger().info('Escucha cortada: el robot empezo a hablar (mute).')
                                 reset_state()
                             if self.current_status != 'IDLE':
                                 self.current_status = 'IDLE'

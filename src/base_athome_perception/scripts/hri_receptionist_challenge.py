@@ -172,6 +172,7 @@ class HriReceptionistChallengeNode(Node):
         no_gui: bool = False,
         max_guests: int = 2,
         arm_gestures: bool = False,
+        track_faces: bool = False,
     ):
         super().__init__("hri_receptionist_challenge_node")
 
@@ -371,7 +372,9 @@ class HriReceptionistChallengeNode(Node):
         self.current_tilt_deg = -5.0
         self.target_pan_deg = 0.0
         self.target_tilt_deg = -5.0
-        self.pan_tilt_tracking = True
+        # Seguimiento de caras con el pan-tilt: desactivado (era demasiado agresivo); la cabeza mira al
+        # frente durante la conversacion. Se puede activar con --track-faces.
+        self.pan_tilt_tracking = track_faces
 
         # Telemetría del brazo
         self.current_arm_pose_name = "home"
@@ -1254,7 +1257,8 @@ class HriReceptionistChallengeNode(Node):
                 bx, by, bw, bh = largest_face["bbox"]
                 img_h, img_w = frame.shape[:2]
                 fx_px = self._fx(img_w)
-                dpan, dtilt = scene.face_tracking_step(bx + bw / 2.0, by + bh / 2.0, img_w, img_h, fx_px, fx_px)
+                dpan, dtilt = scene.face_tracking_step(bx + bw / 2.0, by + bh / 2.0, img_w, img_h, fx_px, fx_px,
+                                                      gain=0.3, deadband_deg=4.0, max_step_deg=3.0)
                 if dpan or dtilt:
                     self.move_head_to(self.target_pan_deg + self.head_pan_sign * dpan,
                                       self.target_tilt_deg + dtilt)
@@ -1300,7 +1304,7 @@ class HriReceptionistChallengeNode(Node):
 
             self.say("All systems online. Camera and perception ready. Starting Receptionist Challenge.", emotion="happy", blocking=True)
             self.state = self.STATE_NAV_TO_DOOR
-            self.state_start_time = now
+            self.state_start_time = time.time()  # tras los say() bloqueantes, no el 'now' del inicio del ciclo
 
         elif self.state == self.STATE_NAV_TO_DOOR:
             self.say("Navigating to the entrance door.", emotion="neutral", blocking=True)
@@ -1322,7 +1326,7 @@ class HriReceptionistChallengeNode(Node):
                 self.force_advance = False
                 self.get_logger().info("⚡ [Manual]: Forzando avance de puerta -> Saludo.")
                 self.state = self.STATE_GREET_AND_PROMPT
-                self.state_start_time = now
+                self.state_start_time = time.time()  # tras los say() bloqueantes, no el 'now' del inicio del ciclo
                 self.door_detection_start = None
                 return
 
@@ -1371,7 +1375,7 @@ class HriReceptionistChallengeNode(Node):
                 elif now - self.door_detection_start >= 1.0:
                     self.get_logger().info("✔ [Puerta]: Invitado confirmado. Iniciando saludo y bienvenida.")
                     self.state = self.STATE_GREET_AND_PROMPT
-                    self.state_start_time = now
+                    self.state_start_time = time.time()  # tras los say() bloqueantes, no el 'now' del inicio del ciclo
                     self.door_detection_start = None
                     return
             else:
@@ -1387,6 +1391,8 @@ class HriReceptionistChallengeNode(Node):
         elif self.state == self.STATE_GREET_AND_PROMPT:
             # Saludo y pregunta abierta de nombre y bebida favorita
             # 1) quien es el robot  2) que tiene que decir la persona  3) cuando (despues del beep)
+            self.move_head_to(0.0, 0.0)  # mirar al frente (sin seguimiento)
+            self.voice_text = None
             self.say("Hello! Welcome to our home. I am Robot, the receptionist of this house.",
                      emotion="speaking", blocking=True)
             self.say(f"After the beep, please say: My name is, your name, and my favorite drink is, your drink. "
@@ -1399,7 +1405,7 @@ class HriReceptionistChallengeNode(Node):
             self.user_speech_buffer = ""
             self.retry_count = 0
             self.state = self.STATE_WAIT_NAME_DRINK
-            self.state_start_time = now
+            self.state_start_time = time.time()  # tras los say() bloqueantes, no el 'now' del inicio del ciclo
 
         elif self.state == self.STATE_WAIT_NAME_DRINK:
             # Esperar respuesta por Whisper ASR
@@ -1421,15 +1427,15 @@ class HriReceptionistChallengeNode(Node):
                 # Si tenemos ambos datos
                 if self.current_name and self.current_drink:
                     self.state = self.STATE_CONFIRM_DETAILS
-                    self.state_start_time = now
+                    self.state_start_time = time.time()  # tras los say() bloqueantes, no el 'now' del inicio del ciclo
                 elif self.current_name and not self.current_drink:
                     self.missing_field = "drink"
                     self.state = self.STATE_PROMPT_MISSING_INFO
-                    self.state_start_time = now
+                    self.state_start_time = time.time()  # tras los say() bloqueantes, no el 'now' del inicio del ciclo
                 elif not self.current_name and self.current_drink:
                     self.missing_field = "name"
                     self.state = self.STATE_PROMPT_MISSING_INFO
-                    self.state_start_time = now
+                    self.state_start_time = time.time()  # tras los say() bloqueantes, no el 'now' del inicio del ciclo
                 else:
                     # Habló pero no se extrajo ninguno: pedir aclaración cortés sin inventar datos
                     self.retry_count += 1
@@ -1439,7 +1445,7 @@ class HriReceptionistChallengeNode(Node):
                     self.speaker.play_beep(blocking=True)  # antes de abrir el micro: el beep no debe grabarse
                     self.set_robot_emotion("listening")
                     self.trigger_mic_listening()
-                    self.state_start_time = now
+                    self.state_start_time = time.time()  # tras los say() bloqueantes, no el 'now' del inicio del ciclo
 
             elif now - self.state_start_time > LISTEN_WINDOW_S + 5.0:  # ventana de escucha + transcripcion
                 # Timeout de silencio: NO avanzar automáticamente. Recordar cortésmente y seguir escuchando
@@ -1456,7 +1462,7 @@ class HriReceptionistChallengeNode(Node):
                 self.speaker.play_beep(blocking=True)  # antes de abrir el micro: el beep no debe grabarse
                 self.set_robot_emotion("listening")
                 self.trigger_mic_listening()
-                self.state_start_time = now
+                self.state_start_time = time.time()  # tras los say() bloqueantes, no el 'now' del inicio del ciclo
 
         elif self.state == self.STATE_PROMPT_MISSING_INFO:
             if self.missing_field == "drink":
@@ -1473,7 +1479,7 @@ class HriReceptionistChallengeNode(Node):
             self.voice_text = None
             self.user_speech_buffer = ""
             self.state = self.STATE_WAIT_NAME_DRINK
-            self.state_start_time = now
+            self.state_start_time = time.time()  # tras los say() bloqueantes, no el 'now' del inicio del ciclo
 
         elif self.state == self.STATE_CONFIRM_DETAILS:
             confirm_msg = f"Thank you, {self.current_name}! I noted that your favorite drink is {self.current_drink}."
@@ -1487,9 +1493,9 @@ class HriReceptionistChallengeNode(Node):
             self.samples_synthetic = False
             self.best_thumbnail = None
             self.best_sharpness = 0.0
-            self.last_sample_time = now
+            self.last_sample_time = time.time()
             self.state = self.STATE_MEMORIZE_FACE
-            self.state_start_time = now
+            self.state_start_time = time.time()  # tras los say() bloqueantes, no el 'now' del inicio del ciclo
 
         elif self.state == self.STATE_MEMORIZE_FACE:
             # Captura de 10 muestras biométricas con filtro de calidad
@@ -1571,7 +1577,7 @@ class HriReceptionistChallengeNode(Node):
 
                 self.say(f"Got it! Your face is saved, {self.current_name}.", emotion="happy", blocking=True)
                 self.state = self.STATE_NAV_TO_LIVING_ROOM
-                self.state_start_time = now
+                self.state_start_time = time.time()  # tras los say() bloqueantes, no el 'now' del inicio del ciclo
 
             elif elapsed > 7.0:
                 # Timeout de memorización: garantizar almacenamiento incluso con pocas muestras
@@ -1617,7 +1623,7 @@ class HriReceptionistChallengeNode(Node):
 
                 self.say(f"I have enough details, {self.current_name}.", emotion="happy", blocking=True)
                 self.state = self.STATE_NAV_TO_LIVING_ROOM
-                self.state_start_time = now
+                self.state_start_time = time.time()  # tras los say() bloqueantes, no el 'now' del inicio del ciclo
 
         elif self.state == self.STATE_NAV_TO_LIVING_ROOM:
             follow_msg = f"{self.current_name}, please follow me to the living room."
@@ -1625,7 +1631,7 @@ class HriReceptionistChallengeNode(Node):
 
             self.navigate_to_waypoint(self.living_room_wp)
             self.state = self.STATE_SCAN_SCENE
-            self.state_start_time = now
+            self.state_start_time = time.time()  # tras los say() bloqueantes, no el 'now' del inicio del ciclo
 
         elif self.state == self.STATE_SCAN_SCENE:
             self.say("We have arrived. Let me take a look around.", emotion="thinking", blocking=True)
@@ -1635,7 +1641,7 @@ class HriReceptionistChallengeNode(Node):
             if host is not None:  # mirar al anfitrion para presentarlo
                 self.move_head_to(self.head_pan_sign * host.bearing_deg, -5.0)
             self.state = self.STATE_INTRODUCE_GUESTS
-            self.state_start_time = now
+            self.state_start_time = time.time()  # tras los say() bloqueantes, no el 'now' del inicio del ciclo
 
         elif self.state == self.STATE_FIND_HOST:
             # Llegada a la sala: escanear el entorno
@@ -1647,7 +1653,7 @@ class HriReceptionistChallengeNode(Node):
             self.move_head_to(0.0, -5.0)
 
             self.state = self.STATE_INTRODUCE_GUESTS
-            self.state_start_time = now
+            self.state_start_time = time.time()  # tras los say() bloqueantes, no el 'now' del inicio del ciclo
 
         elif self.state == self.STATE_INTRODUCE_GUESTS:
             # Protocolo oficial de presentación de invitados
@@ -1667,7 +1673,7 @@ class HriReceptionistChallengeNode(Node):
 
             self.say(intro_text, emotion="speaking", blocking=True)
             self.state = self.STATE_DETECT_AND_OFFER_SEAT
-            self.state_start_time = now
+            self.state_start_time = time.time()  # tras los say() bloqueantes, no el 'now' del inicio del ciclo
 
         elif self.state == self.STATE_DETECT_AND_OFFER_SEAT:
             # Inspección de asientos: mirar cada uno, contar personas y ofrecer uno con lugar libre
@@ -1724,7 +1730,7 @@ class HriReceptionistChallengeNode(Node):
             self.seated_hits = 0
             self.seat_reminded = False
             self.state = self.STATE_WAIT_SEATED
-            self.state_start_time = now
+            self.state_start_time = time.time()  # tras los say() bloqueantes, no el 'now' del inicio del ciclo
 
         elif self.state == self.STATE_WAIT_SEATED:
             # No volver a la puerta hasta ver al invitado sentado en el asiento ofrecido
@@ -1752,7 +1758,7 @@ class HriReceptionistChallengeNode(Node):
                 if self.guest_index >= 2:
                     self._introduce_guests_to_each_other()
                 self.state = self.STATE_CHECK_NEXT_GUEST
-                self.state_start_time = now
+                self.state_start_time = time.time()  # tras los say() bloqueantes, no el 'now' del inicio del ciclo
             elif elapsed > 20.0 and not self.seat_reminded:
                 self.seat_reminded = True
                 where = scene.direction_words(bearing) if bearing is not None else "here"
@@ -1763,7 +1769,7 @@ class HriReceptionistChallengeNode(Node):
                 if self.guest_index >= 2:
                     self._introduce_guests_to_each_other()
                 self.state = self.STATE_CHECK_NEXT_GUEST
-                self.state_start_time = now
+                self.state_start_time = time.time()  # tras los say() bloqueantes, no el 'now' del inicio del ciclo
 
         elif self.state == self.STATE_CHECK_NEXT_GUEST:
             if self.guest_index < self.max_guests:
@@ -1776,10 +1782,10 @@ class HriReceptionistChallengeNode(Node):
                 self.voice_text = None
                 self.user_speech_buffer = ""
                 self.state = self.STATE_NAV_TO_DOOR
-                self.state_start_time = now
+                self.state_start_time = time.time()  # tras los say() bloqueantes, no el 'now' del inicio del ciclo
             else:
                 self.state = self.STATE_CHALLENGE_COMPLETE
-                self.state_start_time = now
+                self.state_start_time = time.time()  # tras los say() bloqueantes, no el 'now' del inicio del ciclo
 
         elif self.state == self.STATE_CHALLENGE_COMPLETE:
             final_msg = "All guests have arrived and are comfortably seated. The Receptionist Challenge is complete. Enjoy the party!"
@@ -1957,6 +1963,8 @@ def main():
     parser.add_argument("--sim-nav", action="store_true", help="Simula navegacion sin mover la base fisica")
     parser.add_argument("--no-gui", action="store_true", help="Desactiva ventana grafica HUD OpenCV")
     parser.add_argument("--max-guests", type=int, default=2, help="Cantidad de invitados a recibir")
+    parser.add_argument("--track-faces", action="store_true",
+                        help="Seguir la cara con el pan-tilt (por defecto la cabeza queda al frente)")
     parser.add_argument("--arm-gestures", action="store_true",
                         help="Permitir gestos del brazo (solo con realimentacion CAN y brazo habilitado)")
     args = parser.parse_args()
@@ -1971,6 +1979,7 @@ def main():
         no_gui=args.no_gui,
         max_guests=args.max_guests,
         arm_gestures=args.arm_gestures,
+        track_faces=args.track_faces,
     )
 
     executor = MultiThreadedExecutor(num_threads=4)
