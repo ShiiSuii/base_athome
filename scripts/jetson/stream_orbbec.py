@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+import array
+import glob
+import os
+import re
 import subprocess
 import time
 import cv2
@@ -9,7 +13,17 @@ from sensor_msgs.msg import Image
 
 
 def find_dabai_video_device(default_id: int = 6) -> int:
-    """Detecta automáticamente el índice /dev/videoX correspondiente a la cámara Orbbec DaBai."""
+    """Detecta automáticamente el índice /dev/videoX correspondiente a la cámara Orbbec DaBai.
+
+    1) symlink estable de udev /dev/v4l/by-id/*Dabai*-video-index0 (no requiere herramientas);
+    2) `v4l2-ctl --list-devices` si está instalado;
+    3) default_id.
+    """
+    links = sorted(glob.glob('/dev/v4l/by-id/*[Dd]abai*-video-index0'))
+    if links:
+        m = re.search(r'video(\d+)$', os.path.realpath(links[0]))
+        if m:
+            return int(m.group(1))
     try:
         out = subprocess.check_output("v4l2-ctl --list-devices 2>/dev/null", shell=True).decode()
         for block in out.split("\n\n"):
@@ -37,7 +51,8 @@ class OrbbecStreamer(Node):
         if self.cap is not None and self.cap.isOpened():
             self.cap.release()
         self.device_id = find_dabai_video_device(self.device_id)
-        self.cap = cv2.VideoCapture(self.device_id)
+        self.cap = cv2.VideoCapture(self.device_id, cv2.CAP_V4L2)
+        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
         self.cap.set(cv2.CAP_PROP_FPS, 30)
@@ -63,7 +78,9 @@ class OrbbecStreamer(Node):
         msg.encoding = 'bgr8'
         msg.is_bigendian = False
         msg.step = msg.width * 3
-        msg.data = frame.tobytes()
+        # array.array evita la validacion elemento a elemento de rclpy con bytes
+        # (Humble, 640x480x3: ~193 ms por frame con bytes vs 0.3 ms con array).
+        msg.data = array.array("B", frame.tobytes())
         self.pub.publish(msg)
 
     def destroy_node(self):

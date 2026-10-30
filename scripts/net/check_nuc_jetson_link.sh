@@ -8,7 +8,8 @@
 set -u
 
 NUC_IF="${NUC_IF:-enp1s0}"
-JETSON_IF="${JETSON_IF:-enP8p1s0}"
+# Vacio = autodetectar la interfaz que tiene JETSON_IP (hoy el USB RTL8153; enP8p1s0 sin carrier)
+JETSON_IF="${JETSON_IF:-}"
 JETSON_IP="${JETSON_IP:-10.42.0.12}"
 JETSON_USER="${JETSON_USER:-ubuntu}"
 TEST_DOMAIN="${TEST_DOMAIN:-77}"
@@ -52,7 +53,7 @@ if "${SSH[@]}" true 2>/tmp/.ssh.$$; then ok "SSH OK"; else bad "SSH falla: $(cat
 rm -f /tmp/.ssh.$$
 
 echo "4. Estado del lado Jetson"
-"${SSH[@]}" "cat /sys/class/net/$JETSON_IF/carrier 2>/dev/null; ip -br addr show $JETSON_IF; systemctl is-active jetson-head; systemctl show jetson-head -p NRestarts --value" > /tmp/.j.$$ 2>&1
+"${SSH[@]}" "IF=${JETSON_IF:-\$(ip -o -4 addr | awk -v ip=$JETSON_IP 'index(\$4, ip\"/\")==1{print \$2; exit}')}; IF=\${IF:-enP8p1s0}; cat /sys/class/net/\$IF/carrier 2>/dev/null; ip -br addr show \$IF; systemctl is-active jetson-head; systemctl show jetson-head -p NRestarts --value" > /tmp/.j.$$ 2>&1
 mapfile -t J < /tmp/.j.$$; rm -f /tmp/.j.$$
 [ "${J[0]:-0}" = "1" ] && ok "carrier Jetson=1" || bad "carrier Jetson=${J[0]:-?}"
 info "${J[1]:-}"

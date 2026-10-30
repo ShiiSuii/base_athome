@@ -27,4 +27,18 @@
 | `/hri/say_something`, `/hri/detected_persons`, `/hri/ui_display`, `/robot/emotion` | String/Image | HRI | cara animada / TTS | NUC |
 | `/hri/introduce_person`, `/hri/play_beep`, `/hri/clear_memory` | srv Trigger | HRI receptionist | — | NUC |
 
-Observaciones: todas las interfaces de actuadores de la Jetson (`/arm/*`, `/pan_tilt/*`) cruzan el enlace NUC↔Jetson, hoy caído. El sistema mezcla Humble (Jetson) y Jazzy (NUC). Pendiente: medir con `ros2 topic list -t`/`hz` en un dominio de prueba cuando el sistema esté en marcha y autorizado.
+Observaciones: todas las interfaces de actuadores de la Jetson (`/arm/*`, `/pan_tilt/*`) cruzan el enlace NUC↔Jetson. El sistema mezcla Humble (Jetson) y Jazzy (NUC). Pendiente: medir con `ros2 topic list -t`/`hz` en un dominio de prueba cuando el sistema esté en marcha y autorizado.
+
+## Medido en ejecución (2026-10-30 ~09:55, dominio 10, solo lectura desde la NUC)
+
+Jetson con `jetson-head.service` activo; Piper y pan-tilt **sin potencia**. `ros2 topic hz` (Jazzy) sobre el enlace Ethernet:
+
+| Tópico | Tasa | Nota |
+|---|---|---|
+| `/arm/status`, `/arm/current_pose` | 49.7 Hz | `piper_arm_controller` a 50 Hz; con el brazo sin potencia publica **ceros** (`joints_deg` 0.0) |
+| `/joint_states` | 69.7 Hz | suma de Piper (50) + pan-tilt (20) |
+| `/pan_tilt/joint_states` | 19.8 Hz | con servos sin responder publica **0.0** (ver S-11) |
+| `/voice/mic_level` / `/voice/status` | 5.0 / 2.0 Hz | whisper `tiny`, micrófono RØDE detectado |
+| `/arm_camera/image_raw` | **5 Hz → 20 Hz** tras el fix S-12 | 640×480 bgr8, 18.6 MB/s por el enlace |
+
+`ros2 node list` vacío desde la NUC por la incompatibilidad Humble↔Jazzy de `ros_discovery_info` (ver `network-topology.md`). No se usó `pub`, `service call` ni `send_goal`.

@@ -10,21 +10,25 @@ export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 export CYCLONEDDS_URI=file:///home/ubuntu/cyclonedds.xml
 export ROS_DOMAIN_ID=10
 
-# Esperar a que la interfaz de red Ethernet enP8p1s0 este activa y tenga IP asignada (max 30 segundos)
-echo "[Jetson Bringup] Esperando que la interfaz de red enP8p1s0 tenga IP asignada..."
+# Esperar a que alguna interfaz Ethernet tenga IP 10.42.x (max 30 s). Desde
+# 2026-10-30 el enlace usa el adaptador USB RTL8153 (enx00e04c68090c) porque el
+# puerto integrado enP8p1s0 no levanta carrier; cyclonedds.xml liga por address.
+echo "[Jetson Bringup] Esperando que la interfaz de red Ethernet tenga IP asignada..."
+LINK_OK=0
 for i in {1..30}; do
-    if ip addr show enP8p1s0 2>/dev/null | grep -q "inet 10.42."; then
-        echo "[Jetson Bringup] Interfaz de red enP8p1s0 lista: $(ip -br a show enP8p1s0)"
+    if ip addr 2>/dev/null | grep -q "inet 10.42."; then
+        echo "[Jetson Bringup] Interfaz de red Ethernet lista: $(ip -br a | grep 10.42.)"
+        LINK_OK=1
         break
     fi
     sleep 1
 done
 
-# Sin enlace Ethernet, el cyclonedds.xml (ligado a enP8p1s0) impide crear
-# cualquier nodo. Caer a DDS solo-localhost: los nodos arrancan pero no son
-# alcanzables (ni comandables) desde la WiFi u otros hosts.
-if [ "$(cat /sys/class/net/enP8p1s0/carrier 2>/dev/null)" != "1" ]; then
-    echo "[Jetson Bringup] AVISO: enP8p1s0 sin enlace. DDS en modo solo-localhost."
+# Sin IP 10.42.x el cyclonedds.xml (ligado a 10.42.0.12) impide crear cualquier
+# nodo. Caer a DDS solo-localhost: los nodos arrancan pero no son alcanzables
+# (ni comandables) desde la WiFi u otros hosts.
+if [ "$LINK_OK" != "1" ]; then
+    echo "[Jetson Bringup] AVISO: sin IP 10.42.x. DDS en modo solo-localhost."
     export CYCLONEDDS_URI='<CycloneDDS><Domain id="any"><General><Interfaces><NetworkInterface address="127.0.0.1"/></Interfaces><AllowMulticast>false</AllowMulticast></General><Discovery><ParticipantIndex>auto</ParticipantIndex><Peers><Peer address="127.0.0.1"/></Peers></Discovery></Domain></CycloneDDS>'
 fi
 

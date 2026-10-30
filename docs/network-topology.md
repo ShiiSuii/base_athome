@@ -2,9 +2,24 @@
 
 Medido 2026-10-29 ~23:40 (-03), comandos de lectura (`ip`, `nmcli`, `ping`, `ssh`). No se modificó ninguna configuración de red.
 
-## Resultado
+## Estado actual (2026-10-30 09:56, `ETHERNET_CONFIRMED`)
 
-**El enlace Ethernet directo NO está activo.** Ninguno de los dos extremos detecta portadora:
+**Enlace activo** por el adaptador USB de la Jetson, no por su puerto integrado:
+
+| Host | Interfaz | Estado |
+|---|---|---|
+| NUC | `enp1s0` (PCI) | UP, carrier 1, 1000 Mb/s full, `10.42.0.1/24` (NM shared) |
+| Jetson | `enx00e04c68090c` (USB RTL8153, driver `r8152`, bus USB 3 5 Gb/s) | UP, 1000 Mb/s full, `10.42.0.12/24`, 0 rx_errors |
+| Jetson | `enP8p1s0` (integrado) | sigue **sin carrier** → puerto o cable de ese lado sospechoso |
+
+- Ping 0 % pérdida, RTT 0.19–0.27 ms. Throughput (cota inferior, `dd` por SSH aes128-gcm): 300 MB en 3.65 s ≈ 82 MB/s (~660 Mb/s). `iperf3` no instalado.
+- Reloj: desfase NUC↔Jetson −11.9 ms (NTP sobre SSH, RTT 0.2 ms). Aceptable (< 50 ms), vigilar.
+- `scripts/net/check_nuc_jetson_link.sh`: **8 OK, 0 FAIL** (`log/net_checks/20261030_095609.txt`); ahora autodetecta la interfaz de la Jetson que tiene `10.42.0.12`.
+- Alguien actualizó en la Jetson (09:39–09:40) `~/cyclonedds.xml` para ligar por `address="10.42.0.12"` y `~/start_mapping_head.sh` para esperar cualquier interfaz con `10.42.x`. Copia de referencia: `jetson_head/config/cyclonedds_jetson.xml`; el repo incorpora ese cambio más el fallback solo-localhost (no desplegado).
+
+## Histórico 2026-10-29 (sin enlace)
+
+**El enlace Ethernet directo NO estaba activo.** Ninguno de los dos extremos detecta portadora:
 
 | Host | Interfaz | Estado | Config | Evidencia |
 |---|---|---|---|---|
@@ -43,4 +58,8 @@ Consecuencia: la Jetson **no tiene ese fallback**; con su configuración, si `en
 
 ## Pruebas ROS 2 inter-host
 
-`BLOCKED`: sin enlace Ethernet. No se hicieron pruebas DDS por WiFi para no publicar en el dominio 10 ni modificar `cyclonedds.xml`. Además Humble ↔ Jazzy no garantiza interoperabilidad de mensajes; validar tras la migración con un dominio de prueba (≠10) y un `std_msgs/String` sintético, según `RED_ETHERNET.md` §4.
+2026-10-30: dominio 77 (sintético) OK en ambos sentidos Humble↔Jazzy. Dominio 10, solo lectura desde la NUC: `ros2 topic list/hz/echo` funcionan; tasas en `ros-interfaces.md`.
+
+**Incompatibilidad Humble↔Jazzy confirmada:** `ros2 node list` desde la NUC devuelve vacío y, al aparecer un participante Jazzy, los nodos Humble registran `invalid data size` / `string data is not null-terminated` (`serdata.cpp:384`). Es el tópico interno `ros_discovery_info` (`rmw_dds_common`), cuyo formato cambió entre distros. Los tópicos de usuario con mensajes idénticos sí funcionan. Impacto: herramientas de introspección por nodo (node list/info, parámetros remotos) no fiables entre hosts hasta migrar la Jetson a Jazzy (HOME-11).
+
+Histórico (2026-10-29): `BLOCKED`: sin enlace Ethernet. No se hicieron pruebas DDS por WiFi para no publicar en el dominio 10 ni modificar `cyclonedds.xml`. Además Humble ↔ Jazzy no garantiza interoperabilidad de mensajes; validar tras la migración con un dominio de prueba (≠10) y un `std_msgs/String` sintético, según `RED_ETHERNET.md` §4.

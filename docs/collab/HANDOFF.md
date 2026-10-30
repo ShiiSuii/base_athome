@@ -81,3 +81,12 @@
 - Hallazgos nuevos: Jetson en modo 25W (CPU 1,344/1,728 GHz); `agx_arm_ros` ros2 soporta Jazzy+MoveIt; reglamento 2026.2 sin "Give Me a Hand".
 - Mañana: `docs/collab/RUNBOOK_CABLE_ETHERNET.md`.
 - Aprobación humana: ver runbook §5.
+
+### HANDOFF 2026-10-30 ~10:00 — Claude Code — enlace Ethernet restablecido
+
+- Enlace NUC `enp1s0` ↔ Jetson **`enx00e04c68090c` (adaptador USB RTL8153)**, 1 Gb/s; el puerto integrado `enP8p1s0` sigue sin carrier. `check_nuc_jetson_link.sh`: 8 OK / 0 FAIL. Reloj −11.9 ms. Detalle: `docs/network-topology.md`.
+- Seguridad verificada en vivo: log del Piper `Brazo DESHABILITADO (usar /arm/set_enable)`; pan-tilt sin torque (servos sin potencia, no responden). `piper_arm_controller.py` desplegado = repo (sha256 `831d800e…`).
+- Cambio hecho por un humano en la Jetson (09:39–09:40): `cyclonedds.xml` liga por `address=10.42.0.12` y `start_mapping_head.sh` espera cualquier IP `10.42.x`. Repo sincronizado + fallback solo-localhost (no desplegado: requiere OK).
+- S-12 corregido y **desplegado**: cámara de muñeca no publicaba (`v4l2-ctl` ausente → `/dev/video6`) y, al publicar, estaba limitada a 5 Hz por `msg.data = bytes` en rclpy. Ahora 20 Hz en la NUC, CPU 100 %→19 %. Se reinició solo `stream_orbbec.py` (sensor). Respaldo `~/deploy_backups/20261030_095446/`.
+- Hallazgos: S-11 (joint states 0.0 falsos cuando el hardware no responde), S-13 (Humble↔Jazzy rompe `ros2 node list`; refuerza HOME-11).
+- No probado: interfaces de actuadores (sin potencia), RealSense (no está en la Jetson; verificar en la NUC).

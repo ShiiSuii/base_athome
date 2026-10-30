@@ -7,6 +7,8 @@ Preparado 2026-10-30 por Claude Code. Actuadores siguen **desenergizados**. Todo
 - **No** desplegado todavía: `start_mapping_head.sh` con fallback solo-localhost (abriría CAN/serial sin cable → requiere OK humano).
 - `jetson-head.service` sigue en bucle (falla al crear DDS) hasta que haya link.
 
+> **Ejecutado 2026-10-30 ~09:50**: pasos 1–4 OK (enlace por el adaptador USB de la Jetson). Resultado en `docs/network-topology.md` y `docs/ros-interfaces.md`. Quedan las decisiones del §5.
+
 ## 1. Conectar el cable y verificar link (humano)
 - NUC `enp1s0` (puerto PCI, MAC 50:a1:32:73:cf:cb) ↔ Jetson `enP8p1s0`.
 - Opcional en la NUC: `cat /sys/class/net/enp1s0/carrier` → `1`.

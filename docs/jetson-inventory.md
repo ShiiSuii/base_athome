@@ -45,13 +45,17 @@ Detectar un periférico por USB **no** implica que su alimentación de potencia 
   - `start_mapping_head.sh`: Jetson pasa `enable_camera:=false`, repo no.
 - Servicios propios: `jetson-head.service` (enabled, `Restart=always`, ejecuta `~/start_mapping_head.sh`) y `jetson-performance.service` (`jetson_clocks`). También `anydesk.service`.
 
-### Estado de `jetson-head.service`: bucle de fallos
+### Estado de `jetson-head.service`
+
+**2026-10-30 09:39:** activo, 0 reinicios, con enlace por `enx00e04c68090c`. Nodos arriba: `pan_tilt_node` (servos sin potencia), `whisper_node` (tiny, RØDE OK), `piper_arm_controller.py` (deshabilitado), `stream_orbbec.py` (20 Hz tras S-12). Carga: RAM 1.1/7.6 GB, ~6.7 W VDD_IN, 51 °C.
+
+#### Histórico 2026-10-29: bucle de fallos
 
 Se reinicia cada ~5 s. Causa (journal): `~/cyclonedds.xml` fija `NetworkInterface name="enP8p1s0"`; sin link Ethernet CycloneDDS falla con *"enP8p1s0: does not match an available interface"* → `rmw_create_node: failed to create domain` → mueren `pan_tilt_node`, `whisper_node`, `piper_arm_controller.py` y `stream_orbbec.py`. **Se resuelve restableciendo el enlace Ethernet**; no se modificó nada.
 
 ### Riesgo de seguridad asociado
 
-`start_mapping_head.sh` lanza `piper_arm_controller.py` en cada arranque, y ese script tenía `auto_enable=True` (envía `EnableArm`, `MotionCtrl_2` y, en el bucle a 50 Hz, `JointCtrl` con el setpoint leído al arrancar). Al reconectar Ethernet el servicio arrancaría el controlador del brazo sin intervención humana. El fix (`auto_enable=False` por defecto) está en la rama `claude/home-00-audit`, **NO desplegado en la Jetson**. Ver `docs/software-audit.md` S-01.
+`start_mapping_head.sh` lanza `piper_arm_controller.py` en cada arranque, y ese script tenía `auto_enable=True` (envía `EnableArm`, `MotionCtrl_2` y, en el bucle a 50 Hz, `JointCtrl` con el setpoint leído al arrancar). Al reconectar Ethernet el servicio arrancaría el controlador del brazo sin intervención humana. El fix (`auto_enable=False` por defecto) fue **desplegado** el 2026-10-30 00:20 y verificado en el log del 09:39 (`Brazo DESHABILITADO`). Ver `docs/software-audit.md` S-01.
 
 ## Respaldo realizado (Fase B, parcial)
 

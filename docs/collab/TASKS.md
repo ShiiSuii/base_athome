@@ -71,13 +71,13 @@ ROS 2 exclusivo. Navegación/Nav2/SLAM/AMCL/control de base **solo lectura**. NU
 |---|---|---|---|---|---|---|---|
 | HOME-00 | run_8db8fe9ab48b | Claude | `claude/home-00-audit` | 2026-10-29 | OFFLINE_DONE | local | reconocimiento Git/Orca/hosts |
 | HOME-01 | run_8db8fe9ab48b | Claude | `claude/home-00-audit` | 2026-10-30 | IN_PROGRESS | local | hardware.md, power-domains.md, HARDWARE_OPTIMIZACION.md |
-| HOME-01E | run_8db8fe9ab48b | Claude | — | 2026-10-29 | BLOCKED_HARDWARE | local | cable sin carrier; herramienta `scripts/net/check_nuc_jetson_link.sh` + runbook listos |
+| HOME-01E | run_8db8fe9ab48b | Claude | — | 2026-10-30 | ETHERNET_CONFIRMED | local | enlace por USB RTL8153 de la Jetson (enP8p1s0 sin carrier); check 8/8 OK; DDS dominio 77 OK ambos sentidos |
 | HOME-02 | run_8db8fe9ab48b | Claude | `claude/home-00-audit` | 2026-10-29 | IN_PROGRESS | local | ros-interfaces.md estático; tasas reales al tener link |
 | HOME-03 | run_8db8fe9ab48b | Claude | `claude/home-00-audit` | 2026-10-30 | IN_REVIEW | local | S-01..S-05 implementados con tests; S-01/S-03 desplegados en Jetson |
 | HOME-04 | task_dd025d65b38a | Antigravity→Claude worker (cuota) | `ShiiSuii/home-04-urdf-editor` | 2026-10-30 | OFFLINE_DONE | 3a957f1 (merge 3640193) | 45 tests; falta prueba visual en navegador |
 | HOME-06a | task_d7971ec8bb2a | Antigravity (Gemini 3.8 Flash) | `ShiiSuii/home-06a-hri-gap` | 2026-10-30 | OFFLINE_DONE | 39aced5 | gap analysis HRI 2026.2 |
 | HOME-06b | — | Claude | `claude/home-00-audit` | 2026-10-30 | OFFLINE_DONE | f56238d | presentación mutua con mirada + torque pan-tilt; 5 tests |
-| HOME-10 | run_8db8fe9ab48b | Claude | — | 2026-10-30 | IN_PROGRESS | — | inventario, respaldo técnico, deploy de fixes de seguridad |
+| HOME-10 | run_8db8fe9ab48b | Claude | — | 2026-10-30 | IN_PROGRESS | — | inventario, respaldo técnico, fixes de seguridad desplegados y verificados en vivo; S-12 cámara muñeca 5→20 Hz desplegado |
 | HOME-11 | — | Claude + humano | — | — | BLOCKED_APPROVAL | — | reflasheo; recomendado NVMe nuevo |
 | HOME-13 | — | — | — | — | CANCELADA | — | "Give Me a Hand" no existe en 2026.2 → reemplazar por Doing Laundry |
 | HOME-15a | task_02674e4e224b | Antigravity (Gemini 3.8 Flash) | `antigravity-home-15a-gpsr` | 2026-10-30 | IN_PROGRESS | — | parser GPSR offline + dataset CommandGenerator |
@@ -85,7 +85,7 @@ ROS 2 exclusivo. Navegación/Nav2/SLAM/AMCL/control de base **solo lectura**. NU
 
 ## Bloqueos de hardware declarados
 
-Jetson ENCENDIDA y conectada por Ethernet; AgileX Piper apagado; cámara de muñeca Orbbec no disponible; Dynamixel/elevador no alimentados o no confirmados; sensores en NUC deben verificarse individualmente, no asumirse. Calibración hand-eye, pick/place real y ensayos físicos de actuadores no pueden declararse completos hasta ensayo autorizado. Reinstalación destructiva de Jetson pendiente de aprobación de destino y backup.
+Jetson ENCENDIDA y conectada por Ethernet; AgileX Piper apagado; cámara de muñeca Orbbec DaBai publicando 20 Hz (2026-10-30); Dynamixel/elevador no alimentados o no confirmados; sensores en NUC deben verificarse individualmente, no asumirse. Calibración hand-eye, pick/place real y ensayos físicos de actuadores no pueden declararse completos hasta ensayo autorizado. Reinstalación destructiva de Jetson pendiente de aprobación de destino y backup.
 
 ## Condiciones de DONE por cada tarea
 
