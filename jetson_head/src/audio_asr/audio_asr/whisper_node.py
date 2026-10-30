@@ -61,6 +61,9 @@ class WhisperASRNode(Node):
         self.declare_parameter('max_utterance_sec', 9.0)
         self.declare_parameter('min_utterance_sec', 0.5)
         self.declare_parameter('trigger_wait_sec', 7.0)
+        # Ventana fija tras /voice/listen_trigger: graba completa (no corta en la primera pausa)
+        # y recien al final transcribe y filtra. Si sigue hablando, se extiende hasta max_utterance_sec.
+        self.declare_parameter('listen_window_sec', 6.0)
         self.declare_parameter('unmute_guard_sec', 0.45)
         self.declare_parameter('max_mute_sec', 25.0)      # failsafe: ninguna frase del robot dura tanto
         self.declare_parameter('max_ambient_rms', 0.15)  # con ganancia maxima el ruido de sala es alto: dejar adaptar
@@ -80,6 +83,7 @@ class WhisperASRNode(Node):
         self.max_utterance_sec = gp('max_utterance_sec').get_parameter_value().double_value
         self.min_utterance_sec = gp('min_utterance_sec').get_parameter_value().double_value
         self.trigger_wait_sec = gp('trigger_wait_sec').get_parameter_value().double_value
+        self.listen_window_sec = gp('listen_window_sec').get_parameter_value().double_value
         self.unmute_guard_sec = gp('unmute_guard_sec').get_parameter_value().double_value
         self.max_mute_sec = gp('max_mute_sec').get_parameter_value().double_value
         self.max_ambient_rms = gp('max_ambient_rms').get_parameter_value().double_value
@@ -127,6 +131,8 @@ class WhisperASRNode(Node):
         self.audio_thread.start()
 
         self.status_timer = self.create_timer(0.5, self.publish_heartbeat)
+        # Re-afirmar la ganancia maxima periodicamente (otro proceso o el USB pueden cambiarla)
+        self.gain_timer = self.create_timer(30.0, self.set_max_gain)
         self.level_timer = self.create_timer(0.2, self.publish_level)
 
     # ------------------------------------------------------------------
@@ -188,7 +194,9 @@ class WhisperASRNode(Node):
             card = m.group(1)
             subprocess.run(['amixer', '-c', card, 'sset', 'Mic', f'{self.mic_gain_percent}%', 'cap'],
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3)
-            self.get_logger().info(f'Ganancia del microfono (tarjeta {card}) en {self.mic_gain_percent}%')
+            if getattr(self, '_gain_card', None) != card:
+                self._gain_card = card
+                self.get_logger().info(f'Ganancia del microfono (tarjeta {card}) en {self.mic_gain_percent}%')
         except Exception as e:
             self.get_logger().warn(f'No se pudo fijar la ganancia del microfono: {e}')
 
@@ -239,8 +247,11 @@ class WhisperASRNode(Node):
                 stats['overflows'] += 1
             audio_queue.append(indata.copy())
 
+        fixed_window = False
+
         def reset_state():
-            nonlocal triggered, heard_speech, voiced_frames, silence_start_time, trigger_start_time
+            nonlocal triggered, heard_speech, voiced_frames, silence_start_time, trigger_start_time, fixed_window
+            fixed_window = False
             triggered = False
             heard_speech = False
             voiced_frames = []
@@ -327,8 +338,9 @@ class WhisperASRNode(Node):
                             trigger_start_time = now
                             silence_start_time = None
                             voiced_frames = []
+                            fixed_window = self.listen_window_sec > 0
                             self.set_status('LISTENING')
-                            self.get_logger().info('Triggered listening...')
+                            self.get_logger().info(f'Escuchando ventana fija de {self.listen_window_sec:.1f} s...')
                             ring_buffer.clear()
 
                         if not triggered:
@@ -360,6 +372,17 @@ class WhisperASRNode(Node):
                             is_silent = (now - silence_start_time >= self.silence_duration)
 
                         reached_max = duration >= self.max_utterance_sec
+
+                        # Ventana fija (disparo manual): no cortar antes de listen_window_sec
+                        if fixed_window:
+                            if duration < self.listen_window_sec or (heard_speech and not is_silent and not reached_max):
+                                continue
+                            if not heard_speech:
+                                self.get_logger().info('Ventana de escucha terminada sin voz.')
+                                reset_state()
+                                self.set_status('IDLE')
+                                continue
+                            reached_max = True  # forzar la transcripcion de toda la ventana
 
                         # Disparo manual sin que el humano haya hablado aun: esperar hasta trigger_wait_sec
                         if not heard_speech:

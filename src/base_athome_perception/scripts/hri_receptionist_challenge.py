@@ -196,6 +196,8 @@ def _extract_raw(text: str) -> Tuple[Optional[str], Optional[str]]:
 # Ruta del ejecutable en la linea de comandos del driver real (evita coincidir con shells
 # que solo mencionan el nombre, p.ej. un "pgrep realsense2_camera_node" en otra terminal)
 RS_PROC_PATTERN = r"^/opt/ros/[a-z]+/lib/realsense2_camera/realsense2_camera_node"
+# Debe coincidir con listen_window_sec de whisper_node (Jetson): ventana fija tras el beep
+LISTEN_WINDOW_S = 6.0
 
 # ------------------------------------------------------------------------------
 # CONSTANTES DE POSES Y GESTOS DEL BRAZO PIPER
@@ -1482,8 +1484,11 @@ class HriReceptionistChallengeNode(Node):
 
         elif self.state == self.STATE_GREET_AND_PROMPT:
             # Saludo y pregunta abierta de nombre y bebida favorita
-            greeting = f"Hello! Welcome to our home. I am Robot. Please tell me your name, and your favorite drink."
-            self.say(greeting, emotion="speaking", blocking=True)
+            # 1) quien es el robot  2) que tiene que decir la persona  3) cuando (despues del beep)
+            self.say("Hello! Welcome to our home. I am Robot, the receptionist of this house.",
+                     emotion="speaking", blocking=True)
+            self.say(f"After the beep, please say: My name is, your name, and my favorite drink is, your drink. "
+                     f"You have {int(LISTEN_WINDOW_S)} seconds.", emotion="speaking", blocking=True)
             # Tono de turn-taking acustico para ceder el turno de habla al humano
             self.speaker.play_beep(blocking=True)  # antes de abrir el micro: el beep no debe grabarse
             self.set_robot_emotion("listening")
@@ -1526,14 +1531,15 @@ class HriReceptionistChallengeNode(Node):
                 else:
                     # Habló pero no se extrajo ninguno: pedir aclaración cortés sin inventar datos
                     self.retry_count += 1
-                    prompt_clarify = "I did not catch that. Please state clearly: My name is, and your drink."
+                    prompt_clarify = ("I did not catch that. After the beep, please say clearly: "
+                                      "My name is, your name, and my favorite drink is, your drink.")
                     self.say(prompt_clarify, emotion="speaking", blocking=True)
                     self.speaker.play_beep(blocking=True)  # antes de abrir el micro: el beep no debe grabarse
                     self.set_robot_emotion("listening")
                     self.trigger_mic_listening()
                     self.state_start_time = now
 
-            elif now - self.state_start_time > 10.0:
+            elif now - self.state_start_time > LISTEN_WINDOW_S + 5.0:  # ventana de escucha + transcripcion
                 # Timeout de silencio: NO avanzar automáticamente. Recordar cortésmente y seguir escuchando
                 self.retry_count += 1
                 self.get_logger().info(
@@ -1541,9 +1547,9 @@ class HriReceptionistChallengeNode(Node):
                     "Use [T] para escribir por teclado o hable al microfono."
                 )
                 if self.retry_count % 2 == 1:
-                    prompt_wait = "I am listening. Please say: My name is, and your favorite drink."
+                    prompt_wait = "I could not hear you. After the beep, say: My name is, your name, and my favorite drink is, your drink."
                 else:
-                    prompt_wait = "Please tell me your name and favorite drink."
+                    prompt_wait = "After the beep, please tell me your name and your favorite drink."
                 self.say(prompt_wait, emotion="speaking", blocking=True)
                 self.speaker.play_beep(blocking=True)  # antes de abrir el micro: el beep no debe grabarse
                 self.set_robot_emotion("listening")
@@ -1552,10 +1558,11 @@ class HriReceptionistChallengeNode(Node):
 
         elif self.state == self.STATE_PROMPT_MISSING_INFO:
             if self.missing_field == "drink":
-                prompt_drink = f"Nice to meet you, {self.current_name}! What is your favorite drink?"
+                prompt_drink = (f"Nice to meet you, {self.current_name}! After the beep, please say: "
+                                f"my favorite drink is, your drink.")
                 self.say(prompt_drink, emotion="speaking", blocking=True)
             else:
-                prompt_name = "I got your drink, but what is your name?"
+                prompt_name = "I got your drink. After the beep, please say: my name is, your name."
                 self.say(prompt_name, emotion="speaking", blocking=True)
 
             self.speaker.play_beep(blocking=True)  # antes de abrir el micro: el beep no debe grabarse
