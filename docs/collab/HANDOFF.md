@@ -99,3 +99,28 @@
 - `ros2 node list` desde la NUC lista los 4 nodos (S-13 resuelto).
 - Asignación de cómputo: `docs/ASIGNACION_COMPUTO.md`. Alias: `ayuda` en NUC y Jetson.
 - Sudo sin contraseña temporal en la NUC: `/etc/sudoers.d/99-jetson-flash-temp` → borrar al terminar.
+
+### HANDOFF 2026-10-30 noche — Claude Code — simulación + HRI (modo CASA: solo NUC + Jetson)
+
+- **Rama:** `claude/home-00-audit`.
+- **Nuevo paquete `src/base_athome_sim`:**
+  - `sim_robot` imita a la Jetson (Piper, pan-tilt, whisper), la RealSense, la cámara de muñeca y Nav2, con las mismas interfaces;
+  - `sim.launch.py` admite `gazebo:=true` (Gazebo Harmonic con el URDF real + `gz_model.py`);
+  - alias `simulacion`, `sim_gazebo`, `sim_env`, `sim_decir`, `sim_invitado`, `sim_auto`, `sim_salir`;
+  - documentación en `docs/SIMULACION.md`.
+- **Receptionist** (bugs encontrados con la simulación; detalle en `docs/HRI_MICROFONO_REVISION.md`):
+  - el cierre se repetía en bucle → nuevo estado `STATE_DONE`;
+  - rostro guardado como vector aleatorio cuando era < 50 px → pide acercarse y usa muestras de respaldo;
+  - el invitado se presentaba como "Charlie" → el anfitrión se elige entre personas sentadas.
+- **Modalidad sin audio:** pantalla `guest_input_server` en `:8090` y `/hri/guest_input`; probada de punta a punta.
+- **`ATHOME_SIM=1`:** base de rostros y configuración del brazo separadas, sin autoarranque de la RealSense, detector por color.
+- **Permisos y bloqueos:** `docs/collab/PERMISOS_Y_BLOQUEOS.md`.
+- **Pruebas:**
+  - `base_athome_sim`: 6 tests pasan; percepción: 78 tests pasan;
+  - receptionist real contra la sim, de punta a punta (voz y pantalla);
+  - Gazebo sin GUI: sensores y navegación OK.
+- **No probado:**
+  - audio real (micrófono RØDE) después de estos cambios;
+  - postura "sentado" en la simulación;
+  - Gazebo con GUI en la pantalla del usuario.
+- **Siguiente paso:** fin de habla por VAD en `whisper_node`, con el robot real.

@@ -75,6 +75,7 @@ except ImportError:
 # Base@Home Perception Modules
 from base_athome_perception.face_recognizer import DEFAULT_DB_DIR, FaceRecognizer, PersonProfile
 from base_athome_perception.guest_vocabulary import GuestVocabulary
+from base_athome_perception.guest_input_server import GuestInputServer
 from base_athome_perception import seat_occupancy as seatocc
 from base_athome_perception import scene_analysis as scene
 from base_athome_perception.speaker import RoboCupSpeaker
@@ -140,6 +141,7 @@ class HriReceptionistChallengeNode(Node):
     STATE_CHALLENGE_COMPLETE = 13
     STATE_SCAN_SCENE = 14
     STATE_WAIT_SEATED = 15
+    STATE_DONE = 16  # terminal: antes COMPLETE se re-ejecutaba en bucle (repetia el discurso final)
 
     STATE_NAMES = {
         STATE_INIT: "0/7: INICIALIZANDO SISTEMA",
@@ -158,6 +160,7 @@ class HriReceptionistChallengeNode(Node):
         STATE_CHALLENGE_COMPLETE: "EXITO: CHALLENGE COMPLETADA",
         STATE_SCAN_SCENE: "6/7: ANALIZANDO LA SALA CON LA CABEZA",
         STATE_WAIT_SEATED: "7/7: ESPERANDO QUE EL INVITADO SE SIENTE",
+        STATE_DONE: "7/7: TERMINADO",
     }
     # Estados en los que la cabeza sigue la cara del interlocutor
     TRACKING_STATES = {STATE_WAIT_DOOR, STATE_GREET_AND_PROMPT, STATE_WAIT_NAME_DRINK, STATE_PROMPT_MISSING_INFO,
@@ -199,7 +202,8 @@ class HriReceptionistChallengeNode(Node):
         self.resources_dir = os.path.join(self.pkg_dir, "resources")
         # Biometria fuera del repo (no versionar caras). Migra la base vieja una vez.
         self.db_dir = os.environ.get("ATHOME_FACES_DB", DEFAULT_DB_DIR)
-        self._migrate_legacy_db(os.path.join(self.config_dir, "faces_database"), self.db_dir)
+        if os.environ.get("ATHOME_SIM") != "1":
+            self._migrate_legacy_db(os.path.join(self.config_dir, "faces_database"), self.db_dir)
         self.session_id = f"receptionist_{datetime.datetime.now():%Y%m%d_%H%M%S}"
 
         # 1. Inicializar Sintesis de Voz Neuronal y Beep
@@ -228,6 +232,17 @@ class HriReceptionistChallengeNode(Node):
             f"Memoria facial: {self.db_dir} | detector {'YuNet+alineacion' if self.recognizer.aligned else 'SSD sin alinear'}"
             f" | umbral {self.recognizer.cosine_thresh:.2f} | sesion {self.session_id}")
         self.vocab = GuestVocabulary()
+        # Alternativa al microfono: pantalla tactil/teclado (http://127.0.0.1:8090) -> /hri/guest_input
+        self.guest_inputs: "queue.Queue[dict]" = queue.Queue()
+        self.pub_guest_input = self.create_publisher(String, "/hri/guest_input", 10)
+        self.create_subscription(String, "/hri/guest_input", self._guest_input_cb, 10)
+        try:
+            self.guest_screen = GuestInputServer(self.vocab.names, self.vocab.drinks,
+                                                 lambda d: self.pub_guest_input.publish(String(data=json.dumps(d))))
+            self.get_logger().info(f"Pantalla del invitado: http://127.0.0.1:{self.guest_screen.port}")
+        except OSError as e:
+            self.guest_screen = None
+            self.get_logger().warn(f"Pantalla del invitado no disponible: {e}")
         self.get_logger().info(f"Vocabulario de invitados: {len(self.vocab.names)} nombres, "
                                f"{len(self.vocab.drinks)} bebidas ({self.vocab.source})")
 
@@ -437,7 +452,10 @@ class HriReceptionistChallengeNode(Node):
         """Verifica si la RealSense D435 está conectada y si el driver está activo; si no, lo inicia.
 
         Si existe el servicio realsense-nuc (driver unico supervisado), se usa ese.
+        En simulacion (ATHOME_SIM=1) las camaras las publica sim_robot: no se arranca nada.
         """
+        if os.environ.get("ATHOME_SIM") == "1":
+            return
         if self._rs_service_installed():
             if subprocess.run(["systemctl", "--user", "is-active", "--quiet", "realsense-nuc"]).returncode != 0:
                 self.get_logger().info("📷 Iniciando servicio realsense-nuc...")
@@ -790,7 +808,11 @@ class HriReceptionistChallengeNode(Node):
                 self.state = self.STATE_CONFIRM_DETAILS
                 self.state_start_time = time.time()
             elif self.state == self.STATE_MEMORIZE_FACE:
+                if not self.recording_samples and getattr(self, "fallback_samples", None):
+                    self.recording_samples = list(self.fallback_samples)
+                    self.get_logger().warn(f"Rostro guardado con {len(self.recording_samples)} muestras de baja calidad")
                 if not self.recording_samples:
+                    self.get_logger().error("No pude ver el rostro del invitado: perfil SIN biometria (no se reconocera luego)")
                     dummy_f = np.random.randn(1, 128).astype(np.float32)
                     dummy_f /= np.linalg.norm(dummy_f)
                     self.recording_samples.append(dummy_f)
@@ -839,6 +861,8 @@ class HriReceptionistChallengeNode(Node):
 
         self.last_spoken_text = text
         self.current_banner_text = text
+        if getattr(self, "guest_screen", None) is not None:
+            self.guest_screen.question = text
 
         # Publicar texto a /hri/say_something para que la cara muestre el subtitulo
         msg_str = String()
@@ -1092,6 +1116,15 @@ class HriReceptionistChallengeNode(Node):
         except Exception as e:
             self.get_logger().warn(f"Error procesando frame de camara: {e}")
 
+    def _guest_input_cb(self, msg: String):
+        try:
+            d = json.loads(msg.data)
+        except ValueError:
+            return
+        if isinstance(d, dict) and d.get("type") in ("name", "drink", "answer"):
+            self.guest_inputs.put(d)
+            self.get_logger().info(f"🖐 [Pantalla]: {d['type']} = {d['value']}")
+
     def _arm_status_cb(self, msg: String):
         """Posicion real del brazo: con realimentacion, la visualizacion sigue al brazo (aunque se mueva a mano)."""
         try:
@@ -1179,9 +1212,15 @@ class HriReceptionistChallengeNode(Node):
             self.scanning = False
         self.scene_objects = scene.merge_views(objs)
         # El anfitrion no tiene cara registrada: con el primer invitado, la unica persona sin nombre es el host
+        # (preferir personas SENTADAS: el invitado que acompana al robot suele estar parado y, si su cara
+        # no se reconocio en el barrido, antes se lo presentaba como "Charlie").
         unnamed = [o for o in self.scene_objects if o.kind == "person" and not o.name]
-        if self.guest_index == 1 and len(unnamed) == 1:
+        seated = [o for o in unnamed if o.seated]
+        if self.guest_index == 1 and len(seated) == 1:
+            seated[0].name = "Charlie"
+        elif self.guest_index == 1 and len(unnamed) == 1 and not any(o.seated for o in self.scene_objects if o.kind == "person"):
             unnamed[0].name = "Charlie"
+            self.get_logger().warn("Anfitrion asignado a la unica persona sin nombre (no vi a nadie sentado)")
         summary = [(o.kind, round(o.bearing_deg), o.name or "", o.occupants) for o in self.scene_objects]
         self.get_logger().info(f"🔎 Escena: {summary}")
 
@@ -1396,7 +1435,8 @@ class HriReceptionistChallengeNode(Node):
             self.say("Hello! Welcome to our home. I am Robot, the receptionist of this house.",
                      emotion="speaking", blocking=True)
             self.say(f"After the beep, please say: My name is, your name, and my favorite drink is, your drink. "
-                     f"You have {int(LISTEN_WINDOW_S)} seconds.", emotion="speaking", blocking=True)
+                     f"You have {int(LISTEN_WINDOW_S)} seconds. You can also tap your answer on my screen.",
+                     emotion="speaking", blocking=True)
             # Tono de turn-taking acustico para ceder el turno de habla al humano
             self.speaker.play_beep(blocking=True)  # antes de abrir el micro: el beep no debe grabarse
             self.set_robot_emotion("listening")
@@ -1408,6 +1448,17 @@ class HriReceptionistChallengeNode(Node):
             self.state_start_time = time.time()  # tras los say() bloqueantes, no el 'now' del inicio del ciclo
 
         elif self.state == self.STATE_WAIT_NAME_DRINK:
+            # Respuestas por la pantalla tactil (alternativa al microfono): se aceptan siempre
+            while not self.guest_inputs.empty():
+                d = self.guest_inputs.get()
+                if d["type"] == "name":
+                    self.current_name = self.vocab.match_name(d["value"]) or d["value"].title()
+                elif d["type"] == "drink":
+                    self.current_drink = self.vocab.match_drink(d["value"]) or d["value"].title()
+            if self.current_name and self.current_drink and not self.voice_text:
+                self.state = self.STATE_CONFIRM_DETAILS
+                self.state_start_time = time.time()
+                return
             # Esperar respuesta por Whisper ASR
             if self.voice_text:
                 speech = self.voice_text
@@ -1490,6 +1541,8 @@ class HriReceptionistChallengeNode(Node):
             self.set_robot_emotion("thinking")
 
             self.recording_samples = []
+            self.fallback_samples = []  # rostros detectados pero chicos/borrosos: mejor que un vector aleatorio
+            self.asked_closer = False
             self.samples_synthetic = False
             self.best_thumbnail = None
             self.best_sharpness = 0.0
@@ -1509,6 +1562,8 @@ class HriReceptionistChallengeNode(Node):
                 same_person = True
                 if feat is not None and self.recording_samples:
                     same_person = self.recognizer.similarity(feat, self.recording_samples[0]) >= 0.30
+                if feat is not None and not q_valid and len(self.fallback_samples) < 10:
+                    self.fallback_samples.append(feat)
                 if feat is not None and q_valid and same_person and (now - self.last_sample_time >= 0.14):
                     self.last_sample_time = now
                     self.recording_samples.append(feat)
@@ -1578,6 +1633,14 @@ class HriReceptionistChallengeNode(Node):
                 self.say(f"Got it! Your face is saved, {self.current_name}.", emotion="happy", blocking=True)
                 self.state = self.STATE_NAV_TO_LIVING_ROOM
                 self.state_start_time = time.time()  # tras los say() bloqueantes, no el 'now' del inicio del ciclo
+
+            elif elapsed > 3.5 and not self.recording_samples and not self.asked_closer:
+                # Nada valido todavia (rostro chico = lejos, o borroso): pedir que se acerque y dar mas tiempo
+                self.asked_closer = True
+                why = face_results[0].get("quality_reason", "") if face_results else "no face"
+                self.get_logger().warn(f"Memorizar rostro: sin muestras validas ({why}); pido que se acerque")
+                self.say("Please come a little closer and look at my camera.", emotion="speaking", blocking=True)
+                self.state_start_time = time.time() - 2.0
 
             elif elapsed > 7.0:
                 # Timeout de memorización: garantizar almacenamiento incluso con pocas muestras
@@ -1797,6 +1860,8 @@ class HriReceptionistChallengeNode(Node):
             self.current_banner_text = "CHALLENGE COMPLETADA EXITOSAMENTE!"
             self._finalize_session_storage()
             self.get_logger().info("🎉 CHALLENGE ROBOCUP @HOME RECEPTIONIST COMPLETADA CON EXITO!")
+            self.state = self.STATE_DONE
+            self.state_start_time = time.time()
 
     # --------------------------------------------------------------------------
     # RENDERIZADO DEL PANEL HUD (OPENCV)
