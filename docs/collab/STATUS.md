@@ -3,7 +3,7 @@
 Corto y actualizado: se **reemplaza** lo viejo, no se acumula (`AGENTS.md` §9). Lo histórico se
 recupera por commit (§8). Editado por el integrador (Claude).
 
-**Última actualización:** 2026-11-03 (tarde) · Claude Code · modo `CASA` · bloque HOME-41.
+**Última actualización:** 2026-11-03 (tarde) · Claude Code · modo `DESARROLLO` · bloques HOME-41/42+.
 
 ## 1. Estado comprobado (2026-11-03)
 
@@ -16,7 +16,7 @@ recupera por commit (§8). Editado por el integrador (Claude).
 | Piper | sin alimentación: adaptador gs_usb hoy en **`can0`**, 0 tramas RX, `feedback_ok=false`, `/arm/joint_states` no se publica (correcto) | `JETSON_VERIFIED` (pasivo) |
 | YOLO TensorRT | **recuperado**: TRT 10.16.2 + CUDA 13.2 runtime instalados; `yolo_trt_node` corriendo; `/arm_camera/detections` a 29,9 Hz en la NUC | `JETSON_VERIFIED`, `ETHERNET_VERIFIED` |
 | `realsense-nuc.service` | no instalado | `NUC_VERIFIED` |
-| Actuadores | sin confirmar (modo CASA) | — |
+| Actuadores | potencia desenergizada (tracción, Piper, elevador, Dynamixel) según el usuario 2026-11-03; modo `DESARROLLO` | declarado por el usuario |
 | Seguridad de host | URL de `origin` **sin credenciales**; NUC: `99-jetson-flash-temp` **borrado** (sudo con contraseña vía `%sudo`); Jetson: `90-ubuntu-nopasswd` aún presente + regla acotada `91-ubuntu-jetson-head`; `agy_autoapprove.py` eliminado del repo; token sin restos en historial/config de git, **pero sí en el registro del repo de Orca** (§3) | `NUC_VERIFIED`/`JETSON_VERIFIED` (sin imprimir secretos) |
 | Tests offline | 279 passed: percepción 116, URDF 45, GPSR 34, skills 29, Jetson scripts 24, ASR 12, semántica 9, sim 6, pan-tilt 5 (comandos en `ROBOT.md` §10; linters ament siguen fallando, S-08) | `UNIT_PASS` 2026-11-03 |
 | Misiones | demo A→B→voz→C→casa en `base_athome_sim` 41,4 s; timeout+reintento+recuperación; cancelación con goal cancelado y base quieta; guardas de dominio/modo | `SIM_PASS` 2026-11-03 |
@@ -87,7 +87,7 @@ recupera por commit (§8). Editado por el integrador (Claude).
 | Fecha | Decisión |
 |---|---|
 | previa, ratificada 03/11 | Navegación: estudiar y proponer sí, modificar no. Capa semántica editable como candidato. |
-| previa | Solo ROS 2; sin Google ni pagos; modo `CASA` por defecto; `LAB_SUPERVISADO` solo con confirmación en la sesión. |
+| 03/11 | Modo `DESARROLLO` por defecto: autonomía de software completa (deploy, sudo con respaldo, reinicio de servicios) con actuadores desenergizados; movimiento físico solo en `LAB_SUPERVISADO`. Solo ROS 2; sin Google ni pagos. |
 | 30/10 | Jetson en JetPack 7.2.1/Jazzy; **no repetir la migración**. Enlace por adaptador USB. |
 | 30/10 | Asignación de cómputo: nodo junto a su periférico; inferencia pesada en la GPU de la Jetson (`ROBOT.md` §1). |
 | 30/10 | Whisper `base.en` + `en` por defecto (6 % vs 20 % WER de `tiny`); `tiny`+`auto` solo para demos en español. |

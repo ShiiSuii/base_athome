@@ -43,23 +43,31 @@ Humble") se verifica antes de usarlo.
 - **Sin pagos.** Nunca compras, suscripciones, upgrades, créditos, trials con cargo ni servicios facturables. Si se agota una cuota, usar otra alternativa o reasignar; nunca pulsar "upgrade".
 - **Sin secretos.** No leer, imprimir, commitear ni publicar credenciales, `.env`, tokens (la URL de `origin` puede contener uno: no mostrar `git remote -v` sin redactar), llaves, audios, rostros, videos o bags con personas.
 - **Sin desactivar seguridad.** No quitar `auto_enable=False` del Piper, el guard de feedback, `auto_torque=false` del pan-tilt ni interlocks; no subir límites de fuerza/velocidad/corriente para pasar una prueba; no saltar políticas con scripts, alias, `sudo` o auto-aprobadores.
-- **Sin movimiento no autorizado** (ver §3) y **sin cambios en navegación** (ver §4).
+- **Sin movimiento físico no autorizado** (ver §3) y **sin cambios en la navegación funcional** (ver §4).
 
 ## 3. Modos operativos (no se heredan entre sesiones)
 
 | Modo | Condición | Permitido | Nunca |
 |---|---|---|---|
-| `CASA` (**por defecto**) | NUC y Jetson encendidas; actuadores sin confirmar | código, docs, tests, simulación en dominio 42, SSH de diagnóstico y mantenimiento, cámaras/micrófono como sensores pasivos | mover base, brazo, pinza, pan-tilt o elevador; torque; publicar comandos a actuadores |
+| `DESARROLLO` (**por defecto**, autorizado por el usuario 2026-11-03) | NUC y Jetson encendidas; potencia de actuadores (tracción, Piper, elevador, Dynamixel) **desenergizada** | todo el desarrollo de software (§5 A): código, drivers, CAN/serial/DDS sin hardware alimentado, despliegues a la Jetson, reinicio de `jetson-head` y de servicios, sudo administrativo con respaldo, simulación, MoveIt/RViz/Gazebo, mensajes y servicios de prueba en dominios aislados (42/77) o hacia interfaces verificadas como seguras | energizar o mover actuadores; dejar comandos de movimiento pendientes; desactivar protecciones; cambiar la navegación funcional |
 | `LAB_SUPERVISADO` | el humano confirma **en la sesión actual**: presencia, E-stop, energía, área libre, dispositivo y prueba concreta | lo anterior + **un** ensayo acotado de Piper, pinza o pan-tilt a velocidad conservadora, con preflight y registro | base, elevador, series autónomas, permisos permanentes |
 | `COMPETENCIA` | el humano inicia un procedimiento de ensayo documentado | exactamente lo que diga ese procedimiento | cambiar código, calibración o límites durante la prueba |
 
-Preflight de cada movimiento: quién supervisa, qué está energizado, E-stop, qué nodo gobierna el
-actuador, feedback fresco (no ceros sintéticos), trayectoria libre, límites de fabricante, cómo abortar.
-Una acción, leer feedback, registrar resultado. Base y elevador requieren pedido separado.
-Un "estoy al lado" de una sesión anterior **no** activa `LAB_SUPERVISADO`.
+**Hardware desenergizado no prohíbe desarrollar ni probar sus interfaces.** Condición permanente para los
+controladores de actuadores (Piper, pan-tilt, elevador, base): arrancan **deshabilitados**, descartan
+trayectorias/comandos viejos al habilitar o deshabilitar, exigen feedback válido y fresco antes de mover y
+nunca publican estados medidos falsos. Los comandos de movimiento se prueban en simulación, con mocks o
+contra un controlador que garantiza que no transmite (deshabilitado / sin feedback).
 
-En `CASA` nunca `ros2 topic pub`, `ros2 service call` ni `ros2 action send_goal` hacia el dominio 10.
-`ROS_DOMAIN_ID=42` aísla el descubrimiento, **no** impide que un driver abra USB/CAN: revisar el launch antes.
+Preflight de cada movimiento físico (`LAB_SUPERVISADO`): quién supervisa, qué está energizado, E-stop, qué
+nodo gobierna el actuador, feedback fresco (no ceros sintéticos), trayectoria libre, límites de fabricante,
+cómo abortar. Una acción, leer feedback, registrar resultado. Base y elevador requieren pedido separado.
+Si el humano trabaja físicamente en el robot, no reiniciar servicios de actuadores sin avisar en `STATUS.md`.
+
+Hacia el dominio 10 (robot real) solo se publica o llama lo que se verificó seguro (p. ej. servicios de
+consulta, o comandos a un controlador que los rechaza por estar deshabilitado); nunca goals de Nav2,
+`cmd_vel`, ni habilitación de actuadores. `ROS_DOMAIN_ID=42` aísla el descubrimiento, **no** impide que un
+driver abra USB/CAN: revisar el launch antes.
 
 ## 4. Navegación protegida
 
@@ -71,33 +79,31 @@ En `CASA` nunca `ros2 topic pub`, `ros2 service call` ni `ros2 action send_goal`
 - Integración desde las apps: siempre como cliente de la acción `navigate_to_pose` (mocks en simulación).
 - Antes de integrar cualquier diff: `git diff --name-only` debe mostrar **cero** archivos de navegación protegidos.
 
-## 5. Permisos por nivel de riesgo
+## 5. Permisos por nivel de riesgo (autorización de desarrollo autónomo del usuario, 2026-11-03)
 
-**A — Autonomía completa (no preguntar):** leer el repo y documentación pública; investigar libremente
-repositorios de robótica, bases hoverboard, ROS 2, Nav2, MoveIt 2, percepción, equipos @Home y
-optimización; crear y editar código **no protegido**, tests y documentación en el worktree propio;
-`pytest`, `colcon build/test` aislados, `xacro`, `check_urdf`, linters; simulación en dominio 42;
-Git local (rama, commit, diff, cherry-pick en rama propia); SSH a la Jetson (`ubuntu@10.42.0.12`) para
-inspección (`systemctl status`, `journalctl`, versiones, `ip`, `ps`); medir rendimiento sin perturbar.
+**A — Autonomía completa (no preguntar; avanzar, probar, corregir, documentar):** todo lo de software en NUC y
+Jetson: leer e investigar (repos, docs públicas, terceros); crear, refactorizar y probar código no protegido;
+instalar/actualizar/quitar dependencias (venvs propios con versiones fijadas; nunca `pip install -U` amplio en
+producción ni exportar modelos con `~/ros2_vision_venv`); SSH y `sudo` administrativo con **respaldo previo y
+rollback**; crear/modificar/reiniciar servicios systemd (incluido `jetson-head`) y reiniciar NUC/Jetson
+conservando la reconexión; desplegar nodos (también los del Piper/pan-tilt) con `deploy_to_jetson.sh`;
+drivers, CAN, serial y DDS con el hardware desenergizado; compilar, MoveIt 2, RViz, Gazebo, simulación;
+diagnóstico y optimización de CPU/RAM/GPU; terminar con SIGTERM procesos propios huérfanos identificados por
+PID (nunca `kill -9`/`pkill -f` global/`killall`, nunca procesos de navegación); capa semántica (§4); Git local,
+ramas, worktrees y PR de revisión (push solo con el token revocado y remoto sin credenciales, tras tests,
+`git diff --check` y búsqueda de secretos); Orca: crear tareas, lanzar, reasignar y retomar workers.
 
-**B — Autorizado por este documento si se cumple el checklist** (si falla un punto: `BLOCKED_APPROVAL`):
-1. Mantenimiento de software en NUC/Jetson: dependencias en venvs propios con versiones fijadas (nunca `pip install -U` amplio en producción ni exportar modelos con `~/ros2_vision_venv`).
-2. Desplegar nodos propios **no actuadores** en la Jetson con `deploy_to_jetson.sh` (respaldo + rollback). Si el cambio toca `jetson-head` y puede habilitar CAN/torque → gate humano.
-3. Servicio de usuario `realsense-nuc.service`: revisar el unit, confirmar un solo dueño de la cámara, respaldo, `disable --now` como rollback.
-4. Terminar con `SIGTERM` un proceso ROS huérfano **propio** identificado por PID/cmdline/usuario (nunca `kill -9`, `pkill -f` global ni `killall`; nunca navegación ni `jetson-head`).
-5. Editar la capa semántica (§4).
-6. Orca: crear tareas y lanzar workers de software con permisos Manual/Auto seguros; reasignar si un worker no responde.
-7. GitHub: **solo cuando el token expuesto esté revocado y el remoto sin credenciales**, push de ramas `claude/*`, `antigravity/*`, `feature/*` y PR de revisión, tras tests, `git diff --check` y búsqueda de secretos.
+Checklist para cambios de host/servicio (no es un pedido de permiso): (a) recurso identificado (b) respaldo
+(c) rollback ejecutable (d) efecto sobre NUC, Jetson, Nav2 y dominio 10 (e) prueba y monitoreo (f) registro
+en `STATUS.md` sin secretos.
 
-Checklist B: (a) modo correcto (b) recurso/proceso identificado (c) diff/config exactos revisados
-(d) efecto sobre NUC, Jetson, Nav2 y dominio 10 (e) respaldo (f) rollback ejecutable
-(g) prueba rápida y monitoreo (h) registro en `STATUS.md` sin secretos.
-
-**C — Aprobación humana específica por operación:** movimiento real de cualquier actuador, torque o
-CAN activo; base o elevador; `sudo` amplio, `sudoers`, `loginctl enable-linger` sin inspección; cambios
-de red/SSH que puedan cortar NUC↔Jetson; flasheo, QSPI/UEFI, particionado, kernel/BSP (la Jetson **ya
-está migrada**: no repetir); servicios de navegación; merge a `main`, borrar ramas compartidas,
-releases; sacar del laboratorio datos de personas.
+**C — Aprobación humana específica:** energizar o mover físicamente cualquier actuador (sesión de pruebas
+acordada); desactivar protecciones contra movimientos inesperados; reflashear firmware, QSPI/UEFI, particionar o
+borrar almacenamiento (la Jetson **ya está migrada**); borrar datos de forma irreversible sin respaldo; cambiar
+la configuración funcional de navegación (§4); cambios de red/SSH que puedan cortar NUC↔Jetson sin vía de
+recuperación; modificar la autenticación o `sudoers` sin vía de recuperación; merge a `main`, borrar ramas
+compartidas, releases; sacar del laboratorio datos de personas. Siempre prohibido: §2 (ROS 1, Google, pagos,
+secretos).
 
 ## 6. Coordinación en Orca
 
@@ -113,7 +119,7 @@ Reglas:
 5. Estados: `PLANNED → DISPATCHED → ACKNOWLEDGED → IMPLEMENTING → REVIEW_READY → ACCEPTED` o `BLOCKED_WORKER`/`REJECTED`. Un `worker_done` no prueba nada: revisar `git status`, `git diff --stat`, `git diff --check`, tests y docs.
 6. **Recuperación:** si un worker cae por cuota/login, registrar `BLOCKED_WORKER` con rama/SHA y Claude retoma la tarea en un worktree nuevo; nunca sobre archivos a medio escribir ajenos ni borrando worktrees con trabajo sin integrar.
 7. Documentación de Orca (leer la de la versión instalada antes de usar comandos): <https://www.onorca.dev/docs/cli/orchestration>, <https://www.onorca.dev/docs/agents/supported>, <https://www.onorca.dev/docs/settings>. Permisos de Claude Code: <https://code.claude.com/docs/en/permissions>.
-8. Orca debe correr sin `--dangerously-skip-permissions`/`--yolo` en hosts con hardware; no usar auto-aprobadores ciegos ni convertir una pregunta de un worker en aprobación humana.
+8. Orca debe correr sin `--dangerously-skip-permissions`/`--yolo` en hosts con hardware; nada de auto-aprobadores ciegos ni convertir una pregunta de un worker en aprobación humana. **Sí** se usa la aprobación acotada `tools/agents/agy_bounded_allow.py` (hook `PreToolUse` de Antigravity instalado en `~/.gemini/config/`): aprueba solo inspección Git, `git add/commit`, lectura, pytest, colcon y xacro dentro de los worktrees; lo demás pregunta. Ampliarla solo con tests.
 
 ## 7. Git y GitHub
 

@@ -68,7 +68,7 @@ Escala: **P0** desbloquea seguridad/progreso · **P1** valor demostrable · **P2
 | ID | Tarea | Quién | Criterio de terminado |
 |---|---|---|---|
 | HOME-SEC | Hecho: URL de `origin` sin credenciales, sudo temporal de la NUC borrado, regla acotada en la Jetson, auto-aprobador eliminado. **Falta (humano):** revocar el token en GitHub; confirmar la contraseña de `ubuntu` en la Jetson para borrar `90-ubuntu-nopasswd`; Orca sin `--dangerously-skip-permissions`/`--yolo` | Humano + Claude | push habilitado; sudo mínimo |
-| HOME-S02 | Desplegar el fallback DDS solo-localhost de la Jetson (S-02) | Claude (Nivel B con checklist) | `jetson-head` sobrevive sin cable |
+| HOME-S02 | Desplegar el fallback DDS solo-localhost de la Jetson (S-02) | Claude (nivel A con checklist) | `jetson-head` sobrevive sin cable |
 | HOME-S11 | Consumidores HRI/manipulación verifican `/pan_tilt/connected` y `feedback_ok` | Claude | tests que fallan sin el chequeo |
 | HOME-41d | Desplegar `piper_arm_controller.py` con S-14 a la Jetson (`deploy_to_jetson.sh`, respaldo; reiniciar `jetson-head` = **gate humano**) | humano + Claude | md5 igual al repo; `/arm/status` ok; rechazos visibles en el log |
 | HOME-43 | Estado medido del elevador (homing + pasos de `stepper_controller.py` → `/torso/joint_states`); quitar `torso_lift_joint=0` sintético y `SHOULDER_IN_BASE` fijo (S-15) | Claude | TF del brazo sigue al elevador en sim; nada publicado sin medición |
@@ -79,7 +79,7 @@ Escala: **P0** desbloquea seguridad/progreso · **P1** valor demostrable · **P2
 |---|---|---|---|
 | HOME-VOZ | Validar el ASR nuevo con personas reales (`escuchar --n 10`, 2–3 personas a 1 y 2 m); grabaciones con ruido para `asr_benchmark --wav-dir`; reducción de ruido solo si la CPU alcanza | Claude + humano | tasa de comprensión y latencia medidas en el robot |
 | HOME-06c | Brechas HRI 2026.2 (§5) | Claude + Antigravity | estados nuevos con tests y SIM_PASS |
-| HOME-RS | Instalar `realsense-nuc.service` de usuario (Nivel B: revisar unit, sin conflicto de dueño): `cp scripts/systemd/realsense-nuc.service ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user enable --now realsense-nuc` (+ `loginctl enable-linger athome` = Nivel C) | Claude | un solo dueño de la cámara, 15 Hz |
+| HOME-RS | Instalar `realsense-nuc.service` de usuario (nivel A con checklist: revisar unit, sin conflicto de dueño): `cp scripts/systemd/realsense-nuc.service ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user enable --now realsense-nuc` (+ `loginctl enable-linger athome`, con rollback `disable-linger`) | Claude | un solo dueño de la cámara, 15 Hz |
 | HOME-15b | GPSR: pasos perdidos en comandos compuestos; dataset con planes esperados (CommandGenerator); métrica de plan exacto | Antigravity | exact-plan accuracy reportada |
 | HOME-05 | Editor URDF: prueba visual en navegador, export candidato, colisiones; nunca toca footprint/Nav2 | Antigravity | capturas + tests UI |
 | HOME-22b | Mapa semántico: waypoint `home` y objetos numerados medidos por el humano; validación de esquema | humano + Antigravity | YAML validado, sin coordenadas inventadas |
