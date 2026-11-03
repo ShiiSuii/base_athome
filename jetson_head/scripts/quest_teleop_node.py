@@ -28,21 +28,26 @@ import quest_cartesian_core as qc
 from quest_teleop_core import MODE_NAMES, ControllerSample, TeleopState, step
 
 PORT = 8765
-PAGE_VERSION = 5   # subir al cambiar la pagina: el nodo avisa si el visor tiene una version vieja abierta
+PAGE_VERSION = 6   # subir al cambiar la pagina: el nodo avisa si el visor tiene una version vieja abierta
 DEG = 3.141592653589793 / 180.0
 
 PAGE = r"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Piper Quest</title><style>body{font-family:sans-serif;background:#111;color:#eee;margin:16px}
 button{font-size:28px;padding:18px 28px;border-radius:12px;border:0;background:#2a7;color:#fff}
 #s{margin-top:16px;font-size:20px;white-space:pre}</style></head><body>
-<h2>Teleoperacion Piper <small>(v PAGE_VERSION)</small></h2><p>Control HAND_LABEL. MODO_TXT</p><button id="b">Empezar</button><div id="s">listo</div>
+<div id="b" style="position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer">
+<div style="font-size:56px;font-weight:bold">Apreta el GATILLO para empezar</div>
+<div style="font-size:24px;margin-top:20px;max-width:900px;text-align:center">MODO_TXT</div>
+<div id="s" style="font-size:22px;margin-top:20px">listo</div><small>v PAGE_VERSION</small></div>
 <script>
 const st=document.getElementById('s');let busy=false,last=0,xr=false;
 function post(d){return fetch('/state',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)})
  .then(r=>r.json()).then(j=>{st.textContent=j.reason+'\nmodo: '+j.mode;}).catch(e=>{st.textContent='sin conexion '+e});}
 function send(d){if(busy)return;busy=true;d.v=PAGE_VERSION;d.xr=true;post(d).finally(()=>{busy=false});}
 setInterval(()=>{if(!xr)post({v:PAGE_VERSION,hello:true,xr:false,webxr:!!navigator.xr});},1000);   // latido: pagina abierta
-document.getElementById('b').onclick=async()=>{
+let starting=false;
+document.getElementById('b').addEventListener('click',async()=>{       // gatillo en cualquier parte = empezar
+ if(starting||xr)return;starting=true;
  try{
  if(!navigator.xr){post({v:PAGE_VERSION,error:'WebXR no disponible'});st.textContent='WebXR no disponible';return;}
  // passthrough (ver la habitacion y el robot) si el visor lo permite; si no, VR
@@ -69,7 +74,8 @@ document.getElementById('b').onclick=async()=>{
   else{if(grip)gl.clearColor(0.05,0.35,0.1,1);else gl.clearColor(0.12,0.12,0.12,1);}
   gl.clear(gl.COLOR_BUFFER_BIT);};
  session.requestAnimationFrame(loop);session.addEventListener('end',()=>{xr=false;st.textContent='sesion VR terminada'});
- }catch(e){post({v:PAGE_VERSION,error:String(e)});st.textContent='error: '+e;}};
+ }catch(e){post({v:PAGE_VERSION,error:String(e)});st.textContent='error: '+e;}
+ finally{starting=false;}});
 </script></body></html>"""
 
 
@@ -149,8 +155,8 @@ class QuestTeleop(Node):
 
             def do_GET(self):
                 page = PAGE.replace("PAGE_VERSION", str(PAGE_VERSION))
-                txt = ("Mantener GRIP: la pinza copia el movimiento de tu mano (posicion y giro). Soltar = frena; volver a "
-                       "agarrar para seguir desde otra posicion. X = activar/desactivar el giro. Gatillo = pinza."
+                txt = (("Mantener X: el brazo va a HOME y despues copia tu mano. Soltar X = frena. Y = giro on/off. Gatillo = pinza."
+                        if node.real else "Mantener GRIP: la pinza copia tu mano. Soltar = frena. X = giro on/off. Gatillo = pinza.")
                        if node.mode == "cartesian" else
                        "Mantener GRIP para mover. Joystick = articulaciones. X/A = cambiar par. Gatillo = pinza.")
                 body = page.replace("MODO_TXT", txt).replace("HAND_LABEL", "izquierdo" if node.hand == "left" else "derecho") \
