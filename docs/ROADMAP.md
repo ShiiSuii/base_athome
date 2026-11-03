@@ -46,7 +46,7 @@ y cuenta la mejor puntuación.
 | Plataforma | Jetson migrada a JetPack 7.2.1 / Ubuntu 24.04 / Jazzy; Ethernet por adaptador USB; `ros2 node list` entre hosts | `VERIFICADO 2026-11-03`; commits `5055d4d`, `e6ed289` |
 | Seguridad | Piper `auto_enable=False` + guard de feedback CAN; pan-tilt sin torque automático; perfiles sintéticos excluidos | `cdfe8fa`, `7b5c05e`, `ad6a00b` (desplegado) |
 | Cámaras | Cámara de muñeca 5→20 Hz (S-12); RealSense con un solo driver | `b5019d1`, `99d3ad5` |
-| Percepción | YOLOv8n TensorRT FP16 (4,3 ms) y nodo `yolo_trt_node` (24,5 Hz en JP6) | `0e6899e`, `e3a3b76` — **engine a reconstruir en JP7** |
+| Percepción | YOLO TensorRT recuperado en JP7 (TRT 10.16): 55 FPS de punta a punta vs 5,2 en CPU; `/arm_camera/detections` 29,9 Hz en la NUC | 2026-11-03 (ver `STATUS.md`) |
 | ASR/HRI | Escucha por pedido con VAD Silero, fin a 1,1 s, ids y `/voice/result`; `VoiceClient`; vocabulario fonético; pantalla del invitado (`:8090`) | `398f876`, `a8550a3`, `01ecbf7`; manual `docs/MICROFONO_ASR.md` |
 | Receptionist | presentación mutua con mirada; centrado de rostro, escaneo, oferta de asiento libre y espera a que se siente; anfitrión elegido entre sentados; cierre único; respaldo de rostro | `f56238d`, `137007f`, `99d3ad5`, `01ecbf7` |
 | Misiones | secuenciador (puerta/invitado/objeto/living) con prompt de órdenes y confirmación | `a1a4442`, `a8550a3` |
@@ -65,10 +65,9 @@ Escala: **P0** desbloquea seguridad/progreso · **P1** valor demostrable · **P2
 
 | ID | Tarea | Quién | Criterio de terminado |
 |---|---|---|---|
-| HOME-SEC | Revocar/rotar el token de GitHub y sacarlo de la URL de `origin`; borrar `99-jetson-flash-temp` (NUC); acotar `90-ubuntu-nopasswd` (Jetson); decidir sobre `scripts/orca/agy_autoapprove.py`; Orca sin `--dangerously-skip-permissions`/`--yolo` | **Humano** (credenciales/sudo) + Claude verifica | remoto sin credenciales; sudo mínimo; push habilitado |
+| HOME-SEC | Hecho: URL de `origin` sin credenciales, sudo temporal de la NUC borrado, regla acotada en la Jetson, auto-aprobador eliminado. **Falta (humano):** revocar el token en GitHub; confirmar la contraseña de `ubuntu` en la Jetson para borrar `90-ubuntu-nopasswd`; Orca sin `--dangerously-skip-permissions`/`--yolo` | Humano + Claude | push habilitado; sudo mínimo |
 | HOME-S02 | Desplegar el fallback DDS solo-localhost de la Jetson (S-02) | Claude (Nivel B con checklist) | `jetson-head` sobrevive sin cable |
 | HOME-S11 | Consumidores HRI/manipulación verifican `/pan_tilt/connected` y `feedback_ok` | Claude | tests que fallan sin el chequeo |
-| HOME-TRT | Reconstruir engines YOLO para TensorRT 10.16 y `cuda-python` CUDA 13; medir FPS | Claude | `/arm_camera/detections` ≥20 Hz medido |
 
 ### P1 — Cerrar funcionalidades existentes
 
@@ -84,6 +83,20 @@ Escala: **P0** desbloquea seguridad/progreso · **P1** valor demostrable · **P2
 | HOME-17 | Rutas absolutas fuera de navegación (S-06), borrar `scripts/jetson/` (S-05), entry points (S-10), `except: pass` (S-07) | Claude | tests verdes, sin cambio de interfaces |
 | HOME-30 | Auditoría de navegación **solo lectura** con traza motores→driver→odom→TF→AMCL→Nav2→cliente | Claude | `ROBOT.md` §8 completado + NAV-PROP con evidencia; cero archivos de navegación modificados |
 | HOME-31 | Investigación de bases hoverboard ROS 2 (5–8 proyectos: licencia, controlador, feedback, watchdog, tests) | Antigravity | tabla en `ROBOT.md` §8 con decisión ADOPTAR/ADAPTAR/NO |
+
+### Propuestas de mejora (investigación 2026-11-03; no implementadas)
+
+| Área | Propuesta | Beneficio | Costo/riesgo |
+|---|---|---|---|
+| Percepción | YOLO: pre/post-proceso en GPU o `cv2.dnn.blobFromImage` + NMS de OpenCV; hoy 12 de 18 ms son numpy en CPU | ~2× FPS o la mitad de CPU | bajo |
+| Percepción | Fine-tuning de YOLOv8n con los objetos del reglamento (Pringles, Red Bull, Rubik, Colgate…) y export a TRT | habilita Pick and Place | medio (dataset propio) |
+| Percepción | YOLO de la cabeza (D435) en la Jetson enviando JPEG comprimido | libera CPU de la NUC (38 ms/frame) | medio (ancho de banda) |
+| HRI | Whisper en GPU: ctranslate2 con CUDA 13 (o whisper TRT) para `small.en` a la latencia actual de `base.en` | menos errores de ASR | medio (compilar) |
+| HRI | Mirada continua: pan-tilt a 50 Hz con `GroupSyncRead` y filtro de seguimiento | puntos de "mirar al que habla" | bajo |
+| Manipulación | `OrbbecSDK_ROS2` para profundidad registrada + estrategia de pose de observación 35–45 cm | agarres 3D reales | medio |
+| Manipulación | `agx_arm_ros` + MoveIt con colisión del torso medido; fachada `/arm/*` | planificación segura | alto |
+| Base | NAV-PROP-001 (feedback stale) y NAV-PROP-004 (mux) son las de mejor relación seguridad/costo | seguridad | requieren autorización (navegación) |
+| Hardware | NVMe para la Jetson; `MAXN_SUPER` solo con fuente verificada; E-stop que corte todos los dominios | robustez, reglamento | decisiones humanas |
 
 ### P2 — Manipulación y competencia
 
@@ -123,13 +136,15 @@ comando pasivo, riesgo, alternativa, plan de simulación, rollback, decisión de
 
 | ID | Pregunta | Estado |
 |---|---|---|
-| NAV-PROP-001 | ¿Qué hace la placa si se pierde la UART? (el driver tiene watchdog 0,5 s del lado ROS) | POR INVESTIGAR |
-| NAV-PROP-002 | Covarianzas de `/odom` y calibración Hall | POR INVESTIGAR |
-| NAV-PROP-003 | ¿Un solo dueño de `odom→base_footprint`? | POR INVESTIGAR |
-| NAV-PROP-004 | Prioridad entre Nav2 y teleop sobre `/cmd_vel` (¿hay mux?) | POR INVESTIGAR |
+| NAV-PROP-001 | Pérdida de comunicación. Lado ROS: watchdog `cmd_vel_timeout` 0,5 s → manda 0/0 (`hoverboard_driver.py:312`). Lado placa: config Lenzod `TIMEOUT 20` comandos perdidos → apagado de emergencia (`firmware_config/lenzod_red_stm32_usart3_odometry/config.h:35`; binario en la placa sin verificar). **Hueco:** si se corta la telemetría pero no el TX, `/odom` sigue publicándose con sello actual, la última velocidad y la pose congelada; `rx_age` solo se usa para un log. Propuesta: dejar de publicar (o marcar) `/odom` y TF si `rx_age` > 0,2 s y exponer `/hoverboard/feedback_ok`. Riesgo bajo, test con puerto serie simulado | ANALIZADA (2026-11-03) |
+| NAV-PROP-002 | Covarianzas constantes (pose xy 0,001, yaw 0,03; twist 0,002/0,05), no crecen con la distancia. AMCL no las usa; importarían si se agrega EKF/IMU. Sello de tiempo = momento de publicación (hasta 20 ms después del paquete). Integración RK2, 90 ticks/vuelta → 5,95 mm por tick | ANALIZADA — sin acción mientras no haya EKF |
+| NAV-PROP-003 | `odom→base_footprint`: único emisor `hoverboard_driver` (`publish_tf: true`); `slam_3d_mapping` usa `publish_tf_map: false`. Lock `/tmp/hoverboard_driver.lock` evita dos drivers. Verificar en vivo con `tf2_echo` cuando la base esté encendida | ANALIZADA (código) |
+| NAV-PROP-004 | **Sin multiplexor:** `controller_server`, `behavior_server` y `teleop_twist_joy` publican todos en `/cmd_vel` (`nav2_bringup.launch.py:139,149`, teleop con hombre muerto R1). Si alguien usa el joystick durante un goal, gana el último mensaje. Propuesta: `twist_mux` con prioridad teleop > Nav2 y tópico de bloqueo (cambio de navegación: requiere autorización) | ANALIZADA — decisión del usuario |
 | NAV-PROP-005 | Footprint operativo (`robot_radius 0.44`) desacoplado del URDF visual | POR INVESTIGAR |
 | NAV-PROP-006 | Efecto de `base_joint z=0.06` (`b2b093d`) sobre la altura de `laser` y el mapa | POR INVESTIGAR |
 | NAV-PROP-007 | Rutas absolutas en `nav2_bringup.launch.py` y `nav2_params.yaml` (BT, mapa) | DOCUMENTADO, sin cambiar |
+| NAV-PROP-008 | La placa corre FOC en `VLT_MODE` (tensión, sin lazo de velocidad); por eso el driver necesita pisos anti-stiction (`min_speed_raw 75`, `min_steer_raw 165`) y la respuesta depende de batería y carga. `SPD_MODE` daría velocidad en lazo cerrado en la placa. Requiere reflashear la base (Nivel C) y re-tunear Nav2: solo evaluar en banco | IDEA |
+| NAV-PROP-009 | `firmware/firmware/HoverboardController/HoverboardController.ino` habla un protocolo de texto (`TEL …`, timeout 500 ms) distinto del binario `0xABCD` que usa el driver: no es el firmware de la base actual. Documentar qué binario está en la placa (probable `firmware_bin/hover_lenzod_usart3_odometry.bin`) | ANALIZADA |
 
 ## 7. Plan de validación
 

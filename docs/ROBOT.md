@@ -33,7 +33,7 @@ flowchart LR
     PT[pan_tilt_node · U2D2]
     ASR[whisper_node · RØDE]
     ORB[stream_orbbec · DaBai]
-    YOLO[yolo_trt_node · GPU<br/>engine sin reconstruir]
+    YOLO[yolo_trt_node · GPU TensorRT]
   end
   HRI <-- "/arm/* /pan_tilt/* /voice/* /arm_camera/*" --> JET
   NUC <-. "Ethernet 1 Gb/s · ROS_DOMAIN_ID=10 · CycloneDDS unicast" .-> JET
@@ -58,7 +58,7 @@ flowchart LR
 
 | | NUC (CHUWI LarkBox S) | Jetson Orin Nano Dev Kit **Super** (8 GB) |
 |---|---|---|
-| SO | Ubuntu 24.04.3, kernel 7.0 — `VERIFICADO 2026-11-03` | Ubuntu 24.04.4, L4T **R39.2.1** (JetPack 7.2.1), kernel 6.8.12-tegra — `VERIFICADO 2026-11-03` |
+| SO | Ubuntu 24.04.3, kernel 7.0 — `VERIFICADO 2026-11-03` | Ubuntu 24.04.4, L4T **R39.2.1** (JetPack 7.2.1), kernel 6.8.12-tegra; TensorRT 10.16.2 + CUDA 13.2 runtime — `VERIFICADO 2026-11-03` |
 | ROS 2 | Jazzy, `rmw_cyclonedds_cpp`, `CYCLONEDDS_URI=~/cyclonedds.xml`, dominio 10 — `VERIFICADO` | Jazzy (`/opt/ros/jazzy`) — `VERIFICADO` |
 | CPU / RAM | i3-1220P 10C/12T, 15 GiB, NVMe 468 GB | 6× A78AE; modo **25W** (CPU 1,344 GHz de 1,728) — `VERIFICADO`; 7,4 GiB compartida |
 | GPU | Intel UHD (sin CUDA) | Ampere; CUDA 13.2, TensorRT 10.16 (`FABRICANTE` JP 7.2.1) |
@@ -149,7 +149,7 @@ riesgo (Nivel C).
 
 **Despliegue a la Jetson:** `jetson_head/scripts/deploy_to_jetson.sh` (dry-run por defecto, respaldo en
 `~/deploy_backups/<fecha>/`, no pisa calibraciones, no reinicia servicios). `scripts/jetson/` es una copia
-duplicada de 4 scripts → eliminar (S-05).
+duplicada: eliminada (S-05).
 
 ### Interfaces ROS principales (`CODIGO`; tasas `HISTORICO 2026-10-30`)
 
@@ -164,7 +164,7 @@ duplicada de 4 scripts → eliminar (S-05).
 | `/pan_tilt/joint_states` (20 Hz), `/pan_tilt/connected` (latched) | JointState / Bool | `pan_tilt_node` |
 | `/pan_tilt/command`, `/pan_tilt/target_degrees`; srv `/pan_tilt/set_torque` | — | apps → pan-tilt (**actuador**) |
 | `/voice/listen_request` (JSON con id), srv `/voice/listen_trigger`, `/voice/result`, `/voice/transcription`, `/voice/status`, `/voice/mute`, `/voice/debug_inject` | — | ver `docs/MICROFONO_ASR.md` |
-| `/arm_camera/image_raw` (20 Hz), `/arm_camera/detections` (Detection2DArray, si YOLO corre) | — | Jetson → NUC |
+| `/arm_camera/image_raw` (~30 Hz), `/arm_camera/detections` (Detection2DArray, 29,9 Hz medido en la NUC 2026-11-03) | — | Jetson → NUC |
 | `/camera/camera/color/image_raw`, `aligned_depth_to_color` | — | RealSense (NUC) |
 | `/hri/guest_input` (JSON `{type, value}`), `/hri/say_something`, `/robot/emotion`, `/mission/command` | — | HRI / pantalla / misiones |
 
@@ -183,7 +183,7 @@ duplicada de 4 scripts → eliminar (S-05).
 | S-02 | Alta | DDS de la Jetson sin fallback si falta el cable | fallback solo-localhost en repo, **no desplegado** |
 | S-03 | Alta | Pan-tilt habilitaba torque solo | **Corregido y desplegado** |
 | S-04 | Alta | Perfiles HRI con embeddings aleatorios | **Corregido** |
-| S-05 | Media | Scripts duplicados `scripts/jetson/` vs `jetson_head/scripts/` | Parcial: falta borrar `scripts/jetson/` |
+| S-05 | Media | Scripts duplicados `scripts/jetson/` vs `jetson_head/scripts/` | **Corregido** (`scripts/jetson/` eliminado 2026-11-03) |
 | S-06 | Media | 29 archivos con rutas absolutas `/home/athome` (incluye `nav2_bringup.launch.py`, BT y mapa por defecto `~/mapa_base_athome.yaml`) | Propuesto fuera de navegación; en navegación solo documentar |
 | S-07 | Media | `except Exception: pass` en el bucle del Piper | Parcial (feedback guard) |
 | S-08 | Media | Linters ament fallan en todos los paquetes; no hay CI | Propuesto (HOME-16) |
@@ -199,6 +199,7 @@ Funciona según el usuario y es **protegida** (`AGENTS.md` §4). Lo siguiente es
 **Cadena:** `Nav2 → /cmd_vel → hoverboard_driver → UART 50 Hz → placa STM32 FOC → motores` y de
 vuelta `ticks Hall → /odom + TF odom→base_footprint (50 Hz) → AMCL (map→odom) → Nav2`.
 
+- **Placa:** config Lenzod (`firmware/firmware_config/lenzod_red_stm32_usart3_odometry/config.h`): FOC en `VLT_MODE`, `I_MOT_MAX 15 A`, `N_MOT_MAX 1000 rpm`, `TIMEOUT 20` comandos perdidos → apagado, `ENABLE_ODOMETRY`. El binario realmente flasheado: `PENDIENTE`.
 - **Driver** (`src/hoverboard_base/hoverboard_base/hoverboard_driver.py`, parámetros efectivos en
   `config/hoverboard_params.yaml`): trama `0xABCD` + steer + speed + checksum XOR (protocolo serie del
   firmware FOC tipo EFeru); telemetría con contadores Hall por rueda, RPM, batería y temperatura.
@@ -263,7 +264,7 @@ no arranca la RealSense, detector por color (`SimColorDetector`).
 | Simulación | `python3 -m pytest -q src/base_athome_sim/test` | 6 passed |
 | Skills (puerta) | `python3 -m pytest -q src/base_athome_skills/test` | 8 passed |
 | Capa semántica | `python3 -m pytest -q src/base_athome_navigation/test` | 9 passed |
-| Scripts Jetson (Piper, Orbbec…) | `python3 -m pytest -q jetson_head/scripts/tests` | 13 passed |
+| Scripts Jetson (Piper, Orbbec, YOLO, bench) | `python3 -m pytest -q jetson_head/scripts/tests` | 15 passed |
 | ASR | `cd jetson_head/src/audio_asr && python3 -m pytest -q test/test_asr_core.py` | 12 passed |
 | Pan-tilt | `python3 -m pytest -q jetson_head/src/pan_tilt_controller/test` | 5 passed |
 | GPSR | `cd tools/gpsr_parser && env -u PYTHONPATH python3 -m pytest -q tests` (sin entorno ROS: el plugin `launch_testing` rompe la colección) | 34 passed |
@@ -284,14 +285,17 @@ Todo esto es `UNIT_PASS`/`SIM_PASS`; ninguna prueba con actuadores reales está 
 - Respaldos en la NUC: `~/jetson_backups/2026-10-29_pre_migration/`, `~/jetson_backups/2026-10-30_pre_migration_extra/`
   (modelos Whisper/YOLO, `gs_usb`, udev/systemd/CAN), ISO r39.2.1 en `~/jetson_backups/jetpack_7.2.1/`.
   Respaldos de cada despliegue en la Jetson: `~/deploy_backups/<fecha>/`.
-- **Pendiente tras la migración:** reconstruir los engines TensorRT (`build_yolo_trt.sh`; hoy solo
-  hay `.onnx` en `~/models/yolo/`), `cuda-python` para CUDA 13, ctranslate2 con CUDA (Whisper sigue en
-  CPU int8), `MAXN_SUPER` solo si la fuente lo soporta (decisión humana).
+- **TensorRT (2026-11-03):** el flasheo instaló solo el BSP. Se agregaron del repo apt oficial de NVIDIA
+  (r39.2) `libnvinfer-bin`, `python3-libnvinfer` y `cuda-cudart-13-2` (TRT 10.16.2, CUDA 13.2; 12 paquetes,
+  lista y rollback `apt-get remove` en `~/deploy_backups/trt_20261103/installed.txt`). Engines FP16 en
+  `~/models/yolo/*_fp16.engine`. `cuda-python 13.2` vive en `~/robot_venv`; el nodo YOLO corre con ese
+  Python (`YOLO_PYTHON` en `start_mapping_head.sh`). Benchmark: `jetson_head/scripts/bench_yolo.py`.
+- **Pendiente:** ctranslate2 con CUDA (Whisper sigue en CPU int8), `MAXN_SUPER` solo si la fuente lo soporta (decisión humana).
 - Comandos de inspección seguros: `cat /etc/os-release; head -1 /etc/nv_tegra_release; systemctl is-active jetson-head; journalctl -u jetson-head -n 30 --no-pager`.
 
 ## 12. Limitaciones y riesgos conocidos
 
-- Seguridad de host: token GitHub en la URL de `origin` (NUC), `/etc/sudoers.d/99-jetson-flash-temp` (NUC) y `90-ubuntu-nopasswd` (Jetson) siguen presentes (`VERIFICADO 2026-11-03`); `scripts/orca/agy_autoapprove.py` existe (no corriendo).
+- Seguridad de host (2026-11-03): URL de `origin` sin credenciales; NUC sin sudo sin contraseña; Jetson aún con `90-ubuntu-nopasswd` (`NOPASSWD: ALL`) más `91-ubuntu-jetson-head` (solo `systemctl/journalctl jetson-head`) a la espera de confirmar la contraseña de `ubuntu`; auto-aprobador de Orca eliminado.
 - Orbbec sin profundidad < 30 cm → estrategia de pose de observación a 35–45 cm, aproximación final abierta y confirmación por feedback de la pinza. Para profundidad registrada migrar a `OrbbecSDK_ROS2` (`v2-main`, verificar DC1).
 - Pringles (~75 mm) en el límite de apertura de la pinza (~70 mm).
 - Hokuyo de 5 m: limitado para lugares grandes (Restaurant).

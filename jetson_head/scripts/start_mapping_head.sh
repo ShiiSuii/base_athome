@@ -51,6 +51,9 @@ WHISPER_MODEL="${WHISPER_MODEL:-base.en}"   # base.en: 6% WER vs tiny 20% (medid
 ASR_LANGUAGE="${ASR_LANGUAGE:-en}"          # base.en es solo ingles; para demos en espanol: tiny + auto
 ENABLE_YOLO="${ENABLE_YOLO:-1}"
 YOLO_ENGINE="${YOLO_ENGINE:-/home/ubuntu/models/yolo/yolov8n_fp16.engine}"
+# YOLO corre en el venv aislado (cuda-python 13; tensorrt viene de python3-libnvinfer del sistema).
+YOLO_PYTHON="${YOLO_PYTHON:-/home/ubuntu/robot_venv/bin/python}"
+[ -x "$YOLO_PYTHON" ] || YOLO_PYTHON=python3
 
 echo "[Jetson Bringup] Iniciando: Pan-Tilt + Whisper ($WHISPER_MODEL/$ASR_LANGUAGE) + Piper CAN + DaBai + YOLO TensorRT"
 
@@ -62,7 +65,7 @@ if ! pgrep -f "python3 /home/ubuntu/piper_arm_controller.py" >/dev/null; then
 fi
 pgrep -f stream_orbbec.py >/dev/null || nohup python3 /home/ubuntu/stream_orbbec.py > /tmp/stream_orbbec.log 2>&1 < /dev/null &
 if [ "$ENABLE_YOLO" = "1" ] && [ -f "$YOLO_ENGINE" ]; then
-    pgrep -f yolo_trt_node.py >/dev/null || nohup python3 /home/ubuntu/yolo_trt_node.py --ros-args -p engine_path:="$YOLO_ENGINE" > /tmp/yolo_trt_node.log 2>&1 < /dev/null &
+    pgrep -f yolo_trt_node.py >/dev/null || nohup "$YOLO_PYTHON" /home/ubuntu/yolo_trt_node.py --ros-args -p engine_path:="$YOLO_ENGINE" > /tmp/yolo_trt_node.log 2>&1 < /dev/null &
 else
     echo "[Jetson Bringup] YOLO deshabilitado o falta $YOLO_ENGINE (build_yolo_trt.sh)"
 fi
