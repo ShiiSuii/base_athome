@@ -1,73 +1,52 @@
-# Migración controlada Jetson Orin Nano → Ubuntu 24.04 + ROS 2 Jazzy
+# Jetson Orin Nano — estado posterior a la migración, mantenimiento y comprobación
 
-**Estado:** TAREA PRIORITARIA ACTIVA; la Jetson y la NUC están ENCENDIDAS y conectadas mediante un cable Ethernet directo. El usuario autoriza SSH, diagnóstico, mantenimiento, paquetes compatibles y preparación/ejecución de la migración de software en la Jetson, si es viable. El flasheo/UEFI/particionado y toda acción que BORRE almacenamiento requieren backup externo comprobado, comprobación del disco y confirmación específica del paso de borrado. Nunca enviar comandos de movimiento. Fuente NVIDIA: https://developer.nvidia.com/embedded/jetpack/downloads y guía Orin Nano https://docs.nvidia.com/jetson/orin-nano-devkit/user-guide/quick_start.html.
+> **Edición integral v3 — 03/11/2026.** Esta documentación es una guía de trabajo, no prueba de ejecución en las máquinas. Los avances operativos se basan en los registros compartidos por el usuario (principalmente `HANDOFF.md`, 29–30/10/2026), deben cotejarse con el checkout y el estado de cada host. Política vigente: la navegación es **estudiable y auditable sin modificarla**; observaciones y propuestas se registran en `docs/collab/PROPUESTAS_NAVEGACION.md`. El estado de tareas en Orca/Git puede ser más reciente que estos documentos.
 
-## 1. Meta, evidencia y no objetivos
+## No repetir migración completada
 
-- Meta: Jetson Orin Nano (modelo/portadora a verificar) sobre JetPack **7.2.1 / Jetson Linux 39.2.1 / Ubuntu 24.04**, con ROS 2 Jazzy; integración con NUC 24.04/Jazzy por red privada y CycloneDDS.
-- Confirmado por **fuente pública NVIDIA**: JetPack 7.2.1 soporta familia Orin y Ubuntu 24.04; **NO está confirmado** aún que todas las bibliotecas actuales del equipo estén listas.
-- README del repo documenta Jetson con Ubuntu 22.04 + ROS2 Humble, NO verificado actualmente; confirmar por SSH en la Jetson encendida.
-- No modificar OS/ROS de NUC ni Nav2; preservar navegación.
-- No utilizar `do-release-upgrade` directo como método. Elegir instalación oficialmente soportada según carrier, almacenamiento y bootloader.
-- No inventar versiones de GPU, firmware, bootloader ni estado eléctrico.
+El `HANDOFF.md` aportado por el usuario informa que el **30/10/2026** Claude y el equipo migraron la Jetson Orin Nano a JetPack 7.2.1 (Jetson Linux R39.2.1), Ubuntu 24.04 y ROS 2 Jazzy, y verificaron ROS2 con la NUC. Este dato es del informe; ChatGPT no tiene acceso en vivo al equipo y no lo certifica hoy. El README público todavía menciona Humble/22.04: tratar esa parte como probablemente desactualizada.
 
-## 2. Fase A — inventario y evaluación (AHORA, por SSH Ethernet)
+### Lista de verificación segura para Claude (por SSH si autorizado)
 
-| Pregunta | Evidencia requerida | Estado |
+```bash
+# Comandos de lectura en la Jetson. Validar host key; no imprimir datos de usuarios ni secretos.
+cat /etc/os-release
+uname -r
+dpkg-query -W -f='${Version}
+' nvidia-l4t-core 2>/dev/null || true
+ros2 --help >/dev/null && env | grep -E 'ROS_DISTRO|ROS_DOMAIN_ID|RMW_IMPLEMENTATION' || true
+ip -br addr
+systemctl status jetson-head --no-pager
+journalctl -u jetson-head -n 30 --no-pager
+```
+
+Antes de entrar por SSH, verificar que no hay experimentos activos ni comandos que arranquen servicios de actuadores. No publicar contenido sensible en reportes o repo.
+
+## Tareas de software y regresión autorizables
+
+- Comprobar versiones ROS2/Jazzy, drivers CAN `gs_usb`, Orbbec, Dynamixel, RØDE, Whisper, CUDA/TensorRT y venvs.
+- Verificar que control Piper requiere feedback real y `auto_enable=false`, que no hay doble publicación de `joint_states` ni arranque de torque por systemd.
+- Mantener dependencias de percepción congeladas y en entornos separados; un export Ultralytics actualizó `numpy` y rompió `cv2` según handoff. Comparar freeze/rollback.
+- Verificar que `jetson-head` no cambia límites ni activa motores cuando faltan 12/24/36 V.
+- Revisar habilitación de servicios `systemd` con propiedad/impacto/rollback. Los componentes hardware que son seguros en lectura no autorizan movimiento.
+- Antes de cualquier mantenimiento que requiera `sudo`, analizar privilegios residuales de flasheo `99-jetson-flash-temp` en NUC y `90-ubuntu-nopasswd` en Jetson; revocar o acotar con humano de ser necesario.
+
+## Pruebas sin intervención física
+
+| Prueba | Resultado del HANDOFF 30/10 | Qué verificar hoy |
 |---|---|---|
-| ¿Orin Nano 8GB devkit o módulo con carrier de tercero? | etiqueta/foto/manual confirmados por humano | PENDIENTE |
-| JetPack/L4T actual, Ubuntu/kernel | outputs obtenidos por SSH de la Jetson encendida | TODO_SSH |
-| UEFI/QSPI y storage boot | particiones/boot logs/versión UEFI por SSH + firmware menú si hace falta | TODO_SSH |
-| Capacidad/vida útil almacenamiento, backup externo | inventario físico y `lsblk` por SSH, respaldo externo | TODO_SSH |
-| Piper CAN/Sockets, bitrate real y servicio | código/README vs inspección futura | REVISAR CÓDIGO |
-| Audio RØDE/ALSA, micrófono y TTS/ASR | services/venvs, requirements | REVISAR CÓDIGO |
-| Orbbec DaBai DC1 / USB / calibraciones | driver y cámara exacta, SDK soportado | REVISAR CÓDIGO |
-| Dynamixel U2D2/IDs/baud y límites | driver y fabricante, no comandos | REVISAR CÓDIGO |
-| Python, rclpy, OpenCV, PyTorch, CUDA/cuDNN/TensorRT | requirements y envs documentados | REVISAR CÓDIGO |
-| RMW, ROS_DOMAIN_ID, IP, NTP/clock/TF | configs NUC/Jetson y red | REVISAR CÓDIGO |
+| Red NUC-Jetson | Ethernet por USB 1 Gb/s, 8/8 checks, desfasaje −11,9 ms | carrier, IP y estado DDS |
+| ROS2 Jazzy interhost | `ros2 node list` de NUC veía nodos Jetson | versiones, RMW, domain y nodos |
+| Orbbec DaBai | streaming reportado a ~20 Hz | rate pasivo y frame IDs |
+| Piper | `auto_enable=False`, feedback guard | log seguro y no torque |
+| Pan-tilt | `connected=false` sin 12 V | logs, no torques |
+| Whisper | `base.en` probado con 6 % WER en una muestra previa | reproducibilidad con dataset permitido |
+| YOLO TensorRT | 24,5 Hz del nodo, 4,3 ms de inferencia en prueba anterior | dataset/sistema/versión, fps medidos |
 
-Antes de sugerir repos o versiones, revisar compatibilidad **arm64**, paquetes ROS2 Jazzy, drivers y kernel NVIDIA. No recomendar `pip install` masivo sobre OS base. Planificar venvs/contenedores compatibles de ser necesarios.
+Si una diferencia aparece, documentar primero y reparar componentes de software por rama con rollback, sin entrar en modo de flasheo.
 
-## 3. Fase B — respaldo verificable (AHORA, con Jetson encendida)
+## Runbook original archivado
 
-Resguardar, entre otros: workspace y ramas Git; repos submódulos; `colcon` metadata; `package.xml`, rosdep y requirements; YAML; Xacro/URDF; TF extrínsecos; hand-eye e intrínsecos; `/etc/systemd/system/` relacionados; custom udev; CAN y serial settings; SSH config **sin copiar llaves privadas al repo**; usuarios/permisos; servicios Jetson; Python venvs listados; Dockerfile/imágenes por tag; TTS/STT local model assets; logs relevantes anonimizados.
+El plan original está conservado en `docs/archive/MIGRACION_JETSON_PLAN_INICIAL.md` y el runbook del flasheo en `docs/RUNBOOK_MIGRACION_JETSON.md`, ambos **solo referencia histórica**. No ejecutar `dd`, instalación ISO, QSPI/UEFI, particionado o reinstalación salvo nueva autorización explícita con backup restaurable y destino validado.
 
-**Los agentes NO extraen tokens, claves ni carpetas privadas.** El humano realiza respaldo sensible local y verifica que se puede restaurar. Mantener backup en dispositivo independiente, checksum/verificación, inventario, versión fuente, fecha e instrucciones para rollback. No sobrescribir el único almacenamiento de arranque sin validación.
-
-## 4. Fase C — instalación compatible, con gate de borrado
-
-1. Confirmar carrier y método oficial de instalación (Jetson ISO/SDK Manager, almacenamiento y versiones de UEFI/QSPI); revisar notas de errores conocidos para Orin Nano. No asumir que ISO se graba en la microSD como imagen tradicional.
-2. Comprobar compatibilidad de accesorios y alimentaciones. NUC y base física aisladas del proceso; no energizar actuadores accidentalmente.
-3. Registrar matriz de paquetes instalados, kernel/BSP, drivers, apt source y versiones JetPack.
-4. Para actualizaciones de paquetes no destructivas, documentar estado anterior, dependencias y rollback, trabajando sin drivers físicos. Para flash/UEFI/particionado, solicitar aprobación humana específica: dispositivo de destino, datos a borrar, respaldo restaurable y plan de reversión.
-5. Solo después de ese gate, un humano o agente autorizado explícitamente para ESA operación puede ejecutar el proceso, con acceso físico/recovery disponible. No iniciar borrados ni escrituras de firmware sin permiso específico.
-
-## 5. Fase D — ROS 2 Jazzy y software robot
-
-- Instalar únicamente ROS 2 Jazzy arm64 en Ubuntu 24.04 compatible, siguiendo https://docs.ros.org/en/jazzy/Installation/Ubuntu-Install-Debs.html; sin ROS 1 ni bridges.
-- `rosdep` y `colcon` en workspace Jetson separado, versiones Python/ABI de Jazzy y paquetes `rclpy`, `tf2_ros`, cv_bridge; evitar paths `/opt/ros/humble` en new launch/scripts.
-- Reconfigurar CycloneDDS, ROS_DOMAIN_ID compartido si autorizado y red entre hosts; comprobar timestamps, TF/QoS solo cuando hardware autorizado.
-- Recuperar componentes uno por vez con `SAFE_MODE`, sin torque por defecto, sin auto-home; no `ros2 launch` de driver físico sin autorización.
-- Verificar USB/audio/cámara/CAN/U2D2 en modo lectura; después ensayos escalonados, aprobados, con parada disponible.
-
-## 6. Matriz de validación (no llenar con éxito ficticio)
-
-| Subsystem | Criterio de aceptación | Estado actual |
-|---|---|---|
-| Boot | JetPack 7.2.1 y Ubuntu 24.04 arrancan consistentemente | TODO / BLOCKED_APPROVAL si requiere flash |
-| GPU | librerías NVIDIA compatibles con versión documentada | TODO_SSH |
-| ROS 2 | Jazzy funciona con workspace reconstruido | TODO / dependiente de OS |
-| DDS | tópicos de prueba inocuos por Ethernet, discovery/time/QoS | TODO_SSH |
-| Orbbec | imágenes e intrínsecos coherentes | BLOCKED_HARDWARE (periférico no confirmado) |
-| Piper CAN | feedback y seguridad sin movimiento inesperado | BLOCKED_HARDWARE |
-| Dynamixel | feedback, límites y cero verificados | BLOCKED_HARDWARE |
-| Audio | captura, VAD, ASR, TTS bajo latencia objetivo | TODO_SSH si dispositivo alimentado, de lo contrario bloqueado |
-| Integración | HRI/percepción/TF/NAV interface sin regresiones en NUC | TODO_SOFTWARE, navegación sin cambios |
-
-## 7. Rollback, go/no-go y documentación
-
-**GO** solo si: backup verificado; carrier y método soportados; dependencias críticas compatibles o ruta de contención clara; respaldo de calibraciones; NUC estable; confirmación humana para operaciones de borrado; ventanas de ensayo; plan de regreso operativo.
-
-**NO-GO** si: solo una copia del sistema; dudas de soporte de carrier/UEFI; riesgo a baterías/motores; falta fuente/alimentación estable; incompatibilidad crítica desconocida; usuario no aprobó el paso destructivo específico.
-
-Documentar: manifest pre/post, cambios en packages, scripts de aprovisionamiento revisados, versiones, errores y recuperación, resultados con evidencias. No ocultar incompatibilidades.
+Documentos oficiales: https://developer.nvidia.com/embedded/jetpack/downloads ; https://docs.ros.org/en/jazzy/Installation/Ubuntu-Install-Debs.html .

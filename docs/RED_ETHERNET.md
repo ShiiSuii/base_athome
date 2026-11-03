@@ -1,3 +1,11 @@
+# Contexto vigente v3 — lectura antes del documento siguiente
+
+> **Edición integral v3 — 03/11/2026.** Esta documentación es una guía de trabajo, no prueba de ejecución en las máquinas. Los avances operativos se basan en los registros compartidos por el usuario (principalmente `HANDOFF.md`, 29–30/10/2026), deben cotejarse con el checkout y el estado de cada host. Política vigente: la navegación es **estudiable y auditable sin modificarla**; observaciones y propuestas se registran en `docs/collab/PROPUESTAS_NAVEGACION.md`. El estado de tareas en Orca/Git puede ser más reciente que estos documentos.
+
+**Nota de uso:** La conexión reportada funcional usa adaptador USB RTL8153 Jetson `enx00e04c68090c`; no asumir que usa NIC integrada `enP8p1s0`. Verificar hoy sin modificar red.
+
+---
+
 # Red Ethernet NUC ↔ Jetson — arquitectura, diagnóstico y pruebas de integración ROS 2
 
 > Proyecto Base@Home / UruBots, actualización 2026-10-29. **Declarado por el usuario:** Intel NUC y NVIDIA Jetson Orin Nano están ENCENDIDAS, unidas directamente mediante un CABLE ETHERNET físico. Los demás subsistemas del robot están DESENERGIZADOS. Este documento es un protocolo de trabajo, **no una medición de la red real**.

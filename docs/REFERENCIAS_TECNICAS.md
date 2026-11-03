@@ -1,3 +1,11 @@
+# Contexto vigente v3 — lectura antes del documento siguiente
+
+> **Edición integral v3 — 03/11/2026.** Esta documentación es una guía de trabajo, no prueba de ejecución en las máquinas. Los avances operativos se basan en los registros compartidos por el usuario (principalmente `HANDOFF.md`, 29–30/10/2026), deben cotejarse con el checkout y el estado de cada host. Política vigente: la navegación es **estudiable y auditable sin modificarla**; observaciones y propuestas se registran en `docs/collab/PROPUESTAS_NAVEGACION.md`. El estado de tareas en Orca/Git puede ser más reciente que estos documentos.
+
+**Nota de uso:** Se agrega catálogo especializado de hoverboard ROS 2: `docs/BASE_HOVERBOARD_REFERENCIAS.md`. Evitar ejecutar ejemplos ROS 1 aunque se citen por contexto.
+
+---
+
 # Referencias técnicas verificables para agentes — Base@Home
 
 > **Regla:** primero identificar edición, distro y API del repositorio local. Estas referencias sirven para estudiar patrones, no para copiar código ciegamente. No ejecutar ROS 1, no instalar software desde repos externos sin revisión, no utilizar datos de Google, no contratar servicios. Consultar licencias y compatibilidad; registrar fecha de revisión.

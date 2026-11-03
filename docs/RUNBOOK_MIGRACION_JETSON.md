@@ -1,3 +1,11 @@
+# Advertencia v3 — runbook histórico
+
+> **Edición integral v3 — 03/11/2026.** Esta documentación es una guía de trabajo, no prueba de ejecución en las máquinas. Los avances operativos se basan en los registros compartidos por el usuario (principalmente `HANDOFF.md`, 29–30/10/2026), deben cotejarse con el checkout y el estado de cada host. Política vigente: la navegación es **estudiable y auditable sin modificarla**; observaciones y propuestas se registran en `docs/collab/PROPUESTAS_NAVEGACION.md`. El estado de tareas en Orca/Git puede ser más reciente que estos documentos.
+
+> **No ejecutar a ciegas.** El HANDOFF posterior indica que la reconexión Ethernet y el flasheo ya se completaron. Si se necesita un procedimiento nuevo, volver a inventariar y aprobar. Este runbook es evidencia histórica.
+
+---
+
 # Runbook HOME-11: Jetson Orin Nano → JetPack 7.2.1 (Ubuntu 24.04) + ROS 2 Jazzy
 
 Preparado 2026-10-30 por Claude Code. **El paso de instalación borra el disco destino y actualiza el firmware QSPI: requiere a un humano frente a la Jetson y su confirmación explícita del dispositivo destino.** Claude no puede hacerlo por SSH (el instalador corre desde un pendrive, con monitor y teclado).

@@ -97,3 +97,18 @@ Jetson ENCENDIDA y conectada por Ethernet; AgileX Piper apagado; cámara de muñ
 | HOME-15a | run_8db8fe9ab48b | Antigravity | ctx_a61d1dad86ff | 2026-10-30 | INTEGRATED | merge 84b3c7c | parser GPSR offline, 34 tests; métrica de primera acción débil |
 | HOME-15b | — | por asignar | — | 2026-10-30 | READY_OFFLINE | — | corregir pasos perdidos en comandos compuestos; dataset con planes esperados y métrica de plan exacto |
 | HOME-11 | run_8db8fe9ab48b | Claude (+humano recovery) | — | 2026-10-30 | DONE (validación sin actuadores) | — | preparado: ISO r39.2.1 en la NUC, respaldos extra, bootstrap_jazzy.sh, runbook; requiere humano con monitor/teclado y destino (NVMe recomendado) |
+
+
+---
+
+## Actualización del plan v3 — nuevas tareas (03/11/2026, propuestas, no dispatch)
+
+| ID | Prioridad | Tarea | Responsable sugerido | Permiso | Criterio observable |
+|---|---|---|---|---|---|
+| HOME-30 | P0 | Auditoría profunda **solo lectura** de hoverboard→odometría→TF→Nav2 | Claude | lectura/diagnóstico pasivo/simulación | `docs/AUDITORIA_NAVEGACION.md` con evidencias reales y dudas |
+| HOME-31 | P1 | Investigación de bases hoverboard ROS 2; comparar 5–8 diseños y motores/controladores | Antigravity | web pública/docs/código, sin hardware | matriz con links/licencias y fichas ADOPTAR/ADAPTAR/NO |
+| HOME-32 | P1 | Análisis independiente de propuestas de navegación y riesgos (no implementación) | Claude + review Antigravity | propuestas únicamente | entradas en `docs/collab/PROPUESTAS_NAVEGACION.md` |
+| HOME-33 | P1 | Reconciliar datos 30/10 con hosts, ramas y estado Git actuales | Claude | comandos pasivos, sin cambios Nav2 | inventario real con SHA, estado Jetson y backlog |
+| HOME-34 | P1 | Consolidar QA / tests y limpiar deuda técnica no navegacional | ambos, scopes separados | software aislado | tests reproducibles, regresiones y benchmark |
+
+**Importante:** HOME-11, HOME-04, HOME-15a y otros avances anteriores tienen estados contradictorios entre filas históricas: no ejecutarlos de nuevo antes de reconciliar con el último HANDOFF y el estado de Git. Sólo Orca marca asignaciones activas.

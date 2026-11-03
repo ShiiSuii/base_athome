@@ -1,98 +1,64 @@
-# Permisos y bloqueos de los agentes (Claude Code y Antigravity), 30-10-2026
+# Nota de vigencia v3
 
-Pedido del usuario: "detectá qué cosas te están trancando de las instrucciones y dame un archivo
-con todo lo que necesitás (permisos, etc.) para trabajar mejor".
+> **Edición integral v3 — 03/11/2026.** Esta documentación es una guía de trabajo, no prueba de ejecución en las máquinas. Los avances operativos se basan en los registros compartidos por el usuario (principalmente `HANDOFF.md`, 29–30/10/2026), deben cotejarse con el checkout y el estado de cada host. Política vigente: la navegación es **estudiable y auditable sin modificarla**; observaciones y propuestas se registran en `docs/collab/PROPUESTAS_NAVEGACION.md`. El estado de tareas en Orca/Git puede ser más reciente que estos documentos.
 
-Este archivo es para que el humano decida y actualice `AGENTS.md`, `CLAUDE.md` y `HANDOFF.md`.
-**No se cambió ningún permiso ni configuración de seguridad.** Todo lo de abajo son propuestas.
+**Se permite exploración profunda de navegación y hoverboard, pero no modificar ni desplegar navegación.** La autoridad detallada está en `AGENTS.md`; los datos históricos pueden estar obsoletos.
 
 ---
 
-## 1. Bloqueos reales de estas sesiones (con evidencia)
+# Permisos y bloqueos — análisis actualizado y autorización propuesta para Base@Home
 
-| # | Bloqueo | Qué pasó | Qué lo destraba |
+**Actualizado:** 2026-11-03. **Base:** archivo del agente `PERMISOS_Y_BLOQUEOS.md` (2026-10-30) y HANDOFF/Tasks más recientes proporcionados. La presente actualización no demuestra estado actual de procesos: todo hallazgo operativo debe revalidarse. **No se han cambiado permisos del host ni configuraciones de Orca solo por generar este archivo.**
+
+## Matriz B1–B9: decisión y estrategia
+
+| ID | Problema reportado | Nueva autorización | Plan reproducible y freno |
 |---|---|---|---|
-| B1 | **Servicios systemd de usuario y linger** | El clasificador de permisos rechazó instalar `scripts/systemd/realsense-nuc.service` (`systemctl --user enable` + `loginctl enable-linger`). El archivo existe, pero no está instalado | Instalarlo ustedes (ver la sección 4) o autorizarlo por escrito ("instalá el servicio realsense-nuc") |
-| B2 | **Matar procesos del usuario** | Se rechazó `kill -9` de un `joint_state_publisher` viejo de `view_robot`, que pisaba el brazo con ceros en RViz | Cerrar esas ventanas a mano, o autorizar "podés cerrar procesos ROS viejos míos" |
-| B3 | **Las instrucciones dicen "actuadores apagados / no publicar comandos ROS"**, pero el usuario autorizó usar el brazo y el pan-tilt estando al lado ("no tengas miedo de utilizarlo yo estoy al lado") | Cada sesión nueva arranca leyendo la prohibición y pierde tiempo dudando o pidiendo confirmación | Definir **modos explícitos** en `AGENTS.md` (sección 2) |
-| B4 | **"Navegación solo lectura"** frente al editor de mapas | El editor (HOME-22) escribe `semantic_map.yaml` y `waypoints.yaml` en `base_athome_navigation/config`. Por la regla literal, eso es "tocar navegación" | Aclarar que la **capa semántica** (zonas, waypoints, objetos) sí se puede editar. Nav2, AMCL, costmaps, mapas `.pgm`, controladores y launches siguen protegidos |
-| B5 | **Jetson documentada con Humble / 22.04** | Ya está en JetPack 7.2.1, Ubuntu 24.04 y Jazzy (flasheo verificado). `AGENTS.md` (línea 31) y partes de `CLAUDE.md` siguen diciendo Humble | Actualizar el texto (sección 2) |
-| B6 | **Workers de Antigravity en Orca** | Mueren cuando se reinicia la sesión, son lentos, piden login y tienen cuota. Los mensajes de orquestación (*heartbeats*) interrumpen el trabajo. El auto-aprobador quedó en `scripts/orca/agy_autoapprove.py` porque el *scratchpad* se borró | Abrir Antigravity antes de pedir delegación. Aceptar que, si el worker no responde, Claude implemente directamente. Desactivar `--dangerously-skip-permissions` en Orca → Settings → Agents |
-| B7 | **Límite de contexto** | Las sesiones largas se compactan y se pierden detalles (rutas, valores probados) | Mantener `HANDOFF.md` al día al cerrar cada bloque (ya se hace) y tareas cortas por sesión |
-| B8 | **Ultralytics auto-instala paquetes** | Una exportación instaló numpy 2 en `~/ros2_vision_venv` y rompió `cv2` | Mantener `YOLO_OFFLINE=1` y no exportar modelos con ese venv (queda en la memoria del agente) |
-| B9 | **Tareas físicas** | Medir la columna del torso (colisión en MoveIt), definir el waypoint `home`, ubicar objetos en `editor_mapa`, energizar subsistemas | Solo el humano (sección 4) |
+| B1 | `realsense-nuc.service` no habilitado por bloqueo de permisos | **Permiso condicionado Nivel B** instalarlo/activarlo como unidad de usuario | Revisar `ExecStart`, usuario, `ROS_DOMAIN_ID`, propietario de `/dev/video*`, conflicto con launch existente; copiar unit tras backup, `daemon-reload`, start temporal, verificar topic FPS/QoS/log; habilitar persistencia solo si es necesaria y con rollback `disable --now`; no relanzar durante ensayo activo |
+| B2 | `joint_state_publisher` viejo compite con controlador | **Permiso Nivel B** finalizar procesos **propios huérfanos** | Inspeccionar `ps`, PID/PPID, cmdline, UID y tópico; verificar no es Nav2 ni servicio; usar `SIGTERM PID`; observar desaparición de duplicados. Nunca `kill -9` automático, `pkill -f` global ni señales a procesos de otro propietario |
+| B3 | La sesión antigua autorizó usar Piper/pan-tilt, pero reglas prohíben mover | Modos CASA/LAB_SUPERVISADO/COMPETENCIA | CASA por defecto; para LAB autorización de usuario presencial **en esa sesión**, preflight E-stop + feedback + zona, un movimiento concreto, velocidad conservadora y detener ante anomalía. No aprobación heredada |
+| B4 | `editor_mapa` escribe YAML en carpeta llamada navegación | **Excepción semántica Nivel B** | Permitir solo `semantic_map.yaml`/`waypoints.yaml` y código editor semántico, validación YAML, backup y diff, no recargar runtime. `Nav2`, AMCL, SLAM, costmaps, controlador, mapa `.pgm`, parámetros de footprint y bringup siguen protegidos |
+| B5 | Docs Jetson obsoletas | Actualización factual (reportada) | Actualizar inventario a JetPack 7.2.1, L4T R39.2.1, Ubuntu24, Jazzy según HANDOFF 30/10; corroborar con `/etc/os-release`, `nv_tegra_release`/paquetes Jetson y `ros2 doctor`; archivar runbook de migración como histórico y **no volver a flashear** |
+| B6 | Workers Antigravity fallan por cuota, login, contexto y auto-aprobaciones | Claude puede asumir tareas pendientes y orquestar sin pedir permiso por cada worker inocuo | Verificar agente en Orca, un reintento; si falta cuota/no autorizado, registrar `WORKER_UNAVAILABLE` y reasignar. Auditar `scripts/orca/agy_autoapprove.py` y deshabilitar cualquier confirmación indiscriminada. No pagar upgrades ni entrar a cuentas Google |
+| B7 | Compactación y pérdida de contexto | Resumen obligatorio por tarea | Registrar SHA, archivos, resultados/limitaciones, modo, host, servicios, métricas, rollback, decisión. Antes de compactar/cerrar y después de cada tarea; snapshot Git, Orca como fuente viva |
+| B8 | Exportación Ultralytics cambió NumPy y rompió OpenCV | Entornos aislados y lockfile | No exportar con venv productivo; `YOLO_OFFLINE=1` cuando corresponda; generar nuevo venv sandbox, `pip freeze`, probar import `cv2/numpy/torch`, YOLO engine TensorRT, preservar versión conocida. No ejecutar `pip install -U` amplio en producción |
+| B9 | Medición columna, localización objetos, energización | **Solo humano para la medición y energización** | Claude prepara fichas y UI para cargar medidas y tests; no inventar altura/obstáculos. Humano mide columna y valida waypoints `home` y objetos; luego implementar, simular, planificar sesión LAB |
 
-## 2. Cambios propuestos a `AGENTS.md` / `CLAUDE.md`
+## Riesgos nuevos/relevantes tras el HANDOFF
 
-1. **Agregar una tabla de modos y declarar cuál rige al comenzar cada sesión:**
+- **Token GitHub en `origin`:** comprobar si la exposición se solucionó **sin mostrar el token**. Si todavía existe, indicar al humano que lo revoque/rote y sanee URL; bloquear push hasta confirmarlo. No poner token en prompts, logs, handoffs, ZIP, issues, commits ni tests.
+- **Privilegios temporales tras flash:** examinar existencia de `/etc/sudoers.d/99-jetson-flash-temp` (NUC) y `90-ubuntu-nopasswd` (Jetson) sin publicar secretos; proponer retirar o acotar mínimo privilegio. No dejar contraseña `sudo` ilimitada para un agente autónomo.
+- **El agente autoaprobador:** confirmar si existe/está activo; si acepta prompts por regex amplia o ciega, deshabilitar y reemplazar por autorizaciones por nivel, ver `ESTRATEGIA_EJECUCION.md`.
+- **Documentación vieja:** `LEEME_INSTALACION.md`, `MIGRACION_JETSON.md`, `RUNBOOK_MIGRACION_JETSON.md`, `RED_ETHERNET.md` y `PROMPTS_AGENTES.md` contienen la ruta de migración **anterior a la ejecución**. Actualizar el README hacia estado actual y archivarlos como historial, no volver a ejecutar pasos destructivos.
+- **Tests/servicios nuevos:** confirmar que `jetson-head` sigue usando `auto_enable=False`, sin estados de articulaciones fingidos y que simulación usa el dominio aislado y no interfiere con componentes USB/CAN.
 
-   | Modo | Hardware | Agentes pueden |
-   |---|---|---|
-   | `CASA` | Solo NUC + Jetson | Simulación (`ROS_DOMAIN_ID=42`, `ATHOME_SIM=1`), SSH y software de la Jetson, tests, docs. **Nada de comandos a actuadores** |
-   | `LAB_SUPERVISADO` | Actuadores energizados **con un humano al lado** | Lo anterior + mover el brazo, el pan-tilt y la cámara a velocidad ≤ 30 %, probar apps reales. **No mover la base ni el elevador** sin un pedido explícito |
-   | `COMPETENCIA` | Todo | Solo lo que el humano lance |
+## Política concreta de permisos
 
-   Hoy (30-10) rige **`CASA`**.
+**A — Automático:** lectura técnica, `pytest`, `colcon` aislado, xacro, lint, local Git, documentación, auditoría, simulación con `ATHOME_SIM=1`/dominio 42, commit a rama propia.
 
-2. Reemplazar "Jetson documentada con Ubuntu 22.04 + ROS 2 Humble" por "**Jetson: JetPack 7.2.1
-   (L4T R39.2.1), Ubuntu 24.04, ROS 2 Jazzy**. Servicio `jetson-head`".
-3. **Navegación:** "La capa semántica (`semantic_map.yaml`: zonas, waypoints, objetos) se edita con
-   `editor_mapa` y está permitida. Nav2, AMCL, costmaps, mapas, odometría, controladores y launches
-   de navegación siguen siendo solo lectura".
-4. **Simulación:** "Toda prueba sin robot usa `base_athome_sim` en `ROS_DOMAIN_ID=42` (alias
-   `sim_env`). Está prohibido publicar en el dominio 10 desde una terminal de simulación". Ver
-   `docs/SIMULACION.md`.
-5. **Antigravity:** "Si el worker no confirma recepción en 10 min, el coordinador puede implementar
-   la tarea él mismo y lo deja registrado". Esto evita esperas indefinidas.
-6. **Receptionist:** agregar que en el rulebook 2026.2 se revisa contra el *HRI Challenge*, y que la
-   entrada táctil se usa como respaldo (`docs/HRI_MICROFONO_REVISION.md`).
+**B — Automático después de preflight verificable:** detener procesos huérfanos propios (`SIGTERM`), servicio RealSense de usuario sin actuadores, ediciones semánticas, instalaciones de dependencias en venv específico, despliegues reversibles de nodos no actuadores, tareas/workers Orca con roles de software. Push de rama de trabajo/PR solo tras revocación de token, análisis de diff y pruebas; respetar los prompts de autorización del CLI.
 
-## 3. Permisos de Claude Code que acelerarían el trabajo (propuesta, no aplicada)
+**C — Una aprobación humana específica por operación/sesión:** movimiento Piper/pan-tilt, torque, CAN, base, elevador, `sudoers`, flash/firmware, modificaciones de red crítica y servicios de navegación, merge `main`, datos de personas y cambios que afecten seguridad.
 
-`~/.claude/settings.json` hoy está vacío (`{}`), así que cada comando nuevo puede pedir
-confirmación o ser evaluado por el clasificador. Propuesta para
-`.claude/settings.json` del proyecto. Revísenla antes de copiarla:
+**D — No:** ROS 1, Google personal, pagos, secretos, desactivación safety, Nav2 core, operaciones destructivas ciegas, bypass permisos/Yolo en máquinas con hardware.
 
-```json
-{
-  "permissions": {
-    "allow": [
-      "Bash(colcon build:*)", "Bash(colcon test:*)", "Bash(python3 -m pytest:*)",
-      "Bash(ros2 topic list:*)", "Bash(ros2 topic echo:*)", "Bash(ros2 topic hz:*)",
-      "Bash(ros2 node list:*)", "Bash(ros2 launch base_athome_sim:*)",
-      "Bash(ssh ubuntu@10.42.0.12:*)", "Bash(scp:*)",
-      "Bash(systemctl --user status:*)", "Bash(journalctl:*)",
-      "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git add:*)", "Bash(git commit:*)"
-    ],
-    "deny": [
-      "Bash(git push:*)", "Bash(git push --force:*)", "Bash(git checkout main:*)",
-      "Bash(roscore:*)", "Bash(rosrun:*)", "Bash(catkin_make:*)",
-      "Bash(sudo dd:*)", "Bash(sudo mkfs:*)"
-    ]
-  }
-}
-```
+## Configuración efectiva
 
-**Reglas de esta propuesta:**
-- `git push` sigue **denegado**: la autorización de push es siempre humana.
-- Para actuadores no se propone ningún permiso automático. En modo `LAB_SUPERVISADO` se autoriza
-  en el chat, por sesión.
+El archivo propuesto `.claude/settings.json` contiene reglas **limitadas**, y `defaultMode=default`/restricción de bypass. Algunas órdenes siguen pidiendo confirmación porque afectan un host o un servicio compartido: eso es deliberado. `ask`/`deny` prevalecen sobre `allow`; reglas Bash basadas en texto no son un control de seguridad completo ante wrappers/comandos equivalentes. Para pruebas fuertes usar usuario Linux con permisos mínimos, y no iniciar Orca en modo Yolo con acceso al hardware.
 
-## 4. Acciones del humano (checklist)
+**Verificación desde Claude:** ejecutar `/permissions` y confirmar qué archivos de settings están activos. **Verificación Orca:** `Settings → Agents → Agent Permissions` y los argumentos concretos de cada agente; una sesión vieja puede conservar el modo al reiniciar. Fuentes oficiales:
+- https://code.claude.com/docs/en/permissions
+- https://code.claude.com/docs/en/settings
+- https://www.onorca.dev/docs/settings
+- https://www.onorca.dev/docs/agents/supported
 
-- [ ] **Revocar el token de GitHub** que está dentro de la URL del remoto `origin` en la NUC
-  (`ghp_…`). Después usar `gh auth login` o un *credential helper*. Ningún agente copió ni publicó
-  el token.
-- [ ] **Borrar el sudo temporal** con `sudo rm /etc/sudoers.d/99-jetson-flash-temp`. Era para el
-  flasheo, que ya terminó. Si quieren que el agente instale paquetes, mejor una regla acotada, por
-  ejemplo solo `apt-get install` y `systemctl restart jetson-head`.
-- [ ] En la Jetson, decidir si se mantiene `/etc/sudoers.d/90-ubuntu-nopasswd` (NOPASSWD total) o
-  se acota.
-- [ ] Instalar el servicio de la RealSense, si lo quieren (B1):
-  `mkdir -p ~/.config/systemd/user && cp ~/base_athome_ws/scripts/systemd/realsense-nuc.service ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user enable --now realsense-nuc && sudo loginctl enable-linger athome`
-- [ ] Medir la columna del torso (alto, ancho y profundidad, y su posición respecto de
-  `base_link`) para corregir la colisión en MoveIt.
-- [ ] En `editor_mapa`: crear el waypoint `home` y ubicar los objetos numerados (por ejemplo, la
-  Pringles = 1).
-- [ ] Orca → Settings → Agents: desactivar los permisos irrestrictos.
-- [ ] Copiar a `AGENTS.md` / `CLAUDE.md` lo que aprueben de la sección 2.
+## Requisitos de evidencia por tipo de autorización
+
+| Operación | Qué adjuntar en HANDOFF | Señal de abortar |
+|---|---|---|
+| venv/deps | freeze antes/después, tests import, rollback | cambios en venv productivo inesperados |
+| systemd de usuario | unit file hash, `status`, logs saneados, `disable --now` | doble owner de cámara, reinicios en bucle |
+| SIGTERM | PID/PPID/UID/argv, por qué es huérfano, efecto, reversión | propietario incierto o proceso crítico |
+| capa semántica | YAML backup/diff, validador, coordenadas de fuente y revisión | difiere mapa SLAM, cambia footprint o Nav2 |
+| GitHub branch | sha, test, secret scan, remote saneado, nombre rama/PR | token en URL, push a main, CI con deploy |
+| hardware LAB | humano, modo, E-stop, feedback, pose, límites, log, stop | feedback stale, obstáculo, torque inesperado |

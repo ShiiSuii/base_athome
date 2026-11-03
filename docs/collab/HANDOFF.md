@@ -150,3 +150,20 @@
   - las apps en el robot real.
 - **Siguiente paso:** con el robot, ejecutar `escuchar --n 10` con 2–3 personas a 1 y 2 m. Agregar las variantes de nombres que aparezcan en `NAME_ALIASES`.
 - **Documentación:** `docs/MICROFONO_ASR.md`.
+---
+
+## Nota de integración v3 (03/11/2026, NO es un nuevo handoff ejecutado)
+
+El usuario autorizó investigación profunda de bases hoverboard y auditoría de navegación solo lectura. Los agentes pueden recomendar cambios sin realizarlos. Al instalar este paquete **no sobrescribir registros más nuevos existentes**: merge manual y conservar todos los handoffs. El próximo agente debe añadir un handoff real con estado del día, tests y comandos.
+
+### HANDOFF 2026-11-03 — Claude Code — instalación instrucciones v3 (modo CASA, solo docs)
+
+- **Rama:** `claude/docs-v3-instructions` (desde `a8550a3`). Sin push. Sin cambios de código ROS ni de navegación.
+- **Paquete:** `BaseAtHome_Orca_Claude_Antigravity_COMPLETO_v3.zip`; SHA256 de los 31 archivos verificados contra `MANIFEST_SHA256.txt` (OK); el ZIP es idéntico a la carpeta extraída.
+- **Respaldo previo:** `~/baseathome_docs_backup_20261103/` (tar de `AGENTS.md`, `CLAUDE.md`, `README.md`, `docs/` + copia de `INSTRUCCIONESIA/`).
+- **Fusionados (no reemplazados):** `HANDOFF.md` y `TASKS.md` = versión del repo (incluye el handoff de micrófono del 03/11, ausente en v3) + secciones nuevas v3 (HOME-30..34).
+- **Archivados con su contenido íntegro en `docs/archive/`:** roadmap con marcas de avance del 30/10 (no la copia sin avances del ZIP), plan inicial de migración Jetson, `PERMISOS_Y_BLOQUEOS` del 30/10.
+- **Movidos:** `docs/collab/RUNBOOK_*.md` → `docs/` (ahora con aviso de histórico). Rutas actualizadas en `docs/jetson-inventory.md` y en un comentario de `jetson_head/scripts/bootstrap_jazzy.sh`. Las menciones en handoffs anteriores conservan la ruta vieja como registro histórico.
+- **Antigravity:** lee el mismo `AGENTS.md`; sus worktrees (`home-04`, `06a`, `15a`, `20`, `21`, `22`) quedan en v2 hasta que integren esta rama. No se tocaron.
+- **No verificado:** el estado de los hosts que describe v3 (Jetson Jazzy, Ethernet, token, sudo, autoaprobador) sigue como `REPORTED_2026-10-30` → tarea HOME-33/HOME-SEC.
+- **Rollback:** `git switch claude/home-00-audit && git branch -D claude/docs-v3-instructions` (o restaurar el tar del respaldo).

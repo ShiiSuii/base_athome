@@ -1,3 +1,11 @@
+# Contexto vigente v3 — lectura antes del documento siguiente
+
+> **Edición integral v3 — 03/11/2026.** Esta documentación es una guía de trabajo, no prueba de ejecución en las máquinas. Los avances operativos se basan en los registros compartidos por el usuario (principalmente `HANDOFF.md`, 29–30/10/2026), deben cotejarse con el checkout y el estado de cada host. Política vigente: la navegación es **estudiable y auditable sin modificarla**; observaciones y propuestas se registran en `docs/collab/PROPUESTAS_NAVEGACION.md`. El estado de tareas en Orca/Git puede ser más reciente que estos documentos.
+
+**Nota de uso:** El editor URDF fue reportado como implementado (45 tests) el 30/10; usar esta especificación como checklist de mejoras, no pedir reimplementación sin inspección.
+
+---
+
 # Especificación funcional — Editor paramétrico URDF para Base@Home
 
 **Objetivo:** crear una aplicación web **local**, simple y segura, que permita inspeccionar el robot Base@Home en 3D y modificar sus parámetros geométricos mientras se perfecciona la estructura física. Es una tarea de desarrollo para Claude Code y Antigravity; no asumir que la aplicación ya existe.
