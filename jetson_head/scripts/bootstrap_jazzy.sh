@@ -12,7 +12,7 @@
 #   ~/jetson_backups/2026-10-30_pre_migration_extra/jetson_project_current.tgz
 #
 # Seguridad: NO habilita jetson-head.service ni levanta CAN con actuadores; eso
-# queda para el humano (ver docs/RUNBOOK_MIGRACION_JETSON.md). No ROS 1.
+# queda para el humano (ver docs/ROBOT.md §11). No ROS 1.
 set -euo pipefail
 
 APPLY=0; [ "${1:-}" = "--apply" ] && APPLY=1

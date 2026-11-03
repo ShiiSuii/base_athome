@@ -11,7 +11,8 @@ Este documento explica:
 - cómo probarlo;
 - qué hacer cuando falla.
 
-Antecedentes: `docs/HRI_MICROFONO_REVISION.md`.
+Manual especializado de operación (se conserva aparte de `docs/ROBOT.md` porque se usa para probar,
+diagnosticar y revertir la cadena de voz). Interfaces y arquitectura general: `docs/ROBOT.md`.
 
 ## 1. Qué fallaba (con evidencia)
 
@@ -185,3 +186,40 @@ voz                     # /voice/result: cada escucha con su id, estado y tiempo
 - Ruido de competencia (público, música). Para eso: grabaciones en `--wav-dir`.
 - El receptionist y las misiones en el robot real con estos cambios (solo en simulación).
 - La ganancia automática con saturación real.
+
+## 8. Historial de correcciones del receptionist (30-10-2026)
+
+Síntomas reportados entonces: "I could not hear you" sin haber escuchado, micrófono "muerto" con el
+2.º invitado, respuestas de 5–10 s, tracking agresivo.
+
+| Bug | Causa | Corrección | Commit |
+|---|---|---|---|
+| "I could not hear you" antes de escuchar | el tiempo de escucha se medía antes de los `say()` bloqueantes | las transiciones usan el tiempo posterior al habla | `35aee85` |
+| Latencia 5–10 s y textos viejos | Whisper transcribía continuamente el ruido | escucha por pedido, Silero VAD, `temperature=0`, una transcripción a la vez (ventana de ruido 3,07 s → 0,04 s) | `398f876` |
+| Nombres transcritos sin que nadie hable | eco del `initial_prompt` con audio vacío | filtro `prompt_echo` | `398f876` |
+| Micrófono "muerto" en el 2.º invitado | el índice ALSA del RØDE cambia y la ganancia quedaba baja; el *mute* cortaba la ventana | ganancia por nombre de tarjeta reafirmada cada 30 s; failsafe de *mute* (25 s) | `398f876`, `1dbd6d7` |
+| Diálogo confuso | pedía datos antes de presentarse | orden: quién es el robot → frase a decir → beep → escucha | `1dbd6d7` |
+| Tracking agresivo | seguía cada detección | desactivado por defecto; `--track-faces` modo suave | `35aee85` |
+| Cierre repetido cada ~10 s | estado final sin salida | `STATE_DONE` | `01ecbf7` |
+| Invitado guardado con vector aleatorio | rostros < 50 px descartados | pide acercarse; usa muestras de baja calidad; si no hay, ERROR | `01ecbf7` |
+| Invitado presentado como "Charlie" | anfitrión = "persona sin nombre" | anfitrión elegido entre personas sentadas | `01ecbf7` |
+
+## 9. Pantalla del invitado (modalidad sin audio)
+
+- `base_athome_perception/guest_input_server.py` en `http://127.0.0.1:8090` (alias `pantalla_invitado`)
+  o desde un celular en `http://<IP NUC>:8090`.
+- Muestra la pregunta actual, botones con los **10 nombres y 12 bebidas oficiales**
+  (`tools/gpsr_parser/data`), campo "Other" y YES/NO. Publica `/hri/guest_input` como
+  `{"type": "name|drink|answer", "value": "..."}`; `VoiceClient.inject()` responde el pedido abierto.
+- En `WAIT_NAME_DRINK` lo tocado tiene prioridad sobre la voz y pasa por el mismo *matching*.
+- Reglamento: la interfaz alternativa penaliza hasta −20 % → usarla como **respaldo** tras 2 fallos de ASR.
+
+## 10. Qué hacen otros equipos (fuentes públicas)
+
+- **fbot@Home** (`fbotathome/fbot_hri`): STT como servicio por pedido con `prompt`; `distil-small.en`
+  en CPU; Silero + WebRTC; fin por 1,2 s de silencio; `initial_prompt` con la lista oficial de nombres.
+- **RoBorregos FRIDA** (`RoBorregos/home2`, `hri/packages/speech`): captura → DeepFilterNet →
+  detección de voz (1,5 s de silencio, descarte del eco del TTS) → openWakeWord → sonido de "escuchando".
+- **Práctica común:** comparar contra el vocabulario oficial, confirmar con sí/no, pantalla de respaldo.
+- **Pendiente para nosotros:** reducción de ruido (DeepFilterNet o *noisereduce*) solo si la CPU de la
+  Jetson alcanza, medido con ruido real de competencia.

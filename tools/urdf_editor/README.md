@@ -7,7 +7,7 @@ Herramienta **local** para inspeccionar en 3D el robot Base@Home y probar en
 
 **Esta herramienta NO modifica el repositorio, NO publica `/robot_description`,
 NO usa nodos ROS, NO toca TF/Nav2/MoveIt ni hardware.** Solo escucha en
-`127.0.0.1`. Spec completa: `docs/URDF_EDITOR_SPEC.md`.
+`127.0.0.1`. Pendientes de la especificación original: sección "Fase siguiente" (abajo).
 
 ## Instalacion (venv local, sin sudo)
 
@@ -99,6 +99,30 @@ curl -s -X POST http://127.0.0.1:8765/api/model/preview \
   `.xacro` candidato sobre `properties.xacro` en una rama, regenerar con
   `build_urdf.sh`, revisar diff y PR). El editor no lo hace.
 - Probado en la NUC (Ubuntu 24.04, Python 3.12, Jazzy). No probado en otros SO.
+
+## Fase siguiente (pendiente; tarea HOME-05 en `docs/ROADMAP.md`)
+
+Resumen de la especificación original (`git show ac9b069:docs/URDF_EDITOR_SPEC.md`):
+
+- **UI:** grupos Base / Columna-Elevador / Busto / Cabeza-Cámaras / Brazo / Calibraciones protegidas;
+  unidades visibles (guardar siempre SI); botones Deshacer, Restaurar, Guardar candidato; barra
+  "Datos solo simulados / No conectado a motores".
+- **Vista:** colores distintos para `visual` y `collision` con activación independiente; selección por
+  clic; árbol de links/joints; vista de TF; sliders de pose de torso, pan-tilt y Piper **solo en el
+  modelo** (nunca comandos ROS/CAN/serial).
+- **Editables con aviso (solo candidatos):** montaje de cabeza, RealSense, cámara de muñeca y anclaje
+  del Piper (`cube_to_arm_joint`): afectan TF y calibración; verificar `optical_frame` y hand-eye.
+- **Nunca en la UI:** `track_width`, `wheel_radius`, extrínsecos del LiDAR, límites de brazo/elevador/
+  pan-tilt, footprint o parámetros de Nav2. Sin botones "Aplicar a Nav2" ni "Mover robot".
+- **Validaciones extra:** nombres de link/joint únicos, árbol conexo sin ciclos, ejes y límites de
+  joints no editados intactos, convenciones REP-103, avisos de colisiones iniciales y de
+  masa/inercia pendientes de medir.
+- **Presets** versionados, comparación de perfiles, chequeo básico de intersecciones, botón para
+  generar diff/PR del perfil (sin push).
+- **Tests adversos:** NaN/negativos, caracteres raros, falta de xacro o de paquetes ROS, meshes
+  ausentes, request malicioso, dos agentes editando a la vez; prueba visual con captura.
+- Referencias: [urdf-loaders](https://github.com/gkjohnson/urdf-loaders),
+  [urdf-editor](https://github.com/gkjohnson/urdf-editor), [agx_arm_urdf](https://github.com/agilexrobotics/agx_arm_urdf).
 
 ## Licencias de terceros
 

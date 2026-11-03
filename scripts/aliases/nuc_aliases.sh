@@ -99,7 +99,7 @@ alias mision_sim='mision --sim'
 mision_pedir() { _ros && ros2 topic pub --once /mission/command std_msgs/msg/String "{data: '$*'}"; }  # mision_pedir do the mission
 alias mision_estado='_ros && ros2 topic echo /mission/status'
 
-# --- Simulacion (paquete base_athome_sim; ver docs/SIMULACION.md) ---
+# --- Simulacion (paquete base_athome_sim; ver docs/ROBOT.md §9 y README.md) ---
 # sim_env cambia ESTA terminal al dominio 42 + ATHOME_SIM=1: ahi receptionist / manipulacion / mision
 # corren sin cambios contra el robot simulado y nunca tocan el robot real (dominio 10).
 sim_env() { _ros; export ROS_DOMAIN_ID=42 ATHOME_SIM=1; echo "Terminal en SIMULACION (ROS_DOMAIN_ID=42). Volver: sim_salir"; }

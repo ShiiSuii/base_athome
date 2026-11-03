@@ -43,7 +43,7 @@ fi
 RODE_CARD=$(awk '/RØDE|RODE|VideoMic/ {print $1; exit}' /proc/asound/cards)
 [ -n "$RODE_CARD" ] && amixer -c "$RODE_CARD" sset 'Mic' 100% cap >/dev/null 2>&1 || true
 
-# Asignacion de computo (docs/ASIGNACION_COMPUTO.md): la Jetson corre lo que esta
+# Asignacion de computo (docs/ROBOT.md §1): la Jetson corre lo que esta
 # conectado a ella (Piper CAN, pan-tilt U2D2, DaBai, RØDE) y la inferencia con GPU.
 # La RealSense D435 esta en la NUC (enable_camera:=false aca).
 # Overrides por entorno (p.ej. en un drop-in de systemd):
