@@ -90,6 +90,7 @@ class MoveItBridge:
         self.cli_get_scene = node.create_client(GetPlanningScene, "/get_planning_scene")
         self.cli_apply_scene = node.create_client(ApplyPlanningScene, "/apply_planning_scene")
         self.allowed_pairs = set()  # pares liberados por solaparse ya en el estado medido
+        self.last_failure = ""
 
     def _to_model(self, pose: Pose) -> Pose:
         """Pose en base_link -> marco del modelo (base_footprint)."""
@@ -217,8 +218,32 @@ class MoveItBridge:
         req.max_acceleration_scaling_factor = vel_scale
         res = self._call(self.cli_cart, req, timeout_s=8.0)
         if res.error_code.val != 1 or res.fraction < min_fraction:
+            self.last_failure = f"camino cartesiano {res.fraction * 100:.0f} % (< {min_fraction * 100:.0f} %)"
+            try:
+                self.last_failure += self._explain_cartesian(req)
+            except Exception as e:  # noqa: BLE001 - el diagnostico no debe romper la planificacion
+                self.last_failure += f" (sin diagnostico: {e})"
+            self.node.get_logger().warn(f"MoveIt: {self.last_failure}")
             return None
         return trajectory_points(res.solution)
+
+    def _explain_cartesian(self, req) -> str:
+        """Repite el camino SIN evitar colisiones y reporta los cuerpos en contacto en el primer punto invalido."""
+        req.avoid_collisions = False
+        res = self._call(self.cli_cart, req, timeout_s=8.0)
+        if res.error_code.val != 1 or not res.solution.joint_trajectory.points:
+            return "; tampoco hay camino sin colisiones (limite cinematico/alcance)"
+        jt = res.solution.joint_trajectory
+        for k, pt in enumerate(jt.points):
+            v = GetStateValidity.Request()
+            v.robot_state = _robot_state([pt.positions[jt.joint_names.index(j)] for j in ARM_JOINTS],
+                                         self.torso_provider())
+            v.group_name = GROUP
+            r = self._call(self.cli_valid, v)
+            if not r.valid:
+                pairs = sorted({tuple(sorted((c.contact_body_1, c.contact_body_2))) for c in r.contacts})
+                return f"; choque en el punto {k}/{len(jt.points)}: {pairs}"
+        return f"; sin colisiones llega al {res.fraction * 100:.0f} % (limite cinematico/alcance)"
 
 
 def pose_from(position: Sequence[float], quat_xyzw: Sequence[float]) -> Pose:

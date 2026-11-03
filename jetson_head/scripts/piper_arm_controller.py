@@ -177,6 +177,7 @@ class PiperArmController(Node):
         # Generador de Trayectoria Activa
         self.lock = threading.Lock()
         self.active_trajectory = None
+        self.gripper_ramp = None  # pinza en paralelo: {'t0','dur','g0','g1'}; NUNCA toca la trayectoria del brazo
         self.autonomous_sequence = None
         self.tick_counter = 0
 
@@ -380,7 +381,14 @@ class PiperArmController(Node):
                         span = max(1e-3, times[k + 1] - times[k])
                         a = min(1.0, max(0.0, (el - times[k]) / span))
                         self.target_joints_deg = [pts[k][j] + a * (pts[k + 1][j] - pts[k][j]) for j in range(6)]
-                is_moving = self.active_trajectory is not None or self.timed_traj is not None
+                if self.gripper_ramp is not None:
+                    gr = self.gripper_ramp
+                    a = min(1.0, (t_start - gr['t0']) / max(0.1, gr['dur']))
+                    self.target_gripper_mm = gr['g0'] + (1.0 - math.cos(math.pi * a)) / 2.0 * (gr['g1'] - gr['g0'])
+                    if a >= 1.0:
+                        self.gripper_ramp = None
+                is_moving = (self.active_trajectory is not None or self.timed_traj is not None
+                             or self.gripper_ramp is not None)
                 if self.active_trajectory is not None:
                     traj = self.active_trajectory
                     elapsed = t_start - traj['start_time']
@@ -548,7 +556,9 @@ class PiperArmController(Node):
         """Inicia una trayectoria suave interpolada hacia target_deg."""
         with self.lock:
             g_target = self.target_gripper_mm if target_gripper is None else target_gripper
-            self.timed_traj = None
+            self._drop_timed_locked("reemplazada por un joint_cmd")
+            if target_gripper is not None:
+                self.gripper_ramp = None  # la pinza la lleva este movimiento
             self.active_trajectory = {
                 'start_deg': list(self.target_joints_deg if self.is_enabled else self.current_joints_deg),
                 'target_deg': list(target_deg),
@@ -559,20 +569,16 @@ class PiperArmController(Node):
             }
 
     def plan_gripper(self, target_gripper_mm: float, duration: float = 1.2):
-        """Mueve la pinza suavemente sin sobrescribir ni cancelar trayectorias articulares en curso."""
+        """Mueve la pinza suavemente EN PARALELO: no cancela ni reemplaza la trayectoria del brazo
+        (antes la borraba y follow_joint_trajectory terminaba con 'trayectoria perdida')."""
         with self.lock:
+            g1 = float(min(GRIPPER_MAX_MM, max(GRIPPER_MIN_MM, target_gripper_mm)))
             if self.active_trajectory is not None:
-                self.active_trajectory['target_gripper'] = float(target_gripper_mm)
+                self.active_trajectory['target_gripper'] = g1
                 return
-            self.timed_traj = None
-            self.active_trajectory = {
-                'start_deg': list(self.target_joints_deg if self.is_enabled else self.current_joints_deg),
-                'target_deg': list(self.target_joints_deg),
-                'start_gripper': float(self.current_gripper_mm),
-                'target_gripper': float(target_gripper_mm),
-                'start_time': time.time(),
-                'duration': float(duration)
-            }
+            self.gripper_ramp = {'t0': time.time(), 'dur': float(duration),
+                                 'g0': float(self.target_gripper_mm if self.is_enabled else self.current_gripper_mm),
+                                 'g1': g1}
 
     def _motion_refusal(self) -> Optional[str]:
         """Motivo para no aceptar un movimiento nuevo (None = aceptable)."""
@@ -588,6 +594,7 @@ class PiperArmController(Node):
             self._traj_aborted[self.timed_traj['id']] = why
         self.timed_traj = None
         self.active_trajectory = None
+        self.gripper_ramp = None
         self.autonomous_sequence = None
         self.target_joints_deg = list(self.current_joints_deg)
         self.get_logger().error(f"Movimiento ABORTADO: {why}. Se sostiene la ultima posicion medida.")
@@ -674,7 +681,7 @@ class PiperArmController(Node):
         if seq is None or seq['status'] != 'RUNNING':
             return
 
-        if self.active_trajectory is not None:
+        if self.active_trajectory is not None or self.gripper_ramp is not None:
             return
 
         step = seq['step']

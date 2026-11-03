@@ -121,6 +121,10 @@ class SimColorDetector:
     def detect(self, frame) -> List[Tuple[Box, float, str]]:
         import cv2
         import numpy as np
+        # Prueba de robustez: ATHOME_SIM_DETECTION_DROPOUT=0.8 pierde el 80 % de los cuadros (deteccion que parpadea)
+        drop = float(os.environ.get("ATHOME_SIM_DETECTION_DROPOUT", "0") or 0)
+        if drop > 0 and np.random.random() < drop:
+            return []
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         mask = cv2.inRange(hsv, np.array([140, 120, 80]), np.array([165, 255, 255]))
         n, _, stats, _ = cv2.connectedComponentsWithStats(mask)

@@ -72,7 +72,7 @@ class SimRobot(Node):
         p = self.declare_parameter
         p("map_yaml", os.path.expanduser("~/mapa_base_athome.yaml"))
         p("start_pose", [0.0, 0.0, 0.0])          # x, y, yaw (si hay waypoint 'home' se usa ese)
-        p("object_xyz", [0.42, -0.12, 0.92])      # objeto en base_footprint: ~12 cm frente a las yemas en la PRE-GRASP actual (alcanzable)
+        p("object_xyz", [0.39, -0.11, 0.92])      # base_footprint: ~12 cm de avance desde la PRE-GRASP actual (el limite de IK esta en ~14-15 cm)
         p("object_diameter_m", 0.075)              # = object_diameter_m de la calibracion de muneca; la pinza se detiene aqui
         p("guest_distance_m", 1.2)
         p("faces", [""])                           # imagenes de rostros (vacio = publicas del sistema)

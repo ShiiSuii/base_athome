@@ -112,11 +112,15 @@ class Manipulacion(Node):
         # Velocidad de los movimientos (% de la maxima de MoveIt / joint_limits). Slider Velocidad_%.
         self.speed_pct = float(np.clip(env.get("arm_speed_pct", 30), 5, 100))
         self.align_before_grasp = bool(env.get("align_before_grasp", False))  # desactivado: [G] como antes
+        self.object_hold_s = float(env.get("object_hold_s", 8.0))
         models = os.path.expanduser("~/base_athome_ws/src/base_athome_perception/models")
         self.detector = make_detector(models)
         self.tracker = TargetTracker()
         self.det_label = ""
-        self.obj_base = None  # centro del objeto en base_link (para RViz y agarre)
+        self.obj_base = None  # centro del objeto en base_link, deteccion EN VIVO (None si se perdio)
+        # Objetivo FIJADO: ultima posicion del objeto en base_link; se conserva object_hold_s aunque la
+        # deteccion parpadee. Es lo que se dibuja en RViz y adonde va el agarre (un solo calculo).
+        self.target = None    # dict(obj, z, box, label, t, q_deg)
         # Tambien en /arm_camera/object_markers: ese topico ya esta en las configuraciones de RViz
         self.pub_markers = self.create_publisher(MarkerArray, "/manipulacion/objeto", 5)
         self.pub_markers_compat = self.create_publisher(MarkerArray, "/arm_camera/object_markers", 5)
@@ -247,12 +251,12 @@ class Manipulacion(Node):
             return
         self.status = "Iniciando MoveIt..."
         env = dict(os.environ)
-        log = open("/tmp/move_group_manipulacion.log", "w")
+        log = open(f"/tmp/move_group_manipulacion_dom{os.environ.get('ROS_DOMAIN_ID', '0')}.log", "w")  # sim y real separados
         self.move_group_proc = subprocess.Popen(
             ["ros2", "launch", "base_athome_moveit_config", "move_group.launch.py"],
             stdout=log, stderr=subprocess.STDOUT, env=env, start_new_session=True)
         ok = self.moveit.cli_ik.wait_for_service(timeout_sec=40.0)
-        self.status = "MoveIt listo." if ok else "MoveIt no arranco (ver /tmp/move_group_manipulacion.log)."
+        self.status = "MoveIt listo." if ok else f"MoveIt no arranco (ver /tmp/move_group_manipulacion_dom{os.environ.get('ROS_DOMAIN_ID', '0')}.log)."
 
     def stop_move_group(self):
         if self.move_group_proc is not None and self.move_group_proc.poll() is None:
@@ -359,13 +363,13 @@ class Manipulacion(Node):
         t_end = time.time() + timeout_s
         want = (label or "").lower().strip()
         while time.time() < t_end and not self.abort:
-            det, lab, obj = self.detection, (self.tracker.label or ""), self.obj_base
-            if det is not None and (not want or want in lab.lower() or lab.lower() in want):
-                box, z = det
-                data = dict(label=lab, box=[round(float(v), 1) for v in box], distance_m=round(float(z), 3))
-                if obj is not None:
-                    data["base_link_xyz"] = [round(float(v), 3) for v in obj]
-                return True, f"veo '{lab}' a {z * 100:.0f} cm", data
+            tg = self.held_target()
+            lab = (tg or {}).get("label", "")
+            if tg is not None and (not want or want in lab.lower() or lab.lower() in want):
+                held = self.detection is None
+                data = dict(label=lab, box=[round(float(v), 1) for v in tg["box"]], distance_m=round(float(tg["z"]), 3),
+                            base_link_xyz=[round(float(v), 3) for v in tg["obj"]], held=held)
+                return True, f"veo '{lab}' a {tg['z'] * 100:.0f} cm" + (" (retenido)" if held else ""), data
             time.sleep(0.05)
         return False, f"no veo {'un ' + want if want else 'ningun objeto'}", {}
 
@@ -425,9 +429,13 @@ class Manipulacion(Node):
             else:
                 box, width = tr
                 z = wg.size_distance(width, self.calib)
+                with self.lock:
+                    q_det = list(self.joints_deg)
+                obj = self._object_point(box, z, q_det)
                 self.detection = (box, z)
                 self.det_label = f"{self.tracker.label} {self.tracker.conf:.2f} ({self.detector.source})"
-                self.obj_base = self._object_in_base(box, z)
+                self.obj_base = obj
+                self.target = dict(obj=obj, z=z, box=box, label=self.tracker.label or "", t=time.time(), q_deg=q_det)
             time.sleep(0.03)
 
     def vel_scale(self) -> float:
@@ -437,6 +445,22 @@ class Manipulacion(Node):
         """Avance real a usar (m): calibrado + ajuste, nunca mas que el tope."""
         adv = wg.advance_needed(z, self.calib) + self.advance_adjust_cm / 100.0
         return float(np.clip(adv, 0.0, self.max_advance_cm / 100.0))
+
+    def _object_point(self, box, z, q_deg):
+        """Centro del objeto en base_link con las articulaciones del MOMENTO de la deteccion.
+        Mismo calculo para RViz y para el agarre (avance calibrado + ajuste, SIN el tope)."""
+        tcp_mm, R = self.kin.forward_kinematics(np.array([math.radians(v) for v in q_deg]))
+        x1, y1, x2, y2 = box
+        left, up = wg.lateral_offsets((x1 + x2) / 2, (y1 + y2) / 2, z, self.calib)
+        adv = max(0.0, wg.advance_needed(z, self.calib) + self.advance_adjust_cm / 100.0)
+        return self.shoulder_in_base() + wg.object_center(tcp_mm / 1000.0, R, adv, left, up, self.calib)
+
+    def held_target(self):
+        """Objetivo fijado si es reciente (en vivo o retenido < object_hold_s); si no, None."""
+        tg = self.target
+        if tg is None or time.time() - tg["t"] > self.object_hold_s:
+            return None
+        return tg
 
     def _object_in_base(self, box, z):
         with self.lock:
@@ -458,24 +482,28 @@ class Manipulacion(Node):
             m.ns = "arm_target"
             m.id = mid
             m.type = mtype
-            m.action = Marker.ADD if self.obj_base is not None else Marker.DELETE
+            m.action = Marker.ADD if self.held_target() is not None else Marker.DELETE
             m.pose.orientation.w = 1.0
             m.lifetime.nanosec = 500_000_000
             return m
         cyl, grasp, arrow, txt = mk(0, Marker.CYLINDER), mk(1, Marker.SPHERE), mk(2, Marker.ARROW), mk(3, Marker.TEXT_VIEW_FACING)
-        if self.obj_base is not None and self.detection is not None:
-            o = self.obj_base
+        tg = self.held_target()
+        if tg is not None:
+            o = tg["obj"]
+            live = self.detection is not None
             cyl.pose.position.x, cyl.pose.position.y, cyl.pose.position.z = map(float, o)
             cyl.scale.x = cyl.scale.y = self.calib.object_diameter_m
             cyl.scale.z = 0.20
-            cyl.color = ColorRGBA(r=0.1, g=0.9, b=0.3, a=0.85)
+            # verde = deteccion en vivo; amarillo = posicion RETENIDA (la deteccion parpadeo)
+            cyl.color = ColorRGBA(r=0.1, g=0.9, b=0.3, a=0.85) if live else ColorRGBA(r=1.0, g=0.85, b=0.1, a=0.85)
             with self.lock:
                 q = list(self.joints_deg)
             tcp_mm, R = self.kin.forward_kinematics(np.array([math.radians(v) for v in q]))
             tcp = self.shoulder_in_base() + tcp_mm / 1000.0
             app = R[:, 2] / np.linalg.norm(R[:, 2])
             gc = tcp - self.calib.grasp_center_back_m * app
-            stop = gc + self.used_advance(self.detection[1]) * app  # donde quedara el centro de la pinza
+            need = float(np.dot(np.asarray(o) - gc, app))           # avance necesario hasta el objeto fijado
+            stop = gc + min(max(0.0, need), self.max_advance_cm / 100.0) * app  # donde quedara el centro de la pinza
             grasp.pose.position.x, grasp.pose.position.y, grasp.pose.position.z = map(float, stop)
             grasp.scale.x = grasp.scale.y = grasp.scale.z = 0.025
             grasp.color = ColorRGBA(r=1.0, g=0.6, b=0.0, a=0.95)
@@ -486,7 +514,9 @@ class Manipulacion(Node):
             txt.pose.position.x, txt.pose.position.y, txt.pose.position.z = float(o[0]), float(o[1]), float(o[2]) + 0.15
             txt.scale.z = 0.04
             txt.color = ColorRGBA(r=1.0, g=1.0, b=1.0, a=1.0)
-            txt.text = f"avance {self.used_advance(self.detection[1]) * 100:.0f} cm (tope {self.max_advance_cm:.0f})"
+            txt.text = (f"avance {need * 100:.0f} cm (tope {self.max_advance_cm:.0f})"
+                        + ("" if live else f" RETENIDO {time.time() - tg['t']:.1f} s")
+                        + (" FUERA DE TOPE" if need * 100 > self.max_advance_cm else ""))
         ma.markers = [cyl, grasp, arrow, txt]
         self.pub_markers.publish(ma)
         self.pub_markers_compat.publish(ma)
@@ -615,30 +645,50 @@ class Manipulacion(Node):
 
     def _grasp_core(self):
         """Aproximacion + avance + cierre + subida. (ok, motivo). No va a POST-GRASP."""
-        det = self.detection
-        if det is None:
-            return False, "Agarre: no veo el objeto."
+        tg = self.held_target()
+        if tg is None:
+            return False, "Agarre: no veo el objeto (ni hay una posicion retenida reciente)."
         if not self.torso_known():
             self.get_logger().warn("Agarre: elevador sin medicion; se ASUME arriba (torso_lift_joint=0)")
-        (x1, y1, x2, y2), z = det
+        obj = np.asarray(tg["obj"], dtype=float)   # el MISMO punto que muestra RViz
         q_now = [math.radians(v) for v in self.joints_deg]
         tcp_mm, R = self.kin.forward_kinematics(np.array(q_now))
-        adv = self.used_advance(z)  # calibrado + ajuste, limitado por Avance_max_cm
-        left, up = wg.lateral_offsets((x1 + x2) / 2, (y1 + y2) / 2, z, self.calib)
-        obj = self.shoulder_in_base() + wg.object_center(tcp_mm / 1000.0, R, adv, left, up, self.calib)
         approach = R[:, 2] / np.linalg.norm(R[:, 2])
+        gc_now = self.shoulder_in_base() + tcp_mm / 1000.0 - self.calib.grasp_center_back_m * approach
+        need = float(np.dot(obj - gc_now, approach))
+        if need * 100.0 > self.max_advance_cm:
+            return False, (f"Agarre: el objeto esta a {need * 100:.0f} cm de avance y el tope es "
+                           f"{self.max_advance_cm:.0f} cm: acercar el robot/objeto o subir Avance_max_cm. No me muevo.")
         grasp_tcp = obj + self.calib.grasp_center_back_m * approach
-        self.get_logger().info(f"Agarre: avance usado {adv * 100:.1f} cm (tope {self.max_advance_cm:.0f} cm)")
+        held = "" if self.detection is not None else f" (posicion RETENIDA hace {time.time() - tg['t']:.1f} s)"
+        self.get_logger().info(f"Agarre: hacia {np.round(obj, 3).tolist()} en base_link, avance {need * 100:.1f} cm "
+                               f"(tope {self.max_advance_cm:.0f} cm){held}")
         app_tcp = grasp_tcp - 0.10 * approach
         quat = quat_from_matrix(R.tolist())
         self.status = "Agarre: planificando..."
-        q_app = self.moveit.compute_ik(pose_from(app_tcp, quat), q_now)
-        plan = self.moveit.plan_to_joints(q_now, q_app, vel_scale=self.vel_scale()) if q_app else None
-        # el avance final y la subida van a la mitad de la velocidad elegida (mas control al agarrar)
-        line = self.moveit.cartesian_path(q_app, [pose_from(grasp_tcp, quat)],
-                                          vel_scale=self.vel_scale() / 2) if plan else None
+        # TRAC-IK puede dar distintas soluciones de aproximacion; desde algunas la linea recta de avance
+        # queda bloqueada por limites articulares (medido en sim: 2 de 6). Probar varias semillas y quedarse
+        # con la primera desde la que el avance cartesiano llega completo.
+        q_app = plan = line = None
+        rng = np.random.default_rng()
+        for attempt in range(5):
+            seed = q_now if attempt == 0 else (np.array(q_now) + rng.normal(0.0, 0.25, 6)).tolist()
+            cand = self.moveit.compute_ik(pose_from(app_tcp, quat), seed)
+            if not cand:
+                continue
+            # el avance final y la subida van a la mitad de la velocidad elegida (mas control al agarrar)
+            cand_line = self.moveit.cartesian_path(cand, [pose_from(grasp_tcp, quat)], vel_scale=self.vel_scale() / 2)
+            if not cand_line:
+                continue
+            cand_plan = self.moveit.plan_to_joints(q_now, cand, vel_scale=self.vel_scale())
+            if cand_plan:
+                q_app, plan, line = cand, cand_plan, cand_line
+                if attempt:
+                    self.get_logger().info(f"Agarre: aproximacion valida en el intento {attempt + 1}")
+                break
         if not line:
-            return False, "Agarre: sin solucion (objeto fuera de alcance o choque). No me muevo."
+            why = self.moveit.last_failure or ("sin IK de aproximacion" if not q_app else "sin plan articular")
+            return False, f"Agarre: sin solucion ({why}). No me muevo."
         if not self.enabled and not self.set_torque(True):
             return False, f"Agarre: no se pudo habilitar el brazo ({self.status})"
         self.gripper(GRIPPER_OPEN_MM)

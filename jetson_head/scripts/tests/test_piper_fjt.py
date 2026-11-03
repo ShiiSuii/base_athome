@@ -185,3 +185,26 @@ def test_disabling_mid_trajectory_aborts_goal(rig):
         time.sleep(0.02)
     assert rf.result().result.error_code == FJT.Result.PATH_TOLERANCE_VIOLATED
     assert "deshabilitado" in rf.result().result.error_string
+
+
+def test_gripper_command_does_not_kill_running_trajectory(rig):
+    """Bug real (2026-11-03): abrir/cerrar la pinza durante una trayectoria la borraba ->
+    'trayectoria perdida'. La pinza debe moverse en paralelo sin tocar la trayectoria del brazo."""
+    from std_msgs.msg import Float32
+    node, cli, _ = rig(follow=True)
+    assert node.set_arm_enable(True)
+    target = [v + 5 for v in START]
+    fut = cli.send_goal_async(goal_to(target, total_s=1.0))
+    while not fut.done():
+        time.sleep(0.02)
+    gh = fut.result()
+    assert gh.accepted
+    time.sleep(0.1)
+    node.gripper_cmd_cb(Float32(data=90.0))   # abrir la pinza en medio del movimiento
+    rf = gh.get_result_async()
+    t0 = time.time()
+    while not rf.done() and time.time() - t0 < 6:
+        time.sleep(0.02)
+    assert rf.result().result.error_code == FJT.Result.SUCCESSFUL, rf.result().result.error_string
+    time.sleep(0.6)  # la rampa de la pinza (1,2 s) sigue sola despues de la trayectoria (1,0 s)
+    assert node.target_gripper_mm == pytest.approx(90.0, abs=0.5)
