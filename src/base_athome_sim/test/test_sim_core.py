@@ -46,17 +46,22 @@ def test_base_reaches_goal():
     assert b.update(0.6) and b.x == 1.0 and b.yaw == 0.5
 
 
-def test_microphone_only_hears_inside_window_and_not_muted():
-    m = SimMicrophone(window_s=6, latency_s=1.0)
-    assert not m.hear('hello', now=0.0)          # sin ventana: se pierde
-    m.trigger(now=10.0)
+def test_microphone_listens_by_request_with_result_always():
+    m = SimMicrophone(start_timeout=8, end_silence=1.0, asr_s=1.0)
+    assert not m.hear("lost before request", now=0.0)          # sin pedido: se pierde
+    m.request("a", now=0.0)
     m.muted = True
-    assert not m.hear('hello', now=11.0)         # robot hablando
+    assert not m.hear("robot talking", now=0.5)               # con mute: se pierde
     m.muted = False
-    assert m.hear('my name is Robin', now=12.0)
-    assert m.due(now=16.5) == []                 # se transcribe al cerrar la ventana + latencia
-    assert m.due(now=17.1) == ['my name is Robin']
-
+    assert m.hear("My name is Robin", now=2.0)
+    assert m.due(now=3.0) == []
+    rid, st, text = m.due(now=6.0)[0]
+    assert (rid, st, text) == ("a", "ok", "My name is Robin")
+    m.request("b", now=10.0)
+    assert m.due(now=17.0) == []
+    assert m.due(now=18.1) == [("b", "no_speech", "")]           # nadie hablo: resultado explicito
+    m.request("c", now=20.0)
+    assert m.request("d", now=21.0) == "c"                       # el nuevo reemplaza al anterior
 
 def test_gz_urdf_has_plugins_and_bridges():
     from base_athome_sim import gz_model

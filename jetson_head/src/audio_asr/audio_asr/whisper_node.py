@@ -1,28 +1,39 @@
 #!/usr/bin/env python3
 """
-Nodo ASR (Whisper + WebRTC VAD) del cabezal Jetson para RoboCup @Home.
+Nodo ASR (faster-whisper + Silero VAD en streaming) del cabezal Jetson para RoboCup @Home.
 
-Adaptado de las ideas de fbot_hri (fbot_speech/speech_recognizer.py):
-  * initial_prompt con nombres/bebidas comunes (mejora el reconocimiento de nombres).
-  * ventana de escucha con timeout, silencio de cierre mas largo y duracion minima.
-  * descarte de alucinaciones tipicas de Whisper sobre ruido.
+Escucha POR PEDIDO con identificador y fin de habla automatico (ver asr_core.py):
+  1. El cliente pide escuchar (topico /voice/listen_request con JSON, o el servicio Trigger).
+  2. El nodo espera a que la persona empiece a hablar (hasta start_timeout, por defecto 8 s),
+     graba mientras habla y corta ~1.1 s despues de que termina (no una ventana fija de 6 s).
+  3. SIEMPRE publica un resultado en /voice/result para ese id: 'ok' con el texto, o
+     'no_speech' / 'rejected' / 'cancelled' / 'error'. El cliente nunca tiene que adivinar por timeout.
 
 Topicos / servicios:
-  PUB  /voice/transcription  (std_msgs/String)   texto reconocido
+  SUB  /voice/listen_request (std_msgs/String)  JSON {"id", "prompt", "start_timeout", "end_silence",
+                                                "max_speech"}; un pedido nuevo reemplaza al anterior
+  SRV  /voice/listen_trigger (std_srvs/Trigger)  pedido con parametros por defecto; message = JSON {"id"}
+  SUB  /voice/cancel         (std_msgs/String)   id a cancelar ("" = el activo)
+  PUB  /voice/result         (std_msgs/String)   JSON {"id", "event": listening|speech_start|speech_end|result,
+                                                "status", "text", "reason", "speech_sec", "wait_sec", "asr_sec"}
+  PUB  /voice/transcription  (std_msgs/String)   texto de cada resultado 'ok' (compatibilidad)
   PUB  /voice/status         (std_msgs/String)   IDLE | LISTENING | PROCESSING | MUTED | NO_MIC
   PUB  /voice/mic_level      (std_msgs/Float32)  RMS 0..1 (salud del microfono)
-  SUB  /voice/mute           (std_msgs/Bool)     true mientras el robot habla (anti-eco)
-  SUB  /voice/initial_prompt (std_msgs/String)   cambia el vocabulario esperado en caliente
-  SRV  /voice/listen_trigger (std_srvs/Trigger)  abre una ventana de escucha forzada
+  SUB  /voice/mute           (std_msgs/Bool)     true mientras el robot habla: esos bloques se anulan,
+                                                pero el pedido de escucha sigue abierto
+  SUB  /voice/initial_prompt (std_msgs/String)   vocabulario por defecto (cada pedido puede traer el suyo)
 """
+import json
+import wave
+import queue
 import re
-import time
 import subprocess
-import collections
 import threading
+import time
+from collections import deque
+
 import numpy as np
 import sounddevice as sd
-import webrtcvad
 
 import rclpy
 from rclpy.node import Node
@@ -31,180 +42,231 @@ from std_srvs.srv import Trigger
 
 from faster_whisper import WhisperModel
 
+from audio_asr.asr_core import (CHUNK_SEC, SAMPLE_RATE, VAD_CHUNK, Endpointer, EnergyVAD, SileroStream,
+                                clean_transcript)
 
 DEFAULT_PROMPT = (
-    "Hello, my name is James. Names: James Michael Robert John David William Richard "
-    "Joseph Thomas Christopher Mary Patricia Jennifer Linda Elizabeth Barbara Susan "
-    "Jessica Karen Sarah Charlie Alex Adam Axel Amelia Angel Ava Charlotte Hunter Max "
-    "Olivia Paris Robin Skyler. Drinks: coke, orange juice, milk, water, tea, coffee, "
-    "lemonade, beer, wine, juice."
+    "Guests introduce themselves at a party. Names: Adel, Angel, Axel, Charlie, Jane, Jules, Morgan, "
+    "Paris, Robin, Simone. Drinks: juice pack, cola, milk, orange juice, tropical juice, red wine, iced tea."
 )
-
-# Alucinaciones frecuentes de Whisper cuando solo hay ruido/silencio.
-HALLUCINATIONS = {
-    'you', 'thank you', 'thank you.', 'thanks for watching', 'thanks for watching!',
-    'bye', 'bye.', 'bye-bye', '.', '..', '...', 'uh', 'um', 'hmm', 'mm',
-    'subtitles by the amara.org community', 'www.mooji.org',
-}
 
 
 class WhisperASRNode(Node):
     def __init__(self):
         super().__init__('whisper_asr_node')
+        p = self.declare_parameter
+        p('model_size', 'base.en')
+        p('language', 'en')
+        p('beam_size', 3)
+        p('cpu_threads', 4)
+        p('start_timeout_sec', 8.0)        # espera maxima a que la persona EMPIECE a hablar
+        p('end_silence_sec', 1.1)          # silencio que cierra la frase (fbot: 1.2, FRIDA: 1.5)
+        p('max_speech_sec', 15.0)
+        p('vad_on_threshold', 0.5)
+        p('vad_off_threshold', 0.35)
+        p('continuous', False)             # True: transcribe toda voz sin pedido (demos)
+        p('unmute_guard_sec', 0.35)        # cola de reverberacion del parlante
+        p('max_mute_sec', 25.0)            # failsafe: ninguna frase del robot dura tanto
+        p('mic_gain_percent', 100)
+        p('auto_gain', True)               # baja la ganancia si la voz satura (clipping)
+        p('no_speech_threshold', 0.6)
+        p('min_avg_logprob', -1.0)
+        p('mic_name_hint', 'rode')
+        p('initial_prompt', DEFAULT_PROMPT)
+        # parametros viejos (ventana fija): se aceptan para no romper launch files, ya no se usan
+        for old, val in (('energy_threshold', 0.02), ('vad_mode', 2), ('silence_duration_sec', 1.0),
+                         ('max_utterance_sec', 9.0), ('min_utterance_sec', 0.5), ('trigger_wait_sec', 7.0),
+                         ('listen_window_sec', 6.0), ('max_ambient_rms', 0.15)):
+            p(old, val)
 
-        # ---------------- Parametros ----------------
-        self.declare_parameter('model_size', 'tiny')
-        self.declare_parameter('language', 'auto')
-        self.declare_parameter('energy_threshold', 0.02)
-        self.declare_parameter('vad_mode', 2)
-        self.declare_parameter('silence_duration_sec', 1.0)
-        self.declare_parameter('max_utterance_sec', 9.0)
-        self.declare_parameter('min_utterance_sec', 0.5)
-        self.declare_parameter('trigger_wait_sec', 7.0)
-        # Ventana fija tras /voice/listen_trigger: graba completa (no corta en la primera pausa)
-        # y recien al final transcribe y filtra. Si sigue hablando, se extiende hasta max_utterance_sec.
-        self.declare_parameter('listen_window_sec', 6.0)
-        # Solo transcribir cuando alguien lo pide (/voice/listen_trigger). En modo continuo cada ruido
-        # de la sala se transcribia: varias transcripciones simultaneas tardaban 5-10 s y el pedido real
-        # del receptionist llegaba tarde (logs del 2026-10-30).
-        self.declare_parameter('continuous', False)
-        self.declare_parameter('unmute_guard_sec', 0.45)
-        self.declare_parameter('max_mute_sec', 25.0)      # failsafe: ninguna frase del robot dura tanto
-        self.declare_parameter('max_ambient_rms', 0.15)  # con ganancia maxima el ruido de sala es alto: dejar adaptar
-        self.declare_parameter('mic_gain_percent', 100)    # siempre a maxima ganancia
-        self.declare_parameter('beam_size', 3)
-        self.declare_parameter('no_speech_threshold', 0.6)
-        self.declare_parameter('min_avg_logprob', -1.1)
-        self.declare_parameter('mic_name_hint', 'rode')
-        self.declare_parameter('initial_prompt', DEFAULT_PROMPT)
+        g = lambda n: self.get_parameter(n).value  # noqa: E731
+        self.model_size = g('model_size')
+        self.language = g('language')
+        self.beam_size = int(g('beam_size'))
+        self.defaults = {'start_timeout': float(g('start_timeout_sec')),
+                         'end_silence': float(g('end_silence_sec')),
+                         'max_speech': float(g('max_speech_sec'))}
+        self.on_thr, self.off_thr = float(g('vad_on_threshold')), float(g('vad_off_threshold'))
+        self.continuous = bool(g('continuous'))
+        self.unmute_guard_sec = float(g('unmute_guard_sec'))
+        self.max_mute_sec = float(g('max_mute_sec'))
+        self.gain_percent = int(g('mic_gain_percent'))
+        self.auto_gain = bool(g('auto_gain'))
+        self.no_speech_threshold = float(g('no_speech_threshold'))
+        self.min_avg_logprob = float(g('min_avg_logprob'))
+        self.mic_name_hint = str(g('mic_name_hint')).lower()
+        self.initial_prompt = str(g('initial_prompt'))
 
-        gp = self.get_parameter
-        self.model_size = gp('model_size').get_parameter_value().string_value
-        self.language = gp('language').get_parameter_value().string_value
-        self.energy_threshold = gp('energy_threshold').get_parameter_value().double_value
-        self.vad_mode = gp('vad_mode').get_parameter_value().integer_value
-        self.silence_duration = gp('silence_duration_sec').get_parameter_value().double_value
-        self.max_utterance_sec = gp('max_utterance_sec').get_parameter_value().double_value
-        self.min_utterance_sec = gp('min_utterance_sec').get_parameter_value().double_value
-        self.trigger_wait_sec = gp('trigger_wait_sec').get_parameter_value().double_value
-        self.listen_window_sec = gp('listen_window_sec').get_parameter_value().double_value
-        self.continuous = gp('continuous').get_parameter_value().bool_value
-        self.transcribe_lock = threading.Lock()
-        self.unmute_guard_sec = gp('unmute_guard_sec').get_parameter_value().double_value
-        self.max_mute_sec = gp('max_mute_sec').get_parameter_value().double_value
-        self.max_ambient_rms = gp('max_ambient_rms').get_parameter_value().double_value
-        self.mic_gain_percent = gp('mic_gain_percent').get_parameter_value().integer_value
-        self.mute_since = 0.0
-        self.beam_size = gp('beam_size').get_parameter_value().integer_value
-        self.no_speech_threshold = gp('no_speech_threshold').get_parameter_value().double_value
-        self.min_avg_logprob = gp('min_avg_logprob').get_parameter_value().double_value
-        self.mic_name_hint = gp('mic_name_hint').get_parameter_value().string_value.lower()
-        self.initial_prompt = gp('initial_prompt').get_parameter_value().string_value
-
-        self.get_logger().info(f'Loading Whisper model: {self.model_size} (lang: {self.language})...')
-        self.model = WhisperModel(self.model_size, device='cpu', compute_type='int8')
-        self.get_logger().info('Whisper model loaded successfully!')
+        self.get_logger().info(f'Cargando Whisper {self.model_size} (idioma {self.language})...')
+        self.model = WhisperModel(self.model_size, device='cpu', compute_type='int8',
+                                  cpu_threads=int(g('cpu_threads')))
+        try:
+            self.vad = SileroStream()
+            self.vad_name = 'silero'
+        except Exception as e:  # sin onnxruntime: respaldo por energia (peor, pero no deja sordo al robot)
+            self.get_logger().error(f'Silero VAD no disponible ({e}): uso VAD por energia')
+            self.vad = EnergyVAD()
+            self.vad_name = 'energia'
+        self._warmup()
 
         # ---------------- ROS ----------------
         self.pub_transcription = self.create_publisher(String, '/voice/transcription', 10)
+        self.pub_result = self.create_publisher(String, '/voice/result', 20)
         self.pub_status = self.create_publisher(String, '/voice/status', 10)
         self.pub_level = self.create_publisher(Float32, '/voice/mic_level', 10)
         self.create_subscription(Bool, '/voice/mute', self.mute_callback, 10)
         self.create_subscription(String, '/voice/initial_prompt', self.prompt_callback, 10)
-        self.srv_trigger = self.create_service(Trigger, '/voice/listen_trigger', self.handle_listen_trigger)
+        self.create_subscription(String, '/voice/listen_request', self.request_callback, 10)
+        self.create_subscription(String, '/voice/cancel', self.cancel_callback, 10)
+        # Prueba reproducible: mezcla un WAV (ruta en la Jetson) con el microfono EN VIVO, como si una
+        # persona hablara delante del robot. Lo usa asr_benchmark --inject. No reemplaza al microfono.
+        self.create_subscription(String, '/voice/debug_inject', self.inject_callback, 10)
+        self.inject = None                 # np.ndarray 16 kHz pendiente de mezclar
+        self.create_service(Trigger, '/voice/listen_trigger', self.handle_listen_trigger)
 
-        # ---------------- Audio ----------------
-        # VAD y Whisper a 16 kHz, frames de 30 ms = 480 muestras.
-        self.target_rate = 16000
-        self.frame_duration_ms = 30
-        self.frame_size = int(self.target_rate * (self.frame_duration_ms / 1000.0))
-        # El RODE VideoMic GO II opera nativamente a 48 kHz.
-        self.capture_rate = 48000
-        self.capture_blocksize = int(self.frame_size * 3)  # 1440 muestras = 30 ms @ 48 kHz
-
-        self.vad = webrtcvad.Vad(self.vad_mode)
-        self.is_running = True
-        self.current_status = 'IDLE'
-        self.manual_trigger_requested = False
-
+        # ---------------- estado ----------------
+        self.lock = threading.Lock()
+        self.next_request = None           # pedido recibido, lo toma el hilo de audio
+        self.cancel_id = None
+        self.active = None                 # {'req': dict, 'ep': Endpointer, 'started': bool}
+        self.trigger_count = 0
+        self.asr_queue: "queue.Queue" = queue.Queue()
+        self.processing = False
         self.muted = False
-        self.last_mute_active = 0.0
+        self.mute_since = 0.0
         self.guard_until = 0.0
         self.last_rms = 0.0
-        self.ambient_rms = 0.04
+        self.mic_ok = False
+        self.is_running = True
+        self.noise_floor = 0.01            # RMS del ruido de fondo (se adapta solo sin voz)
 
-        self.audio_thread = threading.Thread(target=self.audio_loop, daemon=True)
-        self.audio_thread.start()
+        threading.Thread(target=self.audio_loop, daemon=True).start()
+        threading.Thread(target=self.asr_worker, daemon=True).start()
+        self.create_timer(0.5, self.publish_status)
+        self.create_timer(0.2, lambda: self.pub_level.publish(Float32(data=float(self.last_rms))))
+        self.create_timer(30.0, self.set_gain)  # el USB o pulseaudio pueden cambiarla
+        self.get_logger().info(f'ASR listo: VAD {self.vad_name}, fin de habla {self.defaults["end_silence"]} s, '
+                               f'espera de voz {self.defaults["start_timeout"]} s')
 
-        self.status_timer = self.create_timer(0.5, self.publish_heartbeat)
-        # Re-afirmar la ganancia maxima periodicamente (otro proceso o el USB pueden cambiarla)
-        self.gain_timer = self.create_timer(30.0, self.set_max_gain)
-        self.level_timer = self.create_timer(0.2, self.publish_level)
+    def _warmup(self):
+        """La primera decodificacion es lenta (carga de pesos/caches): hacerla al arrancar."""
+        try:
+            t = time.time()
+            list(self.model.transcribe(np.zeros(SAMPLE_RATE, np.float32), language=self._lang(), beam_size=1)[0])
+            self.get_logger().info(f'Whisper precalentado en {time.time() - t:.1f} s')
+        except Exception as e:
+            self.get_logger().warn(f'Precalentamiento fallo: {e}')
 
-    # ------------------------------------------------------------------
-    # ROS helpers
-    # ------------------------------------------------------------------
-    def publish_heartbeat(self):
-        msg = String()
-        msg.data = 'MUTED' if self.muted else self.current_status
-        self.pub_status.publish(msg)
+    def _lang(self):
+        if self.model_size.endswith('.en'):
+            return 'en'
+        return None if self.language.lower() in ('auto', 'none', '', 'multi', 'bi') else self.language
 
-    def publish_level(self):
-        msg = Float32()
-        msg.data = float(self.last_rms)
-        self.pub_level.publish(msg)
+    # ------------------------------------------------------------------ ROS callbacks
+    def publish_status(self):
+        if not self.mic_ok:
+            s = 'NO_MIC'
+        elif self.active is not None and self.active['req']['id']:
+            s = 'LISTENING'
+        elif self.processing or not self.asr_queue.empty():
+            s = 'PROCESSING'
+        elif self.muted:
+            s = 'MUTED'
+        else:
+            s = 'IDLE'
+        self.pub_status.publish(String(data=s))
 
-    def set_status(self, status):
-        self.current_status = status
-        msg = String()
-        msg.data = status
-        self.pub_status.publish(msg)
+    def emit(self, rid, event, **kw):
+        if not rid and event != 'result':
+            return
+        d = {'id': rid, 'event': event, 't': round(time.time(), 3)}
+        d.update(kw)
+        self.pub_result.publish(String(data=json.dumps(d)))
 
     def mute_callback(self, msg: Bool):
-        was_muted = self.muted
-        self.muted = bool(msg.data)
-        if self.muted and not was_muted:
-            self.mute_since = time.time()
         now = time.time()
-        if self.muted:
-            self.last_mute_active = now
-        elif was_muted:
-            # Cola de reverberacion de la voz del robot
+        if msg.data and not self.muted:
+            self.mute_since = now
+        if not msg.data and self.muted:
             self.guard_until = now + self.unmute_guard_sec
+        self.muted = bool(msg.data)
 
     def prompt_callback(self, msg: String):
         text = msg.data.strip() or DEFAULT_PROMPT
-        if text == self.initial_prompt:
-            return  # el receptionist lo re-publica periodicamente: no loguear repetidos
-        self.initial_prompt = text
-        self.get_logger().info(f'initial_prompt actualizado ({len(self.initial_prompt)} chars)')
+        if text != self.initial_prompt:
+            self.initial_prompt = text
+            self.get_logger().info(f'initial_prompt por defecto actualizado ({len(text)} chars)')
+
+    def _queue_request(self, req: dict):
+        with self.lock:
+            self.next_request = req
+        self.get_logger().info(f'Pedido de escucha {req["id"]} (espera {req["start_timeout"]:.0f} s, '
+                               f'cierre {req["end_silence"]:.1f} s)')
+
+    def request_callback(self, msg: String):
+        try:
+            d = json.loads(msg.data) if msg.data.strip().startswith('{') else {}
+        except ValueError:
+            d = {}
+        self.trigger_count += 1
+        req = dict(self.defaults)
+        for k in ('start_timeout', 'end_silence', 'max_speech'):
+            if k in d:
+                try:
+                    req[k] = float(d[k])
+                except (TypeError, ValueError):
+                    pass
+        req['id'] = str(d.get('id') or f'r{self.trigger_count}')
+        req['prompt'] = str(d.get('prompt') or '')
+        self._queue_request(req)
 
     def handle_listen_trigger(self, request, response):
-        self.manual_trigger_requested = True
+        self.trigger_count += 1
+        req = dict(self.defaults, id=f't{self.trigger_count}', prompt='')
+        self._queue_request(req)
         response.success = True
-        response.message = f'Triggered recording. Current status: {self.current_status}'
-        self.get_logger().info('External listen trigger received!')
+        response.message = json.dumps({'id': req['id']})
         return response
 
-    # ------------------------------------------------------------------
-    # Audio
-    # ------------------------------------------------------------------
-    def set_max_gain(self):
-        """Pone la captura del RØDE al maximo con amixer (el indice de tarjeta cambia entre arranques)."""
+    def cancel_callback(self, msg: String):
+        with self.lock:
+            self.cancel_id = msg.data.strip() or '*'
+
+    # ------------------------------------------------------------------ microfono
+    def _card(self):
         try:
             with open('/proc/asound/cards', encoding='utf-8', errors='ignore') as f:
-                cards = f.read()
-            m = re.search(r'^\s*(\d+)\s+\[[^\]]*\]:.*(?:RØDE|RODE|VideoMic)', cards, re.MULTILINE | re.IGNORECASE)
-            if not m:
-                return
-            card = m.group(1)
-            subprocess.run(['amixer', '-c', card, 'sset', 'Mic', f'{self.mic_gain_percent}%', 'cap'],
+                m = re.search(r'^\s*(\d+)\s+\[[^\]]*\]:.*(?:RØDE|RODE|VideoMic)', f.read(), re.M | re.I)
+            return m.group(1) if m else None
+        except OSError:
+            return None
+
+    def set_gain(self):
+        card = self._card()
+        if card is None:
+            return
+        try:
+            subprocess.run(['amixer', '-c', card, 'sset', 'Mic', f'{self.gain_percent}%', 'cap'],
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3)
-            if getattr(self, '_gain_card', None) != card:
-                self._gain_card = card
-                self.get_logger().info(f'Ganancia del microfono (tarjeta {card}) en {self.mic_gain_percent}%')
+            if getattr(self, '_gain_logged', None) != (card, self.gain_percent):
+                self._gain_logged = (card, self.gain_percent)
+                self.get_logger().info(f'Ganancia del microfono (tarjeta {card}) en {self.gain_percent}%')
         except Exception as e:
-            self.get_logger().warn(f'No se pudo fijar la ganancia del microfono: {e}')
+            self.get_logger().warn(f'No se pudo fijar la ganancia: {e}')
+
+    def _adapt_gain(self, peak):
+        """Saturacion = Whisper entiende mal. Baja 10 % si satura; vuelve a subir si la voz llega debil."""
+        if not self.auto_gain:
+            return
+        new = self.gain_percent
+        if peak >= 0.97:
+            new = max(60, self.gain_percent - 10)
+        elif peak < 0.08:
+            new = min(100, self.gain_percent + 10)
+        if new != self.gain_percent:
+            self.get_logger().warn(f'Pico de voz {peak:.2f}: ganancia {self.gain_percent}% -> {new}%')
+            self.gain_percent = new
+            self.set_gain()
 
     def find_microphone_device(self):
         try:
@@ -214,300 +276,215 @@ class WhisperASRNode(Node):
             except Exception:
                 pass
             devices = sd.query_devices()
-            for i, d in enumerate(devices):
-                name = d['name'].lower()
-                ch = d['max_input_channels']
-                if ('videomic' in name or 'rode' in name or 'røde' in name or self.mic_name_hint in name) and ch > 0:
-                    self.get_logger().info(f'Found microphone: [{i}] {d["name"]}', throttle_duration_sec=30.0)
-                    return i
-            for i, d in enumerate(devices):
-                name = d['name'].lower()
-                ch = d['max_input_channels']
-                if 'usb' in name and ch > 0:
-                    self.get_logger().info(f'Found USB microphone: [{i}] {d["name"]}', throttle_duration_sec=30.0)
-                    return i
+            for want in (('videomic', 'rode', 'røde', self.mic_name_hint), ('usb',)):
+                for i, d in enumerate(devices):
+                    if d['max_input_channels'] > 0 and any(w in d['name'].lower() for w in want):
+                        self.get_logger().info(f'Microfono: [{i}] {d["name"]}', throttle_duration_sec=30.0)
+                        return i
         except Exception as e:
-            self.get_logger().warn(f'Error querying audio devices: {e}')
+            self.get_logger().warn(f'Error buscando microfono: {e}')
         return None
 
-    @staticmethod
-    def to_16k(chunk_48k: np.ndarray) -> np.ndarray:
-        """48 kHz -> 16 kHz con filtro anti-alias promediado (boxcar filter)."""
-        n = (len(chunk_48k) // 3) * 3
-        return chunk_48k[:n].astype(np.float32).reshape(-1, 3).mean(axis=1).astype(np.int16)
-
+    # ------------------------------------------------------------------ audio
     def audio_loop(self):
-        ring_buffer = collections.deque(maxlen=int(300 / self.frame_duration_ms))
-        triggered = False
-        heard_speech = False
-        voiced_frames = []
-        silence_start_time = None
-        trigger_start_time = None
-
-        audio_queue = collections.deque(maxlen=400)
-        stats = {'last_chunk': time.time(), 'overflows': 0}
+        capture_rate, decim = 48000, 3                 # el RØDE VideoMic GO II trabaja a 48 kHz
+        q = deque(maxlen=600)                          # ~19 s de margen si el hilo se atrasa
+        stats = {'last': time.time(), 'overflows': 0}
+        preroll = deque(maxlen=int(0.6 / CHUNK_SEC))   # (chunk, prob, muted) recientes
 
         def callback(indata, frames, time_info, status):
-            stats['last_chunk'] = time.time()
+            stats['last'] = time.time()
             if status and status.input_overflow:
                 stats['overflows'] += 1
-            audio_queue.append(indata.copy())
-
-        fixed_window = False
-
-        def reset_state():
-            nonlocal triggered, heard_speech, voiced_frames, silence_start_time, trigger_start_time, fixed_window
-            fixed_window = False
-            triggered = False
-            heard_speech = False
-            voiced_frames = []
-            silence_start_time = None
-            trigger_start_time = None
-            ring_buffer.clear()
+            q.append(indata[:, 0].copy())
 
         while rclpy.ok() and self.is_running:
-            mic_device = self.find_microphone_device()
-            if mic_device is None:
-                self.set_status('NO_MIC')
-                self.get_logger().warn('No se encontro microfono USB. Reintentando en 2s...', throttle_duration_sec=10.0)
+            dev = self.find_microphone_device()
+            if dev is None:
+                self.mic_ok = False
+                self.get_logger().warn('Sin microfono USB; reintento en 2 s', throttle_duration_sec=10.0)
+                self._fail_active('no_mic')
                 time.sleep(2.0)
                 continue
             try:
-                self.set_max_gain()  # tambien tras una reconexion USB (la ganancia vuelve al default)
-                self.get_logger().info(f'Opening audio stream on device {mic_device} @ {self.capture_rate}Hz...')
-                stats['last_chunk'] = time.time()
-                with sd.InputStream(
-                    device=mic_device,
-                    samplerate=self.capture_rate,
-                    channels=1,
-                    dtype='int16',
-                    callback=callback,
-                    blocksize=self.capture_blocksize,
-                ):
-                    self.set_status('IDLE')
-                    self.get_logger().info('Listening for speech (48kHz -> 16kHz con anti-alias)...')
-
+                self.set_gain()
+                stats['last'] = time.time()
+                with sd.InputStream(device=dev, samplerate=capture_rate, channels=1, dtype='int16',
+                                    callback=callback, blocksize=VAD_CHUNK * decim):
+                    self.mic_ok = True
+                    self.vad.reset()
+                    self.get_logger().info(f'Captura abierta en el dispositivo {dev} @ {capture_rate} Hz')
                     while rclpy.ok() and self.is_running:
-                        if not audio_queue:
-                            # Watchdog: si el driver deja de entregar audio, reabrir el stream
-                            if time.time() - stats['last_chunk'] > 2.0:
-                                self.get_logger().warn('Sin audio del microfono por >2 s: reabriendo el stream...')
-                                reset_state()
+                        if not q:
+                            if time.time() - stats['last'] > 2.0:
+                                self.get_logger().warn('Sin audio del microfono por >2 s: reabro la captura')
                                 break
-                            time.sleep(0.005)
+                            time.sleep(0.004)
                             continue
                         if stats['overflows']:
-                            self.get_logger().warn(f"Overflow de captura x{stats['overflows']} (USB saturado?)",
-                                                   throttle_duration_sec=10.0)
+                            self.get_logger().warn(f"Overflow de captura x{stats['overflows']}",
+                                                   throttle_duration_sec=30.0)
                             stats['overflows'] = 0
-
-                        chunk_48k = audio_queue.popleft().flatten()
-                        chunk = self.to_16k(chunk_48k)
-                        if len(chunk) != self.frame_size:
+                        raw = q.popleft().astype(np.float32) / 32768.0
+                        n = (len(raw) // decim) * decim
+                        chunk = raw[:n].reshape(-1, decim).mean(axis=1)
+                        if len(chunk) != VAD_CHUNK:
                             continue
-                        pcm_bytes = chunk.tobytes()
-
-                        rms = float(np.sqrt(np.mean(chunk.astype(np.float32) ** 2)) / 32768.0)
-                        self.last_rms = rms
-                        now = time.time()
-
-                        # --- Anti-eco: el robot esta hablando ---
-                        if self.muted and now - self.mute_since > self.max_mute_sec:
-                            self.get_logger().warn(f'Mute activo hace >{self.max_mute_sec:.0f}s: se asume unmute perdido, vuelvo a escuchar.')
-                            self.muted = False
-                            self.guard_until = now + self.unmute_guard_sec
-                        if self.muted:
-                            self.last_mute_active = now
-                        if self.muted or now < self.guard_until:
-                            if triggered or voiced_frames:
-                                if triggered:
-                                    self.get_logger().info('Escucha cortada: el robot empezo a hablar (mute).')
-                                reset_state()
-                            if self.current_status != 'IDLE':
-                                self.current_status = 'IDLE'
-                            continue
-
-                        is_vad_speech = self.vad.is_speech(pcm_bytes, self.target_rate)
-
-                        if not triggered:
-                            # Techo al ruido ambiente: tras un rato ruidoso el umbral no debe quedar inalcanzable
-                            self.ambient_rms = min(0.96 * self.ambient_rms + 0.04 * rms, self.max_ambient_rms)
-                            speech_threshold = max(self.energy_threshold, self.ambient_rms * 1.30 + 0.012)
-                        else:
-                            speech_threshold = max(self.energy_threshold, self.ambient_rms * 1.15 + 0.008)
-
-                        is_speech = is_vad_speech and (rms >= speech_threshold)
-
-                        # --- Disparo manual (/voice/listen_trigger) ---
-                        if self.manual_trigger_requested and not triggered:
-                            self.manual_trigger_requested = False
-                            triggered = True
-                            heard_speech = False
-                            trigger_start_time = now
-                            silence_start_time = None
-                            voiced_frames = []
-                            fixed_window = self.listen_window_sec > 0
-                            self.set_status('LISTENING')
-                            self.get_logger().info(f'Escuchando ventana fija de {self.listen_window_sec:.1f} s...')
-                            ring_buffer.clear()
-
-                        if not triggered and not self.continuous:
-                            continue  # modo bajo demanda: no se graba nada hasta /voice/listen_trigger
-                        if not triggered:
-                            ring_buffer.append((chunk, is_speech))
-                            num_voiced = len([f for f, speech in ring_buffer if speech])
-                            if num_voiced >= 0.5 * ring_buffer.maxlen:
-                                triggered = True
-                                heard_speech = True
-                                trigger_start_time = now
-                                self.set_status('LISTENING')
-                                self.get_logger().info(f'Voice detected! (RMS: {rms:.4f} > {speech_threshold:.4f}) Recording...')
-                                for f, s in ring_buffer:
-                                    voiced_frames.append(f)
-                                ring_buffer.clear()
-                                silence_start_time = None
-                            continue
-
-                        # ---- Grabando ----
-                        voiced_frames.append(chunk)
-                        duration = now - trigger_start_time
-
-                        if is_speech:
-                            heard_speech = True
-                            silence_start_time = None
-                            is_silent = False
-                        else:
-                            if silence_start_time is None:
-                                silence_start_time = now
-                            is_silent = (now - silence_start_time >= self.silence_duration)
-
-                        reached_max = duration >= self.max_utterance_sec
-
-                        # Ventana fija (disparo manual): no cortar antes de listen_window_sec
-                        if fixed_window:
-                            if duration < self.listen_window_sec or (heard_speech and not is_silent and not reached_max):
-                                continue
-                            if not heard_speech:
-                                self.get_logger().info('Ventana de escucha terminada sin voz.')
-                                reset_state()
-                                self.set_status('IDLE')
-                                continue
-                            reached_max = True  # forzar la transcripcion de toda la ventana
-
-                        # Disparo manual sin que el humano haya hablado aun: esperar hasta trigger_wait_sec
-                        if not heard_speech:
-                            if duration >= self.trigger_wait_sec:
-                                self.get_logger().info('Ventana de escucha agotada sin voz.')
-                                reset_state()
-                                self.set_status('IDLE')
-                            continue
-
-                        if (is_silent and heard_speech) or reached_max:
-                            reason = 'Max duration' if reached_max else 'Silence'
-                            self.set_status('PROCESSING')
-                            self.get_logger().info(f'End of utterance ({reason}, total {duration:.2f}s). Transcribing...')
-
-                            audio_int16 = np.concatenate(voiced_frames) if voiced_frames else np.array([], dtype=np.int16)
-                            t_start = trigger_start_time
-                            reset_state()
-
-                            if len(audio_int16) >= int(self.min_utterance_sec * self.target_rate):
-                                audio_float = audio_int16.astype(np.float32) / 32768.0
-                                threading.Thread(
-                                    target=self.transcribe_worker, args=(audio_float, t_start), daemon=True
-                                ).start()
-                            else:
-                                self.set_status('IDLE')
-
+                        self.process_chunk(chunk, preroll)
             except Exception as e:
-                self.set_status('NO_MIC')
-                self.get_logger().warn(f'InputStream exception: {e}. Retrying in 2s...', throttle_duration_sec=3.0)
+                self.mic_ok = False
+                self.get_logger().warn(f'Error de captura: {e}; reintento en 2 s', throttle_duration_sec=5.0)
                 time.sleep(2.0)
 
-    # ------------------------------------------------------------------
-    # Transcripcion
-    # ------------------------------------------------------------------
-    def transcribe_worker(self, audio_data, t_start):
-        t0 = time.time()
-        if not self.transcribe_lock.acquire(blocking=False):
-            self.get_logger().warn('Ya hay una transcripcion en curso: se descarta este audio.')
-            return
+    def _fail_active(self, reason):
+        with self.lock:
+            act, self.active = self.active, None
+        if act:
+            self.emit(act['req']['id'], 'result', status='error', text='', reason=reason)
+
+    def _take_requests(self, now, preroll):
+        """Aplica pedidos y cancelaciones recibidos; devuelve los resultados a emitir por el cambio."""
+        events = []
+        with self.lock:
+            req, self.next_request = self.next_request, None
+            cancel, self.cancel_id = self.cancel_id, None
+            old = self.active
+            if old and cancel in ('*', old['req']['id']):
+                self.active = None
+                events.append((old['req']['id'], 'cancel'))
+            elif old and req is not None:
+                events.append((old['req']['id'], 'replaced'))
+            if req is not None:
+                recent = list(preroll)[-int(0.3 / CHUNK_SEC):]
+                speaking = any(pr >= self.on_thr for _, pr, m in recent if not m)
+                pre = [c for c, _, m in preroll if not m] if speaking else []
+                ep = Endpointer(req['start_timeout'], req['end_silence'], req['max_speech'],
+                                on_thr=self.on_thr, off_thr=self.off_thr, pre_roll=pre)
+                self.active = {'req': req, 'ep': ep, 'started': False}
+            elif self.active is None and self.continuous:
+                ep = Endpointer(1e9, self.defaults['end_silence'], self.defaults['max_speech'],
+                                on_thr=self.on_thr, off_thr=self.off_thr)
+                self.active = {'req': dict(self.defaults, id='', prompt=''), 'ep': ep, 'started': False}
+        for rid, why in events:
+            if rid:
+                self.emit(rid, 'result', status='cancelled', text='', reason=why)
+        if req is not None:
+            self.emit(req['id'], 'listening')
+
+    def inject_callback(self, msg: String):
         try:
-            lang = None if self.language.lower() in ['auto', 'none', '', 'multi', 'bi'] else self.language
-            if self.model_size.endswith('.en'):
-                lang = 'en'
-
-            segments, info = self.model.transcribe(
-                audio_data,
-                language=lang,
-                initial_prompt=self.initial_prompt,
-                beam_size=self.beam_size,
-                # VAD de faster-whisper (Silero, incluido): recorta silencio/ruido de la ventana fija
-                vad_filter=True,
-                vad_parameters={"min_silence_duration_ms": 400, "speech_pad_ms": 250},
-                condition_on_previous_text=False,
-                no_speech_threshold=self.no_speech_threshold,
-                # Una sola pasada sin "temperature fallback": las re-decodificaciones ante ruido
-                # (alucinaciones que se repiten) llegaban a 8-10 s en la Jetson
-                temperature=0.0,
-                without_timestamps=True,
-                max_new_tokens=64,
-            )
-            segments = list(segments)
-
-            # Normaliza idiomas raros auto-detectados a es/en
-            if lang is None and info.language not in ['en', 'es']:
-                target_lang = 'es' if info.language in ['pt', 'it', 'gl', 'ca'] else 'en'
-                segments, info = self.model.transcribe(
-                    audio_data, language=target_lang, initial_prompt=self.initial_prompt,
-                    beam_size=self.beam_size, vad_filter=False, condition_on_previous_text=False,
-                )
-                segments = list(segments)
-
-            # Filtro de calidad por segmento (ruido -> basura)
-            good = []
-            for seg in segments:
-                if seg.no_speech_prob > self.no_speech_threshold and seg.avg_logprob < self.min_avg_logprob:
-                    continue
-                if seg.avg_logprob < -1.6:
-                    continue
-                good.append(seg.text)
-            text = ' '.join(good).strip()
-            dt = time.time() - t0
-
-            norm = re.sub(r'\s+', ' ', text.lower()).strip()
-            # Eco del initial_prompt: con silencio Whisper "lee" la lista de nombres/bebidas
-            prompt_words = set(re.findall(r'[a-z]+', self.initial_prompt.lower())) - {'and', 'the', 'my', 'is', 'name', 'favorite', 'drink'}
-            heard = re.findall(r'[a-z]+', norm)
-            prompt_echo = len(heard) >= 4 and sum(w in prompt_words for w in heard) / len(heard) > 0.8 \
-                and len({w for w in heard if w in prompt_words}) >= 4
-            is_junk = (
-                prompt_echo or
-                not text
-                or norm in HALLUCINATIONS
-                or not re.search(r'[a-zA-Z\u00c0-\u017f]{2,}', text)
-                or (text.startswith('[') and text.endswith(']'))
-                or (text.startswith('(') and text.endswith(')'))
-            )
-
-            # El robot hablo durante esta frase: es eco de su propia voz
-            echoed = self.last_mute_active >= t_start
-
-            if is_junk:
-                self.get_logger().info(f'Descartado (ruido/alucinacion) [{dt:.2f}s]: "{text}"')
-            elif echoed:
-                self.get_logger().info(f'Descartado (eco del robot) [{dt:.2f}s]: "{text}"')
-            else:
-                self.get_logger().info(
-                    f'Transcribed ({dt:.2f}s) [{info.language} prob={info.language_probability:.2f}]: "{text}"')
-                msg = String()
-                msg.data = text
-                self.pub_transcription.publish(msg)
+            d = json.loads(msg.data) if msg.data.strip().startswith('{') else {'path': msg.data.strip()}
+            with wave.open(d['path']) as w:
+                sr, ch = w.getframerate(), w.getnchannels()
+                a = np.frombuffer(w.readframes(w.getnframes()), np.int16).astype(np.float32) / 32768.0
+            if ch > 1:
+                a = a.reshape(-1, ch).mean(axis=1)
+            idx = np.arange(0, len(a), sr / float(SAMPLE_RATE)).astype(int)
+            self.inject = a[idx[idx < len(a)]] * float(d.get('gain', 1.0))
+            self.get_logger().info(f'Inyeccion de prueba: {d["path"]} ({len(self.inject) / SAMPLE_RATE:.1f} s, '
+                                   f'ganancia {d.get("gain", 1.0)})')
         except Exception as e:
-            self.get_logger().error(f'Transcription error: {e}')
-        finally:
-            self.transcribe_lock.release()
-            self.set_status('IDLE')
+            self.get_logger().warn(f'debug_inject invalido: {e}')
+
+    def process_chunk(self, chunk, preroll):
+        now = time.time()
+        inj = self.inject
+        if inj is not None:
+            part = inj[:VAD_CHUNK]
+            chunk = chunk.copy()
+            chunk[:len(part)] += part
+            self.inject = inj[VAD_CHUNK:] if len(inj) > VAD_CHUNK else None
+        self.last_rms = float(np.sqrt(np.mean(chunk ** 2)))
+        if self.muted and now - self.mute_since > self.max_mute_sec:
+            self.get_logger().warn(f'Mute activo hace >{self.max_mute_sec:.0f} s: asumo que se perdio el unmute')
+            self.muted = False
+            self.guard_until = now + self.unmute_guard_sec
+        muted = self.muted or now < self.guard_until
+        prob = 0.0 if muted else self.vad(chunk)
+        if not muted and prob < 0.1 and self.last_rms < 3.0 * self.noise_floor + 0.002:
+            self.noise_floor = 0.99 * self.noise_floor + 0.01 * self.last_rms
+        preroll.append((chunk, prob, muted))
+        self._take_requests(now, preroll)
+
+        act = self.active
+        if act is None:
+            return
+        out = act['ep'].feed(chunk, prob, muted, floor=self.noise_floor)
+        rid = act['req']['id']
+        if not act['started'] and act['ep'].state == 'SPEECH':
+            act['started'] = True
+            self.emit(rid, 'speech_start')
+            if rid:
+                self.get_logger().info(f'[{rid}] voz detectada')
+        if out is None:
+            return
+        with self.lock:
+            if self.active is act:
+                self.active = None
+        if out['status'] != 'ok':
+            if rid:
+                self.get_logger().info(f'[{rid}] sin voz ({out["reason"]}, espera {out["wait_sec"]:.1f} s, '
+                                       f'VAD max {act["ep"].max_prob:.2f}, RMS max {act["ep"].max_rms:.3f}, '
+                                       f'ruido {self.noise_floor:.3f})')
+                self.emit(rid, 'result', status='no_speech', text='', reason=out['reason'],
+                          wait_sec=round(out['wait_sec'], 2), speech_sec=round(out['speech_sec'], 2))
+            return
+        self.emit(rid, 'speech_end', speech_sec=round(out['speech_sec'], 2))
+        self.get_logger().info(f'[{rid}] fin de habla ({out["reason"]}): {len(out["audio"]) / SAMPLE_RATE:.1f} s '
+                               f'de audio, pico {out["peak"]:.2f}{", voz debil" if out.get("weak") else ""}, '
+                               f'ruido {self.noise_floor:.3f}')
+        self._adapt_gain(out['peak'])
+        self.asr_queue.put((act['req'], out, time.time()))
+
+    # ------------------------------------------------------------------ transcripcion
+    def asr_worker(self):
+        while rclpy.ok() and self.is_running:
+            try:
+                req, out, t_end = self.asr_queue.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            self.processing = True
+            try:
+                self.transcribe(req, out, t_end)
+            except Exception as e:
+                self.get_logger().error(f'Error de transcripcion: {e}')
+                if req['id']:
+                    self.emit(req['id'], 'result', status='error', text='', reason=str(e)[:120])
+            finally:
+                self.processing = False
+
+    def transcribe(self, req, out, t_end):
+        prompt = req.get('prompt') or self.initial_prompt
+        t0 = time.time()
+        segments, info = self.model.transcribe(
+            out['audio'], language=self._lang(), initial_prompt=prompt, beam_size=self.beam_size,
+            vad_filter=True, vad_parameters={'min_silence_duration_ms': 500, 'speech_pad_ms': 300,
+                                             'threshold': 0.2 if out.get('weak') else 0.4},
+            condition_on_previous_text=False, no_speech_threshold=self.no_speech_threshold,
+            temperature=0.0, without_timestamps=True, max_new_tokens=96)
+        good, logprobs = [], []
+        for seg in segments:
+            if seg.no_speech_prob > self.no_speech_threshold and seg.avg_logprob < self.min_avg_logprob:
+                continue
+            if seg.avg_logprob < -1.5:
+                continue
+            good.append(seg.text)
+            logprobs.append(seg.avg_logprob)
+        text, reject = clean_transcript(' '.join(good), prompt)
+        asr_sec = time.time() - t0
+        rid = req['id']
+        meta = dict(speech_sec=round(out['speech_sec'], 2), wait_sec=round(out['wait_sec'], 2),
+                    asr_sec=round(asr_sec, 2), latency_sec=round(time.time() - t_end, 2),
+                    avg_logprob=round(float(np.mean(logprobs)), 3) if logprobs else None)
+        if reject:
+            self.get_logger().info(f'[{rid}] descartado ({reject}) [{asr_sec:.2f} s]: "{text}"')
+            if rid:
+                self.emit(rid, 'result', status='rejected', text='', raw=text, reason=reject, **meta)
+            return
+        self.get_logger().info(f'[{rid}] "{text}" (ASR {asr_sec:.2f} s)')
+        if rid:
+            self.emit(rid, 'result', status='ok', text=text, **meta)
+        self.pub_transcription.publish(String(data=text))
 
 
 def main(args=None):

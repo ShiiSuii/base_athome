@@ -89,14 +89,17 @@ integración en `hri_receptionist_challenge.py`.
   Úsenla como **respaldo** cuando el ASR falle dos veces. No la presenten como modo principal sin
   confirmarlo.
 
-## 4. Pendientes recomendados (no implementados)
+## 4. Pendientes
 
-1. **Fin de habla por VAD en `whisper_node`:** cortar a 1,2 s de silencio, con mínimo de 1,5 s y
-   máximo de 8 s, como fbot. Resta entre 2 y 4 s por turno. Cambio solo en la Jetson y reversible.
-2. **Descartar el eco del TTS:** silenciar mientras habla ya existe (`/voice/mute`). Falta comparar
-   la transcripción con la última frase dicha por el robot, como hace FRIDA.
-3. **Reducción de ruido** (DeepFilterNet o *noisereduce*) **si** el CPU de la Jetson alcanza.
-   Medir con `jetson_stats`.
-4. **Confirmación sí/no por la pantalla** cuando la similitud con el vocabulario sea baja.
-5. **Grabaciones de prueba** (como `hri/benchmarks/stt` de FRIDA) para medir la precisión de ASR
-   con el RØDE real y ruido de fondo. La simulación no cubre el audio.
+**Hechos el 03-11-2026** (detalle y mediciones en `docs/MICROFONO_ASR.md`):
+1. **Fin de habla por VAD:** Silero en *streaming*, cierre a 1,1 s de silencio, espera de voz de 8 s
+   y pedidos con id y resultado explícito.
+2. **Eco del TTS:** los bloques con `/voice/mute` se anulan sin cancelar la escucha.
+3. **Confirmación sí/no**, por voz o pantalla, en el receptionist y en las órdenes de misión.
+4. **Banco de prueba** `asr_benchmark`: inyección sobre el micrófono real, grabaciones propias
+   (`--wav-dir`) y persona real (`--once`).
+
+**Siguen pendientes:**
+- **Reducción de ruido** (DeepFilterNet o *noisereduce*) **si** el CPU de la Jetson alcanza.
+  Medir primero con ruido real de competencia.
+- **Grabaciones con personas reales y ruido de fondo**, para `asr_benchmark --wav-dir`.

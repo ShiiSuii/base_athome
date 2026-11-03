@@ -83,6 +83,7 @@ class SimRobot(Node):
         self.mic = SimMicrophone()
         self.auto_guest = bool(gp("auto_guest"))
         self.auto_idx = 0
+        self.listen_count = 0
         self.prompt = ""
         wp = self._waypoints().get("home")
         sx, sy, syaw = (wp["x"], wp["y"], math.radians(wp.get("yaw_deg", 0))) if wp else gp("start_pose")
@@ -115,6 +116,7 @@ class SimRobot(Node):
         latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.pub_pt_conn = self.create_publisher(Bool, "/pan_tilt/connected", latched)
         self.pub_voice = self.create_publisher(String, "/voice/transcription", 10)
+        self.pub_vresult = self.create_publisher(String, "/voice/result", 20)
         self.pub_vstatus = self.create_publisher(String, "/voice/status", 10)
         self.pub_level = self.create_publisher(Float32, "/voice/mic_level", 10)
         self.pub_rgb = self.create_publisher(Image, "/camera/camera/color/image_raw", qos_profile_sensor_data)
@@ -147,6 +149,8 @@ class SimRobot(Node):
         srv(SetBool, "/arm/set_enable", self._srv_enable)
         srv(SetBool, "/pan_tilt/set_torque", self._srv_torque)
         srv(Trigger, "/voice/listen_trigger", self._srv_listen)
+        sub(String, "/voice/listen_request", self._listen_request)
+        sub(String, "/voice/cancel", lambda m: self._voice_cancelled(self.mic.cancel(m.data.strip()), "cancel"))
         srv(Trigger, "/arm/home", self._srv_home)
         ActionServer(self, NavigateToPose, "navigate_to_pose", execute_callback=self._nav_execute,
                      goal_callback=lambda g: GoalResponse.ACCEPT, cancel_callback=lambda g: CancelResponse.ACCEPT,
@@ -285,14 +289,39 @@ class SimRobot(Node):
         res.success, res.message = True, "sim: home"
         return res
 
-    def _srv_listen(self, req, res):
-        self.mic.trigger()
-        self.get_logger().info(f"Ventana de escucha {self.mic.window_s:.0f}s abierta (prompt: '{self.prompt[:50]}')")
+    def _voice_event(self, rid, event, **kw):
+        d = {"id": rid, "event": event, "t": round(time.time(), 3), "sim": True}
+        d.update(kw)
+        self.pub_vresult.publish(String(data=json.dumps(d)))
+
+    def _voice_cancelled(self, rid, why):
+        if rid:
+            self._voice_event(rid, "result", status="cancelled", text="", reason=why)
+
+    def _open_listen(self, rid, prompt="", start_timeout=None, end_silence=None):
+        self._voice_cancelled(self.mic.request(rid, start_timeout, end_silence), "replaced")
+        self._voice_event(rid, "listening")
+        self.get_logger().info(f"Escucha {rid} abierta (espera {start_timeout or self.mic.start_timeout:.0f} s; "
+                               f"prompt: '{(prompt or self.prompt)[:50]}')")
         if self.auto_guest:
             line = AUTO_LINES[self.auto_idx % len(AUTO_LINES)]
             self.auto_idx += 1
             threading.Timer(1.0, lambda: self._speech(String(data=line))).start()
-        res.success, res.message = True, "Triggered recording (sim)"
+
+    def _listen_request(self, msg):
+        try:
+            d = json.loads(msg.data)
+        except ValueError:
+            d = {}
+        self.listen_count += 1
+        self._open_listen(str(d.get("id") or f"r{self.listen_count}"), d.get("prompt", ""),
+                          d.get("start_timeout"), d.get("end_silence"))
+
+    def _srv_listen(self, req, res):
+        self.listen_count += 1
+        rid = f"t{self.listen_count}"
+        self._open_listen(rid)
+        res.success, res.message = True, json.dumps({"id": rid})
         return res
 
     async def _nav_execute(self, goal_handle):
@@ -352,9 +381,12 @@ class SimRobot(Node):
         t.transform.translation.x, t.transform.translation.y = self.base.x, self.base.y
         _, _, t.transform.rotation.z, t.transform.rotation.w = yaw_quat(self.base.yaw)
         self.tf.sendTransform(t)
-        for text in self.mic.due(now):
-            self.pub_voice.publish(String(data=text))
-            self.get_logger().info(f"/voice/transcription <- '{text}'")
+        for rid, status, text in self.mic.due(now):
+            self._voice_event(rid, "result", status=status, text=text,
+                              reason="" if status == "ok" else "start_timeout")
+            if status == "ok":
+                self.pub_voice.publish(String(data=text))
+            self.get_logger().info(f"/voice/result [{rid}] {status} '{text}'")
 
     # ------------------------------------------------------------------ Gazebo
     def _setup_gazebo(self):
@@ -435,7 +467,8 @@ class SimRobot(Node):
             "is_moving": self.arm.moving, "enabled": self.arm.enabled, "feedback_ok": True,
             "gripper_mm": round(self.arm.gripper_mm, 2), "xyz_mm": [0.0, 0.0, 0.0],
             "joints_deg": [round(v, 2) for v in self.arm.q], "sim": True})))
-        st = "MUTED" if self.mic.muted else ("LISTENING" if self.mic.listening else ("PROCESSING" if self.mic.pending else "IDLE"))
+        st = ("LISTENING" if self.mic.active else ("PROCESSING" if self.mic.pending else
+                                                   ("MUTED" if self.mic.muted else "IDLE")))
         self.pub_vstatus.publish(String(data=st))
         self.pub_level.publish(Float32(data=0.02 if st == "LISTENING" else 0.0))
         a = PoseWithCovarianceStamped()

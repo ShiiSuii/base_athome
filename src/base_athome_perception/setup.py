@@ -39,6 +39,7 @@ setup(
             'hri_receptionist.py = scripts.hri_receptionist_challenge:main',
             'challenge_hri = scripts.hri_receptionist_challenge:main',
             'animated_face = scripts.animated_face_node:main',
+            'asr_benchmark = scripts.asr_benchmark:main',
             'animated_face.py = scripts.animated_face_node:main',
         ],
     },

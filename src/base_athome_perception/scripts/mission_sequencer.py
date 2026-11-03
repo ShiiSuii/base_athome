@@ -49,6 +49,8 @@ from base_athome_perception.face_recognizer import FaceRecognizer
 from base_athome_perception.mission_intents import describe, parse_commands
 from base_athome_perception.speaker import RoboCupSpeaker
 from base_athome_perception.guest_vocabulary import GuestVocabulary
+from base_athome_perception.guest_dialog import parse_yes_no
+from base_athome_perception.voice_client import VoiceClient
 
 try:
     from nav2_msgs.action import NavigateToPose
@@ -58,7 +60,6 @@ except ImportError:  # pragma: no cover
 SEMANTIC_MAP = os.path.expanduser("~/base_athome_ws/src/base_athome_navigation/config/semantic_map.yaml")
 WAYPOINTS_YAML = os.path.expanduser("~/base_athome_ws/src/base_athome_navigation/config/waypoints.yaml")
 PKG = os.path.expanduser("~/base_athome_ws/src/base_athome_perception")
-LISTEN_WINDOW_S = 6.0
 
 
 def yaw_to_quat(yaw: float) -> Tuple[float, float]:
@@ -88,19 +89,16 @@ class MissionSequencer(Node):
         self.load_map()
         # --- interfaces ---
         self.create_subscription(String, "/mission/command", lambda m: self.commands.put(m.data), 10)
-        self.create_subscription(String, "/voice/transcription", self._voice_cb, 10)
         self.create_subscription(PoseWithCovarianceStamped, "/amcl_pose", self._pose_cb, 10)
         self.create_subscription(Image, "/camera/camera/color/image_raw", self._image_cb, qos_profile_sensor_data)
         self.pub_status = self.create_publisher(String, "/mission/status", 10)
         self.pub_say = self.create_publisher(String, "/hri/say_something", 10)
         self.pub_mute = self.create_publisher(Bool, "/voice/mute", 10)
-        self.pub_prompt = self.create_publisher(String, "/voice/initial_prompt", 10)
         self.pub_pantilt = self.create_publisher(Vector3, "/pan_tilt/target_degrees", 10)
-        self.cli_listen = self.create_client(Trigger, "/voice/listen_trigger")
+        self.voice = VoiceClient(self)   # escucha con id, fin de habla automatico y resultado explicito
         self.cli_torque = self.create_client(SetBool, "/pan_tilt/set_torque")
         self.nav = ActionClient(self, NavigateToPose, "navigate_to_pose") if NavigateToPose else None
         self.vocab = GuestVocabulary()
-        self.create_timer(5.0, lambda: self.pub_prompt.publish(String(data=self.vocab.whisper_prompt())))
         self.create_timer(0.5, lambda: self.pub_status.publish(String(data=f"{self.state}: {self.current_step}")))
 
         self.speaker = RoboCupSpeaker(piper_bin="/home/athome/piper_bin/piper/piper",
@@ -138,10 +136,6 @@ class MissionSequencer(Node):
         self.objects: Dict[str, Dict] = dict(data.get("objects") or {})
 
     # ----------------------------------------------------------------- ROS cb
-    def _voice_cb(self, msg: String):
-        if msg.data.strip():
-            self.voice_text = msg.data.strip()
-
     def _pose_cb(self, msg: PoseWithCovarianceStamped):
         p, q = msg.pose.pose.position, msg.pose.pose.orientation
         yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
@@ -168,23 +162,37 @@ class MissionSequencer(Node):
         finally:
             self.pub_mute.publish(Bool(data=False))
 
-    def listen(self, prompt: Optional[str] = None, window_s: float = LISTEN_WINDOW_S) -> Optional[str]:
-        """Dice `prompt`, beep, escucha la ventana fija y devuelve lo transcrito (o None)."""
-        if prompt:
-            self.say(prompt)
-        self.speaker.play_beep(blocking=True)
-        self.voice_text = None
-        self.pub_mute.publish(Bool(data=False))
-        if self.cli_listen.wait_for_service(timeout_sec=1.0):
-            self.cli_listen.call_async(Trigger.Request())
-        t_end = time.time() + window_s + 5.0  # ventana + transcripcion
-        while time.time() < t_end:
-            if self.voice_text:
-                text, self.voice_text = self.voice_text, None
-                self.get_logger().info(f"👂 {text}")
-                return text
-            time.sleep(0.1)
+    def command_prompt(self) -> str:
+        """Vocabulario para Whisper al escuchar ORDENES (no nombres/bebidas)."""
+        places = ", ".join(w.replace("_", " ") for w in self.waypoints)
+        objs = ", ".join(str(o.get("name", k)).replace("_", " ") for k, o in self.objects.items())
+        return (f"Commands for a home robot. Go to the {places or 'kitchen'}. Bring me the {objs or 'pringles'}. "
+                "Bring me object number one. Pick up the object. Receive the guest. Go home. Do the full mission.")
+
+    def listen(self, prompt: Optional[str] = None, asr_prompt: str = "", tries: int = 2) -> Optional[str]:
+        """Dice `prompt`, beep y escucha (corta solo cuando la persona termina). Devuelve el texto o None."""
+        for attempt in range(tries):
+            if prompt:
+                self.say(prompt if attempt == 0 else "I could not hear you. Please come closer and say it again "
+                                                     "after the beep.")
+            self.speaker.play_beep(blocking=True)
+            self.pub_mute.publish(Bool(data=False))
+            res = self.voice.listen(prompt=asr_prompt or self.vocab.whisper_prompt())
+            if res.ok:
+                self.get_logger().info(f"👂 {res.text}")
+                return res.text
+            self.get_logger().warn(f"👂 sin texto: {res.status} {res.reason}")
+            if res.status in ("offline", "error"):
+                self.say("My microphone is not working right now.")
+                return None
         return None
+
+    def confirm(self, question: str) -> bool:
+        """Pregunta si/no. Si no se entiende la respuesta, se asume que si (no bloquear la mision)."""
+        text = self.listen(f"{question} Please say yes or no after the beep.",
+                           asr_prompt="Answer yes or no. Yes. No. Yes, that is correct. No, that is wrong.")
+        ans = parse_yes_no(text)
+        return ans is not False
 
     # ---------------------------------------------------------- cabeza / caras
     def _head(self, pan: float, tilt: float):
@@ -231,12 +239,20 @@ class MissionSequencer(Node):
             except queue.Empty:
                 if self.state == self.IDLE and self.person_in_front() and time.time() - self.last_greet > 25.0:
                     self.last_greet = time.time()
-                    text = self.listen("Hello! What can I do for you? After the beep, tell me your request.")
+                    text = self.listen("Hello! What can I do for you? After the beep, tell me your request.",
+                                       asr_prompt=self.command_prompt())
+                    from_voice = True
+            else:
+                from_voice = False
             if not text:
                 continue
             steps = parse_commands(text, self.objects, list(self.waypoints))
             if not steps:
                 self.say("Sorry, I did not understand the request.")
+                continue
+            if from_voice and not self.confirm(f"I understood: {describe(steps, self.objects)}. Is that right?"):
+                self.say("Okay, I will not do it. Tell me again when you are ready.")
+                self.last_greet = time.time() - 15.0
                 continue
             self.say(f"Okay. I will {describe(steps, self.objects)}.")
             self.run_steps(steps)

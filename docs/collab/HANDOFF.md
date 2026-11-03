@@ -124,3 +124,29 @@
   - postura "sentado" en la simulación;
   - Gazebo con GUI en la pantalla del usuario.
 - **Siguiente paso:** fin de habla por VAD en `whisper_node`, con el robot real.
+
+### HANDOFF 2026-11-03 — Claude Code — micrófono / ASR rediseñado (modo CASA)
+
+- **Pedido del usuario:** "dependemos 100 % de la interacción por micrófono… corregilo al 100 % en todo lo que dependa de él".
+- **Jetson (`audio_asr`, desplegado y activo en `jetson-head`; respaldo en `~/deploy_backups/audio_asr_20261103_094455`):**
+  - Silero VAD en *streaming*, fin de habla a 1,1 s de silencio, espera de voz de 8 s (pausada con *mute*);
+  - pedidos con id (`/voice/listen_request`) y resultado siempre explícito (`/voice/result`);
+  - transcripción en cola; voz débil; ganancia automática;
+  - `/voice/debug_inject` para pruebas.
+- **NUC:**
+  - `voice_client.py` es el cliente único (`ok` / `no_speech` / `offline`…, compatible con el nodo viejo);
+  - interpretación robusta de nombres, bebidas y sí/no (`guest_vocabulary`, `guest_dialog.parse_yes_no`);
+  - receptionist con confirmación sí/no y aviso "micrófono caído → pantalla";
+  - secuenciador de misiones con *prompt* de órdenes y confirmación;
+  - `test_face_recognition` y la simulación usan el mismo protocolo.
+- **Medido:**
+  - `prueba_microfono` (voz inyectada sobre el ruido real del RØDE): 16/16 a volumen normal, al 25 %, al 8 % y con inicio tardío; 10/16 al 3 %;
+  - demora mediana de 2,5 s después de que la persona termina;
+  - *mute* verificado en el nodo real;
+  - simulación: receptionist y misión con confirmación, de punta a punta.
+- **No probado:**
+  - persona real frente al RØDE (el parlante HDMI no sirve para el camino acústico);
+  - ruido de competencia;
+  - las apps en el robot real.
+- **Siguiente paso:** con el robot, ejecutar `escuchar --n 10` con 2–3 personas a 1 y 2 m. Agregar las variantes de nombres que aparezcan en `NAME_ALIASES`.
+- **Documentación:** `docs/MICROFONO_ASR.md`.

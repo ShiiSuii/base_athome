@@ -106,3 +106,36 @@ def _extract_raw(text: str) -> Tuple[Optional[str], Optional[str]]:
             name = valid_words[0].title()
 
     return name, drink
+
+
+# Respuestas si/no tal como las transcribe Whisper (incluye errores tipicos: "No." -> "Know")
+YES_WORDS = {'yes', 'yeah', 'yep', 'yup', 'yah', 'ya', 'yea', 'correct', 'right', 'sure', 'exactly',
+             'affirmative', 'absolutely', 'definitely', 'true', 'okay', 'ok', 'perfect', 'si', 'sí', 'claro'}
+NO_WORDS = {'no', 'nope', 'nah', 'not', 'wrong', 'incorrect', 'negative', 'nein', "don't", 'isnt', "isn't",
+            'mistake', 'never'}
+NO_AT_START = {'know', 'now', 'noh', 'nor'}
+
+
+def parse_yes_no(text: Optional[str]) -> Optional[bool]:
+    """True = si, False = no, None = no se entiende. Gana la primera palabra si/no de la frase
+    ("No, that is right" -> False), salvo frases hechas ("that's right", "not really" ...)."""
+    if not text:
+        return None
+    t = text.lower().strip()
+    if re.search(r"\b(that'?s|that is|it'?s|it is) (not )?(right|correct|wrong)\b", t):
+        neg = re.search(r"\b(not (right|correct)|wrong)\b", t)
+        lead = re.match(r"\W*(yes|yeah|yep|no|nope)\b", t)
+        if lead:
+            return lead.group(1) in ('yes', 'yeah', 'yep')
+        return not neg
+    words = re.findall(r"[a-záéíóú']+", t)
+    if not words:
+        return None
+    if words[0] in NO_AT_START and len(words) <= 4:
+        return False
+    for w in words:
+        if w in YES_WORDS:
+            return True
+        if w in NO_WORDS:
+            return False
+    return None

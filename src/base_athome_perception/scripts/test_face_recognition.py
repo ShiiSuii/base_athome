@@ -165,6 +165,10 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
 
             # Cliente de servicio para disparo de escucha ASR
             self.cli_trigger = self.create_client(Trigger, "/voice/listen_trigger")
+            # Escucha con id y resultado explicito (ver base_athome_perception/voice_client.py)
+            from base_athome_perception.voice_client import VoiceClient
+            self.voice = VoiceClient(self)
+            self.listen_id = None
 
             # --- Interfaces Estandar FBOT@Home HRI ---
             # Topico de entrada: pedir al robot que diga una frase (TTS Piper)
@@ -885,12 +889,25 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
                     self.state = self.STATE_WAIT_NAME
                     self.state_start_time = time.time()
                     self.voice_text = None
-                    self.trigger_mic_listening()
+                    if getattr(self, "voice", None) is not None:
+                        self.listen_id = self.voice.request()
+                    else:
+                        self.trigger_mic_listening()
                     print("[Robot]: Escuchando respuesta del usuario en el microfono RØDE...")
 
             elif self.state == self.STATE_WAIT_NAME:
-                # Esperar transcripcion de Whisper (hasta 8.0s)
-                if self.voice_text:
+                # Esperar el resultado del pedido de escucha (llega siempre: texto, sin voz, ASR caido...)
+                res = self.voice.poll(self.listen_id) if getattr(self, "voice", None) is not None else None
+                if res is not None:
+                    self.listen_id = None
+                    if res.ok:
+                        self.voice_text = res.text
+                    else:
+                        print(f"[ASR]: sin respuesta ({res.status} {res.reason}).")
+                        self.speaker.speak("I am Robot. I did not hear you, let's try again later.")
+                        self.state = self.STATE_IDLE
+                        self.last_registered_time = now
+                if self.state == self.STATE_WAIT_NAME and self.voice_text:
                     user_speech = self.voice_text
                     self.voice_text = None
                     extracted = extract_person_name(user_speech)
@@ -908,7 +925,7 @@ class FaceRecognitionViewer(Node if ROS2_AVAILABLE else object):
                         self.state = self.STATE_PROMPT_NAME
                         self.state_start_time = now
 
-                elif now - self.state_start_time > 8.0:
+                elif getattr(self, "voice", None) is None and now - self.state_start_time > 8.0:
                     print("[ASR]: Tiempo de espera finalizado (sin respuesta).")
                     self.speaker.speak("I am Robot. I did not hear you, let's try again later.")
                     self.state = self.STATE_IDLE

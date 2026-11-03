@@ -118,36 +118,64 @@ class SimBase:
 
 
 class SimMicrophone:
-    """Microfono simulado con la MISMA semantica que whisper_node (modo bajo demanda):
-    solo entrega lo que se 'dice' durante una ventana abierta por listen_trigger y sin mute."""
+    """Microfono simulado con la MISMA semantica que whisper_node (escucha por pedido con id):
 
-    def __init__(self, window_s: float = 6.0, latency_s: float = 1.5, require_window: bool = True):
-        self.window_s = window_s
-        self.latency_s = latency_s
-        self.require_window = require_window
+    - request(id) abre una escucha: espera a que la persona EMPIECE a hablar hasta start_timeout
+      (el reloj se detiene mientras el robot habla: mute) y corta end_silence despues de que termina.
+    - Lo que se dice sin escucha abierta o con el robot hablando se pierde (como en el real).
+    - due() devuelve los resultados (id, status, texto): 'ok' o 'no_speech'. Siempre hay resultado.
+    """
+
+    WORD_SEC = 0.35  # duracion aproximada de cada palabra hablada
+
+    def __init__(self, start_timeout: float = 8.0, end_silence: float = 1.1, asr_s: float = 1.3):
+        self.start_timeout = start_timeout
+        self.end_silence = end_silence
+        self.asr_s = asr_s
         self.muted = False
-        self.window_until = 0.0
-        self.pending: List[Tuple[float, str]] = []  # (t_publicar, texto)
+        self.active: Optional[dict] = None          # {'id', 'deadline'}
+        self.pending: List[Tuple[float, str, str, str]] = []  # (t_publicar, id, status, texto)
+        self._last = None
 
-    def trigger(self, now: Optional[float] = None):
+    def request(self, rid: str, start_timeout: Optional[float] = None, end_silence: Optional[float] = None,
+                now: Optional[float] = None) -> Optional[str]:
+        """Abre una escucha. Devuelve el id reemplazado (que debe terminar como 'cancelled'), si habia."""
         now = time.time() if now is None else now
-        self.window_until = now + self.window_s
+        old = self.active["id"] if self.active else None
+        self.active = {"id": rid, "deadline": now + (start_timeout or self.start_timeout),
+                       "end_silence": end_silence or self.end_silence}
+        self._last = now
+        return old
+
+    def cancel(self, rid: str = "") -> Optional[str]:
+        if self.active and rid in ("", "*", self.active["id"]):
+            old, self.active = self.active["id"], None
+            return old
+        return None
 
     @property
     def listening(self) -> bool:
-        return time.time() < self.window_until and not self.muted
+        return self.active is not None and not self.muted
 
     def hear(self, text: str, now: Optional[float] = None) -> bool:
         """El 'invitado' habla. Devuelve False si el robot no estaba escuchando (se pierde, como en el real)."""
         now = time.time() if now is None else now
-        if self.require_window and (now >= self.window_until or self.muted):
+        if self.active is None or self.muted:
             return False
-        t_pub = max(now, self.window_until if self.require_window else now) + self.latency_s
-        self.pending.append((t_pub, text))
+        dur = max(0.5, len(text.split()) * self.WORD_SEC)
+        self.pending.append((now + dur + self.active["end_silence"] + self.asr_s, self.active["id"], "ok", text))
+        self.active = None
         return True
 
-    def due(self, now: Optional[float] = None) -> List[str]:
+    def due(self, now: Optional[float] = None) -> List[Tuple[str, str, str]]:
         now = time.time() if now is None else now
-        out = [t for tp, t in self.pending if tp <= now]
-        self.pending = [(tp, t) for tp, t in self.pending if tp > now]
+        if self.active is not None:
+            if self.muted and self._last is not None:
+                self.active["deadline"] += now - self._last   # mientras el robot habla no corre la espera
+            if now >= self.active["deadline"]:
+                self.pending.append((now, self.active["id"], "no_speech", ""))
+                self.active = None
+        self._last = now
+        out = [(rid, st, t) for tp, rid, st, t in self.pending if tp <= now]
+        self.pending = [x for x in self.pending if x[0] > now]
         return out

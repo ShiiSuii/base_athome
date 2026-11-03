@@ -42,7 +42,11 @@ alias topicos='_ros && ros2 topic list -t'
 alias nodos='_ros && ros2 node list'
 alias brazo_estado='_ros && ros2 topic echo /arm/status'
 alias pantilt_conectado='_ros && ros2 topic echo --once /pan_tilt/connected'
-alias voz='_ros && ros2 topic echo /voice/transcription'
+alias voz='_ros && ros2 topic echo /voice/result'   # cada escucha: id, estado (ok/no_speech/...), texto, tiempos
+# --- Microfono (ver docs/MICROFONO_ASR.md) ---
+alias escuchar='_ros && ros2 run base_athome_perception asr_benchmark --once'           # beep + escucha a una persona real
+alias prueba_microfono='_ros && ros2 run base_athome_perception asr_benchmark --inject'  # 16 frases sobre el ruido real del RODE
+alias microfono_logs='ssh $JETSON_HOST "journalctl -u jetson-head -f --no-pager | grep --line-buffered whisper_asr"'
 alias detecciones='_ros && ros2 topic echo /arm_camera/detections --field detections'
 alias camara_muneca_hz='_ros && ros2 topic hz /arm_camera/image_raw'
 alias camara_muneca='_ros && ros2 run rqt_image_view rqt_image_view /arm_camera/image_raw'
@@ -57,6 +61,7 @@ Manipulacion:  manipulacion (incluye MoveIt) | manipulacion_avanzada | rviz_mani
 Misiones:      mision | mision_sim | mision_pedir "<pedido>" | mision_estado
 Receptionist:  receptionist | hri_sim | limpiar_memoria | memoria_personas | pantalla_invitado
 Simulacion:    simulacion (=sim) | sim_gazebo | sim_env | sim_salir | sim_decir "..." | sim_invitado door|none|next | sim_auto
+Microfono:     escuchar [--n 5] | prueba_microfono [--gain 0.3] | microfono_logs | voz
 ROS (lectura): topicos | nodos | brazo_estado | pantilt_conectado | voz | detecciones | camara_muneca[_hz]
 Existentes:    mapeo2d | navegacion | rviznav | lidar | receptionist | rostros | cara | piper | stepper ...
 EOF

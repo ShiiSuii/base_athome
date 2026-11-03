@@ -92,10 +92,11 @@ def generate_launch_description():
         parameters=[{
             'model_size': LaunchConfiguration('whisper_model'),
             'language': LaunchConfiguration('language'),
-            'energy_threshold': 0.02,
-            'silence_duration_sec': 1.0,
-            'max_utterance_sec': 8.0,
-            'trigger_wait_sec': 7.0,
+            # Escucha por pedido con fin de habla por Silero VAD (ver audio_asr/asr_core.py)
+            'start_timeout_sec': 8.0,   # espera a que la persona empiece a hablar
+            'end_silence_sec': 1.1,     # silencio que cierra la frase
+            'max_speech_sec': 15.0,
+            'auto_gain': True,          # baja la ganancia del RODE si la voz satura
         }],
         condition=IfCondition(LaunchConfiguration('enable_audio'))
     )

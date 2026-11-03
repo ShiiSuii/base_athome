@@ -93,14 +93,17 @@ from base_athome_perception.piper_kinematics import (
 # ------------------------------------------------------------------------------
 
 from base_athome_perception.guest_dialog import (COMMON_DRINKS, DRINK_TRANSLATIONS, STOP_WORDS,  # noqa: F401
-                                                    extract_name_and_drink)
+                                                    extract_name_and_drink, parse_yes_no)
+from base_athome_perception.voice_client import VoiceClient, VoiceResult
 
 
 # Ruta del ejecutable en la linea de comandos del driver real (evita coincidir con shells
 # que solo mencionan el nombre, p.ej. un "pgrep realsense2_camera_node" en otra terminal)
 RS_PROC_PATTERN = r"^/opt/ros/[a-z]+/lib/realsense2_camera/realsense2_camera_node"
-# Debe coincidir con listen_window_sec de whisper_node (Jetson): ventana fija tras el beep
-LISTEN_WINDOW_S = 6.0
+# Escucha: whisper_node espera hasta LISTEN_START_TIMEOUT_S a que la persona empiece a hablar y corta
+# solo ~1 s despues de que termina (ya no hay ventana fija). Cada pedido termina con un resultado.
+LISTEN_START_TIMEOUT_S = 8.0
+YES_NO_PROMPT = "Answer yes or no. Yes. No. Yes, that is correct. No, that is wrong."
 
 # ------------------------------------------------------------------------------
 # CONSTANTES DE POSES Y GESTOS DEL BRAZO PIPER
@@ -142,6 +145,8 @@ class HriReceptionistChallengeNode(Node):
     STATE_SCAN_SCENE = 14
     STATE_WAIT_SEATED = 15
     STATE_DONE = 16  # terminal: antes COMPLETE se re-ejecutaba en bucle (repetia el discurso final)
+    STATE_ASK_CONFIRM = 17     # "Your name is X and you like Y. Is that correct?"
+    STATE_WAIT_CONFIRM = 18
 
     STATE_NAMES = {
         STATE_INIT: "0/7: INICIALIZANDO SISTEMA",
@@ -161,10 +166,12 @@ class HriReceptionistChallengeNode(Node):
         STATE_SCAN_SCENE: "6/7: ANALIZANDO LA SALA CON LA CABEZA",
         STATE_WAIT_SEATED: "7/7: ESPERANDO QUE EL INVITADO SE SIENTE",
         STATE_DONE: "7/7: TERMINADO",
+        STATE_ASK_CONFIRM: "3/7: VERIFICANDO LO QUE ENTENDI",
+        STATE_WAIT_CONFIRM: "3/7: ESCUCHANDO SI / NO",
     }
     # Estados en los que la cabeza sigue la cara del interlocutor
     TRACKING_STATES = {STATE_WAIT_DOOR, STATE_GREET_AND_PROMPT, STATE_WAIT_NAME_DRINK, STATE_PROMPT_MISSING_INFO,
-                       STATE_CONFIRM_DETAILS, STATE_MEMORIZE_FACE}
+                       STATE_CONFIRM_DETAILS, STATE_MEMORIZE_FACE, STATE_ASK_CONFIRM, STATE_WAIT_CONFIRM}
 
     def __init__(
         self,
@@ -300,6 +307,13 @@ class HriReceptionistChallengeNode(Node):
 
         # Cliente para activar microfono /voice/listen_trigger
         self.cli_mic_trigger = self.create_client(Trigger, "/voice/listen_trigger")
+        # Escucha con id y resultado explicito (ok / no_speech / offline ...): ver voice_client.py
+        self.voice = VoiceClient(self, start_timeout=LISTEN_START_TIMEOUT_S)
+        self.listen_id: Optional[str] = None
+        self.voice_failures = 0         # escuchas seguidas sin entender nada
+        self.confirm_tries = 0
+        self.from_screen = False
+        self.last_heard_text = ""
         # Boton/servicio para vaciar la memoria temporal de personas
         self.srv_clear_memory = self.create_service(Trigger, "/hri/clear_memory", self._srv_clear_memory)
         self.clear_memory_requested = False
@@ -805,6 +819,8 @@ class HriReceptionistChallengeNode(Node):
                 print("   [Manual]: Asignando datos de demo por teclado: 'Alex' y 'Lemonade'")
                 self.current_name = "Alex" if self.guest_index == 1 else "Taylor"
                 self.current_drink = "Lemonade" if self.guest_index == 1 else "Coffee"
+                self.voice.cancel(self.listen_id)
+                self.listen_id = None
                 self.state = self.STATE_CONFIRM_DETAILS
                 self.state_start_time = time.time()
             elif self.state == self.STATE_MEMORIZE_FACE:
@@ -823,7 +839,8 @@ class HriReceptionistChallengeNode(Node):
                 try:
                     sim_text = input("\n🎙️ [Simular Respuesta de Voz]: ")
                     if sim_text.strip():
-                        self.voice_text = sim_text.strip()
+                        if self.voice.inject(sim_text.strip()) is None:
+                            self.voice_text = sim_text.strip()
                         self.get_logger().info(f"🎙️ [Manual Texto]: '{self.voice_text}'")
                 except Exception:
                     pass
@@ -836,7 +853,7 @@ class HriReceptionistChallengeNode(Node):
             self.move_arm_to_named_pose("point_couch", duration_s=1.5)
         elif key in [ord("r"), ord("R")]:
             print("\n[Mic]: Forzando escucha de microfono...")
-            self.trigger_mic_listening()
+            self.start_listening(beep=False)
         elif key in [ord("n"), ord("N")]:
             print("\n[Nav]: Omitiendo navegacion en curso...")
             if self.navigator and not self.sim_nav:
@@ -928,6 +945,25 @@ class HriReceptionistChallengeNode(Node):
                                        throttle_duration_sec=10.0)
         except Exception as e:
             self.get_logger().warn(f"Error disparando escucha: {e}", throttle_duration_sec=10.0)
+
+    def start_listening(self, prompt: Optional[str] = None, beep: bool = True):
+        """Beep (antes de abrir el micro: no debe grabarse) y pedido de escucha con id."""
+        if self._mute_refs == 0:
+            self.pub_voice_mute.publish(Bool(data=False))  # por si se perdio un unmute
+        if beep:
+            self.speaker.play_beep(blocking=True)
+        self.set_robot_emotion("listening")
+        self.listen_id = self.voice.request(prompt=prompt or self.vocab.whisper_prompt())
+        self.state_start_time = time.time()
+
+    def _ask_again(self, text: str):
+        self.say(text, emotion="speaking", blocking=True)
+        self.start_listening()
+
+    def _voice_problem_hint(self) -> str:
+        if self.guest_screen is not None and self.voice_failures >= 2:
+            return " You can also tap your name and drink on my screen."
+        return ""
 
     def _amcl_pose_cb(self, msg: PoseWithCovarianceStamped):
         q = msg.pose.pose.orientation
@@ -1434,18 +1470,18 @@ class HriReceptionistChallengeNode(Node):
             self.voice_text = None
             self.say("Hello! Welcome to our home. I am Robot, the receptionist of this house.",
                      emotion="speaking", blocking=True)
-            self.say(f"After the beep, please say: My name is, your name, and my favorite drink is, your drink. "
-                     f"You have {int(LISTEN_WINDOW_S)} seconds. You can also tap your answer on my screen.",
+            self.say("After the beep, please say: My name is, your name, and my favorite drink is, your drink."
+                     + (" You can also tap your answer on my screen." if self.guest_screen is not None else ""),
                      emotion="speaking", blocking=True)
-            # Tono de turn-taking acustico para ceder el turno de habla al humano
-            self.speaker.play_beep(blocking=True)  # antes de abrir el micro: el beep no debe grabarse
-            self.set_robot_emotion("listening")
-            self.trigger_mic_listening()
             self.voice_text = None
             self.user_speech_buffer = ""
             self.retry_count = 0
+            self.voice_failures = 0
+            self.confirm_tries = 0
+            self.from_screen = False
             self.state = self.STATE_WAIT_NAME_DRINK
-            self.state_start_time = time.time()  # tras los say() bloqueantes, no el 'now' del inicio del ciclo
+            # Tono de turn-taking acustico para ceder el turno de habla al humano + escucha con id
+            self.start_listening()
 
         elif self.state == self.STATE_WAIT_NAME_DRINK:
             # Respuestas por la pantalla tactil (alternativa al microfono): se aceptan siempre
@@ -1455,82 +1491,138 @@ class HriReceptionistChallengeNode(Node):
                     self.current_name = self.vocab.match_name(d["value"]) or d["value"].title()
                 elif d["type"] == "drink":
                     self.current_drink = self.vocab.match_drink(d["value"]) or d["value"].title()
-            if self.current_name and self.current_drink and not self.voice_text:
-                self.state = self.STATE_CONFIRM_DETAILS
+                self.from_screen = True
+            if self.current_name and self.current_drink and self.from_screen:
+                self.voice.cancel(self.listen_id)
+                self.listen_id = None
+                self.state = self.STATE_CONFIRM_DETAILS   # tocado en pantalla: no hace falta preguntar si/no
                 self.state_start_time = time.time()
                 return
-            # Esperar respuesta por Whisper ASR
-            if self.voice_text:
-                speech = self.voice_text
-                self.voice_text = None
+            res = self.voice.poll(self.listen_id)
+            if res is None and self.listen_id is None and self.voice_text:  # [T] sin pedido abierto
+                res, self.voice_text = VoiceResult("manual", "ok", text=self.voice_text, source="keyboard"), None
+            if res is None:
+                if self.listen_id is None and now - self.state_start_time > 2.0:
+                    self.start_listening()          # p.ej. tras un [ESPACIO] o un reinicio: volver a escuchar
+                return
+            self.listen_id = None
+            self.voice_text = None
+            if res.ok:
+                speech = res.text
                 self.set_robot_emotion("thinking")
-
                 extracted_name, extracted_drink = extract_name_and_drink(speech, self.vocab)
                 self.get_logger().info(
                     f"NLP Parser: \"{speech}\" -> Nombre: '{extracted_name}', Bebida: '{extracted_drink}'"
                 )
-
+                self.last_heard_text = speech
                 if extracted_name:
                     self.current_name = extracted_name
                 if extracted_drink:
                     self.current_drink = extracted_drink
 
-                # Si tenemos ambos datos
                 if self.current_name and self.current_drink:
-                    self.state = self.STATE_CONFIRM_DETAILS
-                    self.state_start_time = time.time()  # tras los say() bloqueantes, no el 'now' del inicio del ciclo
-                elif self.current_name and not self.current_drink:
-                    self.missing_field = "drink"
+                    self.voice_failures = 0
+                    self.state = self.STATE_ASK_CONFIRM
+                    self.state_start_time = time.time()
+                elif self.current_name or self.current_drink:
+                    self.voice_failures = 0
+                    self.missing_field = "drink" if self.current_name else "name"
                     self.state = self.STATE_PROMPT_MISSING_INFO
-                    self.state_start_time = time.time()  # tras los say() bloqueantes, no el 'now' del inicio del ciclo
-                elif not self.current_name and self.current_drink:
-                    self.missing_field = "name"
-                    self.state = self.STATE_PROMPT_MISSING_INFO
-                    self.state_start_time = time.time()  # tras los say() bloqueantes, no el 'now' del inicio del ciclo
+                    self.state_start_time = time.time()
                 else:
-                    # Habló pero no se extrajo ninguno: pedir aclaración cortés sin inventar datos
+                    # Hablo pero no se extrajo nada: pedir aclaracion sin inventar datos
+                    self.voice_failures += 1
                     self.retry_count += 1
-                    prompt_clarify = ("I did not catch that. After the beep, please say clearly: "
-                                      "My name is, your name, and my favorite drink is, your drink.")
-                    self.say(prompt_clarify, emotion="speaking", blocking=True)
-                    self.speaker.play_beep(blocking=True)  # antes de abrir el micro: el beep no debe grabarse
-                    self.set_robot_emotion("listening")
-                    self.trigger_mic_listening()
-                    self.state_start_time = time.time()  # tras los say() bloqueantes, no el 'now' del inicio del ciclo
-
-            elif now - self.state_start_time > LISTEN_WINDOW_S + 5.0:  # ventana de escucha + transcripcion
-                # Timeout de silencio: NO avanzar automáticamente. Recordar cortésmente y seguir escuchando
+                    self._ask_again("Sorry, I did not understand. After the beep, please say: "
+                                    "My name is, your name, and my favorite drink is, your drink."
+                                    + self._voice_problem_hint())
+            elif res.status in ("offline", "error"):
+                self.voice_failures += 1
                 self.retry_count += 1
-                self.get_logger().info(
-                    f"⏳ [Audio]: Esperando respuesta del invitado (intento {self.retry_count})... "
-                    "Use [T] para escribir por teclado o hable al microfono."
-                )
+                self.get_logger().error(f"🎤 Microfono/ASR no disponible ({res.status}: {res.reason}). "
+                                        "Revisar Jetson: systemctl status jetson-head; ros2 topic echo /voice/status")
+                if self.guest_screen is not None:
+                    self.say("I am having trouble with my microphone. Please tap your name and your favorite "
+                             "drink on my screen.", emotion="speaking", blocking=True)
+                else:
+                    self.say("I am having trouble with my microphone. One moment please.",
+                             emotion="speaking", blocking=True)
+                self.sleep_gui(2.0)
+                self.start_listening(beep=False)   # si el ASR vuelve, se sigue por voz
+            else:
+                # no_speech / rejected / timeout: no se escucho una frase; NO avanzar, volver a preguntar
+                self.voice_failures += 1
+                self.retry_count += 1
+                self.get_logger().info(f"⏳ [Audio]: sin respuesta ({res.status} {res.reason}), "
+                                       f"intento {self.retry_count}. [T] escribe por teclado.")
                 if self.retry_count % 2 == 1:
-                    prompt_wait = "I could not hear you. After the beep, say: My name is, your name, and my favorite drink is, your drink."
+                    prompt_wait = ("I could not hear you. Please come a little closer and, after the beep, say: "
+                                   "My name is, your name, and my favorite drink is, your drink.")
                 else:
                     prompt_wait = "After the beep, please tell me your name and your favorite drink."
-                self.say(prompt_wait, emotion="speaking", blocking=True)
-                self.speaker.play_beep(blocking=True)  # antes de abrir el micro: el beep no debe grabarse
-                self.set_robot_emotion("listening")
-                self.trigger_mic_listening()
-                self.state_start_time = time.time()  # tras los say() bloqueantes, no el 'now' del inicio del ciclo
+                self._ask_again(prompt_wait + self._voice_problem_hint())
 
         elif self.state == self.STATE_PROMPT_MISSING_INFO:
             if self.missing_field == "drink":
-                prompt_drink = (f"Nice to meet you, {self.current_name}! After the beep, please say: "
-                                f"my favorite drink is, your drink.")
-                self.say(prompt_drink, emotion="speaking", blocking=True)
+                prompt = (f"Nice to meet you, {self.current_name}! After the beep, please say: "
+                          f"my favorite drink is, your drink.")
             else:
-                prompt_name = "I got your drink. After the beep, please say: my name is, your name."
-                self.say(prompt_name, emotion="speaking", blocking=True)
-
-            self.speaker.play_beep(blocking=True)  # antes de abrir el micro: el beep no debe grabarse
-            self.set_robot_emotion("listening")
-            self.trigger_mic_listening()
+                prompt = f"I got your drink, {self.current_drink}. After the beep, please say: my name is, your name."
+            self.say(prompt, emotion="speaking", blocking=True)
             self.voice_text = None
             self.user_speech_buffer = ""
             self.state = self.STATE_WAIT_NAME_DRINK
-            self.state_start_time = time.time()  # tras los say() bloqueantes, no el 'now' del inicio del ciclo
+            self.start_listening()
+
+        elif self.state == self.STATE_ASK_CONFIRM:
+            # Verificar lo entendido: un nombre o bebida mal escuchados cuestan puntos en todo el resto
+            self.confirm_tries += 1
+            self.say(f"Let me check. Your name is {self.current_name}, and your favorite drink is "
+                     f"{self.current_drink}. Is that correct? Please say yes or no after the beep.",
+                     emotion="speaking", blocking=True)
+            self.state = self.STATE_WAIT_CONFIRM
+            self.start_listening(prompt=YES_NO_PROMPT)
+
+        elif self.state == self.STATE_WAIT_CONFIRM:
+            answer = None
+            while not self.guest_inputs.empty():
+                d = self.guest_inputs.get()
+                if d["type"] == "answer":
+                    answer = parse_yes_no(d["value"])
+                elif d["type"] in ("name", "drink"):  # corrigio en la pantalla
+                    self.guest_inputs.put(d)
+                    self.voice.cancel(self.listen_id)
+                    self.listen_id = None
+                    self.state = self.STATE_WAIT_NAME_DRINK
+                    self.state_start_time = time.time()
+                    return
+            res = None
+            if answer is None:
+                res = self.voice.poll(self.listen_id)
+                if res is None:
+                    return
+                if res.ok:
+                    answer = parse_yes_no(res.text)
+                    self.get_logger().info(f"Confirmacion: \"{res.text}\" -> {answer}")
+            self.voice.cancel(self.listen_id)
+            self.listen_id = None
+            if answer is True or (answer is None and self.confirm_tries >= 2):
+                if answer is None:
+                    self.get_logger().warn("Sin si/no claro tras 2 intentos: sigo con lo entendido")
+                self.state = self.STATE_CONFIRM_DETAILS
+                self.state_start_time = time.time()
+            elif answer is False:
+                # Volver a preguntar ambos datos (mas rapido y claro que preguntar cual estaba mal)
+                self.current_name = None
+                self.current_drink = None
+                self.confirm_tries = 0
+                self.say("Sorry about that. Let's try again.", emotion="speaking", blocking=True)
+                self._ask_again("After the beep, please say slowly: My name is, your name, and my favorite "
+                                "drink is, your drink." + (" Or tap them on my screen." if self.guest_screen else ""))
+                self.state = self.STATE_WAIT_NAME_DRINK
+            else:
+                self.state = self.STATE_ASK_CONFIRM
+                self.state_start_time = time.time()
 
         elif self.state == self.STATE_CONFIRM_DETAILS:
             confirm_msg = f"Thank you, {self.current_name}! I noted that your favorite drink is {self.current_drink}."
@@ -1844,6 +1936,8 @@ class HriReceptionistChallengeNode(Node):
                 self.retry_count = 0
                 self.voice_text = None
                 self.user_speech_buffer = ""
+                self.voice.cancel(self.listen_id)
+                self.listen_id = None
                 self.state = self.STATE_NAV_TO_DOOR
                 self.state_start_time = time.time()  # tras los say() bloqueantes, no el 'now' del inicio del ciclo
             else:
