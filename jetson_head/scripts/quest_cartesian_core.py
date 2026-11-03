@@ -116,7 +116,7 @@ def scale_rotation(R, k):
 
 def cart_step(st: CartesianState, pose, buttons, measured_deg, now_age_s, dt,
               scale=1.0, max_joint_dps=45.0, timeout_s=0.3, grip_open=90.0, grip_closed=10.0,
-              rot_scale=1.0, max_wrist_dps=None):
+              rot_scale=1.0, max_wrist_dps=None, max_lead_deg=15.0, ik_damping=80.0):
     """pose = (pos_xyz_m, quat_xyzw) del control en WebXR. Devuelve st con q_cmd (None = no mandar)."""
     if measured_deg is None:
         st.engaged, st.q_cmd, st.reason = False, None, "sin feedback del brazo"
@@ -145,12 +145,14 @@ def cart_step(st: CartesianState, pose, buttons, measured_deg, now_age_s, dt,
     dR = scale_rotation(M_XR_TO_ROBOT @ (Rc @ st.c0_R.T) @ M_XR_TO_ROBOT.T, rot_scale)
     st.target_p = st.t0_p + dp
     st.target_R = dR @ st.t0_R if st.use_rot else st.t0_R
-    q_new, st.err_mm, st.err_deg = ik_step(st.q_cmd, st.target_p, st.target_R, use_rot=True)
+    # amortiguacion alta: cerca de la singularidad de muneca (j5 ~ 0, p.ej. en HOME) evita giros grandes y
+    # opuestos de j4/j6 (medido: 40 grados con 8 -> 7 grados con 80, mismo error de la pinza ~1 mm)
+    q_new, st.err_mm, st.err_deg = ik_step(st.q_cmd, st.target_p, st.target_R, use_rot=True, damping=ik_damping)
     # velocidad maxima por articulacion; la muneca (j4..j6) puede ir mas rapido para que el giro responda
     lim = np.array([max_joint_dps] * 3 + [max_wrist_dps or max_joint_dps] * 3) * dt
     q_prev = np.asarray(st.q_cmd, float)
     q_new = q_prev + np.clip(q_new - q_prev, -lim, lim)
-    q_new = np.minimum(np.asarray(measured_deg) + 15.0, np.maximum(np.asarray(measured_deg) - 15.0, q_new))
+    q_new = np.minimum(np.asarray(measured_deg) + max_lead_deg, np.maximum(np.asarray(measured_deg) - max_lead_deg, q_new))
     st.q_cmd = [float(v) for v in q_new]
     st.reason = (f"siguiendo el control (error {st.err_mm:.0f} mm / {st.err_deg:.0f} grados"
                  + (", FUERA DE ALCANCE" if st.err_mm > 15.0 else "") + ")")

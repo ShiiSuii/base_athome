@@ -84,7 +84,14 @@ class QuestTeleop(Node):
         self.declare_parameter("mode", "cartesian")          # cartesian (pose 6D del control) | joint
         self.declare_parameter("scale", 1.0)                 # escala de la traslacion mano -> pinza
         self.declare_parameter("max_joint_dps", 45.0)        # velocidad maxima por articulacion (modo cartesiano)
-        self.declare_parameter("keep_awake", True)           # seguir funcionando con el visor quitado (se revierte al salir)
+        self.declare_parameter("keep_awake", True)
+        # ROBOT REAL: el brazo se mueve SOLO mientras se mantiene X (boton inferior del control izquierdo;
+        # A en el derecho). Primero va a HOME (despacio, tambien con X); recien ahi sigue la mano.
+        self.declare_parameter("real", False)
+        self.declare_parameter("home_deg", [73.87, 169.72, -138.02, 26.69, -15.7, -117.17])
+        self.declare_parameter("home_speed_dps", 15.0)
+        self.declare_parameter("max_lead_deg", 15.0)   # cuanto puede adelantarse el objetivo a lo medido (real: 5)
+        self.declare_parameter("ik_damping", 80.0)           # seguir funcionando con el visor quitado (se revierte al salir)
         self.declare_parameter("rot_scale", 2.0)             # sensibilidad de giro: angulo de la pinza = k x angulo de la mano
         self.declare_parameter("max_wrist_dps", 90.0)        # velocidad maxima de la muneca (j4..j6)
         self.hand = str(self.get_parameter("hand").value)
@@ -95,6 +102,12 @@ class QuestTeleop(Node):
         self.arm = {}
         self.state = TeleopState()
         self.cstate = qc.CartesianState()
+        self.real = bool(self.get_parameter("real").value)
+        self.homed = False
+        self.was_engaged = False
+        self.home_q = None
+        if self.real:
+            self.get_logger().warn("MODO ROBOT REAL: movimiento solo con X mantenido; primero HOME")
         self.pose = None
         self.pose_t = 0.0
         self.page_version = None
@@ -283,9 +296,49 @@ def _publish_traj(node, q_deg):
     node.pub_traj.publish(msg)
 
 
+def _real_buttons(buttons):
+    """Robot real: X/A (indice 4) es hombre muerto Y embrague; Y/B (indice 5) alterna el giro."""
+    b = list(buttons) + [0.0] * 6
+    return [b[0], b[4], 0.0, 0.0, b[5], 0.0]
+
+
+def _tick_home(self, now, sample, measured, enabled):
+    """Ir a HOME en espacio articular, despacio, solo mientras X esta apretado. True cuando llego."""
+    home = [float(v) for v in self.get_parameter("home_deg").value]
+    xs = sample is not None and now - sample.t < 0.3 and len(sample.buttons) > 4 and sample.buttons[4] > 0.5
+    if measured is None:
+        reason = "sin feedback del brazo real"
+    elif max(abs(a - b) for a, b in zip(measured, home)) < 2.0:
+        self.homed = True
+        self.home_q = None
+        self.get_logger().info("HOME alcanzado: mantener X para que el brazo siga la mano")
+        reason = "en HOME: mantener X para seguir la mano"
+    elif not xs:
+        self.home_q = None
+        reason = "ir a HOME primero: mantener X (el brazo se mueve despacio a HOME)"
+    elif not enabled:
+        reason = "brazo DESHABILITADO: habilitarlo con /arm/set_enable"
+    else:
+        if self.home_q is None:
+            self.home_q = list(measured)
+        step = float(self.get_parameter("home_speed_dps").value) * self.dt
+        self.home_q = [q + max(-step, min(step, h - q)) for q, h in zip(self.home_q, home)]
+        self.home_q = [min(m + 10.0, max(m - 10.0, q)) for q, m in zip(self.home_q, measured)]
+        _publish_traj(self, self.home_q)
+        reason = f"yendo a HOME (faltan {max(abs(a - b) for a, b in zip(measured, home)):.0f} grados)"
+    self.pub_status.publish(String(data=json.dumps(dict(reason=reason, mode="real-home", homed=self.homed,
+                                                          deadman=bool(xs), arm_enabled=enabled))))
+    return self.homed
+
+
 def _tick_cartesian(self, now, sample, pose, measured, fresh_arm):
     age = 99.0 if sample is None else now - sample.t
     buttons = sample.buttons if sample is not None else []
+    if self.real:
+        if not self.homed:
+            _tick_home(self, now, sample, measured, bool(self.arm.get("enabled")))
+            return
+        buttons = _real_buttons(buttons)
     if pose is not None and now - self.pose_t > 0.3:
         pose = None                     # pose vieja: equivale a perder el seguimiento del control
     t_ik = time.monotonic()
@@ -294,11 +347,19 @@ def _tick_cartesian(self, now, sample, pose, measured, fresh_arm):
                           scale=float(self.get_parameter("scale").value),
                           max_joint_dps=float(self.get_parameter("max_joint_dps").value),
                           rot_scale=float(self.get_parameter("rot_scale").value),
-                          max_wrist_dps=float(self.get_parameter("max_wrist_dps").value))
+                          max_wrist_dps=float(self.get_parameter("max_wrist_dps").value),
+                          max_lead_deg=float(self.get_parameter("max_lead_deg").value),
+                          ik_damping=float(self.get_parameter("ik_damping").value))
     for line in st.log:
         self.get_logger().info(line)
     st.log.clear()
     enabled = bool(self.arm.get("enabled"))
+    # Al soltar el hombre muerto: FRENAR donde esta (sostener la posicion MEDIDA), no terminar el tramo
+    # comandado (que puede estar hasta max_lead_deg adelante).
+    if self.was_engaged and not st.engaged and measured is not None and enabled:
+        _publish_traj(self, list(measured))
+        self.get_logger().info("Hombre muerto suelto: brazo detenido en la posicion medida")
+    self.was_engaged = st.engaged
     page_alive = now - self.page_seen_t < 2.0
     if not page_alive:
         st.reason = (f"la pagina NO esta abierta en el visor: abrir http://localhost:{PORT} en el navegador del Quest")
