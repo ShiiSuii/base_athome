@@ -1014,8 +1014,12 @@ class HriReceptionistChallengeNode(Node):
 
         def add(name, ok, detail=""):
             checks.append((name, bool(ok), detail))
-            (self.get_logger().info if ok else self.get_logger().error)(
-                f"{'✔' if ok else '✘'} [Pan-tilt] {name}{': ' + detail if detail else ''}")
+            line = f"{'✔' if ok else '✘'} [Pan-tilt] {name}{': ' + detail if detail else ''}"
+            # rclpy no permite cambiar la severidad en un mismo punto de llamada: una llamada por severidad
+            if ok:
+                self.get_logger().info(line)
+            else:
+                self.get_logger().error(line)
 
         t_end = time.time() + 3.0
         while self.pt_connected is None and time.time() < t_end:
