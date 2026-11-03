@@ -99,6 +99,10 @@ class CartesianState:
     err_mm: float = 0.0
     err_deg: float = 0.0
     gripper_mm: float = 90.0
+    gripper_half: bool = False      # gatillo: alterna abierta <-> 50 %
+    prev_trig: bool = False
+    f_p: Optional[np.ndarray] = None   # pose del control FILTRADA (quita el temblor de la mano)
+    f_R: Optional[np.ndarray] = None
     reason: str = "sin datos"
     log: List[str] = field(default_factory=list)
 
@@ -116,7 +120,8 @@ def scale_rotation(R, k):
 
 def cart_step(st: CartesianState, pose, buttons, measured_deg, now_age_s, dt,
               scale=1.0, max_joint_dps=45.0, timeout_s=0.3, grip_open=90.0, grip_closed=10.0,
-              rot_scale=1.0, max_wrist_dps=None, max_lead_deg=15.0, ik_damping=80.0):
+              rot_scale=1.0, max_wrist_dps=None, max_lead_deg=15.0, ik_damping=80.0,
+              smooth=0.35, deadband_mm=1.5, deadband_deg=0.7, grip_toggle=False, grip_half=45.0):
     """pose = (pos_xyz_m, quat_xyzw) del control en WebXR. Devuelve st con q_cmd (None = no mandar)."""
     if measured_deg is None:
         st.engaged, st.q_cmd, st.reason = False, None, "sin feedback del brazo"
@@ -130,11 +135,31 @@ def cart_step(st: CartesianState, pose, buttons, measured_deg, now_age_s, dt,
         st.use_rot = not st.use_rot
         st.log.append("orientacion " + ("SEGUIDA" if st.use_rot else "FIJA (solo posicion)"))
     st.prev_x = x_pressed
-    st.gripper_mm = grip_open + (grip_closed - grip_open) * max(0.0, min(1.0, b[0]))
-    pos = np.asarray(pose[0], float) * 1000.0
-    Rc = quat_to_R(pose[1])
+    if grip_toggle:                          # gatillo: cada pulsacion alterna abierta <-> 50 %
+        trig = b[0] > 0.5
+        if trig and not st.prev_trig:
+            st.gripper_half = not st.gripper_half
+            st.log.append("pinza " + ("al 50 %" if st.gripper_half else "ABIERTA"))
+        st.prev_trig = trig
+        st.gripper_mm = grip_half if st.gripper_half else grip_open
+    else:
+        st.gripper_mm = grip_open + (grip_closed - grip_open) * max(0.0, min(1.0, b[0]))
+    raw_p = np.asarray(pose[0], float) * 1000.0
+    raw_R = quat_to_R(pose[1])
+    # filtro exponencial de la pose (posicion lineal; rotacion por el angulo relativo) + zona muerta
+    if st.f_p is None:
+        st.f_p, st.f_R = raw_p, raw_R
+    else:
+        dpf = raw_p - st.f_p
+        st.f_p = st.f_p + (smooth if np.linalg.norm(dpf) > deadband_mm else 0.0) * dpf
+        dRf = raw_R @ st.f_R.T
+        ang = math.degrees(math.acos(max(-1.0, min(1.0, (np.trace(dRf) - 1) / 2))))
+        if ang > deadband_deg:
+            st.f_R = scale_rotation(dRf, smooth) @ st.f_R
+    pos, Rc = st.f_p, st.f_R
     if b[1] < 0.5:
         st.engaged, st.q_cmd, st.reason = False, None, "grip suelto (embrague abierto)"
+        st.f_p = st.f_R = None                 # al volver a agarrar, el filtro arranca de la pose actual
         return st
     if not st.engaged:                         # embragar: referencias desde lo MEDIDO
         st.engaged = True
@@ -147,7 +172,8 @@ def cart_step(st: CartesianState, pose, buttons, measured_deg, now_age_s, dt,
     st.target_R = dR @ st.t0_R if st.use_rot else st.t0_R
     # amortiguacion alta: cerca de la singularidad de muneca (j5 ~ 0, p.ej. en HOME) evita giros grandes y
     # opuestos de j4/j6 (medido: 40 grados con 8 -> 7 grados con 80, mismo error de la pinza ~1 mm)
-    q_new, st.err_mm, st.err_deg = ik_step(st.q_cmd, st.target_p, st.target_R, use_rot=True, damping=ik_damping)
+    q_new, st.err_mm, st.err_deg = ik_step(st.q_cmd, st.target_p, st.target_R, use_rot=True, iters=10,
+                                           damping=ik_damping)
     # velocidad maxima por articulacion; la muneca (j4..j6) puede ir mas rapido para que el giro responda
     lim = np.array([max_joint_dps] * 3 + [max_wrist_dps or max_joint_dps] * 3) * dt
     q_prev = np.asarray(st.q_cmd, float)

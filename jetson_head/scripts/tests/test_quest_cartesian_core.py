@@ -116,3 +116,24 @@ def test_scale_rotation_identity_and_axis():
     R = qc.quat_to_R((0.0, math.sin(0.1), 0.0, math.cos(0.1)))
     R2 = qc.scale_rotation(R, 2.0)
     assert np.allclose(R2, R @ R, atol=1e-9)
+
+
+def test_trigger_toggles_gripper_open_half():
+    st = qc.CartesianState()
+    kw = dict(grip_toggle=True, grip_open=90.0, grip_half=45.0)
+    seq = [0, 1, 1, 0, 1, 0]          # dos pulsaciones
+    out = []
+    for t in seq:
+        st = qc.cart_step(st, ((0, 1, 0), Q_ID), [t, 1, 0, 0, 0, 0], CENTRAL, 0.0, 0.05, **kw)
+        out.append(st.gripper_mm)
+    assert out == [90.0, 45.0, 45.0, 45.0, 90.0, 90.0]
+
+
+def test_hand_tremor_is_filtered():
+    rng = np.random.default_rng(5)
+    st = qc.cart_step(qc.CartesianState(), ((0, 1, 0), Q_ID), [0, 1, 0, 0, 0, 0], CENTRAL, 0.0, 0.05)
+    p0 = st.t0_p.copy()
+    for _ in range(60):   # mano "quieta" con temblor de +-1 mm
+        jit = rng.uniform(-0.001, 0.001, 3)
+        st = qc.cart_step(st, ((jit[0], 1 + jit[1], jit[2]), Q_ID), [0, 1, 0, 0, 0, 0], st.q_cmd, 0.0, 0.05)
+    assert np.linalg.norm(qc.fk(np.radians(st.q_cmd))[0] - p0) < 1.5   # la pinza no tiembla

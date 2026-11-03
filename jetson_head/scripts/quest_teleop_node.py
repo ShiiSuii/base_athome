@@ -24,6 +24,8 @@ from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from geometry_msgs.msg import PoseStamped
 from sensor_msgs.msg import JointState
 
+import numpy as np
+
 import quest_cartesian_core as qc
 from quest_teleop_core import MODE_NAMES, ControllerSample, TeleopState, step
 
@@ -97,7 +99,13 @@ class QuestTeleop(Node):
         self.declare_parameter("home_deg", [73.87, 169.72, -138.02, 26.69, -15.7, -117.17])
         self.declare_parameter("home_speed_dps", 15.0)
         self.declare_parameter("max_lead_deg", 15.0)   # cuanto puede adelantarse el objetivo a lo medido (real: 5)
-        self.declare_parameter("ik_damping", 80.0)           # seguir funcionando con el visor quitado (se revierte al salir)
+        self.declare_parameter("ik_damping", 80.0)
+        self.declare_parameter("smooth", 0.35)          # 0..1: menor = mas suave (filtro del temblor)
+        self.declare_parameter("deadband_mm", 1.5)
+        self.declare_parameter("deadband_deg", 0.7)
+        self.declare_parameter("grip_toggle", True)     # gatillo alterna abierta <-> 50 %
+        self.declare_parameter("gripper_open_mm", 90.0)
+        self.declare_parameter("gripper_half_mm", 45.0)           # seguir funcionando con el visor quitado (se revierte al salir)
         self.declare_parameter("rot_scale", 2.0)             # sensibilidad de giro: angulo de la pinza = k x angulo de la mano
         self.declare_parameter("max_wrist_dps", 90.0)        # velocidad maxima de la muneca (j4..j6)
         self.hand = str(self.get_parameter("hand").value)
@@ -355,7 +363,13 @@ def _tick_cartesian(self, now, sample, pose, measured, fresh_arm):
                           rot_scale=float(self.get_parameter("rot_scale").value),
                           max_wrist_dps=float(self.get_parameter("max_wrist_dps").value),
                           max_lead_deg=float(self.get_parameter("max_lead_deg").value),
-                          ik_damping=float(self.get_parameter("ik_damping").value))
+                          ik_damping=float(self.get_parameter("ik_damping").value),
+                          smooth=float(self.get_parameter("smooth").value),
+                          deadband_mm=float(self.get_parameter("deadband_mm").value),
+                          deadband_deg=float(self.get_parameter("deadband_deg").value),
+                          grip_toggle=bool(self.get_parameter("grip_toggle").value),
+                          grip_open=float(self.get_parameter("gripper_open_mm").value),
+                          grip_half=float(self.get_parameter("gripper_half_mm").value))
     for line in st.log:
         self.get_logger().info(line)
     st.log.clear()
@@ -366,6 +380,12 @@ def _tick_cartesian(self, now, sample, pose, measured, fresh_arm):
         _publish_traj(self, list(measured))
         self.get_logger().info("Hombre muerto suelto: brazo detenido en la posicion medida")
     self.was_engaged = st.engaged
+    # precision REAL: objetivo de la pinza vs posicion medida (FK de las articulaciones medidas)
+    track = (None, None)
+    if st.engaged and st.target_p is not None and measured is not None:
+        pm, Rm = qc.fk([v * DEG for v in measured])
+        track = (round(float(np.linalg.norm(st.target_p - pm)), 1),
+                 round(float(np.degrees(np.linalg.norm(qc.rot_err(Rm, st.target_R)))), 1))
     page_alive = now - self.page_seen_t < 2.0
     if not page_alive:
         st.reason = (f"la pagina NO esta abierta en el visor: abrir http://localhost:{PORT} en el navegador del Quest")
@@ -401,6 +421,7 @@ def _tick_cartesian(self, now, sample, pose, measured, fresh_arm):
         feedback_ok=bool(fresh_arm), pose_received=pose is not None, page_version=self.page_version,
         page_alive=page_alive, xr=self.page_xr, posts=self.post_count, hand=self.page_hand, page_error=self.page_error, err_mm=round(st.err_mm, 1),
         err_deg=round(st.err_deg, 1), headset_age_s=None if sample is None else round(age, 2),
+        track_mm=track[0], track_deg=track[1], gripper_mm=round(st.gripper_mm, 1),
         ik_ms=round((time.monotonic() - t_ik) * 1000.0, 1)))))
 
 
