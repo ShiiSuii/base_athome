@@ -45,7 +45,8 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 4.0
-      Focal Point: {X: 0.0, Y: 0.0, Z: 0.5}
+      Target Frame: base_link   # la camara sigue al robot (el mapa queda fijo en el mundo)
+      Distance: 2.5
+      Focal Point: {X: 0.2, Y: 0.0, Z: 0.8}
       Pitch: 0.6
       Yaw: 3.6

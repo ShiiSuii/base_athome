@@ -70,7 +70,7 @@ Escala: **P0** desbloquea seguridad/progreso · **P1** valor demostrable · **P2
 | HOME-SEC | Hecho: URL de `origin` sin credenciales, sudo temporal de la NUC borrado, regla acotada en la Jetson, auto-aprobador eliminado. **Falta (humano):** revocar el token en GitHub; confirmar la contraseña de `ubuntu` en la Jetson para borrar `90-ubuntu-nopasswd`; Orca sin `--dangerously-skip-permissions`/`--yolo` | Humano + Claude | push habilitado; sudo mínimo |
 | HOME-S02 | Desplegar el fallback DDS solo-localhost de la Jetson (S-02) | Claude (nivel A con checklist) | `jetson-head` sobrevive sin cable |
 | HOME-S11 | Consumidores HRI/manipulación verifican `/pan_tilt/connected` y `feedback_ok` | Claude | tests que fallan sin el chequeo |
-| HOME-41d | Desplegar `piper_arm_controller.py` con S-14 a la Jetson (`deploy_to_jetson.sh`, respaldo; reiniciar `jetson-head` = **gate humano**) | humano + Claude | md5 igual al repo; `/arm/status` ok; rechazos visibles en el log |
+| HOME-41d | ~~Desplegar el controlador corregido~~ **hecho 2026-11-03** (md5 `2e347c49`, FJT, rampa de pinza) | Claude | `JETSON_VERIFIED` |
 | HOME-43 | Estado medido del elevador (homing + pasos de `stepper_controller.py` → `/torso/joint_states`); quitar `torso_lift_joint=0` sintético y `SHOULDER_IN_BASE` fijo (S-15) | Claude | TF del brazo sigue al elevador en sim; nada publicado sin medición |
 
 ### P1 — Cerrar funcionalidades existentes
@@ -108,8 +108,10 @@ Escala: **P0** desbloquea seguridad/progreso · **P1** valor demostrable · **P2
 |---|---|---|---|
 | HOME-42 | LAB: leer límites y versión del firmware del Piper; comparar con URDF/ficha (S-16); medir el montaje (`ROBOT.md` §5.1) | humano + Claude | tabla en §5.1; poses fuera de límite señaladas |
 | HOME-44 | Calibración intrínseca + hand-eye según `ROBOT.md` §5.2 (herramienta de captura sobre `handeye.py`) | Claude; LAB con humano | residual ≤ 5 mm/1°, validación ≤ 10 mm |
-| HOME-45 | Servidor `FollowJointTrajectory` en el controlador (patrón de `agx_arm_ros`): resultado por feedback, tolerancias de llegada, cancelación; `arm_manipulation` deja de esperar por tiempo | Claude | tests offline + SIM_PASS |
-| HOME-46 | Escena MoveIt: mesa como objeto de colisión, pares internos del brazo por muestreo (no todos deshabilitados), torso medido (S-17) | Claude | IK rechaza poses que atraviesan la mesa en sim |
+| HOME-45 | ~~Servidor `FollowJointTrajectory`~~ **hecho** (8 tests, SIM_PASS, desplegado) | Claude | — |
+| HOME-50 | Probar con el brazo real (LAB): agarre a 10, 15, 20 cm con objetivo retenido; registrar % de éxito | humano + Claude | serie de 10 por distancia |
+| HOME-51 | Pose de observación más retraída o reposicionar la base antes del agarre para objetos > 25 cm | Claude | SIM_PASS a 30 cm |
+| HOME-46 | Escena MoveIt: ~~pares internos por muestreo~~ (hecho), **falta mesa** como objeto de colisión | Claude | IK rechaza poses que atraviesan la mesa en sim |
 | HOME-47 | Skills `detect_object` (3D), `pick_object`/`place_object` con confirmación por ancho medido de la pinza; recién entonces pasan a `available` | Claude | SIM_PASS → serie LAB con % de éxito |
 | HOME-48 | Evaluar MoveIt Task Constructor (rama `ros2`, compilar en Jazzy; no instalado) cuando exista HOME-45 | Claude | decisión ADOPTAR/NO con prueba en sim |
 | HOME-40 | Monitor web de misiones (`tools/mission_monitor`, contrato `/mission/status`) | Antigravity | tests + revisión de Claude |

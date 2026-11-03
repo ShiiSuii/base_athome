@@ -643,6 +643,26 @@ class Manipulacion(Node):
         finally:
             self.busy = False
 
+    @staticmethod
+    def _axis_angle(axis, ang):
+        axis = np.asarray(axis, float) / np.linalg.norm(axis)
+        K = np.array([[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]])
+        return np.eye(3) + math.sin(ang) * K + (1 - math.cos(ang)) * K @ K
+
+    def _approach_candidates(self, approach):
+        """[(inclinacion_grados, R_extra)]: identidad primero y luego inclinaciones crecientes del eje de la
+        pinza alrededor de los ejes perpendiculares (vertical del mundo y horizontal lateral)."""
+        a = np.asarray(approach, float) / np.linalg.norm(approach)
+        side = np.cross([0.0, 0.0, 1.0], a)
+        side = side / np.linalg.norm(side) if np.linalg.norm(side) > 1e-3 else np.array([0.0, 1.0, 0.0])
+        up = np.cross(a, side)
+        out = [(0.0, np.eye(3))]
+        for deg in (8.0, 16.0, 24.0, 30.0):
+            r = math.radians(deg)
+            for ax in (side, -side, up, -up):   # side primero: inclina la punta hacia abajo (objetos sobre mesa)
+                out.append((deg, self._axis_angle(ax, r)))
+        return out
+
     def _grasp_core(self):
         """Aproximacion + avance + cierre + subida. (ok, motivo). No va a POST-GRASP."""
         tg = self.held_target()
@@ -655,7 +675,7 @@ class Manipulacion(Node):
         tcp_mm, R = self.kin.forward_kinematics(np.array(q_now))
         approach = R[:, 2] / np.linalg.norm(R[:, 2])
         gc_now = self.shoulder_in_base() + tcp_mm / 1000.0 - self.calib.grasp_center_back_m * approach
-        need = float(np.dot(obj - gc_now, approach))
+        need = float(np.linalg.norm(obj - gc_now))  # distancia del centro de la pinza al objeto fijado
         if need * 100.0 > self.max_advance_cm:
             return False, (f"Agarre: el objeto esta a {need * 100:.0f} cm de avance y el tope es "
                            f"{self.max_advance_cm:.0f} cm: acercar el robot/objeto o subir Avance_max_cm. No me muevo.")
@@ -666,29 +686,44 @@ class Manipulacion(Node):
         app_tcp = grasp_tcp - 0.10 * approach
         quat = quat_from_matrix(R.tolist())
         self.status = "Agarre: planificando..."
-        # TRAC-IK puede dar distintas soluciones de aproximacion; desde algunas la linea recta de avance
-        # queda bloqueada por limites articulares (medido en sim: 2 de 6). Probar varias semillas y quedarse
-        # con la primera desde la que el avance cartesiano llega completo.
+        # Candidatos de orientacion: primero la de la pose actual; si la linea recta no alcanza (borde del
+        # espacio de trabajo), la pinza se inclina 8..30 grados (arriba/abajo/costados) hacia el objeto.
+        # Medido offline (2026-11-03) desde PRE-GRASP: recta hasta ~20 cm de avance, inclinada 18 grados ~25 cm.
         q_app = plan = line = None
-        rng = np.random.default_rng()
-        for attempt in range(5):
-            seed = q_now if attempt == 0 else (np.array(q_now) + rng.normal(0.0, 0.25, 6)).tolist()
-            cand = self.moveit.compute_ik(pose_from(app_tcp, quat), seed)
+        chosen = None
+        t_plan = time.time()
+        for tilt_deg, axis_rot in self._approach_candidates(approach):
+            R_c = axis_rot @ R
+            a_c = R_c[:, 2] / np.linalg.norm(R_c[:, 2])
+            g_tcp = obj + self.calib.grasp_center_back_m * a_c
+            p_tcp = g_tcp - 0.10 * a_c
+            quat_c = quat_from_matrix(R_c.tolist())
+            # filtro rapido: si el punto de AGARRE no tiene IK, esta orientacion no sirve (evita caminos
+            # cartesianos de ~1-3 s que van a fallar; antes la planificacion tardaba hasta 38 s)
+            if self.moveit.compute_ik(pose_from(g_tcp, quat_c), q_now, avoid_collisions=False) is None:
+                continue
+            cand = self.moveit.compute_ik(pose_from(p_tcp, quat_c), q_now)
             if not cand:
                 continue
             # el avance final y la subida van a la mitad de la velocidad elegida (mas control al agarrar)
-            cand_line = self.moveit.cartesian_path(cand, [pose_from(grasp_tcp, quat)], vel_scale=self.vel_scale() / 2)
+            cand_line = self.moveit.cartesian_path(cand, [pose_from(g_tcp, quat_c)], vel_scale=self.vel_scale() / 2)
             if not cand_line:
                 continue
             cand_plan = self.moveit.plan_to_joints(q_now, cand, vel_scale=self.vel_scale())
             if cand_plan:
-                q_app, plan, line = cand, cand_plan, cand_line
-                if attempt:
-                    self.get_logger().info(f"Agarre: aproximacion valida en el intento {attempt + 1}")
+                q_app, plan, line, chosen = cand, cand_plan, cand_line, (tilt_deg, g_tcp, quat_c)
                 break
+            if time.time() - t_plan > 45.0:
+                break
+        if line:
+            tilt_deg, grasp_tcp, quat = chosen
+            self.get_logger().info(f"Agarre: aproximacion con la pinza inclinada {tilt_deg:.0f} grados "
+                                   f"({time.time() - t_plan:.1f} s de planificacion)")
         if not line:
-            why = self.moveit.last_failure or ("sin IK de aproximacion" if not q_app else "sin plan articular")
-            return False, f"Agarre: sin solucion ({why}). No me muevo."
+            why = self.moveit.last_failure or "sin IK de aproximacion en ninguna orientacion"
+            return False, (f"Agarre: objeto a {need * 100:.0f} cm de la pinza, fuera del alcance desde esta pose "
+                           f"(probe hasta 30 grados de inclinacion; {why}). Acercar el robot u observar desde mas "
+                           f"atras. No me muevo.")
         if not self.enabled and not self.set_torque(True):
             return False, f"Agarre: no se pudo habilitar el brazo ({self.status})"
         self.gripper(GRIPPER_OPEN_MM)

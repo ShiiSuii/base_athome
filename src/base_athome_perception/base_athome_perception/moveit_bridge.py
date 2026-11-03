@@ -167,7 +167,7 @@ class MoveItBridge:
         ik.ik_link_name = TIP
         ik.pose_stamped = PoseStamped(pose=self._to_model(pose))
         ik.pose_stamped.header.frame_id = FRAME
-        ik.timeout.nanosec = int(0.2e9)
+        ik.timeout.nanosec = int(0.5e9)  # cerca del borde del alcance TRAC-IK necesita mas de 0,2 s
         req.ik_request = ik
         res = self._call(self.cli_ik, req)
         if res.error_code.val != 1:

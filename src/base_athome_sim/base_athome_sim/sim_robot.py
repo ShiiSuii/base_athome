@@ -95,6 +95,8 @@ class SimRobot(Node):
         self.base = SimBase(sx, sy, syaw, speed=float(gp("nav_speed")))
         self.cmd_vel = (0.0, 0.0, 0.0)
         self.obj = list(gp("object_xyz"))
+        if os.environ.get("ATHOME_SIM_OBJECT_XYZ"):  # pruebas de alcance: "x,y,z" en base_footprint
+            self.obj = [float(v) for v in os.environ["ATHOME_SIM_OBJECT_XYZ"].split(",")]
         self.obj_attached = False
         self.guest_present = False
         self.guest_idx = 0

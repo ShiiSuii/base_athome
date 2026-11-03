@@ -13,7 +13,7 @@ recupera por commit (§8). Editado por el integrador (Claude).
 | Jetson | Ubuntu 24.04.4, L4T R39.2.1 (JetPack 7.2.1), Jazzy, modo 25W, uptime 3 días | `JETSON_VERIFIED` por SSH |
 | Enlace | NUC `enp1s0` 10.42.0.1 ↔ Jetson `enx00e04c68090c` 10.42.0.12 UP; `enP8p1s0` sigue DOWN | `ETHERNET_VERIFIED` |
 | `jetson-head` | activo: Piper controller, pan-tilt, Whisper, `stream_orbbec`, YOLO corriendo; controlador desplegado = `226e233` (md5 igual al repo **antes** de HOME-41) | `JETSON_VERIFIED` |
-| Piper | sin alimentación: adaptador gs_usb hoy en **`can0`**, 0 tramas RX, `feedback_ok=false`, `/arm/joint_states` no se publica (correcto) | `JETSON_VERIFIED` (pasivo) |
+| Piper | energizado por el usuario (sesión de pruebas propia); controlador desplegado md5 `2e347c49` (S-14 + FollowJointTrajectory + rampa de pinza), arranca deshabilitado; `control_msgs` instalado en la Jetson (rollback: `apt-get remove ros-jazzy-control-msgs`) | `JETSON_VERIFIED` |
 | YOLO TensorRT | **recuperado**: TRT 10.16.2 + CUDA 13.2 runtime instalados; `yolo_trt_node` corriendo; `/arm_camera/detections` a 29,9 Hz en la NUC | `JETSON_VERIFIED`, `ETHERNET_VERIFIED` |
 | `realsense-nuc.service` | no instalado | `NUC_VERIFIED` |
 | Actuadores | potencia desenergizada (tracción, Piper, elevador, Dynamixel) según el usuario 2026-11-03; modo `DESARROLLO` | declarado por el usuario |
@@ -52,7 +52,7 @@ recupera por commit (§8). Editado por el integrador (Claude).
 | Humano | Medir la columna del torso; ubicar waypoint `home` y objetos en el editor de mapa | pendiente |
 | Humano | Gate para desplegar el controlador corregido (HOME-41d); medir montaje del Piper y elevador; agregar `kitchen`/`home` al mapa semántico | pendiente |
 | Claude | HOME-43 (estado del elevador), HOME-45 (FollowJointTrajectory), HOME-46 (escena MoveIt), revisar HOME-40 | próximas |
-| Antigravity | HOME-40 en curso (bloqueado en permisos); luego HOME-15b, HOME-16 | `BLOCKED_WORKER` |
+| Antigravity | HOME-40 (dispatch `ctx_40a871d802de`): espera aprobación humana de `python3 -c` en su pestaña; reglas acotadas en `~/.gemini/antigravity-cli/settings.json` (respaldo `.bak_20261103_162054`) | `BLOCKED_WORKER` |
 
 ## 5. Bloqueos vigentes
 
@@ -63,6 +63,15 @@ recupera por commit (§8). Editado por el integrador (Claude).
 - Pan-tilt: el U2D2 se desconectó por USB el 30/10 → revisar cable y 12 V.
 
 ## 6. Últimos cambios importantes
+
+- 2026-11-03 (noche) — `ea3016a`, `f16f457`, este commit: FollowJointTrajectory (desplegado), manipulación simulada con
+  confirmación por ancho de pinza, misiones compuestas (`demo_fetch_bottle` SUCCEEDED), objetivo retenido, agarre
+  multi-orientación (alcance ~22–25 cm medido; 30 cm inalcanzable desde `pre_grasp`), ACM por muestreo, nodo `torso_state`,
+  reglas `DESARROLLO` y aprobación acotada de Antigravity.
+- 2026-11-03 — **Incidentes:** (1) Claude terminó por error el `move_group` del usuario (dominio 10) creyéndolo de la
+  simulación → IK caída; relanzado y verificado; ahora la simulación solo cierra procesos con su marca de entorno.
+  (2) El reinicio de la NUC dejó vacío el commit `c98344d`; reparado desde `ea3016a` sin pérdida (respaldo
+  `~/git_backup_20261103_165442`), `core.fsync=committed` activado.
 
 - 2026-11-03 — **HOME-41** (rama `claude/home-41-piper-mission`, **no desplegado**):
   - Diagnóstico del Piper en `ROBOT.md` §5.1 (montaje lateral, FK DH≡URDF 0,15 mm, límites, TCP, cámara, MoveIt, oficial `agx_arm_ros`) y hallazgos S-14…S-18.

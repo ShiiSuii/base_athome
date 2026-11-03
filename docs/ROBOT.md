@@ -191,6 +191,26 @@ Calculado con FK propia sobre el URDF expandido y comparado con el modelo DH del
   Siguen abiertos: heurística rad/grados de `/arm/joint_cmd` (todos |v| ≤ 3,5 → radianes), `/arm/status` publica
   `joints_deg` en cero sin feedback (los consumidores deben mirar `feedback_ok`), errores de TX CAN no reportados.
 
+### 5.1b Manipulación: estado al 2026-11-03 (tarde)
+
+- **Ejecución:** `piper_arm_controller` ofrece `/arm/follow_joint_trajectory` (`control_msgs`): rechaza goals sin habilitar
+  o sin feedback, aborta por error de seguimiento > 15° y confirma la llegada con las articulaciones **medidas**
+  (tolerancia 2°). Desplegado y `JETSON_VERIFIED` (rechazo con el brazo deshabilitado). La pinza tiene rampa propia:
+  antes un `gripper_cmd` borraba la trayectoria (error "trayectoria perdida" visto por el usuario).
+- **Objetivo fijado:** `arm_manipulation` usa un solo punto en `base_link` para RViz y para el agarre, calculado con las
+  articulaciones del momento de la detección y retenido `object_hold_s` (8 s) si la detección parpadea
+  (RViz: verde en vivo, amarillo retenido). Simulación con 80 % de cuadros perdidos: 4/4.
+- **Alcance medido** (offline con límites del URDF y en simulación con MoveIt), desde la `pre_grasp` enseñada:
+  línea recta con orientación fija ~15–20 cm de avance; con la pinza inclinada hasta 24–30° **~22–25 cm**; **30 cm
+  inalcanzable en cualquier orientación** (el TCP ya está a 44 cm del hombro). Para objetos más lejos: acercar la
+  base/elevador u observar desde una pose más retraída (sobre la misma línea hay 60 cm de recorrido).
+  El planificador prueba 17 orientaciones (0–30°) con filtro rápido de IK en el punto de agarre: 22 cm → éxito,
+  ~10 s de planificación; 26 cm → rechazo explícito en ~7 s. Timeout de IK 0,5 s (antes 0,2 s fallaba soluciones existentes).
+- **Colisiones:** ACM regenerado por muestreo (2000 configuraciones): 117 pares brazo↔cuerpo y 18 internos del brazo
+  chequeados (antes 0 internos); cámara↔dedos deshabilitados (solapan en reposo). La mesa todavía no está en la escena.
+- **Elevador:** nodo `torso_state` (`base_athome_bringup`, solo lectura: envía `?`) publica `/torso/joint_states` únicamente
+  si el ESP32 está calibrado; la manipulación y MoveIt usan esa altura. Sin probar en el robot (ESP32 no conectado).
+
 ### 5.2 Procedimiento de calibración eye-in-hand (DaBai en la pinza) — `PENDIENTE` de ejecutar
 
 Núcleo implementado y probado con datos sintéticos: `base_athome_perception/handeye.py` (5 tests; solvePnP
@@ -277,10 +297,10 @@ duplicada: eliminada (S-05).
 | S-11 | Media | Pan-tilt/Piper publican 0.0 como medido sin hardware | Parcial: flags `connected`/`feedback_ok`; faltan consumidores |
 | S-12 | Media | Cámara de muñeca no publicaba / 5 Hz | **Corregido** (20 Hz, CPU 19 %) |
 | S-09/S-13 | — | Humble↔Jazzy | **Resuelto** por la migración |
-| S-14 | Alta | Piper: trayectorias recibidas con el brazo deshabilitado quedaban guardadas y **se ejecutaban (o saltaban al final) al habilitar**; deshabilitar no las borraba; sin límites articulares; con feedback perdido seguía la trayectoria a ciegas 5 s; `/arm/home`, `/pre_grasp`, `/grasp_pringles`, `/release` respondían `success` sin estar habilitado; `/arm/current_pose` en ceros y con frame `base_link` (es `arm_base_link`); pinza recortada a 70 mm en `/joint_states` | **Corregido en repo** (HOME-41, 10 tests nuevos); **no desplegado** (toca `jetson-head`: gate humano) |
-| S-15 | Alta | Elevador sin feedback: `torso_lift_joint=0` sintético y `SHOULDER_IN_BASE` fijo | Abierto (§5.1) |
+| S-14 | Alta | Piper: trayectorias recibidas con el brazo deshabilitado quedaban guardadas y **se ejecutaban (o saltaban al final) al habilitar**; deshabilitar no las borraba; sin límites articulares; con feedback perdido seguía la trayectoria a ciegas 5 s; `/arm/home`, `/pre_grasp`, `/grasp_pringles`, `/release` respondían `success` sin estar habilitado; `/arm/current_pose` en ceros y con frame `base_link` (es `arm_base_link`); pinza recortada a 70 mm en `/joint_states` | **Corregido y desplegado** 2026-11-03 (md5 `2e347c49`), + FollowJointTrajectory y rampa de pinza |
+| S-15 | Alta | Elevador sin feedback: `torso_lift_joint=0` sintético y `SHOULDER_IN_BASE` fijo | Parcial: nodo `torso_state` + geometría con altura medida; falta correrlo en el robot y apagar `publish_assumed_torso` |
 | S-16 | Media | Poses enseñadas y del controlador fuera de los límites de la ficha; límites del firmware desconocidos | Abierto: leer límites en LAB |
-| S-17 | Media | ACM sin autocolisión interna del brazo; mesa fuera de la escena | Abierto |
+| S-17 | Media | ACM sin autocolisión interna del brazo; mesa fuera de la escena | Parcial: 18 pares internos chequeados; falta la mesa |
 | S-18 | Media | Constantes de cámara/brazo obsoletas en `piper_kinematics` (código legado) | Abierto |
 
 ## 8. Navegación actual (SOLO LECTURA — no modificar)
@@ -353,9 +373,12 @@ no arranca la RealSense, detector por color (`SimColorDetector`).
 |---|---|---|
 | Percepción/HRI | `python3 -m pytest -q src/base_athome_perception/test` | 111 passed |
 | Simulación | `python3 -m pytest -q src/base_athome_sim/test` | 6 passed |
-| Skills (puerta + misiones) | `python3 -m pytest -q src/base_athome_skills/test` | 29 passed |
+| Skills (puerta + misiones) | `python3 -m pytest -q src/base_athome_skills/test` | 33 passed |
+| Elevador | `ROS_DOMAIN_ID=77 python3 -m pytest -q src/base_athome_bringup/test/test_torso_state.py` | 6 passed |
+| Aprobación acotada Antigravity | `cd tools/agents && python3 -m pytest -q` | 40 passed |
+| Misiones en simulación | `[RVIZ=1] src/base_athome_skills/scripts/sim_mission.sh <plan.yaml> <mapa_sim>` | demo_fetch_bottle SUCCEEDED (72–112 s) |
 | Capa semántica | `python3 -m pytest -q src/base_athome_navigation/test` | 9 passed |
-| Scripts Jetson (Piper, Orbbec, YOLO, bench) | `ROS_DOMAIN_ID=77 python3 -m pytest -q jetson_head/scripts/tests` | 24 passed |
+| Scripts Jetson (Piper, FJT, Orbbec, YOLO, bench) | `ROS_DOMAIN_ID=77 python3 -m pytest -q jetson_head/scripts/tests` | 32 passed |
 | ASR | `cd jetson_head/src/audio_asr && python3 -m pytest -q test/test_asr_core.py` | 12 passed |
 | Pan-tilt | `python3 -m pytest -q jetson_head/src/pan_tilt_controller/test` | 5 passed |
 | GPSR | `cd tools/gpsr_parser && env -u PYTHONPATH python3 -m pytest -q tests` (sin entorno ROS: el plugin `launch_testing` rompe la colección) | 34 passed |
