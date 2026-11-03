@@ -103,8 +103,20 @@ class CartesianState:
     log: List[str] = field(default_factory=list)
 
 
+def scale_rotation(R, k):
+    """Misma rotacion (eje) con el angulo multiplicado por k (sensibilidad de giro)."""
+    ang = math.acos(max(-1.0, min(1.0, (np.trace(R) - 1) / 2)))
+    if ang < 1e-9 or abs(k - 1.0) < 1e-9:
+        return R
+    axis = np.array([R[2, 1] - R[1, 2], R[0, 2] - R[2, 0], R[1, 0] - R[0, 1]]) / (2 * math.sin(ang))
+    a = ang * k
+    K = np.array([[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]])
+    return np.eye(3) + math.sin(a) * K + (1 - math.cos(a)) * K @ K
+
+
 def cart_step(st: CartesianState, pose, buttons, measured_deg, now_age_s, dt,
-              scale=1.0, max_joint_dps=45.0, timeout_s=0.3, grip_open=90.0, grip_closed=10.0):
+              scale=1.0, max_joint_dps=45.0, timeout_s=0.3, grip_open=90.0, grip_closed=10.0,
+              rot_scale=1.0, max_wrist_dps=None):
     """pose = (pos_xyz_m, quat_xyzw) del control en WebXR. Devuelve st con q_cmd (None = no mandar)."""
     if measured_deg is None:
         st.engaged, st.q_cmd, st.reason = False, None, "sin feedback del brazo"
@@ -130,11 +142,12 @@ def cart_step(st: CartesianState, pose, buttons, measured_deg, now_age_s, dt,
         st.t0_p, st.t0_R = fk(np.radians(measured_deg))
         st.q_cmd = list(measured_deg)
     dp = M_XR_TO_ROBOT @ (pos - st.c0_p) * scale
-    dR = M_XR_TO_ROBOT @ (Rc @ st.c0_R.T) @ M_XR_TO_ROBOT.T
+    dR = scale_rotation(M_XR_TO_ROBOT @ (Rc @ st.c0_R.T) @ M_XR_TO_ROBOT.T, rot_scale)
     st.target_p = st.t0_p + dp
     st.target_R = dR @ st.t0_R if st.use_rot else st.t0_R
     q_new, st.err_mm, st.err_deg = ik_step(st.q_cmd, st.target_p, st.target_R, use_rot=True)
-    lim = max_joint_dps * dt                   # velocidad maxima por articulacion
+    # velocidad maxima por articulacion; la muneca (j4..j6) puede ir mas rapido para que el giro responda
+    lim = np.array([max_joint_dps] * 3 + [max_wrist_dps or max_joint_dps] * 3) * dt
     q_prev = np.asarray(st.q_cmd, float)
     q_new = q_prev + np.clip(q_new - q_prev, -lim, lim)
     q_new = np.minimum(np.asarray(measured_deg) + 15.0, np.maximum(np.asarray(measured_deg) - 15.0, q_new))

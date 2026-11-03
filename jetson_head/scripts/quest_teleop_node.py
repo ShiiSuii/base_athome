@@ -84,6 +84,8 @@ class QuestTeleop(Node):
         self.declare_parameter("mode", "cartesian")          # cartesian (pose 6D del control) | joint
         self.declare_parameter("scale", 1.0)                 # escala de la traslacion mano -> pinza
         self.declare_parameter("max_joint_dps", 45.0)        # velocidad maxima por articulacion (modo cartesiano)
+        self.declare_parameter("rot_scale", 2.0)             # sensibilidad de giro: angulo de la pinza = k x angulo de la mano
+        self.declare_parameter("max_wrist_dps", 90.0)        # velocidad maxima de la muneca (j4..j6)
         self.hand = str(self.get_parameter("hand").value)
         self.max_speed = float(self.get_parameter("max_speed_dps").value)
         self.dt = 1.0 / float(self.get_parameter("rate_hz").value)
@@ -269,7 +271,9 @@ def _tick_cartesian(self, now, sample, pose, measured, fresh_arm):
     with self.lock:
         st = qc.cart_step(self.cstate, pose, buttons, measured, age, self.dt,
                           scale=float(self.get_parameter("scale").value),
-                          max_joint_dps=float(self.get_parameter("max_joint_dps").value))
+                          max_joint_dps=float(self.get_parameter("max_joint_dps").value),
+                          rot_scale=float(self.get_parameter("rot_scale").value),
+                          max_wrist_dps=float(self.get_parameter("max_wrist_dps").value))
     for line in st.log:
         self.get_logger().info(line)
     st.log.clear()

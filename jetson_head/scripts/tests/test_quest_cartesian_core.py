@@ -97,3 +97,22 @@ def test_R_to_quat_roundtrip():
         q /= np.linalg.norm(q)
         R = qc.quat_to_R(q)
         assert np.allclose(qc.quat_to_R(qc.R_to_quat(R)), R, atol=1e-9)
+
+
+def test_rot_scale_doubles_gripper_rotation():
+    q10 = (0.0, math.sin(math.radians(10) / 2), 0.0, math.cos(math.radians(10) / 2))
+    res = {}
+    for k in (1.0, 2.0):
+        st = qc.cart_step(qc.CartesianState(), ((0, 1, 0), Q_ID), [0, 1, 0, 0, 0, 0], CENTRAL, 0.0, 0.05)
+        R0 = st.t0_R.copy()
+        for _ in range(60):
+            st = qc.cart_step(st, ((0, 1, 0), q10), [0, 1, 0, 0, 0, 0], st.q_cmd, 0.0, 0.05, rot_scale=k, max_wrist_dps=90.0)
+        R = qc.fk(np.radians(st.q_cmd))[1]
+        res[k] = math.degrees(math.acos((np.trace(R0.T @ R) - 1) / 2))
+    assert 8.0 < res[1.0] < 12.0 and 17.0 < res[2.0] < 23.0       # 10 grados de mano -> ~20 con k=2
+
+
+def test_scale_rotation_identity_and_axis():
+    R = qc.quat_to_R((0.0, math.sin(0.1), 0.0, math.cos(0.1)))
+    R2 = qc.scale_rotation(R, 2.0)
+    assert np.allclose(R2, R @ R, atol=1e-9)
