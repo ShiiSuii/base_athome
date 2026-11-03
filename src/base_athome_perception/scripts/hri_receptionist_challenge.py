@@ -41,7 +41,7 @@ import yaml
 import rclpy
 from rclpy.node import Node
 from rclpy.executors import MultiThreadedExecutor
-from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy, qos_profile_sensor_data
+from rclpy.qos import DurabilityPolicy, QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy, qos_profile_sensor_data
 from geometry_msgs.msg import Vector3, PoseStamped, PoseWithCovarianceStamped
 from sensor_msgs.msg import CameraInfo, Image, JointState
 from std_msgs.msg import String, Float32, Bool
@@ -290,6 +290,13 @@ class HriReceptionistChallengeNode(Node):
         self.pub_pantilt = self.create_publisher(Vector3, "/pan_tilt/target_degrees", 10)
         # El pan-tilt arranca sin torque (auto_torque=false): se habilita al primer movimiento.
         self.cli_pantilt_torque = self.create_client(SetBool, "/pan_tilt/set_torque")
+        # Realimentacion del pan-tilt para la revision de arranque (posicion MEDIDA, no la comandada)
+        self.pt_connected = None
+        self.pt_meas = None        # (pan_deg, tilt_deg, time)
+        self.pt_selftest = None    # resultado de pan_tilt_self_test()
+        self.create_subscription(Bool, "/pan_tilt/connected", self._pt_connected_cb,
+                                 QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
+        self.create_subscription(JointState, "/pan_tilt/joint_states", self._pt_joint_cb, 10)
         self._pantilt_torque_requested = False
         # Pose del robot (solo lectura de AMCL) para orientar la cabeza hacia los asientos.
         self.robot_pose = None  # (x, y, yaw) en frame map
@@ -975,6 +982,83 @@ class HriReceptionistChallengeNode(Node):
         yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
         self.robot_pose = (msg.pose.pose.position.x, msg.pose.pose.position.y, yaw)
 
+    def _pt_connected_cb(self, msg):
+        self.pt_connected = bool(msg.data)
+
+    def _pt_joint_cb(self, msg: JointState):
+        try:
+            names = list(msg.name)
+            pan = math.degrees(msg.position[names.index("pan_joint")])
+            tilt = math.degrees(msg.position[names.index("tilt_joint")])
+        except (ValueError, IndexError):
+            return
+        self.pt_meas = (pan, tilt, time.time())
+
+    def _wait_head_at(self, pan: float, tilt: float, tol_deg: float = 3.0, timeout_s: float = 2.5):
+        """Espera que la posicion MEDIDA llegue al objetivo. Devuelve (ok, error_max_grados)."""
+        t_end = time.time() + timeout_s
+        err = None
+        while time.time() < t_end:
+            m = self.pt_meas
+            if m is not None and time.time() - m[2] < 1.0:
+                err = max(abs(m[0] - pan), abs(m[1] - tilt))
+                if err <= tol_deg:
+                    return True, err
+            self.sleep_gui(0.05)
+        return False, err
+
+    def pan_tilt_self_test(self) -> Dict:
+        """Revision del pan-tilt al arrancar: conexion, feedback, torque y una prueba corta de movimiento
+        verificada con la posicion MEDIDA (incluye el sentido de giro). Mueve la cabeza unos grados."""
+        checks = []
+
+        def add(name, ok, detail=""):
+            checks.append((name, bool(ok), detail))
+            (self.get_logger().info if ok else self.get_logger().error)(
+                f"{'✔' if ok else '✘'} [Pan-tilt] {name}{': ' + detail if detail else ''}")
+
+        t_end = time.time() + 3.0
+        while self.pt_connected is None and time.time() < t_end:
+            self.sleep_gui(0.05)
+        add("conectado (/pan_tilt/connected)", self.pt_connected is True,
+            "sin mensaje" if self.pt_connected is None else ("" if self.pt_connected else "servos desconectados (U2D2/12 V)"))
+        fresh = self.pt_meas is not None and time.time() - self.pt_meas[2] < 1.0
+        add("realimentacion (/pan_tilt/joint_states)", fresh, "" if fresh else "no llegan posiciones medidas")
+        torque_ok, msg = False, "servicio /pan_tilt/set_torque no disponible"
+        if self.cli_pantilt_torque.wait_for_service(timeout_sec=2.0):
+            fut = self.cli_pantilt_torque.call_async(SetBool.Request(data=True))
+            t_end = time.time() + 3.0
+            while not fut.done() and time.time() < t_end:
+                self.sleep_gui(0.05)
+            if fut.done() and fut.result() is not None:
+                torque_ok, msg = fut.result().success, fut.result().message
+                self._pantilt_torque_requested = torque_ok
+            else:
+                msg = "sin respuesta del servicio"
+        add("torque", torque_ok, msg if not torque_ok else "")
+        moves_ok, worst = False, None
+        if self.pt_connected and fresh and torque_ok:
+            moves_ok, worst = True, 0.0
+            for pan, tilt in ((0.0, 0.0), (10.0, 0.0), (-10.0, 0.0), (0.0, 8.0), (0.0, -8.0), (0.0, 0.0)):
+                self.move_head_smooth(pan, tilt, speed_dps=40.0)
+                ok, err = self._wait_head_at(pan, tilt)
+                worst = max(worst, err if err is not None else 99.0)
+                if not ok:
+                    moves_ok = False
+                    add(f"movimiento a pan {pan:+.0f} / tilt {tilt:+.0f}", False,
+                        f"medido lejos del objetivo (error {err if err is not None else float('nan'):.1f} grados)")
+                    break
+            if moves_ok:
+                add("movimiento y sentido de giro", True, f"error maximo {worst:.1f} grados")
+        else:
+            add("movimiento", False, "omitido (falla conexion/feedback/torque)")
+        result = dict(ok=all(c[1] for c in checks), checks=checks)
+        self.pt_selftest = result
+        if not result["ok"]:
+            self.gentle_tracking = False   # sin cabeza confiable no se sigue la cara
+            self.get_logger().error("Pan-tilt con fallas: seguimiento de rostro DESACTIVADO; la camara queda donde este")
+        return result
+
     def _ensure_pantilt_torque(self):
         if self._pantilt_torque_requested or not self.cli_pantilt_torque.service_is_ready():
             return
@@ -1399,6 +1483,12 @@ class HriReceptionistChallengeNode(Node):
                         self.get_logger().info("✔ [Pre-vuelo]: Servidor Nav2 (navigate_to_pose) listo y respondiendo.")
                 self.nav2_verified = True
 
+            if self.pt_selftest is None:
+                self.current_banner_text = "Revisando el pan-tilt de la camara..."
+                self.pan_tilt_self_test()
+                if not self.pt_selftest["ok"]:
+                    self.say("Warning: my head camera motors are not working correctly. "
+                             "I will keep the camera fixed.", emotion="thinking", blocking=True)
             frame_shape = self.latest_frame.shape if self.latest_frame is not None else (0, 0, 0)
             print("\n" + "=" * 70)
             print("🚀 [PRE-VUELO RECEPTIONIST COMPLETADO - SUBSISTEMAS LISTOS]")
@@ -1409,6 +1499,8 @@ class HriReceptionistChallengeNode(Node):
             print(f"  [✔] Navegación           : {'SIMULADA (Segura sin base)' if self.sim_nav else 'Nav2 REAL'}")
             print(f"  [✔] Audio & Síntesis     : Piper TTS + Whisper ASR")
             print(f"  [✔] Waypoints Semánticos : Entrada '{self.door_wp}' | Sala '{self.living_room_wp}'")
+            for name, ok, detail in (self.pt_selftest or {}).get("checks", []):
+                print(f"  [{'✔' if ok else '✘'}] Pan-tilt: {name}{' - ' + detail if detail else ''}")
             print("=" * 70 + "\n")
 
             self.say("All systems online. Camera and perception ready. Starting Receptionist Challenge.", emotion="happy", blocking=True)
@@ -1423,7 +1515,13 @@ class HriReceptionistChallengeNode(Node):
             self.user_speech_buffer = ""
             self.door_detection_start = None
             self.last_person_seen_time = None
-            self.move_head_to(0.0, 0.0)  # Centrado exacto al llegar a la puerta
+            # Centrar la camara al llegar a la puerta (facilita el seguimiento del invitado): movimiento suave,
+            # reenvio por si el primer comando llego con el torque apagado (el nodo lo descarta), y tracker limpio.
+            self._ensure_pantilt_torque()
+            self.move_head_smooth(0.0, 0.0, speed_dps=40.0)
+            self.sleep_gui(0.3)
+            self.move_head_to(0.0, 0.0)
+            self.gentle_tracker.reset()
             self.set_robot_emotion("neutral")
             self.current_banner_text = f"Esperando invitado {self.guest_index} en la puerta..."
             self.state = self.STATE_WAIT_DOOR
