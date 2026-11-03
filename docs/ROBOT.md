@@ -101,7 +101,7 @@ NUC (`jetson_head/scripts/flash_jetson_r39.sh`, microSD + QSPI), luego `bootstra
 | Hokuyo UST-05LX | NUC, Ethernet `192.168.0.10` | 270°, 0,06–5 m, 40 Hz | `/scan` 40 Hz (`HISTORICO 2026-10-30`) |
 | RealSense D435 | NUC USB 3 | perfil 640×480×15 (`realsense_nuc.launch.py`); fw 5.17.0.10 | 15 Hz estable 60 s (`HISTORICO 2026-10-30`) |
 | Elevador NEMA23 + ESP32-S3 | NUC, CH343 `1a86:55d3` → `/dev/ttyACM0` | `scripts/stepper_controller.py`; firmware `firmware/nema23_esp32` | sin prueba física registrada; auditar homing/límites antes de usar |
-| Piper 6-DOF + pinza | Jetson, CAN `gs_usb` → **`can1`** 1 Mbit/s (`can0` = CAN integrado sin transceptor) | 1,5 kg, ~626 mm, pinza ~70 mm (`FABRICANTE`); `can_port=auto` | 0 tramas CAN el 2026-10-30 con el brazo sin alimentación; no revalidado |
+| Piper 6-DOF + pinza | Jetson, CAN `gs_usb` (hoy **`can0`**; el número cambia entre arranques, `can1` = mttcan integrado sin transceptor) 1 Mbit/s; `can_port=auto` lo resuelve | 1,5 kg, ~626 mm (`FABRICANTE`); pinza: ficha 70 mm, feedback medido 75 mm, URDF y controlador 105 mm | `piper_sdk` 0.6.2 en `~/robot_venv`. Sin alimentación el 2026-11-03: 0 tramas RX en `can0`, `feedback_ok=false` (`JETSON_VERIFIED`) |
 | Orbbec DaBai DC1 (muñeca, eye-in-hand) | Jetson USB | profundidad útil 0,3–3 m (`FABRICANTE`): **por debajo de ~30 cm no hay profundidad** | `stream_orbbec.py` corriendo — `VERIFICADO`; 20–30 Hz `HISTORICO` |
 | Pan-tilt 2× Dynamixel XL430-W250 | Jetson, U2D2 (FTDI `0403:6014`) `/dev/ttyU2D2`, 1 Mbaud, prot. 2.0, IDs 1/2 | 12 V; `pan_center_tick=2059`, tilt homing offset −2212; convención pan + izquierda, tilt + arriba | nodo corriendo — `VERIFICADO`; U2D2 se desconectó por USB −71 el 2026-10-30 (revisar cable/12 V) |
 | Micrófono RØDE VideoMic GO II | Jetson USB | shotgun supercardioide: **apuntarlo al invitado** | `whisper_node` corriendo — `VERIFICADO` |
@@ -127,6 +127,91 @@ riesgo (Nivel C).
 - **`/joint_states` con un dueño por joint** (HOME-20): Piper publica `/arm/joint_states`, pan-tilt `/pan_tilt/joint_states`, torso `/torso/joint_states`; `joint_state_publisher` agrega. Las poses **comandadas** van a `/arm/joint_states_cmd` (solo visualización). Publicar ceros cuando no hay feedback es un defecto (ver §7, S-11).
 - **Calibraciones y configuración del brazo:** `src/base_athome_perception/config/arm_poses_and_limits.yaml` (poses enseñadas HOME/PRE-GRASP/POST-GRASP, límites, `focal_px`; backup `<pose>_previous`), `safe_arm_trajectories.yaml`, `tracking_params.yaml`. Calibración ArUco: `src/base_athome_perception/scripts/calibrar_aruco_manipulacion.py`, marcador `aruco_marker_id0.png`, guía `aruco_calibracion_piper.pdf` (raíz del repo). Hand-eye completa con residuales: `PENDIENTE`.
 - Medida física de la columna/torso para colisiones MoveIt: `PENDIENTE` (tarea humana).
+
+### 5.1 Brazo Piper: diagnóstico (2026-11-03, `CODIGO` + cálculo offline; sin hardware)
+
+Calculado con FK propia sobre el URDF expandido y comparado con el modelo DH del SDK
+(`piper_kinematics.py`). Ninguna pose ni calibración fue modificada.
+
+- **Montaje en el modelo:** Piper sobre la cara izquierda (+Y) del cubo del torso, **acostado**: `cube_to_arm_joint`
+  `xyz (-0.15, 0.175, -0.11)`, `rpy (-π/2, 0, 0)` → el eje z de `arm_base_link` apunta a +Y (afuera) y su y a −Z.
+  `arm_base_link` en `base_link` = **(0.005, 0.175, 1.065) m** con el elevador arriba (1,125 m sobre el piso);
+  baja con `torso_lift_joint`: z = 0,465 (−0,60) y 0,315 (−0,75). Cadena: `base_link → torso_column →
+  torso_lift_link (prismático) → mounting_cube_link → arm_base_link → link1..6 → gripper_base → {link7, link8,
+  arm_camera_link → arm_camera_optical_frame}`, `link6 → tcp_link`.
+- **¿Coincide con el robot real?** Evidencia indirecta a favor: el reposo medido por CAN con motores libres
+  (`[86.97, 172.87, -162.63, -99.89, -0.68, 44.98]`) deja en el modelo la pinza **colgando vertical**
+  (eje de avance (0.04, −0.09, −0.99)) a 0,30 m sobre `base_link`, junto al torso: es lo que haría la gravedad con
+  el montaje lateral. **No hay medición física** del offset ni fotos: `PENDIENTE`. Medir (cinta, elevador en el tope
+  superior): centro de la brida de la base del Piper respecto del eje de la columna (x, y), altura sobre el piso, y
+  que la cara de montaje sea vertical (nivel); posición real del cubo (25×35×35 cm en el modelo).
+- **Cinemática:** DH del SDK (`dh_is_offset=1`) ≡ URDF: error máx. **0,15 mm / 0,004°** en 2000 configuraciones
+  aleatorias. `R_mount` de `piper_kinematics` = rotación del URDF. `tcp_link` = **punta de los dedos** (link6 +0,1358 m;
+  los dedos van de 0,059 a 0,136 m); `wrist_geometry` usa centro de agarre = TCP − 2 cm.
+- **Límites:** el URDF (= `SAFE_JOINT_LIMITS_DEG`) es **más amplio que la ficha** (j1 ±154 vs ±150, j2 0..195 vs
+  0..180, j3 −175 vs −170, j4 ±110 vs ±100, j5 ±80 vs ±70, j6 ±180 vs ±120). Fuera de la ficha (dentro del URDF):
+  `pre_grasp` (j2 184,7, j5 −74,8), `post_grasp` (j2 194,7), `DEFAULT_READY` del controlador (j2 182,7, j5 −75,1) y
+  la secuencia `grasp_pringles` (j6 −154). Las de j2 se midieron por CAN moviendo el brazo a mano, así que el
+  mecanismo llega; **los límites del firmware no se conocen**: leerlos en LAB (consulta de límites del SDK) antes de
+  comandar esas poses. Si el firmware recorta, el brazo ejecuta otra trayectoria que la planificada.
+- **Pinza:** URDF 0..52,5 mm por dedo (105 mm); ficha 70 mm; feedback histórico 75 mm. Masa `gripper_base`
+  0,15 kg (fabricante 0,45): solo afecta dinámica (MoveIt no la usa).
+- **Cámara de muñeca (URDF):** 25 mm en +x de `gripper_base`, 56 mm sobre el eje de avance, eje óptico = eje de avance,
+  8 cm detrás de las yemas. Sin calibración hand-eye. `wrist_geometry` supone la lente sobre el eje
+  (`camera_above_axis_m=0`) y estima la distancia por el **ancho de la caja YOLO con diámetro fijo 75 mm** (vale para
+  un solo objeto; la DaBai no da profundidad < 30 cm y la profundidad no se usa).
+- **Elevador sin realimentación:** `torso_lift_joint=0` lo publican `piper_arm_controller` (cada 5 ciclos), el
+  receptionist y la manipulación autónoma **sin medirlo**, y `arm_manipulation.SHOULDER_IN_BASE` está fijo en z 1,065.
+  Si el elevador baja, MoveIt y el cálculo del agarre quedan desplazados hasta 0,75 m. Hasta tener un estado medido
+  del elevador, no manipular con el elevador fuera del tope superior.
+- **Constantes obsoletas:** `piper_kinematics.HEAD_TO_ARM_OFFSET_M` y `CAMERA_LEVER_ARM_M` ("ZED Mini") no coinciden
+  con el URDF (su comentario ubica el brazo en `torso_lift_link` (0.155, 0.175, −0.075); el URDF da (0.005, 0.175, −0.285)).
+  Los usan `pringles_grasping_node.py`, `hri_receptionist_challenge.py` y `calibrar_aruco_manipulacion.py` (legado).
+  `manipulacion_simple`/`arm_manipulation` usan el URDF (MoveIt) y no dependen de ellas.
+- **MoveIt 2** (`base_athome_moveit_config`): grupo `arm` = cadena `arm_base_link → tcp_link`, grupo `gripper`
+  (joint7/8), `home` = reposo medido, TRAC-IK (`Distance`, 0,1 s), OMPL, 1,5 rad/s y 1,0 rad/s², escala 0,3.
+  **Solo planifica** (`allow_trajectory_execution: false`): `moveit_bridge` pide IK, plan articular y camino cartesiano
+  con el estado inicial **medido**; la trayectoria se publica en `/arm/joint_trajectory` y el controlador la interpola
+  a 50 Hz. ACM: se chequean solo pares brazo↔cuerpo; **todos los pares internos del brazo están deshabilitados**
+  (pinza/cámara contra link2/link3 no se detecta); sin objetos de escena (la mesa no existe para MoveIt);
+  `ensure_start_valid` libera durante la sesión los pares que ya chocan en el estado medido. Torso y cabeza son cajas
+  sin medir. No hay acción `FollowJointTrajectory`: sin resultado, cancelación ni error de seguimiento estándar;
+  `arm_manipulation` espera por tiempo.
+- **Oficial `agx_arm_ros` (rama `ros2`, MIT):** MoveIt ejecuta con `JointTrajectoryController` de ros2_control
+  (`/arm_controller/follow_joint_trajectory`) → `/control/joint_states` → driver `agx_arm_ctrl` (SDK **pyAgxArm**,
+  no `piper_sdk`); feedback `/feedback/joint_states`, servicios `/enable_agx_arm`, `/control_enable`, `/emergency_stop`;
+  `tcp_offset` configurable. **Recomendación:** no migrar el driver todavía (cambia el SDK y todas las interfaces
+  `/arm/*`); sí adoptar su patrón: servidor `FollowJointTrajectory` en nuestro controlador con verificación de
+  llegada por feedback, y gate de ejecución explícito.
+- **Pipeline de agarre actual** (`arm_manipulation._grasp_worker`): detección YOLO en la muñeca → distancia por tamaño
+  → centro del objeto por FK + `wrist_geometry` → IK de aproximación (10 cm) → plan → línea cartesiana → abrir →
+  ejecutar → cerrar a 50 mm fijos → subir 3 cm → `post_grasp`. **Falta:** confirmar el agarre (ancho medido de la
+  pinza), verificar la llegada por feedback, la mesa en la escena, la profundidad, hand-eye y el estado del elevador.
+- **Controlador (`piper_arm_controller.py`), corregido en HOME-41** (tests; **no desplegado**): ver S-14 en §7.
+  Siguen abiertos: heurística rad/grados de `/arm/joint_cmd` (todos |v| ≤ 3,5 → radianes), `/arm/status` publica
+  `joints_deg` en cero sin feedback (los consumidores deben mirar `feedback_ok`), errores de TX CAN no reportados.
+
+### 5.2 Procedimiento de calibración eye-in-hand (DaBai en la pinza) — `PENDIENTE` de ejecutar
+
+Núcleo implementado y probado con datos sintéticos: `base_athome_perception/handeye.py` (5 tests; solvePnP
+`IPPE_SQUARE`, `calibrateHandEye` con los 5 métodos de OpenCV, residual de consistencia, validación independiente,
+criterio de aceptación). El script `calibrar_aruco_manipulacion.py` **no** hace hand-eye (centrado 2D).
+Requiere `LAB_SUPERVISADO` (mueve el brazo) y el controlador con S-14 desplegado.
+
+1. **Intrínsecos:** tablero de ajedrez impreso y medido; ≥20 vistas variadas a 30–60 cm con `camera_calibration`
+   (u OpenCV) sobre `/arm_camera/image_raw` en la resolución de trabajo. Aceptar RMS < 0,5 px. Guardar K y dist
+   (reemplazan `focal_px=485`, que hoy es un supuesto).
+2. **Marcador:** ArUco `DICT_4X4_50` id 0 impreso plano, **lado medido con calibre** (no el nominal), fijo a la mesa.
+3. **Muestras (≥15):** el humano lleva el brazo (motores libres o poses enseñadas) a vistas del marcador a 35–60 cm,
+   con **≥20° de variación de rotación en dos ejes**. En cada una: quieto 1 s, guardar articulaciones **medidas**
+   (`/arm/joint_states` con `feedback_ok`) y la pose del marcador con su error de reproyección (descartar > 1 px).
+4. **Resolver:** `handeye.solve()` ordena los métodos por residual. Aceptar si residual ≤ 5 mm / 1°.
+5. **Validar independientemente:** 3–5 puntos con posición medida en `base_link` (cinta desde el eje de la columna y
+   el piso, o la punta de la pinza tocando el punto) → `validate_points`; aceptar si el peor ≤ 10 mm. Sin este paso
+   la calibración **no** es válida (`accept()` la rechaza).
+6. **Publicar y persistir:** reemplazar `arm_camera_mount_joint` del Xacro por el resultado (respecto de
+   `gripper_base`), regenerar `robot.urdf`, registrar fecha, método, residual y validación en esta sección; el
+   resultado crudo va en `arm_poses_and_limits.yaml` (`wrist_camera_handeye`). Repetir si se desmonta la cámara.
 
 ## 6. Paquetes y software
 
@@ -159,7 +244,7 @@ duplicada: eliminada (S-05).
 | `/odom`, `/odom_raw` (50 Hz), `/hoverboard/battery`, srv `/hoverboard/reset_odom` | Odometry / BatteryState / Trigger | `hoverboard_driver` |
 | `/scan` (40 Hz) | LaserScan | `urg_node` |
 | action `navigate_to_pose` | NavigateToPose | Nav2 ← receptionist, misiones, `waypoint_navigator` |
-| `/arm/joint_states` (50 Hz), `/arm/status` (JSON: `enabled`, `feedback_ok`), `/arm/current_pose` | JointState / String / PoseStamped | `piper_arm_controller` |
+| `/arm/joint_states` (50 Hz), `/arm/status` (JSON: `enabled`, `feedback_ok`), `/arm/current_pose` (brida link6 según el firmware, frame `arm_base_link`, solo con feedback) | JointState / String / PoseStamped | `piper_arm_controller` |
 | `/arm/joint_cmd`, `/arm/joint_trajectory`, `/arm/gripper_cmd`, `/arm/enable`; srv `/arm/set_enable`, `/arm/home`… | — | apps → Piper (**actuador**) |
 | `/pan_tilt/joint_states` (20 Hz), `/pan_tilt/connected` (latched) | JointState / Bool | `pan_tilt_node` |
 | `/pan_tilt/command`, `/pan_tilt/target_degrees`; srv `/pan_tilt/set_torque` | — | apps → pan-tilt (**actuador**) |
@@ -167,6 +252,7 @@ duplicada: eliminada (S-05).
 | `/arm_camera/image_raw` (~30 Hz), `/arm_camera/detections` (Detection2DArray, 29,9 Hz medido en la NUC 2026-11-03) | — | Jetson → NUC |
 | `/camera/camera/color/image_raw`, `aligned_depth_to_color` | — | RealSense (NUC) |
 | `/hri/guest_input` (JSON `{type, value}`), `/hri/say_something`, `/robot/emotion`, `/mission/command` | — | HRI / pantalla / misiones |
+| `/mission/run` (plan JSON), srv `/mission/cancel`, `/mission/status` (JSON, latched), `/mission/skills` | String / Trigger | `mission_executor` (`src/base_athome_skills/README.md`) |
 
 ### Seguridad del software de actuadores (vigente, no revertir)
 
@@ -191,6 +277,11 @@ duplicada: eliminada (S-05).
 | S-11 | Media | Pan-tilt/Piper publican 0.0 como medido sin hardware | Parcial: flags `connected`/`feedback_ok`; faltan consumidores |
 | S-12 | Media | Cámara de muñeca no publicaba / 5 Hz | **Corregido** (20 Hz, CPU 19 %) |
 | S-09/S-13 | — | Humble↔Jazzy | **Resuelto** por la migración |
+| S-14 | Alta | Piper: trayectorias recibidas con el brazo deshabilitado quedaban guardadas y **se ejecutaban (o saltaban al final) al habilitar**; deshabilitar no las borraba; sin límites articulares; con feedback perdido seguía la trayectoria a ciegas 5 s; `/arm/home`, `/pre_grasp`, `/grasp_pringles`, `/release` respondían `success` sin estar habilitado; `/arm/current_pose` en ceros y con frame `base_link` (es `arm_base_link`); pinza recortada a 70 mm en `/joint_states` | **Corregido en repo** (HOME-41, 10 tests nuevos); **no desplegado** (toca `jetson-head`: gate humano) |
+| S-15 | Alta | Elevador sin feedback: `torso_lift_joint=0` sintético y `SHOULDER_IN_BASE` fijo | Abierto (§5.1) |
+| S-16 | Media | Poses enseñadas y del controlador fuera de los límites de la ficha; límites del firmware desconocidos | Abierto: leer límites en LAB |
+| S-17 | Media | ACM sin autocolisión interna del brazo; mesa fuera de la escena | Abierto |
+| S-18 | Media | Constantes de cámara/brazo obsoletas en `piper_kinematics` (código legado) | Abierto |
 
 ## 8. Navegación actual (SOLO LECTURA — no modificar)
 
@@ -248,7 +339,7 @@ interfaces**; las apps solo notan `ATHOME_SIM=1`. Siempre en `ROS_DOMAIN_ID=42`.
 | Whisper | protocolo con id, `/voice/result`, espera pausada por mute | misma temporización; no simula errores de ASR |
 | RealSense | color + profundidad alineada + `camera_info`; invitado = foto | rostros/pose funcionan; "sentado" no se simula |
 | Cámara de muñeca | lata magenta proyectada con la pose real del brazo | geometría correcta |
-| Nav2 | acción `navigate_to_pose`, `/amcl_pose`, `/odom`, TF | línea recta 0,5 m/s, sin planificador ni obstáculos |
+| Nav2 | acción `navigate_to_pose`, `/amcl_pose`, `/odom`, TF | línea recta 0,5 m/s, sin planificador ni obstáculos; un goal nuevo aborta al anterior (como Nav2) |
 | Hokuyo | raycasting sobre el mapa real | visualización |
 | Gazebo (`gazebo:=true`) | URDF real + `gz_model.py`, mundo `worlds/casa_simple.sdf`, `ros_gz_bridge` con hora de pared | física de base y sensores; el agarre no es físico |
 
@@ -262,9 +353,9 @@ no arranca la RealSense, detector por color (`SimColorDetector`).
 |---|---|---|
 | Percepción/HRI | `python3 -m pytest -q src/base_athome_perception/test` | 111 passed |
 | Simulación | `python3 -m pytest -q src/base_athome_sim/test` | 6 passed |
-| Skills (puerta) | `python3 -m pytest -q src/base_athome_skills/test` | 8 passed |
+| Skills (puerta + misiones) | `python3 -m pytest -q src/base_athome_skills/test` | 29 passed |
 | Capa semántica | `python3 -m pytest -q src/base_athome_navigation/test` | 9 passed |
-| Scripts Jetson (Piper, Orbbec, YOLO, bench) | `python3 -m pytest -q jetson_head/scripts/tests` | 15 passed |
+| Scripts Jetson (Piper, Orbbec, YOLO, bench) | `ROS_DOMAIN_ID=77 python3 -m pytest -q jetson_head/scripts/tests` | 24 passed |
 | ASR | `cd jetson_head/src/audio_asr && python3 -m pytest -q test/test_asr_core.py` | 12 passed |
 | Pan-tilt | `python3 -m pytest -q jetson_head/src/pan_tilt_controller/test` | 5 passed |
 | GPSR | `cd tools/gpsr_parser && env -u PYTHONPATH python3 -m pytest -q tests` (sin entorno ROS: el plugin `launch_testing` rompe la colección) | 34 passed |

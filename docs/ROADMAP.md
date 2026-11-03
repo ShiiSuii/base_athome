@@ -56,6 +56,8 @@ y cuenta la mejor puntuación.
 | URDF | `/joint_states` con un dueño por joint; editor Xacro/URDF localhost fase 1 | `c2f2843`, `3a957f1` (45 tests) |
 | Mapa semántico | editor de zonas/waypoints con capa de objetos numerados y puntos de aproximación | `7a74239` |
 | Simulación | `base_athome_sim` liviana + Gazebo Harmonic | `74d8973` |
+| Misiones | `mission_executor`: registro de habilidades con estado real, plan validado, reintentos, timeouts, cancelación, recuperación; demo A→B→voz→C→casa | HOME-41, `SIM_PASS` 2026-11-03 |
+| Manipulación | diagnóstico Piper (`ROBOT.md` §5.1), controlador endurecido (S-14, sin desplegar), núcleo hand-eye (§5.2) | HOME-41 (`UNIT_PASS`) |
 
 ## 4. Prioridades activas
 
@@ -68,6 +70,8 @@ Escala: **P0** desbloquea seguridad/progreso · **P1** valor demostrable · **P2
 | HOME-SEC | Hecho: URL de `origin` sin credenciales, sudo temporal de la NUC borrado, regla acotada en la Jetson, auto-aprobador eliminado. **Falta (humano):** revocar el token en GitHub; confirmar la contraseña de `ubuntu` en la Jetson para borrar `90-ubuntu-nopasswd`; Orca sin `--dangerously-skip-permissions`/`--yolo` | Humano + Claude | push habilitado; sudo mínimo |
 | HOME-S02 | Desplegar el fallback DDS solo-localhost de la Jetson (S-02) | Claude (Nivel B con checklist) | `jetson-head` sobrevive sin cable |
 | HOME-S11 | Consumidores HRI/manipulación verifican `/pan_tilt/connected` y `feedback_ok` | Claude | tests que fallan sin el chequeo |
+| HOME-41d | Desplegar `piper_arm_controller.py` con S-14 a la Jetson (`deploy_to_jetson.sh`, respaldo; reiniciar `jetson-head` = **gate humano**) | humano + Claude | md5 igual al repo; `/arm/status` ok; rechazos visibles en el log |
+| HOME-43 | Estado medido del elevador (homing + pasos de `stepper_controller.py` → `/torso/joint_states`); quitar `torso_lift_joint=0` sintético y `SHOULDER_IN_BASE` fijo (S-15) | Claude | TF del brazo sigue al elevador en sim; nada publicado sin medición |
 
 ### P1 — Cerrar funcionalidades existentes
 
@@ -97,6 +101,19 @@ Escala: **P0** desbloquea seguridad/progreso · **P1** valor demostrable · **P2
 | Manipulación | `agx_arm_ros` + MoveIt con colisión del torso medido; fachada `/arm/*` | planificación segura | alto |
 | Base | NAV-PROP-001 (feedback stale) y NAV-PROP-004 (mux) son las de mejor relación seguridad/costo | seguridad | requieren autorización (navegación) |
 | Hardware | NVMe para la Jetson; `MAXN_SUPER` solo con fuente verificada; E-stop que corte todos los dominios | robustez, reglamento | decisiones humanas |
+
+### Manipulación y misiones (orden de ejecución)
+
+| ID | Tarea | Quién | Criterio |
+|---|---|---|---|
+| HOME-42 | LAB: leer límites y versión del firmware del Piper; comparar con URDF/ficha (S-16); medir el montaje (`ROBOT.md` §5.1) | humano + Claude | tabla en §5.1; poses fuera de límite señaladas |
+| HOME-44 | Calibración intrínseca + hand-eye según `ROBOT.md` §5.2 (herramienta de captura sobre `handeye.py`) | Claude; LAB con humano | residual ≤ 5 mm/1°, validación ≤ 10 mm |
+| HOME-45 | Servidor `FollowJointTrajectory` en el controlador (patrón de `agx_arm_ros`): resultado por feedback, tolerancias de llegada, cancelación; `arm_manipulation` deja de esperar por tiempo | Claude | tests offline + SIM_PASS |
+| HOME-46 | Escena MoveIt: mesa como objeto de colisión, pares internos del brazo por muestreo (no todos deshabilitados), torso medido (S-17) | Claude | IK rechaza poses que atraviesan la mesa en sim |
+| HOME-47 | Skills `detect_object` (3D), `pick_object`/`place_object` con confirmación por ancho medido de la pinza; recién entonces pasan a `available` | Claude | SIM_PASS → serie LAB con % de éxito |
+| HOME-48 | Evaluar MoveIt Task Constructor (rama `ros2`, compilar en Jazzy; no instalado) cuando exista HOME-45 | Claude | decisión ADOPTAR/NO con prueba en sim |
+| HOME-40 | Monitor web de misiones (`tools/mission_monitor`, contrato `/mission/status`) | Antigravity | tests + revisión de Claude |
+| HOME-49 | Migrar pasos de `mission_sequencer` (receive_guest, fetch, guide, place) a skills del ejecutor; plan GPSR → ejecutor (depende de HOME-15b: el parser pierde pasos) | Claude | un solo sistema de misiones |
 
 ### P2 — Manipulación y competencia
 

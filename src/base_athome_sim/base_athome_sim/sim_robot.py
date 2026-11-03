@@ -328,12 +328,17 @@ class SimRobot(Node):
         p = goal_handle.request.pose.pose
         yaw = 2 * math.atan2(p.orientation.z, p.orientation.w)
         self.base.set_goal(p.position.x, p.position.y, yaw)
+        mine = self.base.goal  # identidad del objetivo de ESTE goal (un goal nuevo lo reemplaza)
         self.get_logger().info(f"Nav2 (sim): ir a ({p.position.x:.2f}, {p.position.y:.2f})")
         fb = NavigateToPose.Feedback()
         while rclpy.ok():
             if goal_handle.is_cancel_requested:
-                self.base.goal = None
+                if self.base.goal is mine:  # no pisar el objetivo de un goal posterior
+                    self.base.goal = None
                 goal_handle.canceled()
+                return NavigateToPose.Result()
+            if self.base.goal is not mine and self.base.goal is not None:
+                goal_handle.abort()  # reemplazado por otro goal (como el preempt de Nav2)
                 return NavigateToPose.Result()
             if self.base.goal is None:
                 break

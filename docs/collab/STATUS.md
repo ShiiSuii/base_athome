@@ -3,7 +3,7 @@
 Corto y actualizado: se **reemplaza** lo viejo, no se acumula (`AGENTS.md` §9). Lo histórico se
 recupera por commit (§8). Editado por el integrador (Claude).
 
-**Última actualización:** 2026-11-03 · Claude Code · modo `CASA`.
+**Última actualización:** 2026-11-03 (tarde) · Claude Code · modo `CASA` · bloque HOME-41.
 
 ## 1. Estado comprobado (2026-11-03)
 
@@ -12,23 +12,33 @@ recupera por commit (§8). Editado por el integrador (Claude).
 | NUC | Ubuntu 24.04.3, Jazzy, CycloneDDS, dominio 10 | `NUC_VERIFIED` |
 | Jetson | Ubuntu 24.04.4, L4T R39.2.1 (JetPack 7.2.1), Jazzy, modo 25W, uptime 3 días | `JETSON_VERIFIED` por SSH |
 | Enlace | NUC `enp1s0` 10.42.0.1 ↔ Jetson `enx00e04c68090c` 10.42.0.12 UP; `enP8p1s0` sigue DOWN | `ETHERNET_VERIFIED` |
-| `jetson-head` | activo: Piper controller, pan-tilt, Whisper, `stream_orbbec` corriendo | `JETSON_VERIFIED` |
+| `jetson-head` | activo: Piper controller, pan-tilt, Whisper, `stream_orbbec`, YOLO corriendo; controlador desplegado = `226e233` (md5 igual al repo **antes** de HOME-41) | `JETSON_VERIFIED` |
+| Piper | sin alimentación: adaptador gs_usb hoy en **`can0`**, 0 tramas RX, `feedback_ok=false`, `/arm/joint_states` no se publica (correcto) | `JETSON_VERIFIED` (pasivo) |
 | YOLO TensorRT | **recuperado**: TRT 10.16.2 + CUDA 13.2 runtime instalados; `yolo_trt_node` corriendo; `/arm_camera/detections` a 29,9 Hz en la NUC | `JETSON_VERIFIED`, `ETHERNET_VERIFIED` |
 | `realsense-nuc.service` | no instalado | `NUC_VERIFIED` |
 | Actuadores | sin confirmar (modo CASA) | — |
-| Seguridad de host | URL de `origin` **sin credenciales**; NUC: `99-jetson-flash-temp` **borrado** (sudo con contraseña vía `%sudo`); Jetson: `90-ubuntu-nopasswd` aún presente + regla acotada `91-ubuntu-jetson-head`; `agy_autoapprove.py` eliminado del repo; token sin restos en historial/config locales | `NUC_VERIFIED`/`JETSON_VERIFIED` (sin imprimir secretos) |
-| Tests offline | 245 passed: percepción 111, GPSR 34, URDF 45, Jetson scripts 15, ASR 12, semántica 9, skills 8, sim 6, pan-tilt 5 (comandos en `ROBOT.md` §10) | `UNIT_PASS` 2026-11-03 |
+| Seguridad de host | URL de `origin` **sin credenciales**; NUC: `99-jetson-flash-temp` **borrado** (sudo con contraseña vía `%sudo`); Jetson: `90-ubuntu-nopasswd` aún presente + regla acotada `91-ubuntu-jetson-head`; `agy_autoapprove.py` eliminado del repo; token sin restos en historial/config de git, **pero sí en el registro del repo de Orca** (§3) | `NUC_VERIFIED`/`JETSON_VERIFIED` (sin imprimir secretos) |
+| Tests offline | 279 passed: percepción 116, URDF 45, GPSR 34, skills 29, Jetson scripts 24, ASR 12, semántica 9, sim 6, pan-tilt 5 (comandos en `ROBOT.md` §10; linters ament siguen fallando, S-08) | `UNIT_PASS` 2026-11-03 |
+| Misiones | demo A→B→voz→C→casa en `base_athome_sim` 41,4 s; timeout+reintento+recuperación; cancelación con goal cancelado y base quieta; guardas de dominio/modo | `SIM_PASS` 2026-11-03 |
 
 ## 2. Rama de referencia
 
-- Trabajo integrado: rama `claude/docs-v3-instructions` (contiene todo `claude/home-00-audit` + docs).
-  `main` = `1da2388` (sin los ~60 commits del 29/10–03/11). **Nada pusheado**: push bloqueado hasta revocar el token (HOME-SEC).
+- Trabajo en curso: rama `claude/home-41-piper-mission` (base `226e233` = `claude/docs-v3-instructions`).
+  `main` = `1da2388`. **Nada pusheado**: push bloqueado hasta revocar el token (HOME-SEC).
 - Cambios sin commitear del usuario (no tocar): `semantic_map.yaml`, `waypoints.yaml`, `arm_poses_and_limits.yaml`.
 
 ## 3. Orca y worktrees
 
-- Orca 1.4.246 con orquestación disponible (`orca orchestration …`). Run `run_8db8fe9ab48b`: HOME-04, 06a, 15a, 20, 21 `completed`; HOME-22 figura `ready` aunque está integrada (`17461ab`) — no se pudo actualizar porque el Run está ligado al terminal de la sesión de coordinación anterior (`consumer_fenced`). Sin workers activos.
-- **Nuevo worktree para Antigravity:** `/home/athome/orca/workspaces/base_athome_ws/antigravity-home-15b-gpsr`, rama `antigravity/home-15b-gpsr-compound`, base `7e19cf5` (reglas consolidadas). Tarea prevista: HOME-15b, escribir solo en `tools/gpsr_parser/`. Sin agente lanzado.
+- Orca 1.4.246. **Run `run_daadf85f0e7a`**: HOME-40 (monitor web de misiones) despachada a Antigravity — task
+  `task_3b07fc6ec821`, dispatch `ctx_83329ca3042c`, worktree `antigravity-home-40-mission-monitor`, base rama
+  `claude/docs-v3-instructions`, escritura solo en `tools/mission_monitor/`. Estado: **`BLOCKED_WORKER`**, frenado en un
+  prompt de permisos de su propia TUI (`git status`); lo tiene que aprobar el humano en esa pestaña o configurar
+  permisos acotados (Orca → Settings → Agents). Claude no aprueba prompts ajenos (`AGENTS.md` §6.8).
+- **Seguridad:** el registro del repo en Orca (`orca repo list --json`, campo `gitRemoteIdentity.remoteUrl`) **todavía
+  contiene la URL vieja con el token**. Git ya está limpio; Orca no. Revocar el token resuelve el riesgo; después
+  actualizar o re-importar el repo en Orca.
+- Run anterior `run_8db8fe9ab48b` (HOME-04…22) cerrado de hecho; HOME-22 figura `ready` pero está integrada (`17461ab`).
+- Worktree `antigravity-home-15b-gpsr` (base `7e19cf5`) sigue sin agente: HOME-15b pendiente.
 - Worktrees de Antigravity (todas sus ramas **ya integradas** en la rama de referencia; limpios):
   `antigravity-home-04-urdf`, `-06a-hri-gap`, `-15a-gpsr`, `-20-joint-states`, `-21-teach-panel` (solo un `teach_panel_preview.png` sin trackear), `-22-map-objects`.
   Usan el `AGENTS.md` viejo de su rama: no despachar más trabajo en ellos (se pueden borrar cuando el usuario quiera).
@@ -40,17 +50,26 @@ recupera por commit (§8). Editado por el integrador (Claude).
 | Humano | HOME-SEC: revocar el token en GitHub; confirmar contraseña de `ubuntu` en la Jetson; elegir método de push (`gh auth setup-git` o SSH); Orca sin permisos irrestrictos | pendiente |
 | Humano | Decidir la pregunta de confirmación del receptionist en modo competencia (`ROADMAP.md` §5) | pendiente |
 | Humano | Medir la columna del torso; ubicar waypoint `home` y objetos en el editor de mapa | pendiente |
-| Claude | push + PR de `claude/docs-v3-instructions` (tras revocación); HOME-S02, HOME-S11; optimizar pre/post-proceso YOLO | próximas |
-| Antigravity | HOME-15b en su worktree nuevo; luego HOME-05, HOME-16, HOME-31 | sin despachar |
+| Humano | Gate para desplegar el controlador corregido (HOME-41d); medir montaje del Piper y elevador; agregar `kitchen`/`home` al mapa semántico | pendiente |
+| Claude | HOME-43 (estado del elevador), HOME-45 (FollowJointTrajectory), HOME-46 (escena MoveIt), revisar HOME-40 | próximas |
+| Antigravity | HOME-40 en curso (bloqueado en permisos); luego HOME-15b, HOME-16 | `BLOCKED_WORKER` |
 
 ## 5. Bloqueos vigentes
 
 - Push/PR: hasta que el token comprometido esté revocado y haya autenticación segura configurada.
 - Pruebas con actuadores y voz con personas reales: requieren `LAB_SUPERVISADO`.
-- Piper: 0 tramas CAN la última vez que se energizó (30/10) → revisar alimentación/E-stop/cable CAN.
+- Piper: 0 tramas CAN (30/10 y hoy, sin alimentación). Límites del firmware desconocidos (S-16): no comandar poses con j2 > 180° hasta leerlos.
+- Manipulación con el elevador fuera del tope superior: geometría inválida hasta HOME-43 (S-15).
 - Pan-tilt: el U2D2 se desconectó por USB el 30/10 → revisar cable y 12 V.
 
 ## 6. Últimos cambios importantes
+
+- 2026-11-03 — **HOME-41** (rama `claude/home-41-piper-mission`, **no desplegado**):
+  - Diagnóstico del Piper en `ROBOT.md` §5.1 (montaje lateral, FK DH≡URDF 0,15 mm, límites, TCP, cámara, MoveIt, oficial `agx_arm_ros`) y hallazgos S-14…S-18.
+  - `piper_arm_controller.py`: rechaza movimientos deshabilitado o sin feedback y fuera de límites; borra trayectorias al habilitar/deshabilitar; aborta y sostiene lo medido si se pierde el feedback; servicios responden `success=false` si no pueden; `/arm/current_pose` en `arm_base_link` y solo con feedback; pinza hasta 105 mm (10 tests nuevos). Rollback: `git revert` del commit; la Jetson sigue con la versión anterior.
+  - `base_athome_skills/mission`: registro de habilidades, planes con `recovery`, ejecutor y nodo `mission_executor` (21 tests, SIM_PASS); `missions/demo_a_b_voice_c_home.yaml`. Con el mapa semántico real la demo se **rechaza** (faltan `kitchen` y `home`).
+  - `base_athome_sim`: un goal nuevo ya no hereda la cancelación del anterior (carrera encontrada en la prueba).
+  - `base_athome_perception/handeye.py` + procedimiento `ROBOT.md` §5.2 (5 tests sintéticos).
 
 - 2026-11-03 — YOLO TensorRT recuperado en JetPack 7 (baseline vs después, misma imagen `bus.jpg`, `bench_yolo.py`, con `jetson-head` corriendo):
   | | Inferencia (media) | Punta a punta | FPS |
@@ -89,7 +108,8 @@ recupera por commit (§8). Editado por el integrador (Claude).
 
 ## 9. Próximas acciones
 
-1. Humano: revocar el token y confirmar la contraseña de la Jetson → Claude borra `90-ubuntu-nopasswd`, configura el push y abre el PR.
-2. Claude: desplegar fallback DDS (S-02); consumidores de `feedback_ok`/`connected` (S-11).
-3. Con el robot energizado y supervisión: `escuchar --n 10` con personas reales; prueba de CAN del Piper.
-4. Despachar HOME-15b a Antigravity en `antigravity-home-15b-gpsr` cuando haya un worker disponible.
+1. Humano: revocar el token (también está en el registro de Orca) y confirmar la contraseña de la Jetson.
+2. Humano: aprobar permisos del worker de Antigravity (HOME-40) en su pestaña de Orca.
+3. Humano + Claude: gate de despliegue del controlador (HOME-41d); luego, en LAB, CAN + límites del firmware (HOME-42).
+4. Claude: HOME-43 (elevador medido) → HOME-45 (FollowJointTrajectory) → HOME-46 (escena MoveIt) → HOME-44 (hand-eye en LAB).
+5. Humano: medir y cargar `kitchen` y `home` en el editor de mapa para correr la demo de misiones en el robot (con supervisión).

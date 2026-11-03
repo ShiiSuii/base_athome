@@ -1,0 +1,13 @@
+# Primera demostracion (FASE 4): A -> B -> accion de voz -> C -> regreso.
+# Lugares del mapa semantico (door, living_room, kitchen, home). Si 'home' no existe, return_home falla
+# en la validacion: el plan se rechaza antes de mover nada.
+name: demo_a_b_voz_c_home
+steps:
+  - {id: go_door, skill: navigate_to, args: {place: door}, retries: 1, timeout_s: 180, on_failure: sorry}
+  - {id: go_living, skill: navigate_to, args: {place: living_room}, retries: 1, timeout_s: 180, on_failure: sorry}
+  - {id: greet, skill: speak, args: {text: "Hello, I am the Base at Home robot. I arrived at the living room."}}
+  - {id: go_kitchen, skill: navigate_to, args: {place: kitchen}, retries: 1, timeout_s: 180, on_failure: sorry}
+  - {id: home, skill: return_home, timeout_s: 180}
+  - {id: done, skill: speak, args: {text: "Mission completed."}}
+recovery:
+  - {id: sorry, skill: speak, args: {text: "I could not reach the next place. I am stopping the mission."}}

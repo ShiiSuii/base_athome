@@ -40,6 +40,22 @@ MM0001_TO_MM = 1.0 / 1000.0
 GRIPPER_MAX_MM = 105.0
 GRIPPER_MIN_MM = 0.0
 
+# Limites articulares de software (grados) = limites del URDF del robot (arm_piper.xacro), que son
+# MAS AMPLIOS que la ficha de AgileX (j2 0..180, j5 +-70, j6 +-120): las poses ensenadas llegan a
+# j2=194.7. El firmware puede tener los suyos; verificarlos con el brazo energizado (ROBOT.md §5).
+# Un comando fuera de rango se RECHAZA completo (no se recorta: recortar cambia la trayectoria).
+JOINT_LIMITS_DEG = [(-154.0, 154.0), (0.0, 195.0), (-175.0, 0.0),
+                    (-110.0, 110.0), (-80.0, 80.0), (-180.0, 180.0)]
+LIMIT_TOL_DEG = 0.05
+
+
+def out_of_limits(q_deg) -> Optional[str]:
+    """None si q_deg (6 valores en grados) respeta JOINT_LIMITS_DEG; si no, descripcion del primero."""
+    for i, (v, (lo, hi)) in enumerate(zip(q_deg, JOINT_LIMITS_DEG)):
+        if not (lo - LIMIT_TOL_DEG <= v <= hi + LIMIT_TOL_DEG) or not math.isfinite(v):
+            return f"joint{i + 1}={v:.2f} fuera de [{lo:.0f}, {hi:.0f}]"
+    return None
+
 # Pose Home/Stow y Pre-Grasp calibradas (grados)
 # Reposo real medido por CAN el 2026-10-30 (brazo colgando). El valor anterior tenia joint4 +67 y
 # joint6 -146: a ~170 grados del reposo actual.
@@ -242,7 +258,7 @@ class PiperArmController(Node):
         ]
 
         j_rad = [deg * DEG_TO_RAD for deg in self.current_joints_deg]
-        half_open_m = min(0.035, max(0.0, (self.current_gripper_mm / 1000.0) / 2.0))
+        half_open_m = min(GRIPPER_MAX_MM / 2000.0, max(0.0, (self.current_gripper_mm / 1000.0) / 2.0))
         js.position = j_rad + [half_open_m, -half_open_m]
         js.velocity = [0.0] * 8
         js.effort = [0.0] * 8
@@ -261,10 +277,11 @@ class PiperArmController(Node):
             torso.position = [0.0]
             self.pub_joint_states.publish(torso)
 
-        # 2. /arm/current_pose
+        # 2. /arm/current_pose: pose de la BRIDA (link6) calculada por el firmware, en el marco de la base
+        # del Piper (arm_base_link), no en base_link del robot. Solo con realimentacion valida.
         ps = PoseStamped()
         ps.header.stamp = now
-        ps.header.frame_id = "base_link"
+        ps.header.frame_id = "arm_base_link"
         ps.pose.position.x = self.current_xyz_mm[0] / 1000.0
         ps.pose.position.y = self.current_xyz_mm[1] / 1000.0
         ps.pose.position.z = self.current_xyz_mm[2] / 1000.0
@@ -274,7 +291,8 @@ class PiperArmController(Node):
         ps.pose.orientation.y = qy
         ps.pose.orientation.z = qz
         ps.pose.orientation.w = qw
-        self.pub_end_pose.publish(ps)
+        if self.feedback_ok():
+            self.pub_end_pose.publish(ps)
 
         # 3. Telemetria JSON
         stat_msg = String()
@@ -301,9 +319,15 @@ class PiperArmController(Node):
             # Si la realimentacion se pierde despues de haber funcionado (p.ej. el adaptador USB-CAN
             # se re-enumero), el socket queda muerto: salir para que el lazo del start script
             # relance el controlador sobre la interfaz nueva.
-            if self.feedback_ok():
+            fb_ok = self.feedback_ok()
+            if fb_ok:
                 self._had_feedback = True
-            elif self._had_feedback and self._last_fb_mono is not None and \
+            elif self.is_enabled and (self.timed_traj is not None or self.active_trajectory is not None
+                                      or self.autonomous_sequence is not None):
+                # Sin realimentacion no se sigue ejecutando a ciegas: abortar y sostener lo ultimo medido.
+                with self.lock:
+                    self._abort_motion_locked("realimentacion CAN perdida durante un movimiento")
+            if not fb_ok and self._had_feedback and self._last_fb_mono is not None and \
                     time.monotonic() - self._last_fb_mono > self.reconnect_timeout_s:
                 self.get_logger().error("Realimentacion CAN perdida: saliendo para reconectar.")
                 self.running = False
@@ -374,15 +398,24 @@ class PiperArmController(Node):
         except ValueError:
             self.get_logger().warn("joint_trajectory sin joint1..joint6: ignorada")
             return
+        reason = self._motion_refusal()
+        if reason:
+            self.get_logger().warn(f"joint_trajectory RECHAZADA: {reason}")
+            return
         times, pts = [0.0], []
         with self.lock:
-            pts.append(list(self.target_joints_deg if self.is_enabled else self.current_joints_deg))
+            pts.append(list(self.target_joints_deg))
             for p in msg.points:
                 t = p.time_from_start.sec + p.time_from_start.nanosec * 1e-9
                 if t <= times[-1]:
                     continue
+                q = [p.positions[i] * RAD_TO_DEG for i in idx]
+                bad = out_of_limits(q)
+                if bad:
+                    self.get_logger().warn(f"joint_trajectory RECHAZADA: punto en t={t:.2f}s {bad}")
+                    return
                 times.append(t)
-                pts.append([p.positions[i] * RAD_TO_DEG for i in idx])
+                pts.append(q)
             if len(pts) < 2:
                 return
             self.active_trajectory = None
@@ -419,6 +452,22 @@ class PiperArmController(Node):
                 'duration': float(duration)
             }
 
+    def _motion_refusal(self) -> Optional[str]:
+        """Motivo para no aceptar un movimiento nuevo (None = aceptable)."""
+        if not self.is_enabled:
+            return "brazo deshabilitado (usar /arm/set_enable)"
+        if not self.feedback_ok():
+            return "sin realimentacion CAN reciente"
+        return None
+
+    def _abort_motion_locked(self, why: str):
+        """Cancela trayectorias/secuencias y sostiene la ultima posicion MEDIDA (llamar con self.lock)."""
+        self.timed_traj = None
+        self.active_trajectory = None
+        self.autonomous_sequence = None
+        self.target_joints_deg = list(self.current_joints_deg)
+        self.get_logger().error(f"Movimiento ABORTADO: {why}. Se sostiene la ultima posicion medida.")
+
     # --- Callbacks de Comandos ROS 2 ---
     def joint_cmd_cb(self, msg: JointState):
         if len(msg.position) >= 6:
@@ -434,11 +483,19 @@ class PiperArmController(Node):
             if len(msg.velocity) > 0 and msg.velocity[0] > 0:
                 duration = max(0.6, min(10.0, msg.velocity[0]))
 
+            reason = self._motion_refusal() or out_of_limits(targets_deg)
+            if reason:
+                self.get_logger().warn(f"joint_cmd RECHAZADO {[round(v, 2) for v in targets_deg]}: {reason}")
+                return
             self.get_logger().info(f"Recibido joint_cmd: {[round(v, 2) for v in targets_deg]}, duracion: {duration}s")
             self.plan_trajectory(targets_deg, duration=duration, target_gripper=g_target)
 
     def gripper_cmd_cb(self, msg: Float32):
         val_mm = msg.data
+        reason = self._motion_refusal()
+        if reason:
+            self.get_logger().warn(f"gripper_cmd RECHAZADO ({val_mm:.1f} mm): {reason}")
+            return
         self.get_logger().info(f"Recibido gripper_cmd: {val_mm:.1f} mm")
         self.plan_gripper(val_mm)
 
@@ -458,6 +515,8 @@ class PiperArmController(Node):
                 self.target_joints_deg = list(self.current_joints_deg)
                 self.target_gripper_mm = float(self.current_gripper_mm)
                 self.active_trajectory = None
+                self.timed_traj = None
+                self.autonomous_sequence = None
                 for _ in range(5):
                     self.piper.EnableArm(7)
                     time.sleep(0.02)
@@ -468,6 +527,7 @@ class PiperArmController(Node):
                 self.get_logger().info("Brazo HABILITADO en modo CAN y setpoint sincronizado en posicion actual")
             else:
                 self.active_trajectory = None
+                self.timed_traj = None
                 self.autonomous_sequence = None
                 self.piper.DisableArm(7)
                 self.get_logger().info("Brazo DESHABILITADO (modo manual libre)")
@@ -529,28 +589,47 @@ class PiperArmController(Node):
             self.get_logger().info("[Autonomo] Agarre y elevacion completados con EXITO!")
 
     # --- Servicios ---
+    # success=True significa "movimiento ACEPTADO e iniciado", no terminado: el resultado real se
+    # verifica con /arm/status (is_moving) y /arm/joint_states (medido).
+    def _refuse(self, resp, what: str) -> bool:
+        reason = self._motion_refusal()
+        if reason:
+            resp.success = False
+            resp.message = f"{what} rechazado: {reason}."
+            self.get_logger().warn(resp.message)
+            return True
+        return False
+
     def srv_grasp_cb(self, req, resp):
+        if self._refuse(resp, "grasp_pringles"):
+            return resp
         self.start_grasp_sequence()
         resp.success = True
         resp.message = "Secuencia autonoma de agarre de Pringles iniciada."
         return resp
 
     def srv_release_cb(self, req, resp):
+        if self._refuse(resp, "release"):
+            return resp
         self.plan_gripper(70.0, duration=1.2)
         resp.success = True
-        resp.message = "Pinza abierta. Objeto liberado."
+        resp.message = "Apertura de pinza iniciada."
         return resp
 
     def srv_home_cb(self, req, resp):
+        if self._refuse(resp, "home"):
+            return resp
         self.plan_trajectory(DEFAULT_HOME_DEG, duration=2.5, target_gripper=70.0)
         resp.success = True
-        resp.message = "Brazo retornando a pose Home."
+        resp.message = "Brazo retornando a pose Home (iniciado)."
         return resp
 
     def srv_pre_grasp_cb(self, req, resp):
+        if self._refuse(resp, "pre_grasp"):
+            return resp
         self.plan_trajectory(DEFAULT_READY_DEG, duration=2.0, target_gripper=70.0)
         resp.success = True
-        resp.message = "Brazo en pose de pre-agarre."
+        resp.message = "Brazo yendo a pose de pre-agarre (iniciado)."
         return resp
 
     def srv_enable_cb(self, req, resp):
