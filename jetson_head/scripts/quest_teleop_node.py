@@ -84,6 +84,7 @@ class QuestTeleop(Node):
         self.declare_parameter("mode", "cartesian")          # cartesian (pose 6D del control) | joint
         self.declare_parameter("scale", 1.0)                 # escala de la traslacion mano -> pinza
         self.declare_parameter("max_joint_dps", 45.0)        # velocidad maxima por articulacion (modo cartesiano)
+        self.declare_parameter("keep_awake", True)           # seguir funcionando con el visor quitado (se revierte al salir)
         self.declare_parameter("rot_scale", 2.0)             # sensibilidad de giro: angulo de la pinza = k x angulo de la mano
         self.declare_parameter("max_wrist_dps", 90.0)        # velocidad maxima de la muneca (j4..j6)
         self.hand = str(self.get_parameter("hand").value)
@@ -113,6 +114,9 @@ class QuestTeleop(Node):
         self.create_timer(self.dt, self._tick)
         self._start_http()
         self._setup_adb()
+        if bool(self.get_parameter("keep_awake").value):
+            self._keep_awake(True)
+            self.create_timer(30.0, lambda: self._keep_awake(True, quiet=True))
 
     # ------------------------------------------------------------------ entrada
     def _arm_cb(self, msg):
@@ -213,6 +217,23 @@ class QuestTeleop(Node):
                                capture_output=True, text=True, timeout=8)
         except (OSError, subprocess.TimeoutExpired) as e:
             self.get_logger().warn(f"adb no disponible: {e}")
+
+    def _keep_awake(self, on: bool, quiet: bool = False):
+        """Visor quitado sin cortar la sesion: sensor de proximidad simulado y pantalla despierta por USB.
+        Se revierte con on=False (al cerrar el nodo)."""
+        cmds = ([["shell", "am", "broadcast", "-a", "com.oculus.vrpowermanager.prox_close"],
+                 ["shell", "svc", "power", "stayon", "usb"]] if on else
+                [["shell", "am", "broadcast", "-a", "com.oculus.vrpowermanager.automation_disable"],
+                 ["shell", "svc", "power", "stayon", "false"]])
+        ok = True
+        for c in cmds:
+            try:
+                ok &= subprocess.run(["adb"] + c, capture_output=True, text=True, timeout=8).returncode == 0
+            except (OSError, subprocess.TimeoutExpired):
+                ok = False
+        if not quiet:
+            self.get_logger().info(("Quest: visor puede quitarse sin cortar (proximidad simulada)" if on else
+                                    "Quest: proximidad y energia restauradas") + ("" if ok else " [adb fallo]"))
 
     # ------------------------------------------------------------------ ciclo
     def _tick(self):
@@ -329,6 +350,8 @@ def main():
     finally:
         for srv in node.servers:
             srv.shutdown()
+        if bool(node.get_parameter("keep_awake").value):
+            node._keep_awake(False)
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
