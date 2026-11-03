@@ -117,6 +117,15 @@ Escala: **P0** desbloquea seguridad/progreso · **P1** valor demostrable · **P2
 | HOME-40 | Monitor web de misiones (`tools/mission_monitor`, contrato `/mission/status`) | Antigravity | tests + revisión de Claude |
 | HOME-49 | Migrar pasos de `mission_sequencer` (receive_guest, fetch, guide, place) a skills del ejecutor; plan GPSR → ejecutor (depende de HOME-15b: el parser pierde pasos) | Claude | un solo sistema de misiones |
 
+### Teleoperación y HRI (2026-11-03)
+
+| ID | Tarea | Quién | Criterio |
+|---|---|---|---|
+| HOME-52 | Teleop Quest en el brazo real: prueba completa (HOME → seguimiento → pinza), medir `track_mm`/`track_deg` y ajustar `scale`, `smooth`, velocidades | humano + Claude | error medio < 10 mm a 12°/s |
+| HOME-53 | Grabación de demostraciones (`ros2 bag` de estado, comandos, pose objetivo, cámara de muñeca) para entrenar | Claude | episodios reproducibles, formato documentado |
+| HOME-54 | Pan-tilt: reparar la alimentación (12 V bajo carga, power hub U2D2, masa) y volver a lanzar el nodo desde `jetson-head` | humano + Claude | 0 desconexiones en 10 min con torque y movimiento |
+| HOME-55 | Receptionist en el robot: barrido de 2 filas (~16 s), seguimiento leve del rostro, revisión del pan-tilt al arrancar | humano + Claude | persona sentada detectada; revisión ✔ |
+
 ### P2 — Manipulación y competencia
 
 | ID | Tarea | Notas |

@@ -103,7 +103,7 @@ NUC (`jetson_head/scripts/flash_jetson_r39.sh`, microSD + QSPI), luego `bootstra
 | Elevador NEMA23 + ESP32-S3 | NUC, CH343 `1a86:55d3` → `/dev/ttyACM0` | `scripts/stepper_controller.py`; firmware `firmware/nema23_esp32` | sin prueba física registrada; auditar homing/límites antes de usar |
 | Piper 6-DOF + pinza | Jetson, CAN `gs_usb` (hoy **`can0`**; el número cambia entre arranques, `can1` = mttcan integrado sin transceptor) 1 Mbit/s; `can_port=auto` lo resuelve | 1,5 kg, ~626 mm (`FABRICANTE`); pinza: ficha 70 mm, feedback medido 75 mm, URDF y controlador 105 mm | `piper_sdk` 0.6.2 en `~/robot_venv`. Sin alimentación el 2026-11-03: 0 tramas RX en `can0`, `feedback_ok=false` (`JETSON_VERIFIED`) |
 | Orbbec DaBai DC1 (muñeca, eye-in-hand) | Jetson USB | profundidad útil 0,3–3 m (`FABRICANTE`): **por debajo de ~30 cm no hay profundidad** | `stream_orbbec.py` corriendo — `VERIFICADO`; 20–30 Hz `HISTORICO` |
-| Pan-tilt 2× Dynamixel XL430-W250 | Jetson, U2D2 (FTDI `0403:6014`) `/dev/ttyU2D2`, 1 Mbaud, prot. 2.0, IDs 1/2 | 12 V; `pan_center_tick=2059`, tilt homing offset −2212; convención pan + izquierda, tilt + arriba | nodo corriendo — `VERIFICADO`; U2D2 se desconectó por USB −71 el 2026-10-30 (revisar cable/12 V) |
+| Pan-tilt 2× Dynamixel XL430-W250 | Jetson, U2D2 (FTDI `0403:6014`) `/dev/ttyU2D2`, 1 Mbaud, prot. 2.0, IDs 1/2 | 12 V; `pan_center_tick=2059`, tilt homing offset −2212 y modo extendido (multivuelta); convención pan + izquierda, tilt + arriba | **2026-11-03:** con torque el U2D2 se desconecta por USB en segundos (~6/min), sin torque estable → **falla eléctrica** (12 V bajo carga / power hub / masa). El tilt quedaba corrido 1 vuelta y se trababa contra el tope (HW error 32 sobrecarga): corregido en software (desenvoltura de vueltas), más `pwm_limit` 600 y `position_p_gain` 450 |
 | Micrófono RØDE VideoMic GO II | Jetson USB | shotgun supercardioide: **apuntarlo al invitado** | `whisper_node` corriendo — `VERIFICADO` |
 | Pantalla facial, parlante, TTS | NUC (HDMI) | `animated_face_node.py`, `/robot/emotion` | `CODIGO`. El parlante HDMI no sirve para probar el camino acústico |
 
@@ -210,6 +210,21 @@ Calculado con FK propia sobre el URDF expandido y comparado con el modelo DH del
   chequeados (antes 0 internos); cámara↔dedos deshabilitados (solapan en reposo). La mesa todavía no está en la escena.
 - **Elevador:** nodo `torso_state` (`base_athome_bringup`, solo lectura: envía `?`) publica `/torso/joint_states` únicamente
   si el ESP32 está calibrado; la manipulación y MoveIt usan esa altura. Sin probar en el robot (ESP32 no conectado).
+
+### 5.1c Teleoperación con Meta Quest 2 (2026-11-03, `SIM_PASS`; real parcial)
+
+- **Cadena:** Quest 2 por USB a la **Jetson** → navegador del Quest abre `http://localhost:8765` (túnel `adb reverse`,
+  sin WiFi; el servidor escucha en `127.0.0.1` y `::1` porque `adb` resuelve `localhost` a IPv6) → página WebXR
+  (`immersive-ar` passthrough si está disponible) envía botones + pose del control a 30 Hz → `jetson_head/scripts/quest_teleop_node.py`
+  → `/arm/joint_trajectory` (horizonte 0,15 s) y `/arm/gripper_cmd` → `piper_arm_controller` (límites, feedback, rechazo si deshabilitado).
+- **Modos:** `cartesian` (por defecto): embrague + pose 6D relativa → TCP, IK de mínimos cuadrados amortiguados sobre el DH del SDK
+  (`quest_cartesian_core.py`, idéntico a `piper_kinematics`), filtro de temblor, zona muerta, `rot_scale`; `joint`: joystick por pares.
+- **Robot real (`real:=true`):** X = hombre muerto y embrague; primero HOME (`home_deg`, 15°/s) solo con X; al soltar X se manda
+  sostener la posición medida; objetivo ≤ `max_lead_deg` (5°) de lo medido; 12°/s brazo, 25°/s muñeca; `ik_damping` 80 (cerca
+  de la singularidad de muñeca en HOME reduce el giro opuesto j4/j6 de 40° a 7°). El nodo nunca habilita el brazo.
+- **Diagnóstico:** `/quest_teleop/status` (página viva, XR, mano, pose recibida, embrague, `track_mm`/`track_deg` = objetivo vs FK
+  medido, errores de la página). Con `keep_awake` el Quest no se duerme sin el visor (proximidad simulada; se revierte al salir).
+- **Trampa conocida:** el navegador restaura pestañas viejas que siguen enviando datos (sin pose): cerrar todas antes de usar.
 
 ### 5.2 Procedimiento de calibración eye-in-hand (DaBai en la pinza) — `PENDIENTE` de ejecutar
 
