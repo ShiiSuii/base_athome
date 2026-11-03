@@ -83,3 +83,39 @@ def test_seated_person_seen_in_low_row_is_merged_as_seated():
     low_row = SeenObject("person", 22.0, 12.0, seated=True)
     merged = merge_views([standing_row, low_row])
     assert len(merged) == 1 and merged[0].seated
+
+
+def test_gentle_tracker_looks_up_at_tall_person_in_small_steps():
+    from base_athome_perception.scene_analysis import GentleFaceTracker
+    tr = GentleFaceTracker()
+    pan, tilt, t = 0.0, 0.0, 0.0
+    # cara de una persona alta: arriba en la imagen (y=60 de 480), centrada en x
+    for _ in range(40):
+        out = tr.update(320, 60, 640, 480, 600.0, 600.0, pan, tilt, t)
+        if out:
+            assert abs(out[1] - tilt) <= 2.0 + 1e-9      # pasos chicos
+            pan, tilt = out
+        t += 0.1
+    assert tilt > 5.0 and tilt <= 25.0                    # subio, sin pasar el limite
+    assert abs(pan) < 1e-6                                # cara centrada en x: no gira
+
+
+def test_gentle_tracker_ignores_small_errors_and_limits_rate():
+    from base_athome_perception.scene_analysis import GentleFaceTracker
+    tr = GentleFaceTracker()
+    assert tr.update(330, 250, 640, 480, 600.0, 600.0, 0.0, 0.0, 0.0) is None   # dentro de la zona muerta
+    tr2 = GentleFaceTracker()
+    first = tr2.update(320, 40, 640, 480, 600.0, 600.0, 0.0, 0.0, 0.0)
+    assert first is not None
+    assert tr2.update(320, 40, 640, 480, 600.0, 600.0, first[0], first[1], 0.1) is None  # < 0,3 s: no se mueve
+
+
+def test_gentle_tracker_respects_limits():
+    from base_athome_perception.scene_analysis import GentleFaceTracker
+    tr = GentleFaceTracker(min_interval_s=0.0)
+    pan, tilt = 0.0, 0.0
+    for i in range(200):
+        out = tr.update(0, 0, 640, 480, 600.0, 600.0, pan, tilt, float(i))
+        if out:
+            pan, tilt = out
+    assert pan <= 25.0 + 1e-9 and tilt <= 25.0 + 1e-9

@@ -172,6 +172,9 @@ class HriReceptionistChallengeNode(Node):
     # Estados en los que la cabeza sigue la cara del interlocutor
     TRACKING_STATES = {STATE_WAIT_DOOR, STATE_GREET_AND_PROMPT, STATE_WAIT_NAME_DRINK, STATE_PROMPT_MISSING_INFO,
                        STATE_CONFIRM_DETAILS, STATE_MEMORIZE_FACE, STATE_ASK_CONFIRM, STATE_WAIT_CONFIRM}
+    # Seguimiento LEVE (por defecto) solo mientras se registra al invitado: mirar a quien habla aunque sea alto
+    REGISTRATION_STATES = {STATE_GREET_AND_PROMPT, STATE_WAIT_NAME_DRINK, STATE_PROMPT_MISSING_INFO,
+                           STATE_CONFIRM_DETAILS, STATE_MEMORIZE_FACE, STATE_ASK_CONFIRM, STATE_WAIT_CONFIRM}
 
     def __init__(
         self,
@@ -183,6 +186,7 @@ class HriReceptionistChallengeNode(Node):
         max_guests: int = 2,
         arm_gestures: bool = False,
         track_faces: bool = False,
+        gentle_tracking: bool = True,
     ):
         super().__init__("hri_receptionist_challenge_node")
 
@@ -404,6 +408,8 @@ class HriReceptionistChallengeNode(Node):
         # Seguimiento de caras con el pan-tilt: desactivado (era demasiado agresivo); la cabeza mira al
         # frente durante la conversacion. Se puede activar con --track-faces.
         self.pan_tilt_tracking = track_faces
+        self.gentle_tracking = gentle_tracking
+        self.gentle_tracker = scene.GentleFaceTracker()
 
         # Telemetría del brazo
         self.current_arm_pose_name = "home"
@@ -1351,6 +1357,20 @@ class HriReceptionistChallengeNode(Node):
                 if dpan or dtilt:
                     self.move_head_to(self.target_pan_deg + self.head_pan_sign * dpan,
                                       self.target_tilt_deg + dtilt)
+            elif (self.gentle_tracking and not self.pan_tilt_tracking and not self.scanning
+                  and self.state in self.REGISTRATION_STATES and face_results and new_dets):
+                largest_face = max(face_results, key=lambda f: f["bbox"][2] * f["bbox"][3])
+                bx, by, bw, bh = largest_face["bbox"]
+                img_h, img_w = frame.shape[:2]
+                fx_px = self._fx(img_w)
+                # el pan del tracker va en la convencion de la imagen (izquierda +): se corrige con head_pan_sign
+                tgt = self.gentle_tracker.update(bx + bw / 2.0, by + bh / 2.0, img_w, img_h, fx_px, fx_px,
+                                                 self.head_pan_sign * self.target_pan_deg, self.target_tilt_deg,
+                                                 time.time())
+                if tgt is not None:
+                    self.move_head_to(self.head_pan_sign * tgt[0], tgt[1])
+            elif self.state not in self.REGISTRATION_STATES:
+                self.gentle_tracker.reset()
 
         # 2. Transición y Lógica de Estados
         if self.state == self.STATE_INIT:
@@ -2131,6 +2151,8 @@ def main():
     parser.add_argument("--sim-nav", action="store_true", help="Simula navegacion sin mover la base fisica")
     parser.add_argument("--no-gui", action="store_true", help="Desactiva ventana grafica HUD OpenCV")
     parser.add_argument("--max-guests", type=int, default=2, help="Cantidad de invitados a recibir")
+    parser.add_argument("--no-gentle-tracking", action="store_true",
+                        help="Desactivar el seguimiento leve del rostro durante el registro del invitado")
     parser.add_argument("--track-faces", action="store_true",
                         help="Seguir la cara con el pan-tilt (por defecto la cabeza queda al frente)")
     parser.add_argument("--arm-gestures", action="store_true",
@@ -2148,6 +2170,7 @@ def main():
         max_guests=args.max_guests,
         arm_gestures=args.arm_gestures,
         track_faces=args.track_faces,
+        gentle_tracking=not args.no_gentle_tracking,
     )
 
     executor = MultiThreadedExecutor(num_threads=4)

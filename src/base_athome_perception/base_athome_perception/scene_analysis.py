@@ -151,6 +151,45 @@ def person_seated_at(bearing_deg: float, poses_bearings: Sequence[float], postur
                for b, p in zip(poses_bearings, postures))
 
 
+class GentleFaceTracker:
+    """Seguimiento LEVE del rostro durante el registro del invitado (p. ej. invitado mas alto que el robot).
+
+    Filtra el centro de la cara (EMA), ignora errores chicos (zona muerta), da pasos pequenos y limitados en
+    frecuencia, y mantiene la cabeza en una ventana acotada: tilt [tilt_min, tilt_max] (permite mirar hacia
+    arriba) y pan +-pan_max alrededor del frente.
+    """
+
+    def __init__(self, gain: float = 0.25, deadband_deg: float = 5.0, max_step_deg: float = 2.0,
+                 min_interval_s: float = 0.3, alpha: float = 0.4, tilt_min: float = -10.0, tilt_max: float = 25.0,
+                 pan_max: float = 25.0):
+        self.gain, self.deadband, self.max_step = gain, deadband_deg, max_step_deg
+        self.min_interval, self.alpha = min_interval_s, alpha
+        self.tilt_min, self.tilt_max, self.pan_max = tilt_min, tilt_max, pan_max
+        self._c = None
+        self._last_t = -1e9
+
+    def reset(self):
+        self._c = None
+
+    def update(self, face_cx, face_cy, img_w, img_h, fx, fy, pan_deg, tilt_deg, now):
+        """Nuevo (pan, tilt) objetivo o None si no hay que moverse."""
+        c = (float(face_cx), float(face_cy))
+        self._c = c if self._c is None else (self._c[0] + self.alpha * (c[0] - self._c[0]),
+                                             self._c[1] + self.alpha * (c[1] - self._c[1]))
+        if now - self._last_t < self.min_interval:
+            return None
+        dpan, dtilt = face_tracking_step(self._c[0], self._c[1], img_w, img_h, fx, fy, gain=self.gain,
+                                         deadband_deg=self.deadband, max_step_deg=self.max_step)
+        if not dpan and not dtilt:
+            return None
+        new_pan = max(-self.pan_max, min(self.pan_max, pan_deg + dpan))
+        new_tilt = max(self.tilt_min, min(self.tilt_max, tilt_deg + dtilt))
+        if abs(new_pan - pan_deg) < 1e-6 and abs(new_tilt - tilt_deg) < 1e-6:
+            return None
+        self._last_t = now
+        return new_pan, new_tilt
+
+
 def face_tracking_step(face_cx: float, face_cy: float, img_w: int, img_h: int, fx: float, fy: float,
                        gain: float = 0.6, deadband_deg: float = 2.0, max_step_deg: float = 8.0):
     """Correccion (dpan, dtilt) en grados para llevar la cara al centro de la imagen.
