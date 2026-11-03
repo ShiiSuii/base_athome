@@ -20,6 +20,8 @@ ADDR_HOMING_OFFSET_P2 = 20
 ADDR_TORQUE_ENABLE_P2 = 64
 ADDR_HW_ERROR_P2 = 70
 ADDR_PROFILE_ACCEL_P2 = 108
+ADDR_PWM_LIMIT_P2 = 36          # EEPROM (2 bytes), solo con torque apagado; 885 = 100 %
+ADDR_POSITION_P_GAIN_P2 = 84    # RAM (2 bytes); fabrica 800
 ADDR_PROFILE_VEL_P2 = 112
 ADDR_GOAL_POSITION_P2 = 116
 ADDR_PRESENT_POSITION_P2 = 132
@@ -52,6 +54,10 @@ class PanTiltNode(Node):
         # Seguro por defecto: no habilitar torque (ni escribir EEPROM) al detectar
         # los servos. Habilitar con /pan_tilt/set_torque o -p auto_torque:=true.
         self.declare_parameter('auto_torque', False)
+        # Limitar la potencia de los servos: picos de corriente al sostener la cabeza hacian caer el U2D2 por USB
+        # (2026-11-03: ~6 desconexiones/min con torque, ~0 sin torque). pwm_limit 0..885; position_p_gain 0..16383.
+        self.declare_parameter('pwm_limit', 600)
+        self.declare_parameter('position_p_gain', 450)
         # Sentido de cada eje: convencion de la interfaz = pan + izquierda, tilt + arriba.
         # Medido 2026-10-30: con el montaje actual ambos servos giraban al reves -> -1.
         self.declare_parameter('pan_direction', -1.0)
@@ -103,6 +109,8 @@ class PanTiltNode(Node):
 
         self.port_handler = None
         self.packet_handler = PacketHandler(self.protocol_version)
+        self.pan_turns = 0
+        self.tilt_turns = 0
         self.is_connected = False
         self.last_retry_time = 0.0
 
@@ -219,6 +227,16 @@ class PanTiltNode(Node):
                     self.packet_handler.write1ByteTxRx(self.port_handler, self.tilt_id, ADDR_OPERATING_MODE_P2, 4)
                     self.get_logger().info('Configured Tilt Operating Mode to 4 (Extended Position)')
 
+                pwm = int(self.get_parameter('pwm_limit').value)
+                kp = int(self.get_parameter('position_p_gain').value)
+                for sid in (self.pan_id, self.tilt_id):
+                    cur, res, _ = self.packet_handler.read2ByteTxRx(self.port_handler, sid, ADDR_PWM_LIMIT_P2)
+                    if res == COMM_SUCCESS and cur != pwm and 0 < pwm <= 885:   # EEPROM: escribir solo si cambia
+                        self.packet_handler.write1ByteTxRx(self.port_handler, sid, ADDR_TORQUE_ENABLE_P2, 0)
+                        self.packet_handler.write2ByteTxRx(self.port_handler, sid, ADDR_PWM_LIMIT_P2, pwm)
+                        self.get_logger().info(f'Servo {sid}: PWM limit {cur} -> {pwm}')
+                    if 0 < kp <= 16383:
+                        self.packet_handler.write2ByteTxRx(self.port_handler, sid, ADDR_POSITION_P_GAIN_P2, kp)
                 self.packet_handler.write4ByteTxRx(self.port_handler, self.pan_id, ADDR_PROFILE_ACCEL_P2, 20)
                 self.packet_handler.write4ByteTxRx(self.port_handler, self.pan_id, ADDR_PROFILE_VEL_P2, 80)
                 self.packet_handler.write4ByteTxRx(self.port_handler, self.tilt_id, ADDR_PROFILE_ACCEL_P2, 20)
@@ -259,6 +277,14 @@ class PanTiltNode(Node):
             resp.message = f'Error: {e}'
         return resp
 
+    def _turns(self, rel_ticks: int, current: int, label: str) -> int:
+        """Vueltas enteras (4096 ticks) en que quedo corrida la posicion multivuelta respecto del centro."""
+        k = int(round(rel_ticks / 4096.0))
+        if k != current:
+            self.get_logger().warn(f'{label}: posicion corrida {k} vuelta(s) ({rel_ticks} ticks del centro); '
+                                   'se corrige la referencia (objetivo y medicion en la misma vuelta)')
+        return k
+
     def deg_callback(self, msg: Vector3):
         pan_rad = math.radians(msg.x)
         tilt_rad = math.radians(msg.y)
@@ -281,8 +307,10 @@ class PanTiltNode(Node):
         if not self.is_connected or self.port_handler is None or not self.torque_enabled:
             return
 
-        pan_tick = int(self.pan_center + self.pan_dir * self.target_pan_rad * self.ticks_per_rad)
-        tilt_tick = int(self.tilt_center + self.tilt_dir * self.target_tilt_rad * self.ticks_per_rad)
+        # objetivo en la MISMA vuelta en la que esta el servo (modo extendido multivuelta): sin esto, con la
+        # posicion corrida 4096 ticks el servo intentaba girar 360 grados contra el tope -> sobrecarga (HW error 32)
+        pan_tick = int(self.pan_center + self.pan_turns * 4096 + self.pan_dir * self.target_pan_rad * self.ticks_per_rad)
+        tilt_tick = int(self.tilt_center + self.tilt_turns * 4096 + self.tilt_dir * self.target_tilt_rad * self.ticks_per_rad)
 
         try:
             if self.protocol_version >= 2.0:
@@ -314,8 +342,10 @@ class PanTiltNode(Node):
                 if p_res == COMM_SUCCESS and t_res == COMM_SUCCESS:
                     if p_pos > 2147483647: p_pos -= 4294967296
                     if t_pos > 2147483647: t_pos -= 4294967296
-                    self.current_pan_rad = self.pan_dir * (p_pos - self.pan_center) / self.ticks_per_rad
-                    self.current_tilt_rad = self.tilt_dir * (t_pos - self.tilt_center) / self.ticks_per_rad
+                    self.pan_turns = self._turns(p_pos - self.pan_center, self.pan_turns, 'Pan')
+                    self.tilt_turns = self._turns(t_pos - self.tilt_center, self.tilt_turns, 'Tilt')
+                    self.current_pan_rad = self.pan_dir * (p_pos - self.pan_center - 4096 * self.pan_turns) / self.ticks_per_rad
+                    self.current_tilt_rad = self.tilt_dir * (t_pos - self.tilt_center - 4096 * self.tilt_turns) / self.ticks_per_rad
                 else:
                     self.is_connected = False
                     self.torque_enabled = False

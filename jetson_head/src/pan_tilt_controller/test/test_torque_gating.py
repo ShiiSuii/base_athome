@@ -31,6 +31,7 @@ def make_fake_sdk():
     packet.ping.return_value = (1060, 0, 0)            # XL430 responde
     packet.read1ByteTxRx.return_value = (0, 0, 0)      # sin HW error
     packet.read4ByteTxRx.return_value = (2048, 0, 0)
+    packet.read2ByteTxRx.return_value = (885, 0, 0)    # PWM limit de fabrica
     sdk = types.ModuleType('dynamixel_sdk')
     sdk.COMM_SUCCESS = 0
     sdk.PortHandler = mock.Mock(return_value=mock.MagicMock())
@@ -124,5 +125,51 @@ def test_axis_directions_invert_commands_feedback_and_limits():
         packet.read4ByteTxRx.return_value = (int(node.pan_center - 0.3 * tpr), 0, 0)
         node.timer_callback()
         assert node.current_pan_rad == pytest.approx(0.3, abs=2e-3)
+    finally:
+        node.destroy_node()
+
+
+
+def test_torque_enable_applies_pwm_limit_and_p_gain():
+    """2026-11-03: con torque, los picos de corriente tiraban el U2D2 por USB -> limitar PWM y ganancia P."""
+    node, packet = make_node({'pwm_limit': 600, 'position_p_gain': 450})
+    try:
+        packet.method_calls.clear() if hasattr(packet.method_calls, 'clear') else None
+        node.enable_torque()
+        w2 = [c[1] for c in packet.method_calls if c[0] == 'write2ByteTxRx']
+        assert (node.pan_id, 36, 600) in [a[1:] for a in w2] and (node.tilt_id, 36, 600) in [a[1:] for a in w2]
+        assert (node.pan_id, 84, 450) in [a[1:] for a in w2]
+        # la EEPROM (PWM limit) se escribe con el torque apagado: antes del torque ON
+        idx_pwm = max(i for i, c in enumerate(packet.method_calls) if c[0] == 'write2ByteTxRx' and c[1][2] == 36)
+        idx_on = max(i for i, c in enumerate(packet.method_calls) if c[0] == 'write1ByteTxRx' and c[1][2:] == (64, 1))
+        assert idx_pwm < idx_on and node.torque_enabled
+    finally:
+        node.destroy_node()
+
+
+def test_pwm_limit_not_rewritten_when_equal():
+    node, packet = make_node({'pwm_limit': 885})
+    try:
+        node.enable_torque()
+        assert not any(c[0] == 'write2ByteTxRx' and c[1][2] == 36 for c in packet.method_calls)  # sin desgaste de EEPROM
+    finally:
+        node.destroy_node()
+
+
+def test_multiturn_offset_is_unwrapped_for_feedback_and_goal():
+    """Tilt corrido una vuelta (-381 grados medidos): la medicion vuelve a ~-21 y el objetivo va a la misma vuelta."""
+    node, packet = make_node({'auto_torque': True})
+    try:
+        center = node.tilt_center
+        raw = center - 4096 - int(0.366 * node.ticks_per_rad * node.tilt_dir)   # una vuelta abajo + ~-21 grados
+        packet.read4ByteTxRx.side_effect = lambda port, sid, addr: ((raw if sid == node.tilt_id else node.pan_center), 0, 0)
+        node.timer_callback()
+        assert node.tilt_turns == -1
+        assert abs(node.current_tilt_rad - (-0.366)) < 0.01
+        node.torque_enabled = True
+        node.set_target(0.0, 0.0)
+        goal = [c[1][3] for c in packet.method_calls if c[0] == 'write4ByteTxRx' and c[1][1] == node.tilt_id and c[1][2] == 116][-1]
+        goal = goal - 4294967296 if goal > 2147483647 else goal   # entero con signo enviado como uint32
+        assert abs(goal - (center - 4096)) <= 1          # la misma vuelta: ~21 grados de recorrido, no 381
     finally:
         node.destroy_node()
