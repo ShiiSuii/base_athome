@@ -107,6 +107,10 @@ class PiperArmController(Node):
         self.declare_parameter('fjt_goal_tolerance_deg', 2.0)
         self.declare_parameter('fjt_path_tolerance_deg', 15.0)
         self.declare_parameter('fjt_goal_time_tolerance_s', 1.5)
+        # torso_lift_joint=0 ASUMIDO (no medido) para que robot_state_publisher tenga TF del torso.
+        # Poner en false cuando corra base_athome_bringup/torso_state (posicion medida, HOME-43).
+        self.declare_parameter('publish_assumed_torso', True)
+        self.publish_assumed_torso = bool(self.get_parameter('publish_assumed_torso').value)
 
         self.can_port = self.get_parameter('can_port').value
         if self.can_port == 'auto':
@@ -294,7 +298,7 @@ class PiperArmController(Node):
             self.pub_arm_joint_states.publish(js)
         # torso_lift_joint fijo en 0 (elevador arriba) hasta que exista un nodo del elevador: sin este
         # joint el robot_state_publisher no publica TF de cubo, cabeza ni brazo (no se veian en RViz).
-        if self.tick_counter % 5 == 0:
+        if self.publish_assumed_torso and self.tick_counter % 5 == 0:
             torso = JointState()
             torso.header.stamp = now
             torso.name = ['torso_lift_joint']
@@ -324,6 +328,7 @@ class PiperArmController(Node):
             "is_moving": self.active_trajectory is not None,
             "enabled": self.is_enabled,
             "feedback_ok": self.feedback_ok(),
+            "torso_assumed": self.publish_assumed_torso,
             "gripper_mm": round(self.current_gripper_mm, 2),
             "xyz_mm": [round(v, 1) for v in self.current_xyz_mm],
             "joints_deg": [round(v, 2) for v in self.current_joints_deg]

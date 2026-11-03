@@ -21,20 +21,12 @@
   <passive_joint name="pan_joint"/>
   <passive_joint name="tilt_joint"/>
   <passive_joint name="torso_lift_joint"/>
-    <disable_collisions link1="arm_base_link" link2="arm_camera_link" reason="Never"/>
-  <disable_collisions link1="arm_base_link" link2="base_link" reason="Never"/>
+    <disable_collisions link1="arm_base_link" link2="base_link" reason="Never"/>
   <disable_collisions link1="arm_base_link" link2="camera_link" reason="Never"/>
-  <disable_collisions link1="arm_base_link" link2="gripper_base" reason="Never"/>
   <disable_collisions link1="arm_base_link" link2="laser" reason="Never"/>
   <disable_collisions link1="arm_base_link" link2="left_wheel" reason="Never"/>
-  <disable_collisions link1="arm_base_link" link2="link1" reason="Never"/>
+  <disable_collisions link1="arm_base_link" link2="link1" reason="Adjacent"/>
   <disable_collisions link1="arm_base_link" link2="link2" reason="Never"/>
-  <disable_collisions link1="arm_base_link" link2="link3" reason="Never"/>
-  <disable_collisions link1="arm_base_link" link2="link4" reason="Never"/>
-  <disable_collisions link1="arm_base_link" link2="link5" reason="Never"/>
-  <disable_collisions link1="arm_base_link" link2="link6" reason="Never"/>
-  <disable_collisions link1="arm_base_link" link2="link7" reason="Never"/>
-  <disable_collisions link1="arm_base_link" link2="link8" reason="Never"/>
   <disable_collisions link1="arm_base_link" link2="mounting_cube_link" reason="Never"/>
   <disable_collisions link1="arm_base_link" link2="pan_link" reason="Never"/>
   <disable_collisions link1="arm_base_link" link2="pan_tilt_base_link" reason="Never"/>
@@ -44,15 +36,13 @@
   <disable_collisions link1="arm_base_link" link2="tilt_link" reason="Never"/>
   <disable_collisions link1="arm_base_link" link2="torso_column" reason="Never"/>
   <disable_collisions link1="arm_base_link" link2="torso_lift_link" reason="Never"/>
-  <disable_collisions link1="arm_camera_link" link2="gripper_base" reason="Never"/>
-  <disable_collisions link1="arm_camera_link" link2="link1" reason="Never"/>
-  <disable_collisions link1="arm_camera_link" link2="link2" reason="Never"/>
+  <disable_collisions link1="arm_camera_link" link2="gripper_base" reason="Adjacent"/>
   <disable_collisions link1="arm_camera_link" link2="link3" reason="Never"/>
   <disable_collisions link1="arm_camera_link" link2="link4" reason="Never"/>
   <disable_collisions link1="arm_camera_link" link2="link5" reason="Never"/>
   <disable_collisions link1="arm_camera_link" link2="link6" reason="Never"/>
-  <disable_collisions link1="arm_camera_link" link2="link7" reason="Never"/>
-  <disable_collisions link1="arm_camera_link" link2="link8" reason="Never"/>
+  <disable_collisions link1="arm_camera_link" link2="link7" reason="Default"/>
+  <disable_collisions link1="arm_camera_link" link2="link8" reason="Default"/>
   <disable_collisions link1="base_link" link2="camera_link" reason="Never"/>
   <disable_collisions link1="base_link" link2="laser" reason="Never"/>
   <disable_collisions link1="base_link" link2="left_wheel" reason="Never"/>
@@ -78,14 +68,12 @@
   <disable_collisions link1="camera_link" link2="tilt_link" reason="Never"/>
   <disable_collisions link1="camera_link" link2="torso_column" reason="Never"/>
   <disable_collisions link1="camera_link" link2="torso_lift_link" reason="Never"/>
-  <disable_collisions link1="gripper_base" link2="link1" reason="Never"/>
-  <disable_collisions link1="gripper_base" link2="link2" reason="Never"/>
   <disable_collisions link1="gripper_base" link2="link3" reason="Never"/>
   <disable_collisions link1="gripper_base" link2="link4" reason="Never"/>
   <disable_collisions link1="gripper_base" link2="link5" reason="Never"/>
-  <disable_collisions link1="gripper_base" link2="link6" reason="Never"/>
-  <disable_collisions link1="gripper_base" link2="link7" reason="Never"/>
-  <disable_collisions link1="gripper_base" link2="link8" reason="Never"/>
+  <disable_collisions link1="gripper_base" link2="link6" reason="Adjacent"/>
+  <disable_collisions link1="gripper_base" link2="link7" reason="Adjacent"/>
+  <disable_collisions link1="gripper_base" link2="link8" reason="Adjacent"/>
   <disable_collisions link1="laser" link2="left_wheel" reason="Never"/>
   <disable_collisions link1="laser" link2="link1" reason="Never"/>
   <disable_collisions link1="laser" link2="mounting_cube_link" reason="Never"/>
@@ -107,12 +95,9 @@
   <disable_collisions link1="left_wheel" link2="tilt_link" reason="Never"/>
   <disable_collisions link1="left_wheel" link2="torso_column" reason="Never"/>
   <disable_collisions link1="left_wheel" link2="torso_lift_link" reason="Never"/>
-  <disable_collisions link1="link1" link2="link2" reason="Never"/>
+  <disable_collisions link1="link1" link2="link2" reason="Adjacent"/>
   <disable_collisions link1="link1" link2="link3" reason="Never"/>
   <disable_collisions link1="link1" link2="link4" reason="Never"/>
-  <disable_collisions link1="link1" link2="link5" reason="Never"/>
-  <disable_collisions link1="link1" link2="link6" reason="Never"/>
-  <disable_collisions link1="link1" link2="link7" reason="Never"/>
   <disable_collisions link1="link1" link2="link8" reason="Never"/>
   <disable_collisions link1="link1" link2="mounting_cube_link" reason="Never"/>
   <disable_collisions link1="link1" link2="pan_link" reason="Never"/>
@@ -123,22 +108,19 @@
   <disable_collisions link1="link1" link2="tilt_link" reason="Never"/>
   <disable_collisions link1="link1" link2="torso_column" reason="Never"/>
   <disable_collisions link1="link1" link2="torso_lift_link" reason="Never"/>
-  <disable_collisions link1="link2" link2="link3" reason="Never"/>
+  <disable_collisions link1="link2" link2="link3" reason="Adjacent"/>
   <disable_collisions link1="link2" link2="link4" reason="Never"/>
-  <disable_collisions link1="link2" link2="link5" reason="Never"/>
-  <disable_collisions link1="link2" link2="link6" reason="Never"/>
-  <disable_collisions link1="link2" link2="link7" reason="Never"/>
   <disable_collisions link1="link2" link2="link8" reason="Never"/>
-  <disable_collisions link1="link3" link2="link4" reason="Never"/>
+  <disable_collisions link1="link3" link2="link4" reason="Adjacent"/>
   <disable_collisions link1="link3" link2="link5" reason="Never"/>
   <disable_collisions link1="link3" link2="link6" reason="Never"/>
   <disable_collisions link1="link3" link2="link7" reason="Never"/>
   <disable_collisions link1="link3" link2="link8" reason="Never"/>
-  <disable_collisions link1="link4" link2="link5" reason="Never"/>
+  <disable_collisions link1="link4" link2="link5" reason="Adjacent"/>
   <disable_collisions link1="link4" link2="link6" reason="Never"/>
   <disable_collisions link1="link4" link2="link7" reason="Never"/>
   <disable_collisions link1="link4" link2="link8" reason="Never"/>
-  <disable_collisions link1="link5" link2="link6" reason="Never"/>
+  <disable_collisions link1="link5" link2="link6" reason="Adjacent"/>
   <disable_collisions link1="link5" link2="link7" reason="Never"/>
   <disable_collisions link1="link5" link2="link8" reason="Never"/>
   <disable_collisions link1="link6" link2="link7" reason="Never"/>

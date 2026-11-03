@@ -25,6 +25,7 @@ setup(
     entry_points={
         'console_scripts': [
             'stepper_controller = base_athome_bringup.stepper_controller:main',
+            'torso_state = base_athome_bringup.torso_state_node:main',
         ],
     },
 )

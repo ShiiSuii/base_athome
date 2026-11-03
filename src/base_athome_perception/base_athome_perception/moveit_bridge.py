@@ -26,9 +26,14 @@ FRAME = "base_footprint"
 TIP = "tcp_link"
 
 
-def _robot_state(joints_rad: Sequence[float]) -> RobotState:
+def _robot_state(joints_rad: Sequence[float], torso_m: Optional[float] = None) -> RobotState:
+    """Estado inicial explicito: brazo MEDIDO y, si se conoce, la altura MEDIDA del elevador."""
     rs = RobotState()
-    rs.joint_state = JointState(name=list(ARM_JOINTS), position=[float(v) for v in joints_rad])
+    names, pos = list(ARM_JOINTS), [float(v) for v in joints_rad]
+    if torso_m is not None:
+        names.append("torso_lift_joint")
+        pos.append(float(torso_m))
+    rs.joint_state = JointState(name=names, position=pos)
     rs.is_diff = True
     return rs
 
@@ -73,8 +78,9 @@ def base_link_offset_in_model_frame() -> List[float]:
 
 
 class MoveItBridge:
-    def __init__(self, node: Node, timeout_s: float = 2.0):
+    def __init__(self, node: Node, timeout_s: float = 2.0, torso_provider=None):
         self.node = node
+        self.torso_provider = torso_provider or (lambda: None)  # -> torso_lift_joint medido o None
         self.timeout_s = timeout_s
         self.offset = base_link_offset_in_model_frame()
         self.cli_ik = node.create_client(GetPositionIK, "/compute_ik")
@@ -116,7 +122,7 @@ class MoveItBridge:
         todo plan. Se permiten SOLO esos pares (el resto de las colisiones se sigue chequeando).
         Devuelve los pares liberados en esta llamada."""
         req = GetStateValidity.Request()
-        req.robot_state = _robot_state(start_rad)
+        req.robot_state = _robot_state(start_rad, self.torso_provider())
         req.group_name = GROUP
         res = self._call(self.cli_valid, req)
         if res.valid:
@@ -155,7 +161,7 @@ class MoveItBridge:
         req = GetPositionIK.Request()
         ik = PositionIKRequest()
         ik.group_name = GROUP
-        ik.robot_state = _robot_state(seed_rad)
+        ik.robot_state = _robot_state(seed_rad, self.torso_provider())
         ik.avoid_collisions = avoid_collisions
         ik.ik_link_name = TIP
         ik.pose_stamped = PoseStamped(pose=self._to_model(pose))
@@ -177,7 +183,7 @@ class MoveItBridge:
         req = GetMotionPlan.Request()
         m = MotionPlanRequest()
         m.group_name = GROUP
-        m.start_state = _robot_state(start_rad)
+        m.start_state = _robot_state(start_rad, self.torso_provider())
         m.num_planning_attempts = 3
         m.allowed_planning_time = 3.0
         m.max_velocity_scaling_factor = vel_scale
@@ -201,7 +207,7 @@ class MoveItBridge:
             self.node.get_logger().warn(f'MoveIt: no pude verificar el estado inicial: {e}')
         req = GetCartesianPath.Request()
         req.header.frame_id = FRAME
-        req.start_state = _robot_state(start_rad)
+        req.start_state = _robot_state(start_rad, self.torso_provider())
         req.group_name = GROUP
         req.link_name = TIP
         req.waypoints = [self._to_model(w) for w in waypoints]

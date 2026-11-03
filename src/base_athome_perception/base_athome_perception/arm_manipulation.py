@@ -68,7 +68,9 @@ if os.environ.get("ATHOME_SIM") == "1":  # en simulacion no pisar la calibracion
         os.makedirs(os.path.dirname(_SIM_CONFIG), exist_ok=True)
         shutil.copy(CONFIG, _SIM_CONFIG)
     CONFIG = _SIM_CONFIG
-SHOULDER_IN_BASE = np.array([0.005, 0.175, 1.065])  # arm_base_link en base_link (URDF), mismos ejes
+SHOULDER_IN_BASE = np.array([0.005, 0.175, 1.065])  # arm_base_link en base_link (URDF) con el elevador ARRIBA
+# (torso_lift_joint=0). Con el elevador abajo z baja en |torso_lift_joint| (prismatico vertical): ver
+# shoulder_in_base(). La altura MEDIDA llega por /torso/joint_states (base_athome_bringup torso_state).
 GRIPPER_OPEN_MM, GRIPPER_CLOSE_MM = 105.0, 50.0
 WINDOW = "Manipulacion Base@Home"
 
@@ -87,6 +89,9 @@ class Manipulacion(Node):
         self.abort = False
 
         self.create_subscription(String, "/arm/status", self._status_cb, 10)
+        self.torso_pos: Optional[float] = 0.0 if os.environ.get("ATHOME_SIM") == "1" else None  # sim: fijo arriba
+        self.torso_t = time.time() if self.torso_pos is not None else None
+        self.create_subscription(JointState, "/torso/joint_states", self._torso_cb, 10)
         self.create_subscription(Image, "/arm_camera/image_raw", self._image_cb, qos_profile_sensor_data)
         self.pub_joint = self.create_publisher(JointState, "/arm/joint_cmd", 5)
         self.pub_traj = self.create_publisher(JointTrajectory, "/arm/joint_trajectory", 2)
@@ -117,7 +122,7 @@ class Manipulacion(Node):
         self.pub_markers_compat = self.create_publisher(MarkerArray, "/arm_camera/object_markers", 5)
         self.create_timer(0.1, self._publish_markers)
         self.kin = PiperKinematicsSolver()
-        self.moveit = MoveItBridge(self)
+        self.moveit = MoveItBridge(self, torso_provider=lambda: self.torso_pos if self.torso_known() else None)
         self.move_group_proc = None
         threading.Thread(target=self._ensure_move_group, daemon=True).start()
         self.wizard = TeachWizard(self.set_torque, self.save_pose)
@@ -135,6 +140,20 @@ class Manipulacion(Node):
             if self.feedback_ok:
                 self.joints_deg = [float(v) for v in st.get("joints_deg", self.joints_deg)[:6]]
                 self.gripper_mm = float(st.get("gripper_mm", self.gripper_mm))
+
+    def _torso_cb(self, msg: JointState):
+        if "torso_lift_joint" in msg.name:
+            self.torso_pos = float(msg.position[list(msg.name).index("torso_lift_joint")])
+            self.torso_t = time.time()
+
+    def torso_known(self) -> bool:
+        return self.torso_pos is not None and (os.environ.get("ATHOME_SIM") == "1"
+                                               or time.time() - (self.torso_t or 0.0) < 2.0)
+
+    def shoulder_in_base(self) -> np.ndarray:
+        """arm_base_link en base_link con la altura del elevador MEDIDA (o asumida arriba si no se sabe)."""
+        z = self.torso_pos if self.torso_known() else 0.0
+        return SHOULDER_IN_BASE + np.array([0.0, 0.0, z])
 
     def _image_cb(self, msg: Image):
         if msg.encoding not in ("bgr8", "rgb8"):
@@ -353,6 +372,8 @@ class Manipulacion(Node):
     def pick_blocking(self, label: str = ""):
         """Agarre completo con confirmacion por el ancho MEDIDO de la pinza. (ok, mensaje, datos)."""
         self.abort = False
+        if not self.torso_known():
+            return False, "altura del elevador sin medir (/torso/joint_states): no se calcula un agarre a ciegas", {}
         ok, msg, data = self.detect_blocking(label)
         if not ok:
             return False, msg, data
@@ -424,7 +445,7 @@ class Manipulacion(Node):
         x1, y1, x2, y2 = box
         left, up = wg.lateral_offsets((x1 + x2) / 2, (y1 + y2) / 2, z, self.calib)
         obj = wg.object_center(tcp_mm / 1000.0, R, wg.advance_needed(z, self.calib), left, up, self.calib)
-        return SHOULDER_IN_BASE + obj
+        return self.shoulder_in_base() + obj
 
     def _publish_markers(self):
         ma = MarkerArray()
@@ -451,7 +472,7 @@ class Manipulacion(Node):
             with self.lock:
                 q = list(self.joints_deg)
             tcp_mm, R = self.kin.forward_kinematics(np.array([math.radians(v) for v in q]))
-            tcp = SHOULDER_IN_BASE + tcp_mm / 1000.0
+            tcp = self.shoulder_in_base() + tcp_mm / 1000.0
             app = R[:, 2] / np.linalg.norm(R[:, 2])
             gc = tcp - self.calib.grasp_center_back_m * app
             stop = gc + self.used_advance(self.detection[1]) * app  # donde quedara el centro de la pinza
@@ -549,7 +570,7 @@ class Manipulacion(Node):
             q_now = [math.radians(v) for v in self.joints_deg]
             tcp_mm, R = self.kin.forward_kinematics(np.array(q_now))
             # corregir el 80 % del desvio por vuelta: converge sin pasarse por el ruido de la deteccion
-            new_tcp = SHOULDER_IN_BASE + tcp_mm / 1000.0 + 0.8 * wg.alignment_offset(R, left, up)
+            new_tcp = self.shoulder_in_base() + tcp_mm / 1000.0 + 0.8 * wg.alignment_offset(R, left, up)
             self.status = f"Alineando ({i}/{max_iter}): lateral {left * 100:+.1f} cm, vertical {up * 100:+.1f} cm"
             path = self.moveit.cartesian_path(q_now, [pose_from(new_tcp, quat_from_matrix(R.tolist()))],
                                               vel_scale=self.vel_scale() / 2, min_fraction=0.9)
@@ -597,12 +618,14 @@ class Manipulacion(Node):
         det = self.detection
         if det is None:
             return False, "Agarre: no veo el objeto."
+        if not self.torso_known():
+            self.get_logger().warn("Agarre: elevador sin medicion; se ASUME arriba (torso_lift_joint=0)")
         (x1, y1, x2, y2), z = det
         q_now = [math.radians(v) for v in self.joints_deg]
         tcp_mm, R = self.kin.forward_kinematics(np.array(q_now))
         adv = self.used_advance(z)  # calibrado + ajuste, limitado por Avance_max_cm
         left, up = wg.lateral_offsets((x1 + x2) / 2, (y1 + y2) / 2, z, self.calib)
-        obj = SHOULDER_IN_BASE + wg.object_center(tcp_mm / 1000.0, R, adv, left, up, self.calib)
+        obj = self.shoulder_in_base() + wg.object_center(tcp_mm / 1000.0, R, adv, left, up, self.calib)
         approach = R[:, 2] / np.linalg.norm(R[:, 2])
         grasp_tcp = obj + self.calib.grasp_center_back_m * approach
         self.get_logger().info(f"Agarre: avance usado {adv * 100:.1f} cm (tope {self.max_advance_cm:.0f} cm)")
