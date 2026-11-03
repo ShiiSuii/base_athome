@@ -184,6 +184,7 @@ class SimRobot(Node):
             self.create_timer(1.0 / float(gp("camera_rate_hz")), self._cameras)
             self.create_timer(0.1, self._scan)
         self.create_timer(0.5, self._slow)
+        self.create_timer(0.05, self._arm_status)
         if self.map is not None:
             self.pub_map.publish(self.map["msg"])
         self.get_logger().info("Robot simulado listo (Piper, pan-tilt, voz, camaras, Nav2 falso).")
@@ -529,12 +530,15 @@ class SimRobot(Node):
         self._overlay_guest(None, mm)
         self.pub_depth.publish(to_image(mm, "16UC1", self.get_clock().now().to_msg(), "camera_color_optical_frame"))
 
-    def _slow(self):
-        stamp = self.get_clock().now().to_msg()
+    def _arm_status(self):
+        # 20 Hz como el controlador real (50 Hz): a 2 Hz los consumidores lo veian "viejo" (teleop sin feedback)
         self.pub_arm_status.publish(String(data=json.dumps({
             "is_moving": self.arm.moving, "enabled": self.arm.enabled, "feedback_ok": True,
             "gripper_mm": round(self.arm.gripper_mm, 2), "xyz_mm": [0.0, 0.0, 0.0],
             "joints_deg": [round(v, 2) for v in self.arm.q], "sim": True})))
+
+    def _slow(self):
+        stamp = self.get_clock().now().to_msg()
         st = ("LISTENING" if self.mic.active else ("PROCESSING" if self.mic.pending else
                                                    ("MUTED" if self.mic.muted else "IDLE")))
         self.pub_vstatus.publish(String(data=st))
