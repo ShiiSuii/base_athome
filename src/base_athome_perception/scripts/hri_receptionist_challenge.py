@@ -961,8 +961,7 @@ class HriReceptionistChallengeNode(Node):
         self.start_listening()
 
     def _voice_problem_hint(self) -> str:
-        if self.guest_screen is not None and self.voice_failures >= 2:
-            return " You can also tap your name and drink on my screen."
+        # El robot no tiene pantalla tactil al frente: no se ofrece tocar la pantalla por voz.
         return ""
 
     def _amcl_pose_cb(self, msg: PoseWithCovarianceStamped):
@@ -1008,11 +1007,11 @@ class HriReceptionistChallengeNode(Node):
                      emotion="speaking", blocking=True)
 
     # Barrido de la sala (ajustable): mas angulos, dos inclinaciones y movimiento lento para tener contexto.
-    SCAN_PANS_DEG = (-65.0, -43.0, -22.0, 0.0, 22.0, 43.0, 65.0)   # move_head_to limita el pan a +-65
+    SCAN_PANS_DEG = (-60.0, -30.0, 0.0, 30.0, 60.0)   # move_head_to limita el pan a +-65
     SCAN_TILTS_DEG = (-12.0, -28.0)     # -12: personas paradas; -28: personas SENTADAS
-    SCAN_DWELL_S = 1.5                  # espera en cada vista para que lleguen detecciones nuevas
+    SCAN_DWELL_S = 0.8                  # espera en cada vista para que lleguen detecciones nuevas
     SEAT_TILT_DEG = -22.0               # mirar a los asientos mas abajo
-    HEAD_SCAN_SPEED_DPS = 25.0          # velocidad de la cabeza al barrer (antes saltaba de golpe)
+    HEAD_SCAN_SPEED_DPS = 40.0          # velocidad de la cabeza al barrer (antes saltaba de golpe); ~15 s en total
 
     def move_head_smooth(self, pan_deg: float, tilt_deg: float, speed_dps: float = None):
         """Lleva la cabeza a (pan, tilt) a velocidad limitada, interpolando el objetivo (bloqueante)."""
@@ -1485,8 +1484,7 @@ class HriReceptionistChallengeNode(Node):
             self.voice_text = None
             self.say("Hello! Welcome to our home. I am Robot, the receptionist of this house.",
                      emotion="speaking", blocking=True)
-            self.say("After the beep, please say: My name is, your name, and my favorite drink is, your drink."
-                     + (" You can also tap your answer on my screen." if self.guest_screen is not None else ""),
+            self.say("After the beep, please say: My name is, your name, and my favorite drink is, your drink.",
                      emotion="speaking", blocking=True)
             self.voice_text = None
             self.user_speech_buffer = ""
@@ -1556,12 +1554,8 @@ class HriReceptionistChallengeNode(Node):
                 self.retry_count += 1
                 self.get_logger().error(f"🎤 Microfono/ASR no disponible ({res.status}: {res.reason}). "
                                         "Revisar Jetson: systemctl status jetson-head; ros2 topic echo /voice/status")
-                if self.guest_screen is not None:
-                    self.say("I am having trouble with my microphone. Please tap your name and your favorite "
-                             "drink on my screen.", emotion="speaking", blocking=True)
-                else:
-                    self.say("I am having trouble with my microphone. One moment please.",
-                             emotion="speaking", blocking=True)
+                self.say("I am having trouble with my microphone. One moment please.",
+                         emotion="speaking", blocking=True)
                 self.sleep_gui(2.0)
                 self.start_listening(beep=False)   # si el ASR vuelve, se sigue por voz
             else:
@@ -1633,7 +1627,7 @@ class HriReceptionistChallengeNode(Node):
                 self.confirm_tries = 0
                 self.say("Sorry about that. Let's try again.", emotion="speaking", blocking=True)
                 self._ask_again("After the beep, please say slowly: My name is, your name, and my favorite "
-                                "drink is, your drink." + (" Or tap them on my screen." if self.guest_screen else ""))
+                                "drink is, your drink.")
                 self.state = self.STATE_WAIT_NAME_DRINK
             else:
                 self.state = self.STATE_ASK_CONFIRM
