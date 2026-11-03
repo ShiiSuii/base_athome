@@ -19,7 +19,7 @@ recupera por commit (§8). Editado por el integrador (Claude).
 
 ## 2. Rama y Git
 
-- Rama `claude/home-41-piper-mission` (base `226e233`). `main` = `1da2388`. **Nada pusheado** (HOME-SEC: revocar token).
+- Rama `claude/home-41-piper-mission` **subida a GitHub** el 2026-11-03 (82 commits; escaneo de secretos limpio; los rostros de `faces_database` quedan borrados del árbol). `main` = `1da2388` sin cambios: merge a `main` = decisión humana (PR pendiente). HOME-SEC: el token viejo sigue sin revocar.
 - Cambios del usuario sin commitear (no tocar): `semantic_map.yaml`, `waypoints.yaml`, `arm_poses_and_limits.yaml`
   (incluye la `home` re-enseñada `[73.87, 169.72, -138.02, 26.69, -15.7, -117.17]`).
 - Reparación tras el reinicio de la NUC: commit vacío `c98344d` rehecho como `f16f457`; respaldo `~/git_backup_20261103_165442`; `core.fsync=committed`.
