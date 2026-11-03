@@ -45,3 +45,9 @@ def test_hook_protocol_roundtrip():
                          input=json.dumps(payload), capture_output=True, text=True, timeout=10,
                          env={**os.environ, "HOME": "/tmp"})
     assert json.loads(out.stdout)["decision"] == "allow"
+
+
+def test_allow_grants_only_the_exact_command():
+    out = decide("git status -b", WS)
+    assert out["permissionOverrides"] == ["command(git status \\-b)"]
+    assert "permissionOverrides" not in decide("git push", WS)

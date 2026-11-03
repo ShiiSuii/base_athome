@@ -57,6 +57,8 @@ class MissionExecutorNode(Node):
         self.declare_parameter("semantic_map", "")
         self.declare_parameter("waypoints", "")
         self.declare_parameter("nav_server_timeout_s", 5.0)
+        # Manipulacion en el robot real: ademas de supervised, hace falta pedirla explicitamente.
+        self.declare_parameter("allow_manipulation_real", False)
         self.mode = str(self.get_parameter("mode").value)
         domain = os.environ.get("ROS_DOMAIN_ID", "0")
         if self.mode not in ("sim", "real"):
@@ -81,10 +83,15 @@ class MissionExecutorNode(Node):
             if NavigateToPose else None
         self._speaker = None
         self._voice = None
+        self._manip = None
+        self._manip_lock = threading.Lock()
+        self.ros_executor = None  # lo asigna main(): la manipulacion se agrega como nodo del mismo proceso
 
         self.registry = default_registry()
         handlers = dict(navigate_to=self.h_navigate_to, navigate_sequence=self.h_navigate_sequence,
-                        return_home=self.h_return_home, speak=self.h_speak, listen=self.h_listen, wait=self.h_wait)
+                        return_home=self.h_return_home, speak=self.h_speak, listen=self.h_listen, wait=self.h_wait,
+                        detect_object=self.h_detect, pick_object=self.h_pick, place_object=self.h_place,
+                        arm_pose=self.h_arm_pose)
         self.executor_core = MissionExecutor(self.registry, handlers, mode=self.mode, on_update=self._publish)
         self._thread: Optional[threading.Thread] = None
         self.pub_skills.publish(String(data=json.dumps(self.registry.describe())))
@@ -251,6 +258,70 @@ class MissionExecutorNode(Node):
         self._voice.cancel(rid)
         return SkillResult.failure("no_speech", "sin respuesta a tiempo")
 
+    # ------------------------------------------------------------------ manipulacion
+    def _manipulation(self):
+        """Nodo de manipulacion (base_athome_perception.arm_manipulation) creado al primer uso."""
+        if self.mode == "real" and not bool(self.get_parameter("allow_manipulation_real").value):
+            return None, "manipulacion real deshabilitada (allow_manipulation_real:=false)"
+        with self._manip_lock:
+            if self._manip is None:
+                try:
+                    from base_athome_perception.arm_manipulation import Manipulacion
+                except Exception as e:  # noqa: BLE001
+                    return None, f"no se pudo cargar arm_manipulation: {type(e).__name__}: {e}"
+                self._manip = Manipulacion()
+                if self.ros_executor is not None:
+                    self.ros_executor.add_node(self._manip)
+                t_end = time.time() + 45.0  # move_group puede tardar en arrancar
+                while time.time() < t_end and not self._manip.moveit.available():
+                    time.sleep(0.2)
+        return self._manip, None
+
+    def _with_manip(self, ctx: SkillContext, fn, error: str) -> SkillResult:
+        m, why = self._manipulation()
+        if m is None:
+            return SkillResult.failure("manipulation_unavailable", why)
+        stop = threading.Event()
+
+        def watch():  # la cancelacion de la mision corta el movimiento (abort -> cancel del goal FJT)
+            while not stop.is_set():
+                if ctx.cancel.is_set():
+                    m.abort = True
+                    return
+                time.sleep(0.05)
+        threading.Thread(target=watch, daemon=True).start()
+        try:
+            out = fn(m)
+        finally:
+            stop.set()
+        ok, msg = out[0], out[1]
+        data = out[2] if len(out) > 2 else {}
+        if ctx.cancel.is_set():
+            return SkillResult.failure(ERR_CANCELED, f"cancelado ({msg})", **data)
+        return SkillResult.success(msg, **data) if ok else SkillResult.failure(error, msg, **data)
+
+    def h_arm_pose(self, ctx: SkillContext) -> SkillResult:
+        pose = str(ctx.args["pose"])
+        return self._with_manip(ctx, lambda m: m.go_to_blocking(pose), "arm_failed")
+
+    def h_detect(self, ctx: SkillContext) -> SkillResult:
+        label = str(ctx.args["object"])
+        t = float(ctx.args.get("detect_timeout_s", 8.0))
+        return self._with_manip(ctx, lambda m: m.detect_blocking(label, timeout_s=min(t, ctx.remaining())),
+                                "not_found")
+
+    def h_pick(self, ctx: SkillContext) -> SkillResult:
+        label = str(ctx.args["object"])
+        r = self._with_manip(ctx, lambda m: m.pick_blocking(label), "grasp_failed")
+        if not r.ok and "agarre vacio" in r.message:
+            r.error = "grasp_empty"
+        elif not r.ok and r.message.startswith("no veo"):
+            r.error = "not_found"
+        return r
+
+    def h_place(self, ctx: SkillContext) -> SkillResult:
+        return self._with_manip(ctx, lambda m: m.place_blocking(), "place_failed")
+
     def h_wait(self, ctx: SkillContext) -> SkillResult:
         if ctx.sleep(float(ctx.args["seconds"])):
             return SkillResult.success(f"espere {ctx.args['seconds']} s")
@@ -277,14 +348,18 @@ def main(args=None):
         print(f"[mission_executor] {e}")
         rclpy.shutdown()
         raise
-    ex = MultiThreadedExecutor(num_threads=4)
+    ex = MultiThreadedExecutor(num_threads=6)
     ex.add_node(node)
+    node.ros_executor = ex
     try:
         ex.spin()
     except KeyboardInterrupt:
         pass
     finally:
         node.executor_core.cancel("nodo detenido")
+        if node._manip is not None:
+            node._manip.stop_move_group()
+            node._manip.destroy_node()
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()

@@ -35,16 +35,19 @@ class Step:
     timeout_s: Optional[float] = None
     on_failure: str = ABORT
     recovery: bool = False
+    condition: Optional[Dict[str, str]] = None   # {"step": <id>, "state": SUCCEEDED|FAILED|...}: si no, SKIPPED
 
     def to_dict(self) -> Dict[str, Any]:
         return dict(id=self.id, skill=self.skill, args=dict(self.args), retries=self.retries,
-                    timeout_s=self.timeout_s, on_failure=self.on_failure, recovery=self.recovery)
+                    timeout_s=self.timeout_s, on_failure=self.on_failure, recovery=self.recovery,
+                    **({"if": dict(self.condition)} if self.condition else {}))
 
 
 @dataclass
 class Plan:
     name: str
     steps: List[Step]
+    success_if: Optional[str] = None   # id del paso OBJETIVO: si no termina SUCCEEDED, la mision es FAILED
 
     def index_of(self, step_id: str) -> int:
         for i, s in enumerate(self.steps):
@@ -87,8 +90,19 @@ def parse_plan(data: Any) -> Plan:
             raise PlanError(f"paso {i}: retries/timeout_s invalidos") from e
         steps.append(Step(id=str(raw.get("id") or f"s{i + 1}"), skill=str(raw["skill"]), args=dict(args),
                           retries=retries, timeout_s=timeout, on_failure=str(raw.get("on_failure", ABORT)),
-                          recovery=i >= n_main))
-    return Plan(name=str(data.get("name") or "mission"), steps=steps)
+                          recovery=i >= n_main, condition=_condition(raw.get("if"), i)))
+    succ = data.get("success_if")
+    if isinstance(succ, dict):
+        succ = succ.get("step")
+    return Plan(name=str(data.get("name") or "mission"), steps=steps, success_if=str(succ) if succ else None)
+
+
+def _condition(raw, i) -> Optional[Dict[str, str]]:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict) or "step" not in raw:
+        raise PlanError(f"paso {i}: 'if' debe ser {{step: <id>, state: <estado>}}")
+    return {"step": str(raw["step"]), "state": str(raw.get("state", "SUCCEEDED")).upper()}
 
 
 def validate_plan(plan: Plan, registry: SkillRegistry, places: Optional[Dict[str, Any]] = None,
@@ -101,6 +115,8 @@ def validate_plan(plan: Plan, registry: SkillRegistry, places: Optional[Dict[str
     if len(plan.steps) > MAX_STEPS:
         errors.append(f"demasiados pasos ({len(plan.steps)} > {MAX_STEPS})")
     ids = [s.id for s in plan.steps]
+    if plan.success_if and plan.success_if not in ids:
+        errors.append(f"success_if: '{plan.success_if}' no es un id de paso")
     dup = sorted({i for i in ids if ids.count(i) > 1})
     if dup:
         errors.append(f"ids duplicados: {dup}")
@@ -120,6 +136,11 @@ def validate_plan(plan: Plan, registry: SkillRegistry, places: Optional[Dict[str
             errors.append(f"{s.id}: timeout_s debe estar en (0, {spec.max_timeout_s}]")
         if s.on_failure not in (ABORT, CONTINUE) and s.on_failure not in ids:
             errors.append(f"{s.id}: on_failure '{s.on_failure}' no es abort/continue ni un id de paso")
+        if s.condition:
+            if s.condition["step"] not in ids or ids.index(s.condition["step"]) >= ids.index(s.id):
+                errors.append(f"{s.id}: 'if' debe referirse a un paso ANTERIOR (recibido '{s.condition['step']}')")
+            if s.condition["state"] not in ("SUCCEEDED", "FAILED", "SKIPPED", "CANCELED"):
+                errors.append(f"{s.id}: estado de 'if' invalido '{s.condition['state']}'")
         if s.on_failure == s.id:
             errors.append(f"{s.id}: on_failure no puede apuntar al mismo paso (usar retries)")
         if places is not None:

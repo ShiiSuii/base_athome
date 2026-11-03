@@ -128,7 +128,8 @@ class SimColorDetector:
         for i in range(1, n):
             x, y, w, h, area = stats[i]
             if area >= 40:
-                dets.append(((float(x), float(y), float(x + w), float(y + h)), 0.9, "pringles can"))
+                dets.append(((float(x), float(y), float(x + w), float(y + h)), 0.9,
+                             os.environ.get("ATHOME_SIM_OBJECT_LABEL", "pringles can")))
         return dets
 
 

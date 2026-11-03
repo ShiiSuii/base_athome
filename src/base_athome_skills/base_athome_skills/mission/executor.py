@@ -156,6 +156,16 @@ class MissionExecutor:
                 final, message = CANCELED, "mision cancelada"
                 break
             step = plan.steps[i]
+            if step.condition:
+                ref = self.status.steps[plan.index_of(step.condition["step"])]
+                if ref.state != step.condition["state"]:
+                    with self._lock:
+                        st = self.status.steps[i]
+                        st.state, st.message = SKIPPED, (f"condicion no cumplida: '{ref.id}' es {ref.state}, "
+                                                         f"se esperaba {step.condition['state']}")
+                    self.log("info", f"'{step.id}' omitido: {st.message}")
+                    i += 1
+                    continue
             ok = self._run_step(i, step)
             if ok:
                 i += 1
@@ -194,6 +204,11 @@ class MissionExecutor:
                 final, message = FAILED, f"fallo {not_tolerated}; se ejecuto la recuperacion del plan"
             elif failed:
                 message = f"mision completada con pasos fallidos tolerados por el plan: {failed}"
+        if final == SUCCEEDED and plan.success_if:
+            goal = self.status.steps[plan.index_of(plan.success_if)]
+            if goal.state != SUCCEEDED:
+                final = FAILED
+                message = f"objetivo no cumplido: '{goal.id}' termino {goal.state} ({message})"
         with self._lock:
             for st, sp in zip(self.status.steps, plan.steps):
                 if st.state == PENDING and (final != SUCCEEDED or sp.recovery):

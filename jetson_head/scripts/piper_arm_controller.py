@@ -25,6 +25,14 @@ from std_srvs.srv import Trigger, SetBool
 
 from piper_sdk import C_PiperInterface_V2
 
+try:  # HOME-45: interfaz estandar de ejecucion (MoveIt / ejecutor de misiones)
+    from control_msgs.action import FollowJointTrajectory
+    from rclpy.action import ActionServer, CancelResponse, GoalResponse
+    from rclpy.callback_groups import ReentrantCallbackGroup
+    from trajectory_msgs.msg import JointTrajectoryPoint
+except ImportError:  # pragma: no cover - sin control_msgs se sigue con /arm/joint_trajectory
+    FollowJointTrajectory = None
+
 # Constantes de conversion
 DEG_TO_RAD = math.pi / 180.0
 RAD_TO_DEG = 180.0 / math.pi
@@ -95,6 +103,10 @@ class PiperArmController(Node):
         # Velocidad (%) del planificador interno del Piper al seguir setpoints transmitidos a 50 Hz.
         # Muy baja (antes 24 %) => el brazo queda atras del setpoint, frena y acelera: tiembla.
         self.declare_parameter('stream_speed_pct', 60)
+        # FollowJointTrajectory: tolerancias (grados) y tiempo extra para llegar al final.
+        self.declare_parameter('fjt_goal_tolerance_deg', 2.0)
+        self.declare_parameter('fjt_path_tolerance_deg', 15.0)
+        self.declare_parameter('fjt_goal_time_tolerance_s', 1.5)
 
         self.can_port = self.get_parameter('can_port').value
         if self.can_port == 'auto':
@@ -104,7 +116,10 @@ class PiperArmController(Node):
         self.feedback_timeout_s = float(self.get_parameter('feedback_timeout_s').value)
         self.reconnect_timeout_s = float(self.get_parameter('reconnect_timeout_s').value)
         self.stream_speed_pct = int(self.get_parameter('stream_speed_pct').value)
-        self.timed_traj = None  # {'t0', 'times': [...], 'points': [[deg]*6, ...]}
+        self.timed_traj = None  # {'id', 't0', 'times': [...], 'points': [[deg]*6, ...]}
+        self._traj_seq = 0
+        self._traj_finished = set()   # ids de trayectorias que llegaron a su ultimo punto
+        self._traj_aborted = {}       # id -> motivo (feedback perdido, deshabilitado, reemplazada)
         self._had_feedback = False
         self.lost_feedback = False
         self._last_fb_stamp = None
@@ -138,6 +153,15 @@ class PiperArmController(Node):
         self.srv_grasp = self.create_service(Trigger, '/arm/grasp_pringles', self.srv_grasp_cb)
         self.srv_release = self.create_service(Trigger, '/arm/release', self.srv_release_cb)
         self.srv_enable = self.create_service(SetBool, '/arm/set_enable', self.srv_enable_cb)
+        self.fjt_server = None
+        if FollowJointTrajectory is not None:
+            self._cb_group = ReentrantCallbackGroup()
+            self.fjt_server = ActionServer(
+                self, FollowJointTrajectory, '/arm/follow_joint_trajectory', execute_callback=self._fjt_execute,
+                goal_callback=self._fjt_goal_cb, cancel_callback=lambda _g: CancelResponse.ACCEPT,
+                callback_group=self._cb_group)
+        else:
+            self.get_logger().warn("control_msgs no disponible: sin accion /arm/follow_joint_trajectory")
 
         # Estado interno y memoria de objetivos
         self.current_joints_deg = list(DEFAULT_HOME_DEG)
@@ -344,6 +368,7 @@ class PiperArmController(Node):
                     times, pts = tt['times'], tt['points']
                     if el >= times[-1]:
                         self.target_joints_deg = list(pts[-1])
+                        self._traj_finished.add(tt['id'])
                         self.timed_traj = None
                     else:
                         k = max(0, next(i for i, t in enumerate(times) if t > el) - 1)
@@ -391,17 +416,23 @@ class PiperArmController(Node):
             t_sleep = max(0.001, period - t_spent)
             time.sleep(t_sleep)
 
-    def trajectory_cb(self, msg: JointTrajectory):
-        """Trayectoria temporizada: se arranca desde el setpoint actual para no dar saltos."""
+    def _drop_timed_locked(self, why: str):
+        if self.timed_traj is not None:
+            self._traj_aborted[self.timed_traj['id']] = why
+        self.timed_traj = None
+
+    def load_trajectory(self, msg: JointTrajectory):
+        """Valida y arranca una trayectoria temporizada desde el setpoint actual (sin saltos).
+
+        Devuelve (id, None) si se acepto o (None, motivo) si se rechazo.
+        """
         try:
-            idx = [msg.joint_names.index(f'joint{i}') for i in range(1, 7)]
+            idx = [list(msg.joint_names).index(f'joint{i}') for i in range(1, 7)]
         except ValueError:
-            self.get_logger().warn("joint_trajectory sin joint1..joint6: ignorada")
-            return
+            return None, "la trayectoria no trae joint1..joint6"
         reason = self._motion_refusal()
         if reason:
-            self.get_logger().warn(f"joint_trajectory RECHAZADA: {reason}")
-            return
+            return None, reason
         times, pts = [0.0], []
         with self.lock:
             pts.append(list(self.target_joints_deg))
@@ -412,15 +443,101 @@ class PiperArmController(Node):
                 q = [p.positions[i] * RAD_TO_DEG for i in idx]
                 bad = out_of_limits(q)
                 if bad:
-                    self.get_logger().warn(f"joint_trajectory RECHAZADA: punto en t={t:.2f}s {bad}")
-                    return
+                    return None, f"punto en t={t:.2f}s {bad}"
                 times.append(t)
                 pts.append(q)
             if len(pts) < 2:
-                return
+                return None, "trayectoria sin puntos con tiempo creciente"
             self.active_trajectory = None
-            self.timed_traj = {'t0': time.time(), 'times': times, 'points': pts}
-        self.get_logger().info(f"Trayectoria recibida: {len(pts) - 1} puntos, {times[-1]:.2f} s")
+            self._drop_timed_locked("reemplazada por otra trayectoria")
+            self._traj_seq += 1
+            self.timed_traj = {'id': self._traj_seq, 't0': time.time(), 'times': times, 'points': pts}
+        self.get_logger().info(f"Trayectoria {self._traj_seq} aceptada: {len(pts) - 1} puntos, {times[-1]:.2f} s")
+        return self._traj_seq, None
+
+    def trajectory_cb(self, msg: JointTrajectory):
+        """Topico /arm/joint_trajectory (sin resultado; preferir la accion follow_joint_trajectory)."""
+        _, reason = self.load_trajectory(msg)
+        if reason:
+            self.get_logger().warn(f"joint_trajectory RECHAZADA: {reason}")
+
+    # --- Accion FollowJointTrajectory (HOME-45) ---
+    def _fjt_goal_cb(self, goal_request):
+        reason = self._motion_refusal()
+        if reason:
+            self.get_logger().warn(f"follow_joint_trajectory RECHAZADO: {reason}")
+            return GoalResponse.REJECT
+        return GoalResponse.ACCEPT
+
+    def _fjt_execute(self, goal_handle):
+        R = FollowJointTrajectory.Result
+        result = R()
+        tid, reason = self.load_trajectory(goal_handle.request.trajectory)
+        if reason:
+            result.error_code, result.error_string = R.INVALID_GOAL, reason
+            goal_handle.abort()
+            return result
+        goal_tol = float(self.get_parameter('fjt_goal_tolerance_deg').value)
+        path_tol = float(self.get_parameter('fjt_path_tolerance_deg').value)
+        time_tol = float(self.get_parameter('fjt_goal_time_tolerance_s').value)
+        names = [f'joint{i}' for i in range(1, 7)]
+        final = None
+        fb = FollowJointTrajectory.Feedback()
+        fb.joint_names = names
+        t_end_extra = None
+        while rclpy.ok():
+            with self.lock:
+                running = self.timed_traj is not None and self.timed_traj['id'] == tid
+                if running:
+                    final = list(self.timed_traj['points'][-1])
+                desired = list(self.target_joints_deg)
+                actual = list(self.current_joints_deg)
+                aborted = self._traj_aborted.pop(tid, None)
+                finished = tid in self._traj_finished
+            if goal_handle.is_cancel_requested:
+                with self.lock:
+                    if self.timed_traj is not None and self.timed_traj['id'] == tid:
+                        self._abort_motion_locked("cancelado por el cliente (follow_joint_trajectory)")
+                goal_handle.canceled()
+                result.error_code, result.error_string = R.SUCCESSFUL, "cancelado; se sostiene la posicion medida"
+                return result
+            if aborted:
+                result.error_code, result.error_string = R.PATH_TOLERANCE_VIOLATED, f"abortada: {aborted}"
+                goal_handle.abort()
+                return result
+            err = [a - d for a, d in zip(actual, desired)]
+            fb.desired = JointTrajectoryPoint(positions=[v * DEG_TO_RAD for v in desired])
+            fb.actual = JointTrajectoryPoint(positions=[v * DEG_TO_RAD for v in actual])
+            fb.error = JointTrajectoryPoint(positions=[v * DEG_TO_RAD for v in err])
+            goal_handle.publish_feedback(fb)
+            if running and max(abs(e) for e in err) > path_tol:
+                with self.lock:
+                    self._abort_motion_locked(f"error de seguimiento {max(abs(e) for e in err):.1f} grados > {path_tol}")
+                self._traj_aborted.pop(tid, None)
+                result.error_code = R.PATH_TOLERANCE_VIOLATED
+                result.error_string = f"error de seguimiento > {path_tol} grados (medido vs deseado)"
+                goal_handle.abort()
+                return result
+            if finished and final is not None:
+                t_end_extra = t_end_extra or time.time() + time_tol
+                dev = max(abs(a - f) for a, f in zip(actual, final))
+                if dev <= goal_tol and self.feedback_ok():
+                    self._traj_finished.discard(tid)
+                    goal_handle.succeed()
+                    result.error_code, result.error_string = R.SUCCESSFUL, f"llegada verificada por feedback ({dev:.2f} grados)"
+                    return result
+                if time.time() > t_end_extra:
+                    self._traj_finished.discard(tid)
+                    result.error_code = R.GOAL_TOLERANCE_VIOLATED
+                    result.error_string = f"no llego: desvio medido {dev:.2f} grados > {goal_tol}"
+                    goal_handle.abort()
+                    return result
+            elif not running and not finished:
+                result.error_code, result.error_string = R.INVALID_GOAL, "trayectoria perdida"
+                goal_handle.abort()
+                return result
+            time.sleep(0.05)
+        return result
 
     def plan_trajectory(self, target_deg: List[float], duration: float = 2.0, target_gripper: Optional[float] = None):
         """Inicia una trayectoria suave interpolada hacia target_deg."""
@@ -462,6 +579,8 @@ class PiperArmController(Node):
 
     def _abort_motion_locked(self, why: str):
         """Cancela trayectorias/secuencias y sostiene la ultima posicion MEDIDA (llamar con self.lock)."""
+        if self.timed_traj is not None:
+            self._traj_aborted[self.timed_traj['id']] = why
         self.timed_traj = None
         self.active_trajectory = None
         self.autonomous_sequence = None
@@ -515,7 +634,7 @@ class PiperArmController(Node):
                 self.target_joints_deg = list(self.current_joints_deg)
                 self.target_gripper_mm = float(self.current_gripper_mm)
                 self.active_trajectory = None
-                self.timed_traj = None
+                self._drop_timed_locked("brazo re-habilitado")
                 self.autonomous_sequence = None
                 for _ in range(5):
                     self.piper.EnableArm(7)
@@ -527,7 +646,7 @@ class PiperArmController(Node):
                 self.get_logger().info("Brazo HABILITADO en modo CAN y setpoint sincronizado en posicion actual")
             else:
                 self.active_trajectory = None
-                self.timed_traj = None
+                self._drop_timed_locked("brazo deshabilitado")
                 self.autonomous_sequence = None
                 self.piper.DisableArm(7)
                 self.get_logger().info("Brazo DESHABILITADO (modo manual libre)")
@@ -644,9 +763,12 @@ class PiperArmController(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = PiperArmController()
+    from rclpy.executors import MultiThreadedExecutor
+    executor = MultiThreadedExecutor(num_threads=3)  # la accion bloquea su propio hilo
+    executor.add_node(node)
     try:
         while rclpy.ok() and node.running:
-            rclpy.spin_once(node, timeout_sec=0.1)
+            executor.spin_once(timeout_sec=0.1)
     except KeyboardInterrupt:
         pass
     finally:

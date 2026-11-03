@@ -47,6 +47,11 @@ from std_msgs.msg import ColorRGBA, Float32, String
 from visualization_msgs.msg import Marker, MarkerArray
 from geometry_msgs.msg import Point
 from std_srvs.srv import SetBool
+from rclpy.action import ActionClient
+try:  # HOME-45: ejecucion con resultado verificado por el controlador (real o simulado)
+    from control_msgs.action import FollowJointTrajectory
+except ImportError:  # pragma: no cover
+    FollowJointTrajectory = None
 
 from base_athome_perception import pose_store
 from base_athome_perception import wrist_geometry as wg
@@ -87,6 +92,9 @@ class Manipulacion(Node):
         self.pub_traj = self.create_publisher(JointTrajectory, "/arm/joint_trajectory", 2)
         self.pub_gripper = self.create_publisher(Float32, "/arm/gripper_cmd", 5)
         self.cli_enable = self.create_client(SetBool, "/arm/set_enable")
+        self.fjt = ActionClient(self, FollowJointTrajectory, "/arm/follow_joint_trajectory") \
+            if FollowJointTrajectory is not None else None
+        self.last_exec_msg = ""
 
         self.poses = {}
         self.reload_poses()
@@ -236,7 +244,9 @@ class Manipulacion(Node):
                 pass
 
     def _execute(self, points) -> bool:
-        """Manda la trayectoria COMPLETA al controlador (la sigue continua a 50 Hz: sin temblar)."""
+        """Ejecuta la trayectoria COMPLETA. Con la accion follow_joint_trajectory el resultado lo confirma
+        el controlador con el feedback MEDIDO; sin ella (controlador viejo) se publica en el topico y se
+        espera por tiempo."""
         pts = decimate(points, min_dt=0.05)
         if len(pts) < 2:
             return True
@@ -247,6 +257,8 @@ class Manipulacion(Node):
             p.positions = [float(v) for v in q]
             p.time_from_start = Duration(sec=int(t), nanosec=int((t % 1.0) * 1e9))
             msg.points.append(p)
+        if self.fjt is not None and self.fjt.wait_for_server(timeout_sec=0.5):
+            return self._execute_fjt(msg, pts[-1][1])
         self.pub_traj.publish(msg)
         t_end = time.time() + pts[-1][1] + 0.5
         while time.time() < t_end:
@@ -256,7 +268,120 @@ class Manipulacion(Node):
                 self.status = "Movimiento cancelado."
                 return False
             time.sleep(0.05)
+        self.last_exec_msg = "ejecutado por tiempo (sin accion follow_joint_trajectory)"
         return True
+
+    def _execute_fjt(self, traj: JointTrajectory, duration_s: float) -> bool:
+        goal = FollowJointTrajectory.Goal(trajectory=traj)
+        fut = self.fjt.send_goal_async(goal)
+        t_end = time.time() + 3.0
+        while not fut.done() and time.time() < t_end:
+            time.sleep(0.02)
+        gh = fut.result() if fut.done() else None
+        if gh is None or not gh.accepted:
+            self.last_exec_msg = "el controlador rechazo la trayectoria (¿deshabilitado o sin feedback?)"
+            self.status = f"Movimiento: {self.last_exec_msg}"
+            return False
+        res = gh.get_result_async()
+        t_end = time.time() + duration_s + 10.0
+        while not res.done():
+            if self.abort or time.time() > t_end:
+                cf = gh.cancel_goal_async()
+                t_c = time.time() + 3.0
+                while not res.done() and time.time() < t_c:
+                    time.sleep(0.02)
+                self.last_exec_msg = "cancelado" if self.abort else "sin resultado a tiempo (cancelado)"
+                self.status = f"Movimiento {self.last_exec_msg}."
+                return False
+            time.sleep(0.02)
+        r = res.result().result
+        self.last_exec_msg = r.error_string
+        ok = r.error_code == FollowJointTrajectory.Result.SUCCESSFUL and res.result().status == 4
+        if not ok:
+            self.status = f"Movimiento fallido: {r.error_string}"
+        return ok
+
+    # ------------------------------------------------------------ API bloqueante (misiones)
+    def wait_feedback(self, timeout_s: float = 3.0) -> bool:
+        t_end = time.time() + timeout_s
+        while time.time() < t_end:
+            if self.feedback_ok:
+                return True
+            time.sleep(0.05)
+        return False
+
+    def go_to_blocking(self, name: str):
+        """Va a una pose guardada y devuelve (ok, mensaje). La llegada la confirma el controlador."""
+        pose = self.poses.get(name)
+        if not pose:
+            return False, f"la pose '{name}' no esta guardada"
+        if not self.wait_feedback():
+            return False, "sin realimentacion del brazo"
+        if not self.enabled and not self.set_torque(True):
+            return False, f"no se pudo habilitar el brazo: {self.status}"
+        target = [float(v) for v in pose["joints_deg"]]
+        plan = None
+        if self.moveit.available():
+            plan = self.moveit.plan_to_joints([math.radians(v) for v in self.joints_deg],
+                                              [math.radians(v) for v in target], vel_scale=self.vel_scale())
+            if plan is None:
+                return False, f"MoveIt no encontro un plan sin colisiones hacia '{name}'"
+        else:
+            return False, "MoveIt no disponible: no se mueve el brazo sin plan de colisiones"
+        if not self._execute(plan):
+            return False, f"no llego a '{name}': {self.last_exec_msg}"
+        self.gripper(pose.get("gripper_mm", GRIPPER_OPEN_MM))
+        time.sleep(1.4)
+        return True, f"en '{name}' ({self.last_exec_msg})"
+
+    def detect_blocking(self, label: str = "", timeout_s: float = 5.0):
+        """Espera una deteccion fresca (opcionalmente que la etiqueta contenga `label`).
+        Devuelve (ok, mensaje, datos) con caja, distancia estimada y centro en base_link."""
+        t_end = time.time() + timeout_s
+        want = (label or "").lower().strip()
+        while time.time() < t_end and not self.abort:
+            det, lab, obj = self.detection, (self.tracker.label or ""), self.obj_base
+            if det is not None and (not want or want in lab.lower() or lab.lower() in want):
+                box, z = det
+                data = dict(label=lab, box=[round(float(v), 1) for v in box], distance_m=round(float(z), 3))
+                if obj is not None:
+                    data["base_link_xyz"] = [round(float(v), 3) for v in obj]
+                return True, f"veo '{lab}' a {z * 100:.0f} cm", data
+            time.sleep(0.05)
+        return False, f"no veo {'un ' + want if want else 'ningun objeto'}", {}
+
+    def pick_blocking(self, label: str = ""):
+        """Agarre completo con confirmacion por el ancho MEDIDO de la pinza. (ok, mensaje, datos)."""
+        self.abort = False
+        ok, msg, data = self.detect_blocking(label)
+        if not ok:
+            return False, msg, data
+        ok, why = self._grasp_core()
+        if not ok:
+            return False, why, data
+        time.sleep(0.3)
+        width = float(self.gripper_mm)
+        data["gripper_mm"] = round(width, 1)
+        if width <= GRIPPER_CLOSE_MM + 5.0:
+            self.gripper(GRIPPER_OPEN_MM)
+            return False, f"agarre vacio: la pinza cerro hasta {width:.0f} mm (sin objeto)", data
+        if "post_grasp" in self.poses:
+            ok2, msg2 = self.go_to_blocking("post_grasp")
+            if not ok2:
+                return False, f"objeto tomado pero no pude retirarme: {msg2}", data
+        return True, f"objeto tomado (pinza {width:.0f} mm)", data
+
+    def place_blocking(self):
+        """Coloca adelante (PRE-GRASP), abre la pinza, verifica y vuelve a HOME. (ok, mensaje)."""
+        self.abort = False
+        ok, msg = self.go_to_blocking("pre_grasp")   # pre_grasp abre la pinza al llegar
+        if not ok:
+            return False, msg
+        time.sleep(0.5)
+        if self.gripper_mm < GRIPPER_OPEN_MM - 10.0:
+            return False, f"la pinza no abrio (mide {self.gripper_mm:.0f} mm)"
+        ok, msg = self.go_to_blocking("home")
+        return ok, ("objeto colocado; " + msg) if ok else f"colocado pero no volvi a HOME: {msg}"
 
     # ---------------------------------------------------------------- vision
     def _vision_loop(self):
@@ -459,48 +584,51 @@ class Manipulacion(Node):
             # Como antes de la alineacion: usa la deteccion actual. Alinear es opcional con [A].
             if self.align_before_grasp and not self.align_with_object():
                 return
-            det = self.detection
-            if det is None:
-                self.status = "Agarre: no veo el objeto."
-                return
-            (x1, y1, x2, y2), z = det
-            q_now = [math.radians(v) for v in self.joints_deg]
-            tcp_mm, R = self.kin.forward_kinematics(np.array(q_now))
-            adv = self.used_advance(z)  # calibrado + ajuste, limitado por Avance_max_cm
-            left, up = wg.lateral_offsets((x1 + x2) / 2, (y1 + y2) / 2, z, self.calib)
-            obj = SHOULDER_IN_BASE + wg.object_center(tcp_mm / 1000.0, R, adv, left, up, self.calib)
-            approach = R[:, 2] / np.linalg.norm(R[:, 2])
-            grasp_tcp = obj + self.calib.grasp_center_back_m * approach
-            self.get_logger().info(f"Agarre: avance usado {adv * 100:.1f} cm (tope {self.max_advance_cm:.0f} cm)")
-            app_tcp = grasp_tcp - 0.10 * approach
-            quat = quat_from_matrix(R.tolist())
-            self.status = "Agarre: planificando..."
-            q_app = self.moveit.compute_ik(pose_from(app_tcp, quat), q_now)
-            plan = self.moveit.plan_to_joints(q_now, q_app, vel_scale=self.vel_scale()) if q_app else None
-            # el avance final y la subida van a la mitad de la velocidad elegida (mas control al agarrar)
-            line = self.moveit.cartesian_path(q_app, [pose_from(grasp_tcp, quat)],
-                                              vel_scale=self.vel_scale() / 2) if plan else None
-            if not line:
-                self.status = "Agarre: sin solucion (objeto fuera de alcance o choque). No me muevo."
-                return
-            if not self.enabled and not self.set_torque(True):
-                return
-            self.gripper(GRIPPER_OPEN_MM)
-            self.status = "Agarre: aproximando..."
-            if not self._execute(plan) or not self._execute(line):
-                return
-            self.gripper(GRIPPER_CLOSE_MM)
-            time.sleep(1.5)
-            lift = self.moveit.cartesian_path(line[-1][0], [pose_from(grasp_tcp + np.array([0, 0, 0.03]), quat)],
-                                              vel_scale=self.vel_scale() / 2)
-            if lift:
-                self._execute(lift)
-            self.status = "Agarre: listo."
-            if "post_grasp" in self.poses:
+            ok, why = self._grasp_core()
+            self.status = "Agarre: listo." if ok else why
+            if ok and "post_grasp" in self.poses:
                 self.busy = False
                 self.go_to("post_grasp")
         finally:
             self.busy = False
+
+    def _grasp_core(self):
+        """Aproximacion + avance + cierre + subida. (ok, motivo). No va a POST-GRASP."""
+        det = self.detection
+        if det is None:
+            return False, "Agarre: no veo el objeto."
+        (x1, y1, x2, y2), z = det
+        q_now = [math.radians(v) for v in self.joints_deg]
+        tcp_mm, R = self.kin.forward_kinematics(np.array(q_now))
+        adv = self.used_advance(z)  # calibrado + ajuste, limitado por Avance_max_cm
+        left, up = wg.lateral_offsets((x1 + x2) / 2, (y1 + y2) / 2, z, self.calib)
+        obj = SHOULDER_IN_BASE + wg.object_center(tcp_mm / 1000.0, R, adv, left, up, self.calib)
+        approach = R[:, 2] / np.linalg.norm(R[:, 2])
+        grasp_tcp = obj + self.calib.grasp_center_back_m * approach
+        self.get_logger().info(f"Agarre: avance usado {adv * 100:.1f} cm (tope {self.max_advance_cm:.0f} cm)")
+        app_tcp = grasp_tcp - 0.10 * approach
+        quat = quat_from_matrix(R.tolist())
+        self.status = "Agarre: planificando..."
+        q_app = self.moveit.compute_ik(pose_from(app_tcp, quat), q_now)
+        plan = self.moveit.plan_to_joints(q_now, q_app, vel_scale=self.vel_scale()) if q_app else None
+        # el avance final y la subida van a la mitad de la velocidad elegida (mas control al agarrar)
+        line = self.moveit.cartesian_path(q_app, [pose_from(grasp_tcp, quat)],
+                                          vel_scale=self.vel_scale() / 2) if plan else None
+        if not line:
+            return False, "Agarre: sin solucion (objeto fuera de alcance o choque). No me muevo."
+        if not self.enabled and not self.set_torque(True):
+            return False, f"Agarre: no se pudo habilitar el brazo ({self.status})"
+        self.gripper(GRIPPER_OPEN_MM)
+        self.status = "Agarre: aproximando..."
+        if not self._execute(plan) or not self._execute(line):
+            return False, f"Agarre: movimiento fallido ({self.last_exec_msg})"
+        self.gripper(GRIPPER_CLOSE_MM)
+        time.sleep(1.5)
+        lift = self.moveit.cartesian_path(line[-1][0], [pose_from(grasp_tcp + np.array([0, 0, 0.03]), quat)],
+                                          vel_scale=self.vel_scale() / 2)
+        if lift and not self._execute(lift):
+            return False, f"Agarre: no pude levantar ({self.last_exec_msg})"
+        return True, "Agarre: listo."
 
     # -------------------------------------------------------------------- UI
     def draw(self) -> np.ndarray:

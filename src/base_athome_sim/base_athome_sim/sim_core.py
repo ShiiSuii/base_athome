@@ -20,6 +20,7 @@ class SimArm:
         self._seg = None   # (t0, dur, q0, q1)
         self._traj = None  # (t0, times, points)
         self._grip = None  # (t0, dur, g0, g1)
+        self.grip_block_mm: Optional[float] = None  # objeto entre los dedos: la pinza no cierra mas alla
 
     def set_enable(self, on: bool) -> bool:
         self.enabled = bool(on)
@@ -67,6 +68,8 @@ class SimArm:
             t0, dur, g0, g1 = self._grip
             a = min(1.0, (now - t0) / dur)
             self.gripper_mm = g0 + a * (g1 - g0)
+            if self.grip_block_mm is not None and g1 < g0:
+                self.gripper_mm = max(self.gripper_mm, self.grip_block_mm)
             if a >= 1.0:
                 self._grip = None
 

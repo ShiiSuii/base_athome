@@ -26,6 +26,10 @@ from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped, TransformS
 from nav2_msgs.action import NavigateToPose
 from nav_msgs.msg import OccupancyGrid, Odometry
 from rclpy.action import ActionServer, CancelResponse, GoalResponse
+try:
+    from control_msgs.action import FollowJointTrajectory
+except ImportError:  # pragma: no cover
+    FollowJointTrajectory = None
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
@@ -68,7 +72,8 @@ class SimRobot(Node):
         p = self.declare_parameter
         p("map_yaml", os.path.expanduser("~/mapa_base_athome.yaml"))
         p("start_pose", [0.0, 0.0, 0.0])          # x, y, yaw (si hay waypoint 'home' se usa ese)
-        p("object_xyz", [0.52, -0.155, 0.93])     # objeto en base_footprint: ~24 cm frente a la pinza en PRE-GRASP
+        p("object_xyz", [0.42, -0.12, 0.92])      # objeto en base_footprint: ~12 cm frente a las yemas en la PRE-GRASP actual (alcanzable)
+        p("object_diameter_m", 0.075)              # = object_diameter_m de la calibracion de muneca; la pinza se detiene aqui
         p("guest_distance_m", 1.2)
         p("faces", [""])                           # imagenes de rostros (vacio = publicas del sistema)
         p("auto_guest", False)
@@ -152,6 +157,10 @@ class SimRobot(Node):
         sub(String, "/voice/listen_request", self._listen_request)
         sub(String, "/voice/cancel", lambda m: self._voice_cancelled(self.mic.cancel(m.data.strip()), "cancel"))
         srv(Trigger, "/arm/home", self._srv_home)
+        if FollowJointTrajectory is not None:  # misma interfaz que piper_arm_controller (HOME-45)
+            ActionServer(self, FollowJointTrajectory, "/arm/follow_joint_trajectory", execute_callback=self._fjt_execute,
+                         goal_callback=lambda g: GoalResponse.ACCEPT if self.arm.enabled else GoalResponse.REJECT,
+                         cancel_callback=lambda g: CancelResponse.ACCEPT, callback_group=self.cb)
         ActionServer(self, NavigateToPose, "navigate_to_pose", execute_callback=self._nav_execute,
                      goal_callback=lambda g: GoalResponse.ACCEPT, cancel_callback=lambda g: CancelResponse.ACCEPT,
                      callback_group=self.cb)
@@ -264,6 +273,58 @@ class SimRobot(Node):
         if pts:
             with self.lock:
                 self.arm.trajectory(times, pts)
+
+    def _fjt_execute(self, goal_handle):
+        R = FollowJointTrajectory.Result
+        res = R()
+        msg = goal_handle.request.trajectory
+        try:
+            idx = [list(msg.joint_names).index(f"joint{i}") for i in range(1, 7)]
+        except ValueError:
+            res.error_code, res.error_string = R.INVALID_JOINTS, "faltan joint1..joint6"
+            goal_handle.abort()
+            return res
+        times, pts = [], []
+        for pt in msg.points:
+            t = pt.time_from_start.sec + pt.time_from_start.nanosec * 1e-9
+            if times and t <= times[-1]:
+                continue
+            times.append(t)
+            pts.append([pt.positions[i] / D2R for i in idx])
+        if not pts:
+            res.error_code, res.error_string = R.INVALID_GOAL, "sin puntos"
+            goal_handle.abort()
+            return res
+        with self.lock:
+            self.arm.trajectory(times, pts)
+        t_end = time.time() + times[-1] + 2.0
+        while rclpy.ok():
+            if goal_handle.is_cancel_requested:
+                with self.lock:
+                    self.arm.joint_cmd(list(self.arm.q), 0.6)
+                goal_handle.canceled()
+                return res
+            if not self.arm.enabled:
+                res.error_code, res.error_string = R.PATH_TOLERANCE_VIOLATED, "sim: brazo deshabilitado"
+                goal_handle.abort()
+                return res
+            with self.lock:
+                moving = self.arm.moving
+            if not moving:
+                dev = max(abs(a - b) for a, b in zip(self.arm.q, pts[-1]))
+                if dev <= 2.0:
+                    res.error_code, res.error_string = R.SUCCESSFUL, f"sim: llegada verificada ({dev:.2f} grados)"
+                    goal_handle.succeed()
+                else:
+                    res.error_code, res.error_string = R.GOAL_TOLERANCE_VIOLATED, f"sim: desvio {dev:.2f} grados"
+                    goal_handle.abort()
+                return res
+            if time.time() > t_end:
+                res.error_code, res.error_string = R.GOAL_TOLERANCE_VIOLATED, "sim: timeout"
+                goal_handle.abort()
+                return res
+            time.sleep(0.05)
+        return res
 
     def _pt_cmd(self, msg):
         pan, tilt = self.pt.target
@@ -505,10 +566,13 @@ class SimRobot(Node):
         tcp = self._lookup("base_footprint", "tcp_link")
         if tcp is not None:
             d = float(np.linalg.norm(tcp[1] - np.array(self.obj)))
-            if not self.obj_attached and self.arm.gripper_mm < 70 and d < 0.06:
+            dia_mm = 1000.0 * float(self.get_parameter("object_diameter_m").value)
+            # Objeto entre los dedos (TCP a < 6 cm): la pinza no puede cerrar por debajo de su diametro
+            self.arm.grip_block_mm = dia_mm if (d < 0.06 or self.obj_attached) else None
+            if not self.obj_attached and self.arm.gripper_mm <= dia_mm + 2.0 and d < 0.06:
                 self.obj_attached = True
                 self.get_logger().info("Objeto AGARRADO (sim)")
-            elif self.obj_attached and self.arm.gripper_mm > 75:
+            elif self.obj_attached and self.arm.gripper_mm > dia_mm + 10.0:
                 self.obj_attached = False
                 self.get_logger().info("Objeto SOLTADO (sim)")
             if self.obj_attached:
@@ -518,7 +582,7 @@ class SimRobot(Node):
         m.ns, m.id, m.type, m.action = "sim_object", 0, Marker.CYLINDER, Marker.ADD
         m.pose.position.x, m.pose.position.y, m.pose.position.z = self.obj
         m.pose.orientation.w = 1.0
-        m.scale.x = m.scale.y = 0.075
+        m.scale.x = m.scale.y = float(self.get_parameter("object_diameter_m").value)
         m.scale.z = 0.23
         m.color.r, m.color.g, m.color.b, m.color.a = 0.85, 0.1, 0.85, 1.0
         self.pub_world.publish(MarkerArray(markers=[m]))

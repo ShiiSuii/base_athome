@@ -71,3 +71,17 @@ def test_gz_urdf_has_plugins_and_bridges():
     assert "VelocityControl" in out and "gpu_lidar" in out and "rgbd_camera" in out
     assert out.count("JointPositionController") == len(gz_model.POSITION_JOINTS)
     assert any(a.startswith("/sim/gz/joint1/cmd_pos@") for a in gz_model.bridge_args())
+
+
+def test_gripper_stops_at_object_width_when_closing():
+    from base_athome_sim.sim_core import SimArm
+    arm = SimArm()
+    arm.set_enable(True)
+    arm.gripper_mm = 100.0
+    arm.grip_block_mm = 65.0
+    arm.gripper(10.0, now=0.0)
+    arm.update(now=5.0)
+    assert arm.gripper_mm == 65.0          # el objeto impide cerrar mas
+    arm.gripper(100.0, now=5.0)
+    arm.update(now=10.0)
+    assert arm.gripper_mm == 100.0         # abrir no esta bloqueado

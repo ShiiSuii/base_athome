@@ -30,17 +30,19 @@ def plan(*steps, name="t"):
 # ------------------------------------------------------------------ registro / validacion
 def test_registry_marks_unimplemented_skills_unavailable():
     assert {"navigate_to", "navigate_sequence", "speak", "listen", "wait", "return_home"} <= set(REG.available())
-    for name in ("pick_object", "place_object", "detect_object", "find_person", "follow_person"):
+    for name in ("find_person", "follow_person", "guide_person", "deliver_object", "answer_question"):
         assert REG.get(name).status == "unavailable"
+    for name in ("detect_object", "pick_object", "place_object", "arm_pose"):   # SIM_PASS (HOME-47)
+        assert REG.get(name).status == "available"
 
 
 def test_validate_rejects_unavailable_unknown_and_bad_args():
-    p = plan({"skill": "pick_object", "args": {"object": "bottle"}},
+    p = plan({"skill": "follow_person", "args": {}},
              {"skill": "fly", "args": {}},
              {"skill": "navigate_to", "args": {}},
              {"skill": "speak", "args": {"text": "hi", "volume": 3}})
     errs = validate_plan(p, REG, PLACES)
-    assert any("pick_object" in e and "no esta implementada" in e for e in errs)
+    assert any("follow_person" in e and "no esta implementada" in e for e in errs)
     assert any("desconocida 'fly'" in e for e in errs)
     assert any("faltan argumentos ['place']" in e for e in errs)
     assert any("desconocidos ['volume']" in e for e in errs)
@@ -75,11 +77,12 @@ def test_gpsr_conversion_keeps_unimplemented_steps_and_validation_rejects_them()
     actions = [{"action": "go_to", "params": {"location": "kitchen"}},
                {"action": "find_object", "params": {"object": "bottle"}},
                {"action": "pick", "params": {"object": "bottle"}},
-               {"action": "say", "params": {"text": "done"}}]
+               {"action": "say", "params": {"text": "done"}},
+               {"action": "follow", "params": {"person": "me"}}]
     p = from_gpsr(actions)
-    assert [s.skill for s in p.steps] == ["navigate_to", "detect_object", "pick_object", "speak"]
+    assert [s.skill for s in p.steps] == ["navigate_to", "detect_object", "pick_object", "speak", "follow_person"]
     errs = validate_plan(p, REG, PLACES)
-    assert len([e for e in errs if "no esta implementada" in e]) == 2
+    assert len([e for e in errs if "no esta implementada" in e]) == 1
     with pytest.raises(PlanError):
         from_gpsr([{"action": "teleport", "params": {}}])
 
@@ -269,3 +272,45 @@ def test_node_preflight_refuses_domain_10_without_real_mode():
     assert node.preflight(["x", "--ros-args", "-p", "mode:=sim"], {"ROS_DOMAIN_ID": "10"})
     assert node.preflight(["x", "--ros-args", "-p", "mode:=real"], {"ROS_DOMAIN_ID": "10"}) is None
     assert node.preflight(["mission_executor"], {"ROS_DOMAIN_ID": "42"}) is None
+
+
+
+def test_condition_branches_on_previous_step_state():
+    calls = []
+    hs = {"detect_object": lambda ctx: SkillResult.failure("not_found"), "speak": ok_handler(calls),
+          "navigate_to": ok_handler(calls)}
+    p = plan({"id": "look", "skill": "detect_object", "args": {"object": "bottle"}, "on_failure": "continue"},
+             {"id": "found", "skill": "speak", "args": {"text": "found it"}, "if": {"step": "look", "state": "SUCCEEDED"}},
+             {"id": "search", "skill": "navigate_to", "args": {"place": "kitchen"}, "if": {"step": "look", "state": "FAILED"}})
+    assert validate_plan(p, REG, PLACES) == []
+    res = MissionExecutor(REG, hs).run(p)
+    assert [s["state"] for s in res["steps"]] == ["FAILED", "SKIPPED", "SUCCEEDED"]
+    assert [c[1] for c in calls] == [{"place": "kitchen"}]
+    assert "condicion no cumplida" in res["steps"][1]["message"]
+
+
+def test_condition_must_reference_previous_step():
+    p = plan({"id": "a", "skill": "speak", "args": {"text": "x"}, "if": {"step": "b"}},
+             {"id": "b", "skill": "speak", "args": {"text": "y"}})
+    assert any("paso ANTERIOR" in e for e in validate_plan(p, REG, PLACES))
+
+
+
+def test_success_if_marks_mission_failed_when_goal_step_not_done():
+    hs = {"detect_object": lambda ctx: SkillResult.failure("not_found"), "speak": lambda ctx: SkillResult.success()}
+    p = parse_plan({"name": "g", "success_if": "say",
+                    "steps": [{"id": "look", "skill": "detect_object", "args": {"object": "bottle"}, "on_failure": "continue"},
+                              {"id": "say", "skill": "speak", "args": {"text": "got it"}, "if": {"step": "look"}}]})
+    assert validate_plan(p, REG, PLACES) == []
+    res = MissionExecutor(REG, hs).run(p)
+    assert res["state"] == "FAILED" and "objetivo no cumplido" in res["message"]
+
+
+def test_fetch_demo_valid_in_sim_map_and_rejected_in_empty_map():
+    import os
+    root = os.path.join(os.path.dirname(__file__), "..", "..")
+    p = parse_plan(open(os.path.join(root, "base_athome_skills", "missions", "demo_fetch_bottle.yaml")).read())
+    sim = load_places(os.path.join(root, "base_athome_sim", "config", "sim_semantic_map.yaml"))
+    assert validate_plan(p, REG, sim) == []
+    assert p.success_if == "put"
+    assert any("reception" in e for e in validate_plan(p, REG, {"door": (0, 0, 0)}))

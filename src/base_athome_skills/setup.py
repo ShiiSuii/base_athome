@@ -26,6 +26,7 @@ setup(
         'console_scripts': [
             'door_open_detector = base_athome_skills.door_open_node:main',
             'mission_executor = base_athome_skills.mission.node:main',
+            'mission_run = base_athome_skills.mission.cli:main',
         ],
     },
 )

@@ -1,0 +1,23 @@
+# Mision compuesta (FASE 4/5): "anda a recepcion, saluda, despues a la mesa, identifica una botella,
+# agarrala y llevala a la cocina". Navegacion + voz + percepcion + manipulacion con ramas y recuperacion.
+name: fetch_bottle_to_kitchen
+success_if: put          # la mision solo se cumple si la botella quedo en la cocina
+steps:
+  - {id: to_reception, skill: navigate_to, args: {place: reception}, retries: 1, timeout_s: 180, on_failure: sorry}
+  - {id: greet, skill: speak, args: {text: "Hello! I am going to bring a bottle to the kitchen."}}
+  - {id: to_table, skill: navigate_to, args: {place: table}, retries: 1, timeout_s: 180, on_failure: sorry}
+  - {id: observe, skill: arm_pose, args: {pose: pre_grasp}, timeout_s: 60, on_failure: sorry}
+  - {id: look, skill: detect_object, args: {object: bottle}, retries: 2, on_failure: continue}
+  - {id: not_found, skill: speak, args: {text: "I cannot see a bottle on the table."}, if: {step: look, state: FAILED}}
+  - {id: grab, skill: pick_object, args: {object: bottle}, retries: 1, timeout_s: 90,
+     on_failure: sorry, if: {step: look, state: SUCCEEDED}}
+  - {id: stow, skill: arm_pose, args: {pose: post_grasp}, timeout_s: 60, if: {step: grab, state: SUCCEEDED}}
+  - {id: to_kitchen, skill: navigate_to, args: {place: kitchen}, retries: 1, timeout_s: 180, on_failure: sorry,
+     if: {step: grab, state: SUCCEEDED}}
+  - {id: put, skill: place_object, args: {place: kitchen}, timeout_s: 60, on_failure: sorry,
+     if: {step: grab, state: SUCCEEDED}}
+  - {id: done, skill: speak, args: {text: "Here is the bottle."}, if: {step: put, state: SUCCEEDED}}
+  - {id: home, skill: return_home, timeout_s: 180}
+recovery:
+  - {id: sorry, skill: speak, args: {text: "Something went wrong. I am going back home."}}
+  - {id: home_after_error, skill: return_home, timeout_s: 180}

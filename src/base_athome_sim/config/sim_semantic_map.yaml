@@ -1,0 +1,10 @@
+# Mapa semantico SOLO para simulacion (ROS_DOMAIN_ID=42). No es el mapa operativo y no lo reemplaza.
+# door/living_room copian el mapa real (2026-11-03); reception/table/kitchen/home son ficticios.
+# En base_athome_sim el objeto esta fijo respecto del robot (frente a la pinza en PRE-GRASP).
+waypoints:
+  door: {x: 3.06, y: -0.14, yaw_deg: -2}
+  reception: {x: 2.6, y: -0.6, yaw_deg: 180}
+  living_room: {x: 0.19, y: -7.26, yaw_deg: -1}
+  table: {x: 1.2, y: -4.5, yaw_deg: -90}
+  kitchen: {x: 1.5, y: -3.0, yaw_deg: 90}
+  home: {x: 0.0, y: 0.0, yaw_deg: 0}
