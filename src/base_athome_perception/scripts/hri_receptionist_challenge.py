@@ -1007,6 +1007,21 @@ class HriReceptionistChallengeNode(Node):
                      f"{other['name']}'s favorite drink is {other['drink']}.",
                      emotion="speaking", blocking=True)
 
+    # Barrido de la sala (ajustable): mas angulos, dos inclinaciones y movimiento lento para tener contexto.
+    SCAN_PANS_DEG = (-65.0, -43.0, -22.0, 0.0, 22.0, 43.0, 65.0)   # move_head_to limita el pan a +-65
+    SCAN_TILTS_DEG = (-12.0, -28.0)     # -12: personas paradas; -28: personas SENTADAS
+    SCAN_DWELL_S = 1.5                  # espera en cada vista para que lleguen detecciones nuevas
+    SEAT_TILT_DEG = -22.0               # mirar a los asientos mas abajo
+    HEAD_SCAN_SPEED_DPS = 25.0          # velocidad de la cabeza al barrer (antes saltaba de golpe)
+
+    def move_head_smooth(self, pan_deg: float, tilt_deg: float, speed_dps: float = None):
+        """Lleva la cabeza a (pan, tilt) a velocidad limitada, interpolando el objetivo (bloqueante)."""
+        speed = float(speed_dps or self.HEAD_SCAN_SPEED_DPS)
+        goal = (float(np.clip(pan_deg, -90.0, 90.0)), float(np.clip(tilt_deg, -35.0, 35.0)))
+        for p, t in scene.head_steps((self.target_pan_deg, self.target_tilt_deg), goal, speed, rate_hz=20.0):
+            self.move_head_to(p, t)
+            self.sleep_gui(0.05)
+
     def move_head_to(self, pan_deg: float, tilt_deg: float):
         """Envía comandos angulares al cabezal pan-tilt."""
         self._ensure_pantilt_torque()
@@ -1219,9 +1234,9 @@ class HriReceptionistChallengeNode(Node):
         self.scanning = True
         objs: List[scene.SeenObject] = []
         try:
-            for pan in (-60.0, -30.0, 0.0, 30.0, 60.0):
-                self.move_head_to(pan, -10.0)
-                self.sleep_gui(1.4)  # dejar que lleguen detecciones nuevas en este angulo
+            for pan, tilt in scene.scan_plan(self.SCAN_PANS_DEG, self.SCAN_TILTS_DEG):
+                self.move_head_smooth(pan, tilt)
+                self.sleep_gui(self.SCAN_DWELL_S)  # dejar que lleguen detecciones nuevas en este angulo
                 with self.frame_lock:
                     frame = self.latest_frame.copy() if self.latest_frame is not None else None
                 if frame is None:
@@ -1268,7 +1283,7 @@ class HriReceptionistChallengeNode(Node):
         for key in self.seats:
             pan = self._head_pan_to_seat(key)
             if pan is not None:
-                self.move_head_to(pan, -10.0)
+                self.move_head_smooth(pan, self.SEAT_TILT_DEG)
             self.sleep_gui(1.6)  # dejar que el detector de poses procese varios frames nuevos
             with self.face_lock:
                 poses = list(self.current_poses or [])
@@ -1793,8 +1808,8 @@ class HriReceptionistChallengeNode(Node):
             self.current_banner_text = "Analizando la sala: personas y asientos..."
             self.analyze_scene()
             host = next((o for o in self.scene_objects if o.kind == "person" and o.name == "Charlie"), None)
-            if host is not None:  # mirar al anfitrion para presentarlo
-                self.move_head_to(self.head_pan_sign * host.bearing_deg, -5.0)
+            if host is not None:  # mirar al anfitrion para presentarlo (sentado: un poco mas abajo)
+                self.move_head_smooth(self.head_pan_sign * host.bearing_deg, -15.0 if host.seated else -5.0)
             self.state = self.STATE_INTRODUCE_GUESTS
             self.state_start_time = time.time()  # tras los say() bloqueantes, no el 'now' del inicio del ciclo
 

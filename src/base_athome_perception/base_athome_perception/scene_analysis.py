@@ -66,6 +66,25 @@ def occupants_in_image(seat_bbox: Sequence[float], person_bboxes: Sequence[Seque
     return n
 
 
+def scan_plan(pans=(-65.0, -43.0, -22.0, 0.0, 22.0, 43.0, 65.0), tilts=(-12.0, -28.0)):
+    """Vistas (pan, tilt) del barrido de la sala en zigzag: una fila por inclinacion, alternando el
+    sentido para no volver la cabeza al principio de cada fila. tilt negativo = mirar hacia abajo:
+    la fila baja ve a las personas SENTADAS (la de -10 grados las dejaba fuera de cuadro)."""
+    out = []
+    for i, tilt in enumerate(tilts):
+        row = list(pans) if i % 2 == 0 else list(reversed(pans))
+        out.extend((float(p), float(tilt)) for p in row)
+    return out
+
+
+def head_steps(start, goal, speed_dps: float, rate_hz: float = 20.0):
+    """Puntos intermedios (pan, tilt) para mover la cabeza a velocidad limitada (lineal, ambos ejes juntos)."""
+    dp, dt = goal[0] - start[0], goal[1] - start[1]
+    dist = max(abs(dp), abs(dt))
+    n = max(1, int(math.ceil(dist / max(1e-3, speed_dps) * rate_hz)))
+    return [(start[0] + dp * k / n, start[1] + dt * k / n) for k in range(1, n + 1)]
+
+
 def merge_views(objs: List[SeenObject], tol_deg: float = 12.0) -> List[SeenObject]:
     """Une el mismo objeto visto desde dos angulos de la cabeza (mismo tipo, rumbo cercano)."""
     merged: List[SeenObject] = []

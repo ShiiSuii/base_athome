@@ -60,3 +60,26 @@ def test_face_tracking_centers_face_with_deadband_and_limit():
     assert 0 < dpan <= 8.0
     dpan, dtilt = sa.face_tracking_step(640, 0, 640, 480, FX, FX)  # derecha y arriba
     assert dpan < 0 and dtilt > 0
+
+
+def test_scan_plan_two_rows_zigzag_and_low_row():
+    from base_athome_perception.scene_analysis import scan_plan
+    plan = scan_plan((-65.0, 0.0, 65.0), (-12.0, -28.0))
+    assert plan == [(-65.0, -12.0), (0.0, -12.0), (65.0, -12.0), (65.0, -28.0), (0.0, -28.0), (-65.0, -28.0)]
+    assert min(t for _, t in scan_plan()) <= -25.0       # fila baja para personas sentadas
+
+
+def test_head_steps_limit_speed():
+    from base_athome_perception.scene_analysis import head_steps
+    steps = head_steps((0.0, 0.0), (25.0, -10.0), speed_dps=25.0, rate_hz=20.0)
+    assert len(steps) == 20                               # 25 grados a 25 grados/s = 1 s = 20 pasos
+    assert steps[-1] == (25.0, -10.0)
+    assert max(abs(b[0] - a[0]) for a, b in zip([(0.0, 0.0)] + steps, steps)) <= 25.0 / 20 + 1e-9
+
+
+def test_seated_person_seen_in_low_row_is_merged_as_seated():
+    from base_athome_perception.scene_analysis import SeenObject, merge_views
+    standing_row = SeenObject("person", 20.0, 10.0, seated=False)
+    low_row = SeenObject("person", 22.0, 12.0, seated=True)
+    merged = merge_views([standing_row, low_row])
+    assert len(merged) == 1 and merged[0].seated
