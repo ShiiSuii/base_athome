@@ -14,7 +14,7 @@ RV=false; [ "${RVIZ:-0}" = "1" ] && RV=true
 PIDS=()
 start() { setsid "$@" & PIDS+=($!); }
 cleanup() {
-  trap - EXIT INT TERM
+  trap - EXIT HUP INT TERM
   for ((i=${#PIDS[@]}-1; i>=0; i--)); do kill -TERM -- -"${PIDS[i]}" 2>/dev/null; sleep 2; done
   for p in $(pgrep -u "$USER" -x move_group); do
     tr "\0" "\n" < /proc/$p/environ 2>/dev/null | grep -qx "SIM_MISSION_TAG=$$" && kill -TERM "$p"
@@ -26,7 +26,7 @@ cleanup() {
   [ $alive = 1 ] && echo "AVISO: quedan procesos propios de la simulacion"
   echo "logs: $LOG"
 }
-trap cleanup EXIT; trap 'exit 130' INT TERM
+trap cleanup EXIT; trap 'exit 130' HUP INT TERM
 start ros2 launch base_athome_sim sim.launch.py rviz:=$RV > "$LOG/sim.log" 2>&1
 sleep 8
 ARGS=(--ros-args -p semantic_map:="$MAP" -p waypoints:=/nonexistent)

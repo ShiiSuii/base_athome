@@ -183,6 +183,7 @@ class HriReceptionistChallengeNode(Node):
         living_room_wp: str = "B",
         sim_nav: bool = False,
         no_gui: bool = False,
+        wait_start: bool = False,
         max_guests: int = 2,
         arm_gestures: bool = False,
         track_faces: bool = False,
@@ -194,6 +195,9 @@ class HriReceptionistChallengeNode(Node):
         self.living_room_wp = living_room_wp
         self.sim_nav = sim_nav
         self.no_gui = no_gui
+        self.wait_start = wait_start      # esperar ESPACIO cuando termina de cargar todo
+        self.start_confirmed = False
+        self._pt_retest_requested = False
         self.max_guests = max_guests
         self.arm_gestures = arm_gestures
         # Estado MEDIDO del brazo (/arm/status del controlador en la Jetson)
@@ -415,6 +419,7 @@ class HriReceptionistChallengeNode(Node):
         # Seguimiento de caras con el pan-tilt: desactivado (era demasiado agresivo); la cabeza mira al
         # frente durante la conversacion. Se puede activar con --track-faces.
         self.pan_tilt_tracking = track_faces
+        self._gentle_requested = gentle_tracking
         self.gentle_tracking = gentle_tracking
         self.gentle_tracker = scene.GentleFaceTracker()
 
@@ -816,10 +821,18 @@ class HriReceptionistChallengeNode(Node):
             print("\n[HRI]: Saliendo de la challenge...")
             self._finalize_session_storage()
             self.request_shutdown = True
+        elif key in [ord("p"), ord("P")] and self.state == self.STATE_INIT and self.preflight_complete:
+            self._pt_retest_requested = True     # volver a revisar la cabeza antes de arrancar
         elif key in [32, 13]:  # Espacio o Enter
             print(f"\n[Manual]: Tecla [ESPACIO/ENTER] presionada en estado '{self.STATE_NAMES.get(self.state, self.state)}'. Forzando avance...")
             self.force_advance = True
-            if self.state == self.STATE_INIT:
+            if self.state == self.STATE_INIT and self.wait_start:
+                self.force_advance = False       # que no saltee el primer paso de la mision
+                if self.preflight_complete:
+                    self.start_confirmed = True
+                else:
+                    print("   [Manual]: Todavia esta cargando; espera el aviso para arrancar.")
+            elif self.state == self.STATE_INIT:
                 if self.latest_frame is None:
                     with self.frame_lock:
                         self.latest_frame = np.zeros((480, 640, 3), dtype=np.uint8)
@@ -1058,10 +1071,19 @@ class HriReceptionistChallengeNode(Node):
             add("movimiento", False, "omitido (falla conexion/feedback/torque)")
         result = dict(ok=all(c[1] for c in checks), checks=checks)
         self.pt_selftest = result
+        if result["ok"]:
+            self.gentle_tracking = self._gentle_requested   # por si una revision anterior lo habia apagado
         if not result["ok"]:
             self.gentle_tracking = False   # sin cabeza confiable no se sigue la cara
             self.get_logger().error("Pan-tilt con fallas: seguimiento de rostro DESACTIVADO; la camara queda donde este")
         return result
+
+    def _ready_banner(self) -> str:
+        """Estado en vivo mientras se espera ESPACIO: lo que falla se ve antes de arrancar."""
+        head = "OK" if (self.pt_selftest or {}).get("ok") and self.pt_connected else "FALLA (P revisa)"
+        mic = "OK" if self.voice.online() else "SIN RESPUESTA"
+        nav = "simulada" if self.sim_nav else "OK"
+        return f"LISTO: ESPACIO arranca | Nav {nav} | Mic {mic} | Pan-tilt {head}"
 
     def _ensure_pantilt_torque(self):
         if self._pantilt_torque_requested or not self.cli_pantilt_torque.service_is_ready():
@@ -1494,6 +1516,17 @@ class HriReceptionistChallengeNode(Node):
                     self.say("Warning: my head camera motors are not working correctly. "
                              "I will keep the camera fixed.", emotion="thinking", blocking=True)
             frame_shape = self.latest_frame.shape if self.latest_frame is not None else (0, 0, 0)
+            if self.preflight_complete and self.wait_start and not self.start_confirmed:
+                if self._pt_retest_requested:
+                    self._pt_retest_requested = False
+                    self.pan_tilt_self_test()
+                self.current_banner_text = self._ready_banner()
+                return
+            if self.preflight_complete:
+                self.say("Starting Receptionist Challenge.", emotion="happy", blocking=True)
+                self.state = self.STATE_NAV_TO_DOOR
+                self.state_start_time = time.time()
+                return
             print("\n" + "=" * 70)
             print("🚀 [PRE-VUELO RECEPTIONIST COMPLETADO - SUBSISTEMAS LISTOS]")
             print("=" * 70)
@@ -1507,6 +1540,13 @@ class HriReceptionistChallengeNode(Node):
                 print(f"  [{'✔' if ok else '✘'}] Pan-tilt: {name}{' - ' + detail if detail else ''}")
             print("=" * 70 + "\n")
 
+            self.preflight_complete = True
+            if self.wait_start:
+                print("👉 Todo cargado. Con la ventana seleccionada: [ESPACIO] arranca la mision, "
+                      "[P] vuelve a revisar el pan-tilt, [Q] sale.\n")
+                self.say("All systems online. Press space to start.", emotion="happy", blocking=True)
+                self.current_banner_text = self._ready_banner()
+                return
             self.say("All systems online. Camera and perception ready. Starting Receptionist Challenge.", emotion="happy", blocking=True)
             self.state = self.STATE_NAV_TO_DOOR
             self.state_start_time = time.time()  # tras los say() bloqueantes, no el 'now' del inicio del ciclo
@@ -2252,6 +2292,8 @@ def main():
     parser.add_argument("--living-room-wp", type=str, default="B", help="Waypoint de la sala de estar")
     parser.add_argument("--sim-nav", action="store_true", help="Simula navegacion sin mover la base fisica")
     parser.add_argument("--no-gui", action="store_true", help="Desactiva ventana grafica HUD OpenCV")
+    parser.add_argument("--no-wait", action="store_true",
+                        help="Arranca solo al terminar de cargar, sin esperar ESPACIO (sin ventana no se espera)")
     parser.add_argument("--max-guests", type=int, default=2, help="Cantidad de invitados a recibir")
     parser.add_argument("--no-gentle-tracking", action="store_true",
                         help="Desactivar el seguimiento leve del rostro durante el registro del invitado")
@@ -2269,6 +2311,7 @@ def main():
         living_room_wp=args.living_room_wp,
         sim_nav=args.sim_nav,
         no_gui=args.no_gui,
+        wait_start=not (args.no_wait or args.no_gui),
         max_guests=args.max_guests,
         arm_gestures=args.arm_gestures,
         track_faces=args.track_faces,
@@ -2294,7 +2337,8 @@ def main():
     print("\n" + "=" * 70)
     print("🤖 ROBOCUP @HOME - HRI RECEPTIONIST CHALLENGE")
     print("=" * 70)
-    print("   [ESPACIO / ENTER] : Forzar avance de paso / simular deteccion o datos")
+    print("   [ESPACIO / ENTER] : Arrancar cuando termina de cargar; despues, forzar avance de paso")
+    print("   [P]               : Volver a revisar el pan-tilt (antes de arrancar)")
     print("   [T]               : Escribir texto por teclado (simular microfono)")
     print("   [R]               : Forzar escucha de microfono (/voice/listen_trigger)")
     print("   [G]               : Probar gesto de senalamiento con brazo Piper")

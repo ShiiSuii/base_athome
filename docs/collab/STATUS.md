@@ -3,7 +3,7 @@
 Corto y actualizado: se **reemplaza** lo viejo, no se acumula (`AGENTS.md` §9). Lo histórico se
 recupera por commit (§8). Editado por el integrador (Claude).
 
-**Última actualización:** 2026-11-04 · Claude Code · modo `DESARROLLO` · foco actual: receptionist (pruebas del usuario).
+**Última actualización:** 2026-11-04 · Claude Code · modo `DESARROLLO` · receptionist con arranque por ESPACIO, calibrador del pan-tilt.
 
 ## 1. Estado comprobado al pausar
 
@@ -12,7 +12,7 @@ recupera por commit (§8). Editado por el integrador (Claude).
 | NUC | Ubuntu 24.04, kernel 7.0.0-42 (reiniciada hoy), Jazzy, CycloneDDS, dominio 10 | `NUC_VERIFIED` |
 | Jetson | L4T R39.2.1, Jazzy; `jetson-head` activo | `JETSON_VERIFIED` |
 | Piper | energizado, **habilitado** con feedback válido (`/arm/status` leído 2026-11-04; deshabilitarlo lo deja caer: hacerlo con el usuario presente); controlador md5 `2e347c49` | `JETSON_VERIFIED` |
-| Pan-tilt | **falla eléctrica abierta**: con torque el U2D2 se cae por USB en segundos; sin torque estable. Software corregido (vueltas multivuelta, `pwm_limit`, `position_p_gain`). Corre desde `jetson-head` (la Jetson se reinició; ya no hay proceso manual) | `JETSON_VERIFIED` |
+| Pan-tilt | **falla eléctrica abierta**: 118 desconexiones USB del U2D2 el 04/11, solo ese puerto (`Cannot enable. Maybe the USB cable is bad?`, error -71). Si la revisión inicial falla, el receptionist desactiva el seguimiento. `pan_tilt_params.yaml` no existe en la Jetson: usa valores por defecto del nodo | `JETSON_VERIFIED` |
 | Teleop Meta Quest 2 | **en pausa** por pedido del usuario; nodo detenido en la Jetson. Fidelidad validada en sim; seguimiento real pendiente | `SIM_PASS`; real parcial |
 | Simulación | cerrada | — |
 | Commander | alias `commander`: pedido por micrófono (inglés), dice el plan y actúa con "yes"; "stop" cancela; web en `:8770`. Diálogo probado con ASR y ejecutor falsos (6 tests). Whisper real: 3 frases bien, ~1,4 s; el resto sin resultado en 14 s porque el ASR detectó voz continua (posible ruido del ambiente). **Nunca ejecutó una misión en el robot.** Agarre real: exige `torso_state` corriendo | `UNIT_PASS`/`SIM_PASS`; real `PENDIENTE` |
@@ -62,6 +62,9 @@ recupera por commit (§8). Editado por el integrador (Claude).
 | Claude | HOME-46 mesa en la escena MoveIt; HOME-43 correr `torso_state` con el ESP32 conectado | pendiente |
 
 ## 6. Cambios de esta sesión (detalle en Git)
+
+- Receptionist: espera ESPACIO al terminar de cargar (`--no-wait` lo omite; en competencia no se permite teclado, §3.6.8) y `P` repite la revisión del pan-tilt. Calibrador: `calibrar_pantilt`. `SIM_PASS`/tests con nodo falso; la cabeza real solo se leyó.
+- **Incidente:** `commander` dejaba procesos vivos al cerrar la terminal (HUP sin trampa): el 04/11 quedaron 4 ejecutores reales y un Nav2 completo duplicando al de `navegacion`. Cerrados por grupo con el robot quieto. Arreglo: `session_lib.sh` cierra también con HUP y limpia restos de sesiones anteriores.
 
 - Mapa: `map_server` solo lee el archivo al arrancar, así que un Nav2 abierto seguía con el mapa viejo. Ahora el editor lo recarga al guardar y `commander` al arrancar (`nav_map_sync.sh`, servicio `load_map`), sin cambios en archivos protegidos. Verificado el 2026-11-04: `/map` = PGM, los 200 obstáculos agregados son letales en el costmap global y AMCL no saltó.
 
