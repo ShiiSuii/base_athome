@@ -3,7 +3,7 @@
 Corto y actualizado: se **reemplaza** lo viejo, no se acumula (`AGENTS.md` §9). Lo histórico se
 recupera por commit (§8). Editado por el integrador (Claude).
 
-**Última actualización:** 2026-11-04 · Claude Code · modo `DESARROLLO` · reglas de guiado y modelos de objetos (HOME-59, HOME-60).
+**Última actualización:** 2026-11-04 · Claude Code · modo `DESARROLLO` · foco actual: receptionist (pruebas del usuario).
 
 ## 1. Estado comprobado al pausar
 
@@ -55,7 +55,8 @@ recupera por commit (§8). Editado por el integrador (Claude).
 |---|---|---|
 | Humano | Pan-tilt: revisar fuente de 12 V bajo carga, cableado del power hub del U2D2 y masa común; cambiar cable USB del U2D2 | **bloquea** el seguimiento de rostro |
 | Humano | HOME-SEC: revocar el token (también está en el registro de Orca); contraseña de la Jetson | pendiente |
-| Claude | Commander: probar con Nav2 real (con supervisión) y sumar skills de personas (HOME-49). Teleop en pausa | siguiente |
+| Humano + Claude | **Activo:** receptionist. El usuario prueba en el robot y reporta problemas; Claude los corrige | en curso |
+| Claude | En pausa, retomar después (detalle en `ROADMAP.md`): commander con Nav2 real y personas (HOME-57, HOME-49), docking (HOME-58), detector World en Jetson (HOME-59), `guide_person` (HOME-60), teleop (HOME-52) | guardado |
 | Humano | TDP: seguir `docs/TDP_INSTRUCTIVO.txt` desde la otra computadora | pendiente |
 | Claude | Receptionist: probar en el robot el barrido nuevo (2 filas, ~16 s), seguimiento leve y la revisión del pan-tilt | código listo (`SIM_PASS` parcial) |
 | Claude | HOME-46 mesa en la escena MoveIt; HOME-43 correr `torso_state` con el ESP32 conectado | pendiente |
