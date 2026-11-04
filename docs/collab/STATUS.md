@@ -3,7 +3,7 @@
 Corto y actualizado: se **reemplaza** lo viejo, no se acumula (`AGENTS.md` §9). Lo histórico se
 recupera por commit (§8). Editado por el integrador (Claude).
 
-**Última actualización:** 2026-11-04 · Claude Code · modo `DESARROLLO` · objetos del mapa en el commander.
+**Última actualización:** 2026-11-04 · Claude Code · modo `DESARROLLO` · reglas de guiado y modelos de objetos (HOME-59, HOME-60).
 
 ## 1. Estado comprobado al pausar
 
