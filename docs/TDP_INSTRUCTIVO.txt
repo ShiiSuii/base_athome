@@ -1,0 +1,146 @@
+INSTRUCTIVO PARA ESCRIBIR EL TDP DE BASE@HOME CON CLAUDE
+Equipo UruBots - RoboCup@Home OPL
+Escrito el 2026-11-04. Los datos de abajo envejecen: el repositorio manda sobre este archivo.
+
+
+1. PREPARAR LA COMPUTADORA
+--------------------------
+Instalar git, una distribucion de LaTeX (TeX Live o MiKTeX) y Claude Code. Despues:
+
+    git clone -b claude/home-41-piper-mission https://github.com/ShiiSuii/base_athome.git
+    cd base_athome
+    git pull
+    mkdir -p tdp
+    git clone https://github.com/RoboCupAtHome/TDPTemplate.git tdp/template
+    claude
+
+Usar esa rama: el trabajo reciente no esta en main.
+No hace falta ROS ni el robot para escribir. Para medir algo nuevo hay que correrlo en la NUC.
+
+El repositorio es PUBLICO. Antes de subir el TDP o sus figuras, revisar que no tengan datos privados.
+
+
+2. PRIMER MENSAJE PARA CLAUDE (copiar y pegar)
+----------------------------------------------
+    Vamos a escribir el Team Description Paper de UruBots para RoboCup@Home OPL, en ingles.
+    Primero lee docs/TDP_INSTRUCTIVO.txt completo y seguilo. Despues lee docs/ROBOT.md,
+    docs/ROADMAP.md, docs/collab/STATUS.md y src/base_athome_skills/README.md.
+    No escribas todavia. Devolveme: (a) las reglas vigentes del TDP que pudiste confirmar y de
+    donde salen, (b) una propuesta de indice con paginas por seccion, (c) una tabla de cada
+    resultado que usariamos con su etiqueta de evidencia y (d) lo que me falta darte a mi.
+    Trabajamos en tdp/. No inventes ningun dato.
+
+
+3. REGLAS DEL TDP: CONFIRMAR ANTES DE ESCRIBIR
+----------------------------------------------
+Lo que sabemos hoy:
+  - Reglamento que usa el proyecto: RuleBook 2026.2
+    https://github.com/RoboCupAtHome/RuleBook/releases/tag/2026.2
+    La calificacion pide TDP de 8 paginas, video de hasta 10 minutos y web en ingles con codigo abierto.
+  - Plantilla oficial: https://github.com/RoboCupAtHome/TDPTemplate
+    Formato Springer LNCS/LNAI, limite de 8 paginas INCLUIDAS las referencias, con una descripcion
+    del robot aparte (RobotDescriptionOPL.tex).
+
+Lo que NO esta confirmado:
+  - La plantilla dice "2020" y no se actualiza desde 2022.
+  - El limite cambio otros anios (la convocatoria 2021 pidio 6 paginas). Una convocatoria anterior
+    avisaba que pasarse de paginas anula la postulacion.
+  - No encontramos la convocatoria de la competencia a la que vamos.
+
+Hay que buscar la convocatoria (Call for Participation) vigente en https://athome.robocup.org y
+confirmar: limite de paginas, plantilla, si la descripcion del robot cuenta para el limite, fecha
+limite y forma de entrega. Si contradice este archivo, gana la convocatoria.
+
+Enfoque: las convocatorias anteriores piden destacar la contribucion cientifica y no una
+descripcion breve de todo el sistema. Todo el contenido va en ingles, tambien figuras y tablas.
+
+
+4. INDICE SUGERIDO (ajustar a la plantilla)
+-------------------------------------------
+  1. Introduccion: equipo, objetivo, que aporta este trabajo.
+  2. Plataforma: base, elevador, Piper, cabeza, sensores; NUC + Jetson y reparto de computo.
+  3. Arquitectura de software: ROS 2 Jazzy, CycloneDDS, nodos y simulacion.
+  4. Contribuciones (la parte principal; elegir 2 o 3 y explicarlas con detalle):
+       a. Del pedido en lenguaje natural a la mision: compilador determinista ES/EN, plan validado,
+          ejecutor con reintentos, recuperacion y cancelacion. Explica por que no se manda texto
+          libre de un LLM a los motores.
+       b. Manipulacion con un brazo montado de costado: IK, planificacion con MoveIt 2, agarre con
+          varias orientaciones, seguridad del controlador.
+       c. Teleoperacion con Meta Quest 2 por WebXR, base para aprender de demostraciones.
+       d. HRI: receptionist, mirada, escucha por pedido con VAD.
+       e. Vision en la Jetson: YOLO con TensorRT.
+  5. Experimentos y resultados: solo con evidencia (seccion 6).
+  6. Conclusion y trabajo futuro.
+  Referencias. Descripcion del robot y enlaces segun la plantilla.
+
+
+5. DONDE ESTA CADA DATO
+-----------------------
+  docs/ROBOT.md             Arquitectura, hardware, interfaces, pruebas, limitaciones.
+  docs/ROADMAP.md           Reglas de competencia, prioridades, logros con commits.
+  docs/collab/STATUS.md     Ultimo estado comprobado.
+  AGENTS.md                 Significado de las etiquetas de evidencia (seccion 8).
+  src/base_athome_skills/   Ejecutor de misiones y commander (README.md, mission/).
+  src/base_athome_moveit_config/, src/hoverboard_base/urdf/   Manipulacion y modelo del robot.
+  jetson_head/scripts/      Controlador del Piper, teleop Quest, YOLO.
+  git log                   Historia y evidencia por commit.
+
+La etiqueta de cada dato esta en esos documentos. Citar el dato tal como figura y releerlo: este
+archivo no copia cifras a proposito salvo las de la seccion 6.
+
+
+6. HONESTIDAD DE LOS RESULTADOS (LO MAS IMPORTANTE)
+---------------------------------------------------
+No inventar numeros, tasas de exito, participaciones, premios ni integrantes. Si falta un dato,
+escribir [FALTA: que dato] y preguntar. Decir siempre en que condicion se obtuvo cada resultado.
+
+  Etiqueta en el repo       Como se puede escribir
+  UNIT_PASS / STATIC_PASS   "automated tests cover..." (no es un resultado experimental)
+  SIM_PASS                  "in simulation..." (siempre aclararlo)
+  NUC/JETSON_VERIFIED       Medido en esa computadora, indicar que se midio y en que condicion.
+  HARDWARE_VERIFIED         Unico caso para afirmar que funciona en el robot real.
+  PENDIENTE / BLOCKED_*     Solo como trabajo futuro.
+
+Trampas conocidas al 2026-11-04 (volver a verificar):
+  - Commander: probado solo en simulacion. Nunca corrio con Nav2 real ni en el robot.
+  - Mision "buscar botella y llevarla": en la simulacion liviana el objeto esta fijo respecto del
+    robot y la deteccion es simulada. Prueba la logica de la mision, NO la percepcion ni el agarre.
+  - Teleop Quest: validada en simulacion. En el brazo real el uso fue parcial; la ultima medida de
+    error (102 mm) es anterior a los ultimos arreglos. Hay que volver a medir antes de citarla.
+  - Pan-tilt: tiene una falla electrica abierta. Con torque, el U2D2 se cae por USB.
+  - Seguir o guiar personas, buscar personas, entregar objetos y responder preguntas: no estan
+    implementados en el ejecutor de misiones.
+  - El resto de lo que sigue pendiente esta en docs/ROADMAP.md.
+
+Medir antes de la entrega, si llega el tiempo (lo hace el equipo con el robot):
+  - N repeticiones de una mision completa con Nav2 real: exitos, tiempo, causas de falla.
+  - Agarres reales sobre objetos del reglamento: exitos sobre intentos.
+  - Comandos GPSR: porcentaje de plan exacto.
+Cualquier prueba con el robot real requiere supervision de una persona. Claude no mueve el robot
+ni corre nada contra el desde esta tarea.
+
+
+7. QUE NO DEBE ENTRAR
+---------------------
+Sin credenciales, tokens, contrasenias, direcciones de red internas ni rutas personales.
+Sin rostros, voces ni datos de personas sin su permiso. Sin imagenes o texto de otros sin citarlos
+y con licencia compatible. Las referencias tienen que existir: Claude debe verificar cada una
+(DOI o URL) y no citar de memoria.
+
+
+8. COMO TRABAJAR
+----------------
+  1. Claude confirma las reglas y propone el indice. Vos elegis las contribuciones.
+  2. Le pasas lo que solo el equipo sabe (lista abajo).
+  3. Escribe una seccion por vez en tdp/. Vos la revisas antes de pasar a la siguiente.
+  4. Compilar seguido y controlar las paginas. Las referencias cuentan.
+  5. Al final, pedirle una revision: cada numero contra su fuente, limite de paginas, ingles,
+     datos privados.
+  6. Guardar en una rama propia, por ejemplo docs/tdp. No trabajar sobre main.
+
+Solo el equipo puede dar:
+  - Integrantes, afiliacion, autores y contacto para el paper.
+  - Competencia y anio objetivo; participaciones y resultados previos.
+  - Fotos del robot sin personas o con permiso; video de calificacion; web del equipo.
+  - Datos de hardware todavia abiertos: fuente, E-stop, medidas finales.
+  - Agradecimientos y financiacion.
