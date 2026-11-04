@@ -1021,6 +1021,7 @@ HTML_PAGE = r'''<!DOCTYPE html>
       <div class="vol-metric-item">Approach Y<b id="obj-app-y-disp">0.00 m</b></div>
       <div class="vol-metric-item">Yaw (hacia obj)<b id="obj-app-yaw-disp">0°</b></div>
     </div>
+    <small id="obj-reach-warning" style="color: #ffb020; display: none; font-size: 11px;"></small>
 
     <div class="modal-actions">
       <button class="modal-btn cancel" onclick="closeObjectModal()">Cancelar</button>
@@ -2489,6 +2490,31 @@ HTML_PAGE = r'''<!DOCTYPE html>
     return { x: appX, y: appY, yaw_deg: yawDeg };
   }
 
+  // Igual que calculate_table_approach (semantic_objects.py): frente al borde mas cercano, fuera del mueble.
+  function jsTableApproach(objX, objY, polygon, clearance = 0.50) {
+    if (!polygon || polygon.length < 3) return null;
+    const edges = [];
+    for (let i = 0; i < polygon.length; i++) {
+      const [ax, ay] = polygon[i];
+      const [bx, by] = polygon[(i + 1) % polygon.length];
+      const ex = bx - ax, ey = by - ay, len2 = ex * ex + ey * ey;
+      if (len2 < 1e-8) continue;
+      const t = Math.max(0, Math.min(1, ((objX - ax) * ex + (objY - ay) * ey) / len2));
+      const px = ax + t * ex, py = ay + t * ey;
+      edges.push({ d: Math.hypot(objX - px, objY - py), px, py, nx: -ey, ny: ex });
+    }
+    edges.sort((a, b) => a.d - b.d);
+    for (const e of edges) {
+      const n = Math.hypot(e.nx, e.ny);
+      for (const s of [1, -1]) {
+        const x = e.px + s * e.nx / n * clearance, y = e.py + s * e.ny / n * clearance;
+        if (jsPointInPolygon(x, y, polygon)) continue;
+        return { x: round4(x), y: round4(y), yaw_deg: Math.round(Math.atan2(objY - y, objX - x) * 180 / Math.PI), edge_m: e.d };
+      }
+    }
+    return null;
+  }
+
   function openObjectModal(objX, objY, customApproach = null, existingId = null) {
     editingObjectId = existingId;
     const tpl = activeTemplate || {};
@@ -2513,9 +2539,18 @@ HTML_PAGE = r'''<!DOCTYPE html>
         app = customApproach;
       } else {
         const refCenter = (containing && containing.data && containing.data.center) ? containing.data.center : null;
-        app = jsCalculateApproach(objX, objY, refCenter, 0.60);
+        app = (containing && jsTableApproach(objX, objY, containing.data.polygon)) || jsCalculateApproach(objX, objY, refCenter, 0.60);
       }
     }
+
+    const { edge_m: edgeM, ...appClean } = app;
+    app = appClean;
+    const inTable = containing && jsPointInPolygon(app.x, app.y, containing.data.polygon);
+    const reachWarn = document.getElementById('obj-reach-warning');
+    reachWarn.textContent = inTable
+      ? '⚠ El punto de aproximación cae dentro de la mesa: el robot no podrá llegar. Volvé a colocar el objeto o arrastrá hasta afuera.'
+      : (edgeM > 0.20 ? `⚠ El objeto está a ${Math.round(edgeM * 100)} cm del borde: el brazo puede no alcanzarlo sin docking.` : '');
+    reachWarn.style.display = reachWarn.textContent ? 'block' : 'none';
 
     pendingObject = {
       x: round4(objX),

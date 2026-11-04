@@ -27,7 +27,7 @@ from std_srvs.srv import Trigger
 
 from .command_parser import compile_command
 from .node import _share_config
-from .places import load_places
+from .places import load_objects, load_places, load_tables
 from .plan import parse_plan, validate_plan
 from .skills import default_registry
 
@@ -39,17 +39,24 @@ PAGE = r"""<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name
 h1{font-size:22px;margin:4px 0 12px}textarea{width:100%;font:17px system-ui;padding:12px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--fg);min-height:76px}
 button{font:600 15px system-ui;padding:10px 16px;border:0;border-radius:8px;margin:8px 8px 0 0;cursor:pointer;background:var(--line);color:var(--fg)}
 button.go{background:var(--acc);color:#07111f}button.stop{background:var(--err);color:#fff}button:disabled{opacity:.4;cursor:default}
-.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px;margin-top:14px}.mut{color:var(--mut);font-size:14px}.err{color:var(--err)}
+button.it{font-size:14px;padding:5px 9px;margin:4px 4px 0 0}button.bad{outline:1px solid var(--err)}.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px;margin-top:14px}.mut{color:var(--mut);font-size:14px}.err{color:var(--err)}
 ol{margin:6px 0 0;padding-left:24px}li{padding:3px 0}.st{font-size:12px;font-weight:700;padding:2px 7px;border-radius:5px;margin-left:6px;background:var(--line)}
 .SUCCEEDED{background:var(--ok);color:#06140d}.FAILED,.CANCELED{background:var(--err);color:#fff}.RUNNING{background:var(--run);color:#1b1300}
 </style></head><body><h1>Commander del robot</h1><div class="mut" id="mode"></div>
-<textarea id="t" placeholder="Anda a recepcion, saluda a la persona, despues dirigite a la mesa, busca una botella y llevala a la cocina"></textarea>
+<textarea id="t" placeholder="Agarra el objeto 1 y llevalo a la cocina"></textarea>
 <div><button id="p">Ver plan</button><button id="x" class="go" disabled>Ejecutar</button><button id="c" class="stop">Cancelar mision</button></div>
+<div class="card"><b>En el mapa</b> <span class="mut">(toca para agregar al pedido)</span><div id="items" class="mut">-</div></div>
 <div class="card" id="plan"><span class="mut">Escribi un pedido y toca "Ver plan".</span></div>
 <div class="card"><b>Mision</b> <span id="ms" class="st">-</span><div class="mut" id="mm"></div><ol id="steps"></ol></div>
 <script>
 const $=i=>document.getElementById(i);let ready=false;
-const esc=s=>String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+async function items(){const j=await(await fetch('/api/items')).json();
+ const o=j.objects.map(x=>'<button class="it'+(x.problem?' bad':'')+'" data-t="objeto '+x.number+'" title="'+esc(x.problem)+'">#'+x.number+' '+esc(x.name)+' <small>'+esc(x.cls)+(x.on?' en '+esc(x.on):'')+'</small></button>').join('');
+ const p=j.places.map(x=>'<button class="it" data-t="'+esc(x)+'">'+esc(x)+'</button>').join('');
+ $('items').innerHTML='<div>Objetos: '+(o||'ninguno')+'</div><div>Lugares: '+(p||'ninguno')+'</div>';}
+$('items').onclick=e=>{const b=e.target.closest('button');if(!b)return;const t=$('t');t.value=(t.value?t.value.trimEnd()+' ':'')+b.dataset.t;t.focus();};
+items();setInterval(items,5000);
 async function api(u,b){const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});return r.json();}
 $('p').onclick=async()=>{const j=await api('/api/plan',{text:$('t').value});ready=j.ok;$('x').disabled=!ready;
  $('plan').innerHTML=j.cancel?'<span class="mut">Eso es un pedido de cancelar: usa el boton rojo.</span>':j.ok?'<b>Plan</b><ol>'+j.steps.map(s=>'<li>'+esc(s)+'</li>').join('')+'</ol>':'<b class="err">No lo puedo hacer</b><ul>'+j.errors.map(e=>'<li class="err">'+esc(e)+'</li>').join('')+'</ul>';};
@@ -94,7 +101,7 @@ class Commander(Node):
     def compile(self, text):
         """Pedido -> resultado (dict). Valida contra el registro y el mapa con las mismas reglas del ejecutor."""
         places = self.places()
-        c = compile_command(text, places)
+        c = compile_command(text, places, objects=load_objects(self.semantic_map), tables=load_tables(self.semantic_map))
         errors = list(c.errors)
         plan = None
         if c.ok:
@@ -102,6 +109,11 @@ class Commander(Node):
             errors = validate_plan(parse_plan(plan), self.registry, places)
         return dict(text=text, ok=c.ok and not errors, steps=c.steps_text, errors=errors, cancel=c.cancel, plan=plan,
                     executed=False)
+
+    def items(self):
+        """Lo que se puede pedir: objetos en orden numerico y lugares."""
+        places = sorted(k for k in self.places() if not k.startswith("object:"))
+        return dict(objects=load_objects(self.semantic_map), places=places)
 
     def run(self, res):
         if self.pub_run.get_subscription_count() == 0:
@@ -150,6 +162,8 @@ class Commander(Node):
                 if self.path.startswith("/api/status"):
                     info = f"dominio {os.environ.get('ROS_DOMAIN_ID', '0')} | ejecutor {'conectado' if node.pub_run.get_subscription_count() else 'NO conectado'} | modo {node.mission.get('mode', '?')}"
                     return self._send(json.dumps(dict(info=info, mission=node.mission)).encode())
+                if self.path.startswith("/api/items"):
+                    return self._send(json.dumps(node.items()).encode())
                 return self._send(PAGE.encode(), "text/html; charset=utf-8")
 
             def do_POST(self):

@@ -159,10 +159,10 @@ def test_create_object_entry_with_table(sample_furniture):
     # Z debe ser altura de mesa (0.76) + 0.10 = 0.86
     assert math.isclose(entry["z"], 0.86, abs_tol=1e-3)
 
-    # Approach debe existir a 0.60m del objeto
+    # Approach fuera de la mesa (a 0.60 m del objeto caia adentro y Nav2 no podia llegar)
     app = entry["approach"]
-    dist = math.hypot(app["x"] - (-2.6), app["y"] - (-1.8))
-    assert math.isclose(dist, 0.60, abs_tol=1e-3)
+    polygon = sample_furniture["mesa_de_centro"]["polygon"]
+    assert not point_in_polygon(app["x"], app["y"], polygon)
 
     # Validación
     valid, msg = validate_object_entry(entry)
@@ -288,7 +288,7 @@ seats:
             os.remove(temp_path)
 
 
-def test_semantic_map_manager_objects_integration():
+def test_semantic_map_manager_objects_integration(monkeypatch, tmp_path):
     """
     Verifica que la clase SemanticMapManager de map_zone_editor
     cargue y guarde objetos adecuadamente preservando la estructura.
@@ -339,7 +339,10 @@ def test_semantic_map_manager_objects_integration():
         yaml.dump({"resolution": 0.05, "origin": [-5.0, -5.0, 0.0], "image": "dummy.pgm"}, f)
 
     try:
+        # save_data tambien escribe waypoints.yaml y ~/waypoints_base_athome.yaml: nunca los reales en un test
+        monkeypatch.setenv("HOME", str(tmp_path))
         manager = SemanticMapManager(map_yaml_path=dummy_map_yaml, semantic_yaml_path=sem_yaml_path)
+        manager.waypoints_yaml_path = str(tmp_path / "waypoints.yaml")
 
         # Verificar carga de objects
         assert len(manager.objects) == 1
@@ -377,3 +380,24 @@ def test_semantic_map_manager_objects_integration():
         if os.path.exists(dummy_map_yaml):
             os.remove(dummy_map_yaml)
 
+
+
+def test_table_approach_is_outside_and_faces_the_object():
+    from base_athome_navigation.semantic_objects import calculate_table_approach
+    big = [[-4.3154, -4.265], [-0.8255, -4.265], [-0.8255, -0.5757], [-4.3154, -0.5757]]    # mesa de 3,5 m
+    for x, y in ((-2.5, -2.4), (-1.0, -2.0), (-4.2, -4.2), (-2.57, -0.7)):
+        app = calculate_table_approach(x, y, big)
+        assert not point_in_polygon(app["x"], app["y"], big)
+        yaw = math.radians(app["yaw_deg"])
+        assert math.hypot(x - app["x"], y - app["y"]) > 0.49
+        look = math.atan2(y - app["y"], x - app["x"])
+        assert math.hypot(math.cos(look) - math.cos(yaw), math.sin(look) - math.sin(yaw)) < 0.01
+    app = calculate_table_approach(-1.0, -2.0, big)      # borde derecho, a 17,45 cm
+    assert app["x"] == pytest.approx(-0.8255 + 0.50) and app["y"] == pytest.approx(-2.0) and app["yaw_deg"] == 180.0
+
+
+def test_table_approach_handles_both_polygon_directions_and_degenerate():
+    from base_athome_navigation.semantic_objects import calculate_table_approach
+    ccw = [[0, 0], [1, 0], [1, 1], [0, 1]]
+    assert calculate_table_approach(0.5, 0.1, ccw) == calculate_table_approach(0.5, 0.1, ccw[::-1])
+    assert calculate_table_approach(0.5, 0.1, [[0, 0], [1, 0]]) is None

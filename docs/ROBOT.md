@@ -393,7 +393,7 @@ no arranca la RealSense, detector por color (`SimColorDetector`).
 |---|---|---|
 | Percepción/HRI | `python3 -m pytest -q src/base_athome_perception/test` | 111 passed |
 | Simulación | `python3 -m pytest -q src/base_athome_sim/test` | 6 passed |
-| Skills (puerta + misiones + commander) | `env -u PYTHONPATH python3 -m pytest -q src/base_athome_skills/test` | 63 passed, 1 skipped (2026-11-04) |
+| Skills (puerta + misiones + commander) | `env -u PYTHONPATH python3 -m pytest -q src/base_athome_skills/test` | 76 passed, 1 skipped (2026-11-04) |
 | Elevador | `ROS_DOMAIN_ID=77 python3 -m pytest -q src/base_athome_bringup/test/test_torso_state.py` | 6 passed |
 | Aprobación acotada Antigravity | `cd tools/agents && python3 -m pytest -q` | 40 passed |
 | Misiones en simulación | `[RVIZ=1] src/base_athome_skills/scripts/sim_mission.sh <plan.yaml> <mapa_sim>` | demo_fetch_bottle SUCCEEDED (72–112 s) |

@@ -51,6 +51,13 @@ La web muestra el plan antes de ejecutar y el avance en vivo. Por tópico (`/com
 `auto_execute:=true`; "stop"/"cancelá" cancela siempre. En dominio 10 exige `real:=true`, y el ejecutor mantiene
 sus guardas (`mode:=real` con `supervised:=true`). Estado: `SIM_PASS` 2026-11-04; con Nav2 real `PENDIENTE`.
 
+**Objetos del mapa.** Lee `objects` y `furniture` de `semantic_map.yaml` (se colocan en la pestaña Objetos del editor):
+"agarrá el objeto 1 y llevalo a la cocina", "traé las pringles", "poné el 2 en la mesa de centro", "andá al objeto 1".
+Va al punto de aproximación del objeto, lo busca con la cámara y lo agarra. Si la clase coincide con varios, pide el
+número; un lugar nombrado antes manda ("andá a la cocina y buscá una botella" busca ahí). Un mueble sin waypoint usa
+el punto del objeto de menor número que tenga encima. La posición del objeto en el mapa no guía el agarre: lo decide
+la cámara, por clase (`other` usa el nombre).
+
 ### Plan
 ```yaml
 name: demo

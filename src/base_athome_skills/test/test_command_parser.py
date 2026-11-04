@@ -179,3 +179,101 @@ def test_follow_person_is_explicitly_unimplemented():
 def test_plan_text_shows_the_condition():
     c = compile_command("anda a la mesa, busca una botella, si no la ves deci no esta", PLACES)
     assert c.ok and c.steps_text[-1].startswith("si no lo encuentra:")
+
+
+# --- objetos y mesas del mapa ---
+MAP_OBJECTS = [
+    dict(number=1, key="obj_1", name="agua", cls="bottle", on="mesa_a", label="bottle", place="object:obj_1", problem=""),
+    dict(number=2, key="obj_2", name="pringles", cls="can", on="mesa_a", label="can", place="object:obj_2", problem=""),
+    dict(number=3, key="obj_3", name="soda", cls="bottle", on="mesa_b", label="bottle", place="object:obj_3", problem=""),
+    dict(number=4, key="obj_4", name="mala", cls="cup", on="mesa_b", label="cup", place="object:obj_4",
+         problem="su punto de aproximacion cae dentro de 'mesa_b'"),
+]
+MAP_TABLES = {"mesa_a": dict(name="Mesa A", type="table"), "mesa_b": dict(name="Mesa B", type="table"),
+              "mesa_c": dict(name="Mesa C", type="table")}
+MAP_PLACES = {"kitchen": (0, 0, 0), "home": (0, 0, 0), "mesa_a": (0, 0, 0), "mesa_b": (0, 0, 0), "object:obj_1": (0, 0, 0),
+              "object:obj_2": (0, 0, 0), "object:obj_3": (0, 0, 0), "object:obj_4": (0, 0, 0)}
+
+
+def _map(text):
+    return compile_command(text, MAP_PLACES, objects=MAP_OBJECTS, tables=MAP_TABLES)
+
+
+def _calls(c):
+    return [(s["skill"], next(iter(s["args"].values()), None)) for s in c.plan["steps"]]
+
+
+def test_object_by_number_goes_to_it_then_picks_and_carries():
+    c = _map("agarra el objeto 1 y llevalo a la cocina")
+    assert c.ok, c.errors
+    assert _calls(c) == [("navigate_to", "object:obj_1"), ("arm_pose", "pre_grasp"), ("detect_object", "bottle"),
+                         ("pick_object", "bottle"), ("navigate_to", "kitchen"), ("place_object", "kitchen")]
+    assert validate_plan(parse_plan(c.plan), REG, MAP_PLACES) == []
+
+
+def test_object_number_variants():
+    for text in ("agarra el 2", "traeme el objeto numero 2 a la cocina", "pick up item 2", "agarra el objeto dos",
+                 "agarra las pringles"):
+        c = _map(text)
+        assert c.ok, (text, c.errors)
+        assert c.plan["steps"][0]["args"] == {"place": "object:obj_2"}, text
+
+
+def test_label_sent_to_detector_is_the_class_not_the_name():
+    assert ("detect_object", "can") in _calls(_map("agarra el 2"))
+
+
+def test_unknown_number_lists_what_exists():
+    c = _map("agarra el objeto 9")
+    assert not c.ok and "no hay objeto numero 9" in c.errors[0] and "#1 agua" in c.errors[0]
+
+
+def test_ambiguous_class_asks_for_the_number():
+    c = _map("agarra la botella")
+    assert not c.ok and "deci el numero" in c.errors[0] and "#1" in c.errors[0] and "#3" in c.errors[0]
+
+
+def test_class_disambiguated_by_the_table_already_visited():
+    c = _map("anda a la mesa b y agarra la botella")
+    assert c.ok, c.errors
+    assert _calls(c)[:2] == [("navigate_to", "mesa_b"), ("navigate_to", "object:obj_3")]
+
+
+def test_requested_place_wins_over_the_map():
+    c = _map("anda a la cocina y busca una botella")
+    assert c.ok and _calls(c)[0] == ("navigate_to", "kitchen")
+    assert not any(s["args"].get("place", "").startswith("object:") for s in c.plan["steps"])
+
+
+def test_number_and_name_must_agree():
+    c = _map("agarra la lata 1")
+    assert not c.ok and "es agua" in c.errors[0]
+
+
+def test_object_with_bad_approach_is_rejected():
+    c = _map("agarra el 4")
+    assert not c.ok and "cae dentro" in c.errors[0]
+
+
+def test_go_to_object_and_pick_does_not_travel_twice():
+    c = _map("anda al objeto 1 y agarralo")
+    assert c.ok, c.errors
+    assert [s for s, _ in _calls(c)].count("navigate_to") == 1
+
+
+def test_two_tables_need_a_name_and_empty_table_says_why():
+    c = _map("anda a la mesa")
+    assert not c.ok and "varias mesas" in c.errors[0]
+    c = _map("anda a la mesa c")
+    assert not c.ok and "agregale un waypoint" in c.errors[0]
+
+
+def test_put_object_on_a_table():
+    c = _map("pone el objeto 2 en la mesa b")
+    assert c.ok, c.errors
+    assert _calls(c)[-2:] == [("navigate_to", "mesa_b"), ("place_object", "mesa_b")]
+
+
+def test_second_object_while_holding_is_rejected():
+    c = _map("agarra el 1 y agarra el 2")
+    assert not c.ok and "ya tengo" in c.errors[0]

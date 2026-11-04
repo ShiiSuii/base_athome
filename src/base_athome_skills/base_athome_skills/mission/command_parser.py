@@ -71,6 +71,9 @@ class _Ctx:
     last_obj: Optional[str] = None
     last_detect: Optional[str] = None     # id del ultimo detect_object
     cond: Optional[Dict[str, str]] = None # "if" a aplicar a los pasos que se agregan
+    objects: List[Dict[str, Any]] = field(default_factory=list)   # objetos del mapa, en orden numerico
+    tables: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    place: Optional[str] = None           # donde va a estar el robot en este punto del plan
     n: int = 0
 
     def add(self, skill, args, desc, retries=0, recover=True, timeout=None):
@@ -96,8 +99,9 @@ def _strip_articles(t: str) -> str:
         t = new
 
 
-def find_place(phrase: str, places: Dict[str, Any]) -> Tuple[Optional[str], str]:
-    """(nombre en el mapa o None, texto limpio). Prueba alias -> nombre del mapa, y el nombre literal."""
+def find_place(phrase: str, places: Dict[str, Any], tables: Optional[Dict[str, Dict[str, str]]] = None
+               ) -> Tuple[Optional[str], str]:
+    """(nombre en el mapa o None, texto limpio). Prueba alias -> nombre del mapa, el nombre literal y los muebles."""
     p = _strip_articles(phrase)
     p = re.sub(r"^(?:punto|waypoint|point|lugar)\s+", "", p).strip()
     if not p:
@@ -107,7 +111,100 @@ def find_place(phrase: str, places: Dict[str, Any]) -> Tuple[Optional[str], str]
     for canon, aliases in PLACE_ALIASES.items():
         if p in aliases and resolve(places, canon) is not None:
             return canon, p
+    for tid, t in (tables or {}).items():                # por el nombre visible del mueble
+        if norm(t["name"]) == p and resolve(places, tid) is not None:
+            return tid, p
+    mesas = [t for t, d in (tables or {}).items() if d["type"] == "table"]
+    if p in PLACE_ALIASES["table"] and len(mesas) == 1 and resolve(places, mesas[0]) is not None:
+        return mesas[0], p                               # "la mesa", si hay una sola
     return None, p
+
+
+def _unknown_place(c: "_Ctx", cleaned: str) -> str:
+    """Por que no se puede ir a ese lugar, con lo que si existe."""
+    mesas = [t for t, d in c.tables.items() if d["type"] == "table"]
+    if cleaned in PLACE_ALIASES["table"] and len(mesas) > 1:
+        return f"hay varias mesas ({', '.join(mesas)}): deci cual"
+    for tid, t in c.tables.items():
+        if cleaned in (norm(t["name"]), norm(tid).replace("_", " "), norm(tid)) or \
+                (cleaned in PLACE_ALIASES["table"] and t["type"] == "table"):
+            return f"'{tid}' no tiene waypoint ni objetos encima: agregale un waypoint con su nombre en el editor"
+    known = sorted(k for k in c.places if not k.startswith("object:"))
+    return f"no conozco el lugar '{cleaned}' (conozco: {', '.join(known) or 'ninguno'})"
+
+
+GENERIC_OBJECT = ("objeto", "object", "item", "cosa", "thing")
+NUM_WORDS = {"uno": 1, "dos": 2, "tres": 3, "cuatro": 4, "cinco": 5, "seis": 6, "siete": 7, "ocho": 8, "nueve": 9,
+             "diez": 10, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8,
+             "nine": 9, "ten": 10}
+_NUM_RE = re.compile(rf"^(?:(.*?)\s+)?#?(\d+|{'|'.join(NUM_WORDS)})$")
+_NUM_KEYWORD_RE = re.compile(r"^(?:(?:objeto|object|item|numero|nro|number|el|la|the)\s*)*$")
+
+
+def _describe(o: Dict[str, Any]) -> str:
+    return f"#{o['number']} {o['name']}" + (f" en {o['on']}" if o["on"] else "")
+
+
+def _match_objects(c: "_Ctx", phrase: str) -> Tuple[List[Dict[str, Any]], bool, Optional[str]]:
+    """Objetos del mapa que nombra la frase: (candidatos, nombrado por numero, error)."""
+    p = _strip_articles(phrase)
+    if not c.objects or not p:
+        m = _NUM_RE.match(p) if p else None
+        if m and _NUM_KEYWORD_RE.match(m.group(1) or ""):
+            return [], True, f"no hay objeto numero {m.group(2)} en el mapa"
+        return [], False, None
+    m = _NUM_RE.match(p)
+    prefix = (m.group(1) or "").strip() if m else ""
+    if m and (_NUM_KEYWORD_RE.match(prefix) or find_object(re.sub(r"\s*numero$", "", prefix))):
+        num = int(NUM_WORDS.get(m.group(2), m.group(2)))
+        found = [o for o in c.objects if o["number"] == num]
+        if not found:
+            have = ", ".join(_describe(o) for o in c.objects)
+            return [], True, f"no hay objeto numero {num} (hay: {have})"
+        o = found[0]
+        wanted = None if _NUM_KEYWORD_RE.match(prefix) else find_object(re.sub(r"\s*numero$", "", prefix))
+        if wanted and wanted not in (o["cls"], norm(o["name"])):
+            return [], True, f"el objeto {num} es {o['name']} ({o['cls']}), no {wanted}"
+        return found, True, None
+    canon = find_object(p)
+    if canon is None or p in GENERIC_OBJECT:
+        return [], False, None
+    by_name = [o for o in c.objects if canon == norm(o["name"]) or p == norm(o["name"])]
+    return by_name or [o for o in c.objects if canon == o["cls"]], False, None
+
+
+def _go_to_object(c: "_Ctx", o: Dict[str, Any]) -> None:
+    c.last_obj = o["label"]                 # "anda al objeto 1 y agarralo"
+    if c.place != o["place"]:
+        c.add("navigate_to", {"place": o["place"]}, f"ir al objeto {_describe(o)}", retries=1, timeout=180)
+        c.place, c.observing, c.seen = o["place"], False, None
+
+
+def _target(c: "_Ctx", phrase: str, raw: str) -> Optional[str]:
+    """Que objeto pide la frase. Si es un objeto del mapa, agrega el viaje hasta el. Devuelve la etiqueta a detectar."""
+    p = _strip_articles(phrase)
+    if not p or p in PRONOUNS or p in GENERIC_OBJECT:
+        return None
+    found, by_number, err = _match_objects(c, p)
+    if err:
+        c.errors.append(f"'{raw}': {err}")
+        return None
+    if found and not by_number and c.place:
+        here = [o for o in found if c.place in (o["place"], o["on"])]
+        if not here:                       # ya lo mandaron a otro lugar: busca ahi con la camara, como pidieron
+            return find_object(p)
+        found = here
+    if not found:
+        return find_object(p)
+    if len(found) > 1:
+        c.errors.append(f"'{raw}': hay {len(found)} en el mapa ({', '.join(_describe(o) for o in found)}): deci el numero")
+        return None
+    o = found[0]
+    if o["problem"]:
+        c.errors.append(f"'{raw}': objeto {_describe(o)}: {o['problem']}")
+        return None
+    _go_to_object(c, o)
+    return o["label"]
 
 
 def find_object(phrase: str) -> Optional[str]:
@@ -139,10 +236,22 @@ def _named_place(c: "_Ctx", phrase: str, raw: str) -> Tuple[str, bool]:
 
 
 def _go(c: _Ctx, phrase: str, raw: str) -> None:
-    place, cleaned = find_place(phrase, c.places)
-    if place is None:
-        c.errors.append(f"no conozco el lugar '{cleaned or raw}' (conozco: {', '.join(sorted(c.places)) or 'ninguno'})")
+    place, cleaned = find_place(phrase, c.places, c.tables)
+    if place is None:                       # "anda al objeto 1", "anda a la botella"
+        found, by_number, err = _match_objects(c, phrase)
+        if err or found:
+            if len(found) > 1:
+                err = f"hay {len(found)} en el mapa ({', '.join(_describe(o) for o in found)}): deci el numero"
+            elif found and found[0]["problem"]:
+                err = f"objeto {_describe(found[0])}: {found[0]['problem']}"
+            if err:
+                c.errors.append(f"'{raw}': {err}")
+            else:
+                _go_to_object(c, found[0])
+            return
+        c.errors.append(_unknown_place(c, cleaned or raw))
         return
+    c.place = place
     c.observing = False
     c.seen = None                           # lo visto antes ya no sirve en otro lugar
     if place in ("home", "default"):
@@ -234,10 +343,10 @@ def _clause(c: _Ctx, raw: str, quotes: Dict[str, str]) -> None:
             return
         det = next(s for s in c.steps if s["id"] == c.last_detect)
         det["on_failure"] = "continue"       # no encontrarlo es un caso previsto, no un error
-        saved = (c.seen, c.observing, c.holding)
+        saved = (c.seen, c.observing, c.holding, c.place)
         c.cond = {"step": c.last_detect, "state": "FAILED"}
         _clause(c, action, quotes)
-        c.seen, c.observing, c.holding = saved
+        c.seen, c.observing, c.holding, c.place = saved
         c.cond = {"step": c.last_detect, "state": "SUCCEEDED"}   # lo que sigue exige haberlo visto
         return
     verb, rest = None, t
@@ -292,7 +401,9 @@ def _clause(c: _Ctx, raw: str, quotes: Dict[str, str]) -> None:
         rest, ok = _named_place(c, rest, raw)
         if not ok:
             return
-        obj = find_object(rest) or c.last_obj
+        obj = _target(c, rest, raw) or c.last_obj
+        if c.errors:
+            return
         if obj is None:
             c.errors.append(f"'{raw}': que objeto busco?")
             return
@@ -302,20 +413,26 @@ def _clause(c: _Ctx, raw: str, quotes: Dict[str, str]) -> None:
         rest, ok = _named_place(c, rest, raw)
         if not ok:
             return
-        _pick(c, find_object(rest), raw)
+        obj = _target(c, rest, raw)
+        if c.errors:
+            return
+        _pick(c, obj, raw)
     elif verb == "place":
         rest = re.sub(r"\bdown\b", "", rest).strip()
         m = re.search(r"\b(?:en|sobre|on|in|at|into)\s+(.+)$", rest)
         dest = None
-        named = find_object(rest[:m.start()] if m else rest)
-        if named and not c.holding:           # "pone la botella en la mesa": agarrarla primero
-            _pick(c, named, raw)
+        if not c.holding:                     # "pone la botella en la mesa": agarrarla primero
+            named = _target(c, rest[:m.start()] if m else rest, raw)
             if c.errors:
                 return
+            if named:
+                _pick(c, named, raw)
+                if c.errors:
+                    return
         if m:
-            dest, cleaned = find_place(m.group(1), c.places)
+            dest, cleaned = find_place(m.group(1), c.places, c.tables)
             if dest is None:
-                c.errors.append(f"no conozco el lugar '{cleaned}'")
+                c.errors.append(_unknown_place(c, cleaned))
                 return
             _go(c, m.group(1), raw)
         _place(c, dest, raw)
@@ -323,33 +440,37 @@ def _clause(c: _Ctx, raw: str, quotes: Dict[str, str]) -> None:
         m = re.search(r"\b(?:a|al|hasta|hacia|to|into)\s+((?:la |el |the )?[\w ]+)$", rest)
         obj_txt, dest_txt = rest, None
         if m:
-            cand, _ = find_place(m.group(1), c.places)
+            cand, _ = find_place(m.group(1), c.places, c.tables)
             if cand is None and not re.fullmatch(r"(?:mi|me|ti)", m.group(1).strip()):
-                c.errors.append(f"no conozco el lugar '{_strip_articles(m.group(1))}'")
+                c.errors.append(_unknown_place(c, _strip_articles(m.group(1))))
                 return
             if cand is not None:
                 dest_txt, obj_txt = m.group(1), rest[:m.start()]
-        obj = find_object(obj_txt) if obj_txt.strip() else None
-        if c.holding and (obj is None or obj == c.holding):
+        if c.holding and (not obj_txt.strip() or find_object(obj_txt) in (None, c.holding)):
             pass
         else:
+            obj = _target(c, obj_txt, raw) if obj_txt.strip() else None
+            if c.errors:
+                return
             _pick(c, obj, raw)
             if c.errors:
                 return
         if dest_txt is not None:
             _go(c, dest_txt, raw)
-            _place(c, find_place(dest_txt, c.places)[0], raw)
+            _place(c, find_place(dest_txt, c.places, c.tables)[0], raw)
         else:
             c.add("speak", {"text": "Here you are."}, "avisar que trae el objeto", recover=False)
 
 
-def compile_command(text: str, places: Dict[str, Any], name: str = "pedido") -> Compiled:
+def compile_command(text: str, places: Dict[str, Any], name: str = "pedido",
+                    objects: Optional[List[Dict[str, Any]]] = None,
+                    tables: Optional[Dict[str, Dict[str, str]]] = None) -> Compiled:
     if not text or not text.strip():
         return Compiled(False, errors=["pedido vacio"])
     if CANCEL_RE.match(norm(text).strip()):
         return Compiled(False, cancel=True)
     parts, quotes = _split(norm(text))
-    c = _Ctx(places=places)
+    c = _Ctx(places=places, objects=objects or [], tables=tables or {})
     for raw in parts:
         _clause(c, raw, quotes)
     if not c.errors and not c.steps:

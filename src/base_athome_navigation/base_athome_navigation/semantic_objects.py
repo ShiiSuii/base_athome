@@ -19,6 +19,8 @@ ALLOWED_OBJECT_CLASSES = ["can", "bottle", "cup", "box", "other"]
 DEFAULT_APPROACH_DISTANCE_M = 0.60
 DEFAULT_OBJECT_CLEARANCE_M = 0.10
 FALLBACK_OBJECT_Z_M = 0.865
+# El centro del robot no puede acercarse a un obstaculo a menos de robot_radius (0.44 m en nav2_params.yaml).
+APPROACH_EDGE_CLEARANCE_M = 0.50
 
 
 def point_in_polygon(x: float, y: float, polygon: List[List[float]]) -> bool:
@@ -152,6 +154,42 @@ def calculate_approach_pose(
     }
 
 
+def calculate_table_approach(
+    obj_x: float,
+    obj_y: float,
+    polygon: List[List[float]],
+    clearance: float = APPROACH_EDGE_CLEARANCE_M,
+) -> Optional[Dict[str, float]]:
+    """
+    Punto de approach frente al borde del mueble mas cercano al objeto, a 'clearance' metros del borde
+    y mirando al objeto. Si ese borde no sirve (mueble no convexo) prueba el siguiente; None si ninguno sirve.
+    """
+    n = len(polygon or [])
+    if n < 3:
+        return None
+    edges = []
+    for i in range(n):
+        ax, ay = float(polygon[i][0]), float(polygon[i][1])
+        bx, by = float(polygon[(i + 1) % n][0]), float(polygon[(i + 1) % n][1])
+        ex, ey = bx - ax, by - ay
+        length_sq = ex * ex + ey * ey
+        if length_sq < 1e-8:
+            continue
+        t = max(0.0, min(1.0, ((obj_x - ax) * ex + (obj_y - ay) * ey) / length_sq))
+        px, py = ax + t * ex, ay + t * ey
+        edges.append((math.hypot(obj_x - px, obj_y - py), px, py, -ey, ex))
+    for _, px, py, nx, ny in sorted(edges):
+        norm_len = math.hypot(nx, ny)
+        for sign in (1.0, -1.0):       # la normal hacia afuera depende del sentido del poligono
+            app_x = px + sign * nx / norm_len * clearance
+            app_y = py + sign * ny / norm_len * clearance
+            if point_in_polygon(app_x, app_y, polygon):
+                continue
+            yaw = math.degrees(math.atan2(obj_y - app_y, obj_x - app_x))
+            return {"x": round(app_x, 4), "y": round(app_y, 4), "yaw_deg": round(yaw, 1)}
+    return None
+
+
 def create_object_entry(
     number: int,
     name: str,
@@ -174,12 +212,14 @@ def create_object_entry(
     detected_on = ""
     table_height = 0.76
     ref_center = None
+    table_polygon = None
 
     if furniture is not None:
         f_id, f_data = find_containing_furniture(x, y, furniture)
         if f_id and f_data:
             detected_on = f_id
             table_height = float(f_data.get("height_m", 0.76))
+            table_polygon = f_data.get("polygon")
             center = f_data.get("center")
             if center and "x" in center and "y" in center:
                 ref_center = (float(center["x"]), float(center["y"]))
@@ -195,7 +235,7 @@ def create_object_entry(
         final_z = round(float(z), 3)
 
     if approach is None:
-        approach = calculate_approach_pose(
+        approach = calculate_table_approach(x, y, table_polygon) or calculate_approach_pose(
             x, y, ref_center=ref_center, distance=DEFAULT_APPROACH_DISTANCE_M
         )
     else:

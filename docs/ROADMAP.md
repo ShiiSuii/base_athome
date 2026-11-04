@@ -114,7 +114,9 @@ Escala: **P0** desbloquea seguridad/progreso · **P1** valor demostrable · **P2
 | HOME-46 | Escena MoveIt: ~~pares internos por muestreo~~ (hecho), **falta mesa** como objeto de colisión | Claude | IK rechaza poses que atraviesan la mesa en sim |
 | HOME-47 | Skills `detect_object` (3D), `pick_object`/`place_object` con confirmación por ancho medido de la pinza; recién entonces pasan a `available` | Claude | SIM_PASS → serie LAB con % de éxito |
 | HOME-48 | Evaluar MoveIt Task Constructor (rama `ros2`, compilar en Jazzy; no instalado) cuando exista HOME-45 | Claude | decisión ADOPTAR/NO con prueba en sim |
-| HOME-57 | Commander: pedido en lenguaje natural ES/EN → plan validado → ejecutor, con web local (reemplaza HOME-40). Hecho en sim; falta probarlo con Nav2 real y sumar skills de personas (HOME-49) | Claude | `SIM_PASS` 2026-11-04; real `PENDIENTE` |
+| HOME-57 | Commander: pedido en lenguaje natural ES/EN → plan validado → ejecutor, con web local (reemplaza HOME-40) y objetos/mesas del mapa. Hecho en sim; falta probarlo con Nav2 real y sumar skills de personas (HOME-49) | Claude | `SIM_PASS` 2026-11-04; real `PENDIENTE` |
+| HOME-58 | Docking a la mesa: al llegar, acercar la base hasta dejar el objeto al alcance del brazo. Nav2 deja el centro del robot a ≥0,44 m del mueble (tolerancia 0,18 m), así que objetos lejos del borde quedan fuera de alcance. Sin modificar Nav2 | Claude | pendiente; pedido por el usuario para después |
+| HOME-59 | Detector: `yolov8n` COCO ve `bottle` y `cup`, pero no `can` ni `box`. Para Pringles/Coca hace falta un modelo entrenado; `pick` tampoco distingue entre dos objetos de la misma clase en la misma mesa | Claude | pendiente |
 | HOME-49 | Migrar pasos de `mission_sequencer` (receive_guest, fetch, guide, place) a skills del ejecutor; plan GPSR → ejecutor (depende de HOME-15b: el parser pierde pasos) | Claude | un solo sistema de misiones |
 
 ### Teleoperación y HRI (2026-11-03)
