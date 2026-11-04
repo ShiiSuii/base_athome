@@ -25,6 +25,7 @@ trap cleanup EXIT; trap 'exit 130' INT TERM
 nav_up() { timeout 6 ros2 action list 2>/dev/null | grep -q '^/navigate_to_pose$'; }
 if nav_up; then
   echo "Nav2 ya esta corriendo."
+  "$HERE/nav_map_sync.sh"
 elif [ "${COMMANDER_NO_NAV:-0}" = 1 ]; then
   echo "Nav2 no esta corriendo (COMMANDER_NO_NAV=1: no se levanta)."
 else

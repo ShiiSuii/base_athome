@@ -401,3 +401,35 @@ def test_table_approach_handles_both_polygon_directions_and_degenerate():
     ccw = [[0, 0], [1, 0], [1, 1], [0, 1]]
     assert calculate_table_approach(0.5, 0.1, ccw) == calculate_table_approach(0.5, 0.1, ccw[::-1])
     assert calculate_table_approach(0.5, 0.1, [[0, 0], [1, 0]]) is None
+
+
+class _Fake:
+    def __init__(self, param="", service="", fail=False):
+        self.param, self.service, self.fail, self.calls = param, service, fail, []
+
+    def __call__(self, cmd, **_):
+        import subprocess
+        if self.fail:
+            raise subprocess.TimeoutExpired(cmd, 1)
+        self.calls.append(cmd)
+        out = self.param if cmd[1] == "param" else self.service
+        return type("R", (), {"stdout": out})()
+
+
+def test_reload_nav_map_only_loads_the_same_file(tmp_path):
+    from base_athome_navigation.map_zone_editor import reload_nav_map
+    path = str(tmp_path / "m.yaml")
+    ok = _Fake(f"String value is: {path}\n", "response:\nLoadMap_Response(map=x, result=0)\n")
+    assert reload_nav_map(path, run=ok)["state"] == "reloaded"
+    assert ok.calls[1][:3] == ["ros2", "service", "call"] and path in ok.calls[1][-1]
+    other = _Fake("String value is: /otro/mapa.yaml\n", "result=0")
+    res = reload_nav_map(path, run=other)
+    assert res["state"] == "other_map" and "/otro/mapa.yaml" in res["message"] and len(other.calls) == 1
+
+
+def test_reload_nav_map_reports_nav_off_and_failures(tmp_path):
+    from base_athome_navigation.map_zone_editor import reload_nav_map
+    path = str(tmp_path / "m.yaml")
+    assert reload_nav_map(path, run=_Fake(""))["state"] == "nav_off"
+    assert reload_nav_map(path, run=_Fake(fail=True))["state"] == "nav_off"
+    assert reload_nav_map(path, run=_Fake(f"String value is: {path}\n", "result=1"))["state"] == "failed"

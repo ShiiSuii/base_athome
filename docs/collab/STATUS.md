@@ -63,6 +63,8 @@ recupera por commit (§8). Editado por el integrador (Claude).
 
 ## 6. Cambios de esta sesión (detalle en Git)
 
+- Mapa: `map_server` solo lee el archivo al arrancar, así que un Nav2 abierto seguía con el mapa viejo. Ahora el editor lo recarga al guardar y `commander` al arrancar (`nav_map_sync.sh`, servicio `load_map`), sin cambios en archivos protegidos. Verificado el 2026-11-04: `/map` = PGM, los 200 obstáculos agregados son letales en el costmap global y AMCL no saltó.
+
 - Commander + objetos: `places.py` (objetos y muebles), `command_parser.py` (número, nombre, clase; pide el número si hay ambigüedad), web con la lista numerada. Editor: aproximación frente al borde de la mesa, fuera de ella. Rollback: revertir el commit.
 - **Incidente:** `test_semantic_map_manager_objects_integration` escribía los `waypoints` reales al llamar `save_data` (los vació en corridas del 03/11 y 04/11). Test aislado; archivos regenerados con door y living_room. Si existían otros waypoints solo en esos archivos, no se pueden recuperar.
 

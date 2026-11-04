@@ -17,7 +17,9 @@ import io
 import json
 import math
 import os
+import re
 import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -40,6 +42,31 @@ class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
     """Servidor HTTP multihilo para atender peticiones web concurrentes sin bloqueo."""
     daemon_threads = True
     allow_reuse_address = True
+
+
+def reload_nav_map(map_yaml_path: str, run=subprocess.run) -> Dict[str, Any]:
+    """Hace que el map_server en marcha use el mapa guardado: solo lee el archivo al arrancar.
+
+    Devuelve {"state": "reloaded" | "nav_off" | "other_map" | "failed", "message": texto para el usuario}.
+    """
+    wanted = os.path.realpath(map_yaml_path)
+
+    def ros2(args, timeout):
+        try:
+            return run(["ros2"] + args, capture_output=True, text=True, timeout=timeout).stdout or ""
+        except (OSError, subprocess.SubprocessError):
+            return ""
+
+    found = re.search(r"String value is: (.+)", ros2(["param", "get", "/map_server", "yaml_filename"], 8))
+    if not found:
+        return {"state": "nav_off", "message": "Nav2 no está corriendo: leerá este mapa al arrancar."}
+    current = found.group(1).strip()
+    if os.path.realpath(current) != wanted:
+        return {"state": "other_map", "message": f"Nav2 tiene abierto otro mapa: {current}"}
+    out = ros2(["service", "call", "/map_server/load_map", "nav2_msgs/srv/LoadMap", f"{{map_url: '{wanted}'}}"], 20)
+    if "result=0" in out:
+        return {"state": "reloaded", "message": "Nav2 ya usa este mapa."}
+    return {"state": "failed", "message": "Nav2 no pudo recargar el mapa: reiniciá navegacion."}
 
 
 class SemanticMapManager:
@@ -2390,7 +2417,9 @@ HTML_PAGE = r'''<!DOCTYPE html>
       const semData = await semRes.json();
 
       if (imgData.status === 'ok' && semData.status === 'ok') {
-        showToast('✔ ¡Mapa PGM y Datos Semánticos guardados exitosamente!');
+        const nav = imgData.nav || {};
+        const navOk = nav.state === 'reloaded' || nav.state === 'nav_off';
+        showToast((navOk ? '✔ Guardado. ' : '⚠ Guardado, pero: ') + (nav.message || ''));
       } else {
         showToast('⚠ Error al guardar algunos archivos');
       }
@@ -2724,6 +2753,9 @@ class MapZoneEditorHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.end_headers()
                 resp = {"status": "ok" if success else "error"}
+                if success:
+                    resp["nav"] = reload_nav_map(self.manager.map_yaml_path)
+                    print(f"[Editor] {resp['nav']['message']}")
                 self.wfile.write(json.dumps(resp).encode("utf-8"))
             except Exception as e:
                 self.send_response(500)
