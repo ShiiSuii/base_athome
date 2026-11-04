@@ -62,7 +62,8 @@ class PanTiltCalibrator(Node):
         self.create_subscription(Bool, "/pan_tilt/connected", self._link, latched)
         self.params = dict(DEFAULTS)
         self.params.update(self._read_params())
-        self.pan_dir, self.tilt_dir = -1.0, -1.0
+        self.pan_dir = self._node_direction("pan", 1.0)
+        self.tilt_dir = self._node_direction("tilt", -1.0)
         self.limits = cal.logical_limits(self.params, self.pan_dir, self.tilt_dir)
         self.goal = (0.0, 0.0)
 
@@ -107,6 +108,18 @@ class PanTiltCalibrator(Node):
             return cal.params_from_yaml(text) if text else {}
         except (KeyError, TypeError, ValueError):
             return {}
+
+    def _node_direction(self, axis, default):
+        """El sentido que esta usando el nodo: define como se pasan las marcas a ticks."""
+        if not self.use_ssh:
+            return default
+        try:
+            out = subprocess.run(["ros2", "param", "get", "/pan_tilt_node", f"{axis}_direction"], capture_output=True,
+                                 text=True, timeout=8).stdout
+            return 1.0 if float(out.split()[-1]) >= 0 else -1.0
+        except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+            self.out(f"AVISO: no pude leer {axis}_direction del nodo; uso {default:+.0f}.")
+            return default
 
     def usb_drops(self):
         """Desconexiones del FTDI que registro el kernel de la Jetson (None si no se puede leer)."""

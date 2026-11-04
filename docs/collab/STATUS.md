@@ -3,7 +3,7 @@
 Corto y actualizado: se **reemplaza** lo viejo, no se acumula (`AGENTS.md` §9). Lo histórico se
 recupera por commit (§8). Editado por el integrador (Claude).
 
-**Última actualización:** 2026-11-04 · Claude Code · modo `DESARROLLO` · receptionist con arranque por ESPACIO, calibrador del pan-tilt.
+**Última actualización:** 2026-11-04 · Claude Code · modo `DESARROLLO` · sentido del pan corregido.
 
 ## 1. Estado comprobado al pausar
 
@@ -12,7 +12,7 @@ recupera por commit (§8). Editado por el integrador (Claude).
 | NUC | Ubuntu 24.04, kernel 7.0.0-42 (reiniciada hoy), Jazzy, CycloneDDS, dominio 10 | `NUC_VERIFIED` |
 | Jetson | L4T R39.2.1, Jazzy; `jetson-head` activo | `JETSON_VERIFIED` |
 | Piper | energizado, **habilitado** con feedback válido (`/arm/status` leído 2026-11-04; deshabilitarlo lo deja caer: hacerlo con el usuario presente); controlador md5 `2e347c49` | `JETSON_VERIFIED` |
-| Pan-tilt | **falla eléctrica abierta**: 118 desconexiones USB del U2D2 el 04/11, solo ese puerto (`Cannot enable. Maybe the USB cable is bad?`, error -71). Si la revisión inicial falla, el receptionist desactiva el seguimiento. `pan_tilt_params.yaml` no existe en la Jetson: usa valores por defecto del nodo | `JETSON_VERIFIED` |
+| Pan-tilt | **falla eléctrica abierta**: 118 desconexiones USB del U2D2 el 04/11, solo ese puerto (`Cannot enable. Maybe the USB cable is bad?`, error -71). Si la revisión inicial falla, el receptionist desactiva el seguimiento. `pan_tilt_params.yaml` no existe en la Jetson: usa valores por defecto del nodo. **Sentido del pan corregido** (`pan_direction` +1, lo observó el usuario desde atrás): falta confirmarlo con `V` del calibrador. Cable cambiado: 3 caídas a las 19:32, falta probarlo con torque y movimiento (`M`) | `JETSON_VERIFIED` |
 | Teleop Meta Quest 2 | **en pausa** por pedido del usuario; nodo detenido en la Jetson. Fidelidad validada en sim; seguimiento real pendiente | `SIM_PASS`; real parcial |
 | Simulación | cerrada | — |
 | Commander | alias `commander`: pedido por micrófono (inglés), dice el plan y actúa con "yes"; "stop" cancela; web en `:8770`. Diálogo probado con ASR y ejecutor falsos (6 tests). Whisper real: 3 frases bien, ~1,4 s; el resto sin resultado en 14 s porque el ASR detectó voz continua (posible ruido del ambiente). **Nunca ejecutó una misión en el robot.** Agarre real: exige `torso_state` corriendo | `UNIT_PASS`/`SIM_PASS`; real `PENDIENTE` |
@@ -46,6 +46,7 @@ recupera por commit (§8). Editado por el integrador (Claude).
 
 | Dónde | Proceso | Qué hacer |
 |---|---|---|
+| Jetson | `pan_tilt_node` lanzado a mano (`/tmp/pan_tilt_manual.log`), reemplaza al de `jetson-head` | dejar: al reiniciar `jetson-head` vuelve solo, con el mismo código |
 | Jetson | `adb` server + regla udev `/etc/udev/rules.d/51-meta-quest.rules` | dejar (necesarios para el Quest) |
 | Jetson | `ros-jazzy-control-msgs` y `adb` instalados por apt | rollback: `~/deploy_backups/{control_msgs,adb}_20261103/installed.txt` |
 

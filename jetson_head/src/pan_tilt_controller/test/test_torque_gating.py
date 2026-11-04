@@ -118,11 +118,11 @@ def test_axis_directions_invert_commands_feedback_and_limits():
         tpr = node.ticks_per_rad
         node.set_target(0.2, 0.1)  # logico: pan izquierda, tilt arriba
         goals = {c[1][1]: c[1][3] for c in packet.method_calls if c[0] == 'write4ByteTxRx' and c[1][2] == 116}
-        assert goals[node.pan_id] == int(node.pan_center - 0.2 * tpr)    # pan_direction = -1
+        assert goals[node.pan_id] == int(node.pan_center + 0.2 * tpr)    # pan_direction = +1 (medido 2026-11-04)
         assert goals[node.tilt_id] == int(node.tilt_center - 0.1 * tpr)  # tilt_direction = -1
         # limites fisicos tilt [-0.4878, 0.6150] -> logicos [-0.6150, 0.4878]
         assert node.tilt_min_rad == pytest.approx(-0.6150) and node.tilt_max_rad == pytest.approx(0.4878)
-        packet.read4ByteTxRx.return_value = (int(node.pan_center - 0.3 * tpr), 0, 0)
+        packet.read4ByteTxRx.return_value = (int(node.pan_center + 0.3 * tpr), 0, 0)
         node.timer_callback()
         assert node.current_pan_rad == pytest.approx(0.3, abs=2e-3)
     finally:

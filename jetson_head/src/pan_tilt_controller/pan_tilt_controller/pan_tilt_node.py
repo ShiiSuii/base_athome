@@ -59,8 +59,8 @@ class PanTiltNode(Node):
         self.declare_parameter('pwm_limit', 600)
         self.declare_parameter('position_p_gain', 450)
         # Sentido de cada eje: convencion de la interfaz = pan + izquierda, tilt + arriba.
-        # Medido 2026-10-30: con el montaje actual ambos servos giraban al reves -> -1.
-        self.declare_parameter('pan_direction', -1.0)
+        # Medido 2026-11-04 desde atras del robot: con -1 el pan giraba al reves -> +1. Tilt medido 2026-10-30.
+        self.declare_parameter('pan_direction', 1.0)
         self.declare_parameter('tilt_direction', -1.0)
 
         self.device_name = self.get_parameter('device_name').value
