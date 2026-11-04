@@ -292,7 +292,7 @@ duplicada: eliminada (S-05).
 | `/camera/camera/color/image_raw`, `aligned_depth_to_color` | — | RealSense (NUC) |
 | `/hri/guest_input` (JSON `{type, value}`), `/hri/say_something`, `/robot/emotion`, `/mission/command` | — | HRI / pantalla / misiones |
 | `/mission/run` (plan JSON), srv `/mission/cancel`, `/mission/status` (JSON, latched), `/mission/skills` | String / Trigger | `mission_executor` (`src/base_athome_skills/README.md`) |
-| `/commander/command` (texto), `/commander/result` (JSON), web `127.0.0.1:8770` | String | usuario → `commander` → `/mission/run` |
+| `/commander/command` (texto), `/commander/result` (JSON), web `127.0.0.1:8770`, micrófono con `voice:=true` (`/voice/*`) | String | usuario → `commander` → `/mission/run` |
 
 ### Seguridad del software de actuadores (vigente, no revertir)
 

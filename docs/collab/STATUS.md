@@ -15,7 +15,7 @@ recupera por commit (§8). Editado por el integrador (Claude).
 | Pan-tilt | **falla eléctrica abierta**: con torque el U2D2 se cae por USB en segundos; sin torque estable. Software corregido (vueltas multivuelta, `pwm_limit`, `position_p_gain`). Corre desde `jetson-head` (la Jetson se reinició; ya no hay proceso manual) | `JETSON_VERIFIED` |
 | Teleop Meta Quest 2 | **en pausa** por pedido del usuario; nodo detenido en la Jetson. Fidelidad validada en sim; seguimiento real pendiente | `SIM_PASS`; real parcial |
 | Simulación | cerrada | — |
-| Commander | pedido en texto → plan → ejecutor, con web en `:8770`. Usa objetos numerados y mesas del mapa ("agarrá el objeto 1"). Sin probar con Nav2 real ni en el robot; el editor no se probó en un navegador (JS verificado con node) | `SIM_PASS` 2026-11-04 |
+| Commander | alias `commander`: pedido por micrófono (inglés), dice el plan y actúa con "yes"; "stop" cancela; web en `:8770`. Diálogo probado con ASR y ejecutor falsos (6 tests). Whisper real: 3 frases bien, ~1,4 s; el resto sin resultado en 14 s porque el ASR detectó voz continua (posible ruido del ambiente). **Nunca ejecutó una misión en el robot.** Agarre real: exige `torso_state` corriendo | `UNIT_PASS`/`SIM_PASS`; real `PENDIENTE` |
 | Tests offline | Jetson scripts 32 + Quest 18, percepción 122, skills 76 (1 skipped), bringup (elevador) 6, sim 7, pan-tilt 8, agentes 40 | `UNIT_PASS` 2026-11-04 (skills) |
 
 ## 2. Rama y Git

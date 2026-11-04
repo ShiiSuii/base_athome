@@ -6,6 +6,7 @@
   pub  /mission/run        std_msgs/String  plan (lo ejecuta mission_executor; /mission/status informa el avance)
   cli  /mission/cancel     std_srvs/Trigger
   web  http://127.0.0.1:8770                escribir el pedido, ver el plan, ejecutar, cancelar, ver el avance
+  voz  voice:=true                          pedido por microfono -> dice el plan -> "yes" lo ejecuta, "stop" cancela
 
 No mueve nada por si mismo y no reemplaza las guardas del ejecutor (mode:=real exige supervised:=true alli).
 auto_execute:=false (por defecto en la web) muestra el plan y espera confirmacion; por topico ejecuta si auto_execute:=true.
@@ -22,7 +23,7 @@ import rclpy
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile
-from std_msgs.msg import String
+from std_msgs.msg import Bool, String
 from std_srvs.srv import Trigger
 
 from .command_parser import compile_command
@@ -30,6 +31,7 @@ from .node import _share_config
 from .places import load_objects, load_places, load_tables
 from .plan import parse_plan, validate_plan
 from .skills import default_registry
+from .voice_dialog import asr_prompt, error_to_speech, plan_to_speech
 
 PORT = 8770
 PAGE = r"""<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -76,18 +78,27 @@ class Commander(Node):
         self.declare_parameter("waypoints", "")
         self.declare_parameter("auto_execute", False)
         self.declare_parameter("real", False)
+        self.declare_parameter("voice", False)
+        self.declare_parameter("port", PORT)
+        self.declare_parameter("tts", True)          # false: no usa el parlante (pruebas)
+        self.voice_state = "apagada"
         self.semantic_map = self.get_parameter("semantic_map").value or _share_config("semantic_map.yaml")
         self.waypoints = self.get_parameter("waypoints").value or _share_config("waypoints.yaml")
         self.registry = default_registry()
         self.mission = {}
         self.pub_run = self.create_publisher(String, "/mission/run", 5)
         self.pub_result = self.create_publisher(String, "/commander/result", 5)
+        self.pub_say = self.create_publisher(String, "/hri/say_something", 5)
+        self.pub_mute = self.create_publisher(Bool, "/voice/mute", 5)
+        self._speaker = None
         self.cli_cancel = self.create_client(Trigger, "/mission/cancel")
         latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.create_subscription(String, "/mission/status", self._status, latched)
         self.create_subscription(String, "/commander/command", self._command, 5)
         self._start_web()
-        self.get_logger().info(f"commander listo: http://127.0.0.1:{PORT} | lugares: {sorted(self.places())}")
+        if bool(self.get_parameter("voice").value):
+            threading.Thread(target=self._voice_loop, daemon=True).start()
+        self.get_logger().info(f"commander listo: http://127.0.0.1:{self.httpd.server_port} | lugares: {sorted(self.places())}")
 
     def places(self):
         return load_places(self.semantic_map, self.waypoints)      # se relee: el mapa se edita con el editor
@@ -143,6 +154,66 @@ class Commander(Node):
             res = self.run(res)
         self.pub_result.publish(String(data=json.dumps({k: v for k, v in res.items() if k != "plan"})))
 
+    # ------------------------------------------------------------------ voz
+    def _say(self, text):
+        self.get_logger().info(f"Digo: {text}")
+        self.pub_say.publish(String(data=text))
+        if self._speaker is None:
+            return
+        self.pub_mute.publish(Bool(data=True))      # que el ASR no se escuche a si mismo
+        try:
+            self._speaker.speak(text, blocking=True)
+        finally:
+            self.pub_mute.publish(Bool(data=False))
+
+    def _hear(self, voice, state, **kw):
+        """Abre una escucha y devuelve el texto, o "" si no hubo voz."""
+        self.voice_state = state
+        places = self.places()
+        res = voice.listen(prompt=asr_prompt(sorted(places), load_objects(self.semantic_map)), **kw)
+        if res.ok:
+            self.voice_state = f"oi: {res.text}"
+            self.get_logger().info(f"Oi: {res.text}")
+            return res.text
+        if res.status in ("offline", "error"):
+            self.voice_state = f"microfono no disponible ({res.status})"
+            time.sleep(2.0)
+        return ""
+
+    def _voice_loop(self):
+        from base_athome_perception.guest_dialog import parse_yes_no
+        from base_athome_perception.voice_client import VoiceClient
+        if bool(self.get_parameter("tts").value):
+            from base_athome_perception.speaker import RoboCupSpeaker
+            self._speaker = RoboCupSpeaker()
+        voice = VoiceClient(self, start_timeout=30.0)
+        self.voice_state = "esperando el microfono"
+        while rclpy.ok() and not voice.online():
+            time.sleep(0.5)
+        self._say("Commander ready. Tell me what to do.")
+        while rclpy.ok():
+            running = self.mission.get("state") == "RUNNING"
+            text = self._hear(voice, "mision en curso: escucho 'stop'" if running else "escuchando un pedido")
+            if not text:
+                continue
+            res = self.compile(text)
+            self.pub_result.publish(String(data=json.dumps({k: v for k, v in res.items() if k != "plan"})))
+            if res["cancel"]:
+                self.cancel()
+                self._say("Stopping." if running else "There is nothing to stop.")
+            elif self.mission.get("state") == "RUNNING":
+                self._say("I am busy. Say stop to cancel.")
+            elif not res["ok"]:
+                self._say(error_to_speech(res["errors"]))
+            else:
+                self._say(plan_to_speech(res["plan"], load_objects(self.semantic_map)) + " Should I do it?")
+                answer = self._hear(voice, "esperando yes o no", start_timeout=10.0)
+                if parse_yes_no(answer) is True:
+                    res = self.run(res)
+                    self._say("Okay." if res["executed"] else "I cannot start the mission right now.")
+                else:
+                    self._say("Okay, I will not do it.")
+
     def _start_web(self):
         node = self
 
@@ -160,7 +231,7 @@ class Commander(Node):
 
             def do_GET(self):
                 if self.path.startswith("/api/status"):
-                    info = f"dominio {os.environ.get('ROS_DOMAIN_ID', '0')} | ejecutor {'conectado' if node.pub_run.get_subscription_count() else 'NO conectado'} | modo {node.mission.get('mode', '?')}"
+                    info = f"dominio {os.environ.get('ROS_DOMAIN_ID', '0')} | ejecutor {'conectado' if node.pub_run.get_subscription_count() else 'NO conectado'} | modo {node.mission.get('mode', '?')} | voz: {node.voice_state}"
                     return self._send(json.dumps(dict(info=info, mission=node.mission)).encode())
                 if self.path.startswith("/api/items"):
                     return self._send(json.dumps(node.items()).encode())
@@ -178,7 +249,7 @@ class Commander(Node):
                     res = node.run(res)
                 return self._send(json.dumps({k: v for k, v in res.items() if k != "plan"}).encode())
 
-        self.httpd = ThreadingHTTPServer(("127.0.0.1", PORT), H)   # solo local
+        self.httpd = ThreadingHTTPServer(("127.0.0.1", int(self.get_parameter("port").value)), H)   # solo local
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
 
 

@@ -31,7 +31,8 @@ start ros2 launch base_athome_sim sim.launch.py rviz:=$RV > "$LOG/sim.log" 2>&1
 sleep 8
 ARGS=(--ros-args -p semantic_map:="$MAP" -p waypoints:=/nonexistent)
 start ros2 run base_athome_skills mission_executor "${ARGS[@]}" > "$LOG/executor.log" 2>&1
-start ros2 run base_athome_skills commander "${ARGS[@]}" > "$LOG/commander.log" 2>&1
+# COMMANDER_ARGS: parametros extra, p. ej. "-p voice:=true -p tts:=false" para probar el dialogo con un ASR falso
+start ros2 run base_athome_skills commander "${ARGS[@]}" ${COMMANDER_ARGS:-} > "$LOG/commander.log" 2>&1
 sleep 4
 if [ $# -eq 0 ]; then echo "Commander listo: http://127.0.0.1:8770  (Ctrl-C cierra todo)"; wait; exit 0; fi
 python3 "$(dirname "$0")/commander_client.py" "$@"

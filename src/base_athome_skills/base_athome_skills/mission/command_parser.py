@@ -21,7 +21,7 @@ PLACE_ALIASES = {
     "living_room": ["sala", "sala de estar", "living", "living room", "livingroom", "comedor"],
     "kitchen": ["cocina", "kitchen"],
     "table": ["mesa", "table"],
-    "bedroom": ["dormitorio", "cuarto", "habitacion", "bedroom"],
+    "bedroom": ["dormitorio", "cuarto", "habitacion", "bedroom", "room"],
     "bathroom": ["bano", "bathroom"],
     "home": ["casa", "home", "inicio", "base"],
 }
@@ -111,6 +111,9 @@ def find_place(phrase: str, places: Dict[str, Any], tables: Optional[Dict[str, D
     for canon, aliases in PLACE_ALIASES.items():
         if p in aliases and resolve(places, canon) is not None:
             return canon, p
+    found = _place_by_alias(p, places)
+    if found:
+        return found, p
     for tid, t in (tables or {}).items():                # por el nombre visible del mueble
         if norm(t["name"]) == p and resolve(places, tid) is not None:
             return tid, p
@@ -118,6 +121,31 @@ def find_place(phrase: str, places: Dict[str, Any], tables: Optional[Dict[str, D
     if p in PLACE_ALIASES["table"] and len(mesas) == 1 and resolve(places, mesas[0]) is not None:
         return mesas[0], p                               # "la mesa", si hay una sola
     return None, p
+
+
+_PLACE_WORD_NUM = {"one": "1", "two": "2", "three": "3", "four": "4", "five": "5", "uno": "1", "dos": "2", "tres": "3",
+                   "cuatro": "4", "cinco": "5"}
+
+
+def _place_by_alias(phrase: str, places: Dict[str, Any]) -> Optional[str]:
+    """El mapa puede estar en otro idioma o numerar: 'the kitchen' -> cocina, 'room one' -> cuarto1."""
+    def split(text):
+        m = re.fullmatch(r"(.*?)[ _-]*(\d+)?", text.lower())
+        return m.group(1), m.group(2) or ""
+    words = phrase.split()
+    if words and words[-1] in _PLACE_WORD_NUM:
+        phrase = " ".join(words[:-1] + [_PLACE_WORD_NUM[words[-1]]])
+    base, num = split(phrase)
+    group = next((al for al in PLACE_ALIASES.values() if base in al), None)
+    matches = []
+    for key in places:
+        if key.startswith("object:"):
+            continue
+        kb, kn = split(key)
+        same_word = kb.replace("_", " ") == base or (group is not None and kb.replace("_", " ") in group)
+        if same_word and kn == num:
+            matches.append(key)
+    return matches[0] if len(matches) == 1 else None
 
 
 def _unknown_place(c: "_Ctx", cleaned: str) -> str:
@@ -446,6 +474,7 @@ def _clause(c: _Ctx, raw: str, quotes: Dict[str, str]) -> None:
                 return
             if cand is not None:
                 dest_txt, obj_txt = m.group(1), rest[:m.start()]
+        obj_txt = re.sub(r"^\s*(?:me|us)\b", "", obj_txt).strip()      # "bring me the bottle"
         if c.holding and (not obj_txt.strip() or find_object(obj_txt) in (None, c.holding)):
             pass
         else:

@@ -277,3 +277,37 @@ def test_put_object_on_a_table():
 def test_second_object_while_holding_is_rejected():
     c = _map("agarra el 1 y agarra el 2")
     assert not c.ok and "ya tengo" in c.errors[0]
+
+
+# --- lo que llega por voz (Whisper en ingles) contra un mapa en castellano ---
+ES_MAP = {"cocina": (0, 0, 0), "cuarto1": (0, 0, 0), "door": (0, 0, 0), "living_room": (0, 0, 0)}
+
+
+def test_english_words_reach_spanish_map_names():
+    for text, place in (("Go to the kitchen.", "cocina"), ("Go to room 1.", "cuarto1"), ("go to room one", "cuarto1"),
+                        ("Go to the living room.", "living_room"), ("Go to the door", "door")):
+        c = compile_command(text, ES_MAP)
+        assert c.ok, (text, c.errors)
+        assert c.plan["steps"][0]["args"] == {"place": place}, text
+
+
+def test_room_without_number_is_not_guessed():
+    assert not compile_command("go to the room", ES_MAP).ok
+
+
+def test_bring_me_object_by_voice():
+    c = _map("Bring me object one.")
+    assert c.ok, c.errors
+    assert c.plan["steps"][0]["args"] == {"place": "object:obj_1"}
+
+
+def test_speech_for_plan_and_errors():
+    from base_athome_skills.mission.voice_dialog import error_to_speech, plan_to_speech
+    text = plan_to_speech(_map("Pick up object 1 and take it to the kitchen.").plan, MAP_OBJECTS)
+    assert text == ("I will go to object 1, the agua, look for the bottle, pick up the bottle, "
+                    "go to the kitchen, and put it down.")
+    assert "arm" not in text
+    assert "object number 9" in error_to_speech(_map("pick up object 9").errors)
+    assert "tell me the object number" in error_to_speech(_map("pick up the bottle").errors)
+    assert "cannot do that yet" in error_to_speech(compile_command("follow the person", ES_MAP).errors)
+    assert error_to_speech(compile_command("make me a coffee", ES_MAP).errors).startswith("Sorry")

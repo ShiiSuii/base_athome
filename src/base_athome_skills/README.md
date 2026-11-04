@@ -43,8 +43,10 @@ existente. `mission_sequencer.py` sigue funcionando: sus pasos se migran a skill
 adivinar: agrega pasos implícitos (mirar antes de buscar, buscar antes de agarrar), recuperación y `success_if`,
 entiende "si no la ves ...", y rechaza con un motivo los lugares desconocidos y lo no implementado (personas, responder).
 `mission/commander_node.py` valida el plan con las reglas del ejecutor y lo publica en `/mission/run`.
-En la NUC, el alias `commander` (`scripts/commander.sh`) abre la simulación; `commander real` usa el robot real solo con
-navegación y `commander real manip` suma manipulación.
+En la NUC, el alias `commander` (`scripts/commander.sh`) trabaja con el robot real y el micrófono: levanta Nav2 si no está,
+el ejecutor (con manipulación) y el commander. El pedido se dice en inglés porque el ASR es `base.en`. El robot repite el plan
+y solo actúa si le contestan "yes"; silencio o cualquier otra respuesta no ejecuta nada. "Stop" cancela una misión en curso.
+No corre junto al receptionist, que usa el mismo micrófono. Prueba del diálogo: `test/test_commander_voice.py` (dominio 77).
 ```bash
 src/base_athome_skills/scripts/sim_commander.sh      # sim + ejecutor + commander; abrir http://127.0.0.1:8770
 src/base_athome_skills/scripts/sim_commander.sh "anda a la mesa, busca una botella y llevala a la cocina"
