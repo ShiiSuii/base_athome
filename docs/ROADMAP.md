@@ -35,7 +35,7 @@ y cuenta la mejor puntuación.
 - §3.6.9/3.6.14: un restart (≤60 s, antes de 40 pts); 30 s quieto = retirado → el secuenciador debe hablar/pedir tiempo.
 - §3.7: asistencia humana como último recurso, pedida explícitamente y verificada. §3.7.4: ASR custom −10 %, interfaz alternativa hasta −20 %.
 - Skill certificates (§1.7.5): ≥75 % de los puntos de una habilidad en todas las pruebas.
-- Calificación: TDP de 8 páginas, video ≤10 min, web en inglés con código abierto. Premio open-source (§1.7.6): candidato el editor URDF.
+- Calificación: TDP de 8 páginas (guía: `docs/TDP_INSTRUCTIVO.txt`), video ≤10 min, web en inglés con código abierto. Premio open-source (§1.7.6): candidato el editor URDF.
 
 **Checklist de inspección (§4.4) — pendiente:** E-stop corta base+brazo+elevador+pan-tilt · robot ≤200×70 cm sin cables sueltos · freno ante persona · voz clara y salida de audio para RF · señal de inicio aprobada · ninguna WiFi propia (NUC y Jetson) · sin ArUco visible · dispositivos externos informados.
 
@@ -114,7 +114,7 @@ Escala: **P0** desbloquea seguridad/progreso · **P1** valor demostrable · **P2
 | HOME-46 | Escena MoveIt: ~~pares internos por muestreo~~ (hecho), **falta mesa** como objeto de colisión | Claude | IK rechaza poses que atraviesan la mesa en sim |
 | HOME-47 | Skills `detect_object` (3D), `pick_object`/`place_object` con confirmación por ancho medido de la pinza; recién entonces pasan a `available` | Claude | SIM_PASS → serie LAB con % de éxito |
 | HOME-48 | Evaluar MoveIt Task Constructor (rama `ros2`, compilar en Jazzy; no instalado) cuando exista HOME-45 | Claude | decisión ADOPTAR/NO con prueba en sim |
-| HOME-40 | Monitor web de misiones (`tools/mission_monitor`, contrato `/mission/status`) | Antigravity | tests + revisión de Claude |
+| HOME-57 | Commander: pedido en lenguaje natural ES/EN → plan validado → ejecutor, con web local (reemplaza HOME-40). Hecho en sim; falta probarlo con Nav2 real y sumar skills de personas (HOME-49) | Claude | `SIM_PASS` 2026-11-04; real `PENDIENTE` |
 | HOME-49 | Migrar pasos de `mission_sequencer` (receive_guest, fetch, guide, place) a skills del ejecutor; plan GPSR → ejecutor (depende de HOME-15b: el parser pierde pasos) | Claude | un solo sistema de misiones |
 
 ### Teleoperación y HRI (2026-11-03)

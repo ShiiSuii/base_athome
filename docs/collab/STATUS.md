@@ -3,7 +3,7 @@
 Corto y actualizado: se **reemplaza** lo viejo, no se acumula (`AGENTS.md` §9). Lo histórico se
 recupera por commit (§8). Editado por el integrador (Claude).
 
-**Última actualización:** 2026-11-04 · Claude Code · modo `DESARROLLO` · fidelidad de la teleop.
+**Última actualización:** 2026-11-04 · Claude Code · modo `DESARROLLO` · commander e instructivo del TDP.
 
 ## 1. Estado comprobado al pausar
 
@@ -11,15 +11,16 @@ recupera por commit (§8). Editado por el integrador (Claude).
 |---|---|---|
 | NUC | Ubuntu 24.04, kernel 7.0.0-42 (reiniciada hoy), Jazzy, CycloneDDS, dominio 10 | `NUC_VERIFIED` |
 | Jetson | L4T R39.2.1, Jazzy; `jetson-head` activo | `JETSON_VERIFIED` |
-| Piper | energizado, **deshabilitado** tras reiniciarse la Jetson (colgando en reposo, feedback válido); controlador md5 `2e347c49` | `JETSON_VERIFIED` 2026-11-04 |
+| Piper | energizado, **habilitado** con feedback válido (`/arm/status` leído 2026-11-04; deshabilitarlo lo deja caer: hacerlo con el usuario presente); controlador md5 `2e347c49` | `JETSON_VERIFIED` |
 | Pan-tilt | **falla eléctrica abierta**: con torque el U2D2 se cae por USB en segundos; sin torque estable. Software corregido (vueltas multivuelta, `pwm_limit`, `position_p_gain`). Corre desde `jetson-head` (la Jetson se reinició; ya no hay proceso manual) | `JETSON_VERIFIED` |
-| Teleop Meta Quest 2 | **nodo corriendo** en la Jetson (dominio 10, `real:=true`, 20/40°/s), sin mover nada hasta X. Quest desconectado al último chequeo (rearma `adb` solo). Fidelidad mejorada y validada en sim; seguimiento real pendiente | `SIM_PASS`; real parcial |
+| Teleop Meta Quest 2 | **en pausa** por pedido del usuario; nodo detenido en la Jetson. Fidelidad validada en sim; seguimiento real pendiente | `SIM_PASS`; real parcial |
 | Simulación | cerrada | — |
-| Tests offline | Jetson scripts 32 + Quest 18, percepción 122, skills 33, bringup (elevador) 6, sim 7, pan-tilt 8, agentes 40 | `UNIT_PASS` 2026-11-03 |
+| Commander | pedido en texto → plan → ejecutor, con web en `:8770`; frase compuesta del usuario SUCCEEDED en 66 s. Sin probar con Nav2 real ni en el robot | `SIM_PASS` 2026-11-04 |
+| Tests offline | Jetson scripts 32 + Quest 18, percepción 122, skills 63 (1 skipped), bringup (elevador) 6, sim 7, pan-tilt 8, agentes 40 | `UNIT_PASS` 2026-11-04 (skills) |
 
 ## 2. Rama y Git
 
-- Rama `claude/home-41-piper-mission` **subida a GitHub** el 2026-11-03 (82 commits; escaneo de secretos limpio; los rostros de `faces_database` quedan borrados del árbol). `main` = `1da2388` sin cambios: merge a `main` = decisión humana (PR pendiente). HOME-SEC: el token viejo sigue sin revocar.
+- Rama `claude/home-41-piper-mission` **subida a GitHub** el 2026-11-04 (repo público). `main` = `1da2388` sin cambios: merge a `main` = decisión humana (PR pendiente). HOME-SEC: el token viejo sigue sin revocar.
 - Cambios del usuario sin commitear (no tocar): `semantic_map.yaml`, `waypoints.yaml`, `arm_poses_and_limits.yaml`
   (incluye la `home` re-enseñada `[73.87, 169.72, -138.02, 26.69, -15.7, -117.17]`).
 - Reparación tras el reinicio de la NUC: commit vacío `c98344d` rehecho como `f16f457`; respaldo `~/git_backup_20261103_165442`; `core.fsync=committed`.
@@ -44,7 +45,6 @@ recupera por commit (§8). Editado por el integrador (Claude).
 
 | Dónde | Proceso | Qué hacer |
 |---|---|---|
-| Jetson | `quest_teleop_node.py` lanzado a mano (dominio 10) | `kill -TERM` al terminar (revierte el Quest) |
 | Jetson | `adb` server + regla udev `/etc/udev/rules.d/51-meta-quest.rules` | dejar (necesarios para el Quest) |
 | Jetson | `ros-jazzy-control-msgs` y `adb` instalados por apt | rollback: `~/deploy_backups/{control_msgs,adb}_20261103/installed.txt` |
 
@@ -54,13 +54,14 @@ recupera por commit (§8). Editado por el integrador (Claude).
 |---|---|---|
 | Humano | Pan-tilt: revisar fuente de 12 V bajo carga, cableado del power hub del U2D2 y masa común; cambiar cable USB del U2D2 | **bloquea** el seguimiento de rostro |
 | Humano | HOME-SEC: revocar el token (también está en el registro de Orca); contraseña de la Jetson | pendiente |
-| Humano | Aprobar `python3 -c` en la pestaña de Antigravity (HOME-40, dispatch `ctx_40a871d802de`) o cerrar ese worker | `BLOCKED_WORKER` |
-| Claude | Teleop: prueba completa en el robot real, ajuste fino con `track_mm`; luego grabación de demostraciones | siguiente |
+| Claude | Commander: probar con Nav2 real (con supervisión) y sumar skills de personas (HOME-49). Teleop en pausa | siguiente |
+| Humano | TDP: seguir `docs/TDP_INSTRUCTIVO.txt` desde la otra computadora | pendiente |
 | Claude | Receptionist: probar en el robot el barrido nuevo (2 filas, ~16 s), seguimiento leve y la revisión del pan-tilt | código listo (`SIM_PASS` parcial) |
 | Claude | HOME-46 mesa en la escena MoveIt; HOME-43 correr `torso_state` con el ESP32 conectado | pendiente |
 
 ## 6. Cambios de esta sesión (detalle en Git)
 
+- Commander (HOME-57, reemplaza HOME-40, cuyo worker terminó sin commits): `command_parser.py`, `commander_node.py`, `sim_commander.sh`. Rollback: revertir el commit; no toca al ejecutor.
 - `0c282ec`…`1a901f3` — Teleop Meta Quest 2 (WebXR por `adb reverse`, sin WiFi): pose 6D con embrague, IK DLS (modelo DH
   del SDK, validado contra `piper_kinematics`), filtro de temblor, sensibilidad de giro, modo real con X de hombre
   muerto + HOME primero + freno al soltar, Quest despierto sin el visor, gatillo pinza abierta/50 %.

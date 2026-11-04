@@ -38,6 +38,19 @@ HRI ya es Python, `py_trees` no está instalado y BT.CPP obligaría a escribir n
 lugares de `semantic_map.yaml`/`waypoints.yaml` (solo lectura) y la acción `navigate_to_pose`
 existente. `mission_sequencer.py` sigue funcionando: sus pasos se migran a skills de a uno, cuando se validan.
 
+### Commander: pedidos en lenguaje natural (HOME-57)
+`mission/command_parser.py` compila un pedido en español o inglés a un plan del ejecutor, sin LLM y sin
+adivinar: agrega pasos implícitos (mirar antes de buscar, buscar antes de agarrar), recuperación y `success_if`,
+entiende "si no la ves ...", y rechaza con un motivo los lugares desconocidos y lo no implementado (personas, responder).
+`mission/commander_node.py` valida el plan con las reglas del ejecutor y lo publica en `/mission/run`.
+```bash
+src/base_athome_skills/scripts/sim_commander.sh      # sim + ejecutor + commander; abrir http://127.0.0.1:8770
+src/base_athome_skills/scripts/sim_commander.sh "anda a la mesa, busca una botella y llevala a la cocina"
+```
+La web muestra el plan antes de ejecutar y el avance en vivo. Por tópico (`/commander/command`) solo ejecuta con
+`auto_execute:=true`; "stop"/"cancelá" cancela siempre. En dominio 10 exige `real:=true`, y el ejecutor mantiene
+sus guardas (`mode:=real` con `supervised:=true`). Estado: `SIM_PASS` 2026-11-04; con Nav2 real `PENDIENTE`.
+
 ### Plan
 ```yaml
 name: demo

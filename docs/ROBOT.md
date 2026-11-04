@@ -292,6 +292,7 @@ duplicada: eliminada (S-05).
 | `/camera/camera/color/image_raw`, `aligned_depth_to_color` | — | RealSense (NUC) |
 | `/hri/guest_input` (JSON `{type, value}`), `/hri/say_something`, `/robot/emotion`, `/mission/command` | — | HRI / pantalla / misiones |
 | `/mission/run` (plan JSON), srv `/mission/cancel`, `/mission/status` (JSON, latched), `/mission/skills` | String / Trigger | `mission_executor` (`src/base_athome_skills/README.md`) |
+| `/commander/command` (texto), `/commander/result` (JSON), web `127.0.0.1:8770` | String | usuario → `commander` → `/mission/run` |
 
 ### Seguridad del software de actuadores (vigente, no revertir)
 
@@ -392,10 +393,11 @@ no arranca la RealSense, detector por color (`SimColorDetector`).
 |---|---|---|
 | Percepción/HRI | `python3 -m pytest -q src/base_athome_perception/test` | 111 passed |
 | Simulación | `python3 -m pytest -q src/base_athome_sim/test` | 6 passed |
-| Skills (puerta + misiones) | `python3 -m pytest -q src/base_athome_skills/test` | 33 passed |
+| Skills (puerta + misiones + commander) | `env -u PYTHONPATH python3 -m pytest -q src/base_athome_skills/test` | 63 passed, 1 skipped (2026-11-04) |
 | Elevador | `ROS_DOMAIN_ID=77 python3 -m pytest -q src/base_athome_bringup/test/test_torso_state.py` | 6 passed |
 | Aprobación acotada Antigravity | `cd tools/agents && python3 -m pytest -q` | 40 passed |
 | Misiones en simulación | `[RVIZ=1] src/base_athome_skills/scripts/sim_mission.sh <plan.yaml> <mapa_sim>` | demo_fetch_bottle SUCCEEDED (72–112 s) |
+| Commander en simulación | `[RVIZ=1] src/base_athome_skills/scripts/sim_commander.sh ["pedido" ...]` (sin pedidos: web en `:8770`) | pedido compuesto SUCCEEDED en 66 s; cancelación, objeto no visto y lugar desconocido correctos (2026-11-04) |
 | Capa semántica | `python3 -m pytest -q src/base_athome_navigation/test` | 9 passed |
 | Scripts Jetson (Piper, FJT, Orbbec, YOLO, bench) | `ROS_DOMAIN_ID=77 python3 -m pytest -q jetson_head/scripts/tests` | 32 passed |
 | ASR | `cd jetson_head/src/audio_asr && python3 -m pytest -q test/test_asr_core.py` | 12 passed |
