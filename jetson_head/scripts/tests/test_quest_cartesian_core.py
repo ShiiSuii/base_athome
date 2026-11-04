@@ -137,3 +137,63 @@ def test_hand_tremor_is_filtered():
         jit = rng.uniform(-0.001, 0.001, 3)
         st = qc.cart_step(st, ((jit[0], 1 + jit[1], jit[2]), Q_ID), [0, 1, 0, 0, 0, 0], st.q_cmd, 0.0, 0.05)
     assert np.linalg.norm(qc.fk(np.radians(st.q_cmd))[0] - p0) < 1.5   # la pinza no tiembla
+
+
+def test_one_euro_removes_tremor_but_keeps_fast_motion():
+    kw = dict(one_euro=True, damping_min=5.0, ik_iters=6, max_joint_dps=45.0, max_wrist_dps=90.0)
+    rng = np.random.default_rng(7)
+    st = qc.cart_step(qc.CartesianState(), ((0, 1, 0), Q_ID), [0, 1, 0, 0, 0, 0], CENTRAL, 0.0, 0.04, **kw)
+    p0 = st.t0_p.copy()
+    for _ in range(100):
+        j = rng.uniform(-0.001, 0.001, 3)
+        st = qc.cart_step(st, ((j[0], 1 + j[1], j[2]), Q_ID), [0, 1, 0, 0, 0, 0], st.q_cmd, 0.0, 0.04, **kw)
+    assert np.linalg.norm(qc.fk(np.radians(st.q_cmd))[0] - p0) < 2.0
+    # mano rapida (12 cm/s): el filtro casi no retrasa
+    st = qc.cart_step(qc.CartesianState(), ((0, 1, 0), Q_ID), [0, 1, 0, 0, 0, 0], CENTRAL, 0.0, 0.04, **kw)
+    z = 0.0
+    for _ in range(25):
+        z -= 0.12 * 0.04
+        st = qc.cart_step(st, ((0, 1, z), Q_ID), [0, 1, 0, 0, 0, 0], st.q_cmd, 0.0, 0.04, **kw)
+    lag_mm = abs(z) * 1000.0 - abs(st.f_p[2])
+    assert lag_mm < 12.0                                   # < 100 ms a 120 mm/s
+
+
+def test_speed_limit_preserves_direction():
+    """Paso limitado: todas las articulaciones se escalan por igual (la pinza no se desvia)."""
+    st = qc.cart_step(qc.CartesianState(), ((0, 1, 0), Q_ID), [0, 1, 0, 0, 0, 0], CENTRAL, 0.0, 0.04)
+    q_free, _, _ = qc.ik_step(st.q_cmd, st.t0_p + np.array([30.0, 20.0, 0.0]), st.t0_R, iters=10, damping=80.0)
+    target = (-0.02, 1.0, -0.03)
+    st = qc.cart_step(st, (target, Q_ID), [0, 1, 0, 0, 0, 0], CENTRAL, 0.0, 0.04, smooth=1.0, deadband_mm=0.0,
+                      max_joint_dps=5.0, max_wrist_dps=5.0)
+    d = np.array(st.q_cmd) - np.array(CENTRAL)
+    d_free = np.array(q_free) - np.array(CENTRAL)
+    cos = float(np.dot(d, d_free) / (np.linalg.norm(d) * np.linalg.norm(d_free)))
+    assert cos > 0.99 and np.max(np.abs(d)) <= 5.0 * 0.04 + 1e-6
+
+
+def test_adaptive_damping_low_far_high_near_singularity():
+    q_far = np.radians(CENTRAL)
+    q_sing = np.radians([80.0, 150.0, -90.0, 0.0, 0.0, 0.0])    # j5 = 0: j4 y j6 alineados
+    def jac(q):
+        p, R = qc.fk(q); J = np.zeros((6, 6))
+        for j in range(6):
+            dq = np.zeros(6); dq[j] = 1e-4
+            p2, R2 = qc.fk(q + dq)
+            J[:3, j] = (p2 - p) / 1e-4; J[3:, j] = 200.0 * qc.rot_err(R, R2) / 1e-4
+        return J
+    assert qc.adaptive_damping(jac(q_sing), 5.0, 80.0) > qc.adaptive_damping(jac(q_far), 5.0, 80.0)
+    assert qc.adaptive_damping(jac(q_sing), 5.0, 80.0) > 60.0
+
+
+def test_forward_calibration_rotates_axes():
+    """Control apuntando 90 grados a la izquierda calibrado como frente: moverlo hacia alla = pinza a +X del robot."""
+    q90 = (0.0, math.sin(math.radians(90) / 2), 0.0, math.cos(math.radians(90) / 2))    # giro +90 sobre Y
+    yaw = qc.heading_yaw(qc.quat_to_R(q90))
+    assert abs(math.degrees(yaw) - 90.0) < 1e-6
+    st = qc.CartesianState(forward_yaw=yaw)
+    st = qc.cart_step(st, ((0, 1, 0), Q_ID), [0, 1, 0, 0, 0, 0], CENTRAL, 0.0, 0.05)
+    p0 = st.t0_p.copy()
+    for _ in range(40):                                  # 4 cm hacia -X de WebXR (la izquierda, el "frente" calibrado)
+        st = qc.cart_step(st, ((-0.04, 1, 0), Q_ID), [0, 1, 0, 0, 0, 0], st.q_cmd, 0.0, 0.05)
+    d = qc.fk(np.radians(st.q_cmd))[0] - p0
+    assert d[0] > 30.0 and abs(d[1]) < 6.0

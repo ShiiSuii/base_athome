@@ -30,7 +30,7 @@ import quest_cartesian_core as qc
 from quest_teleop_core import MODE_NAMES, ControllerSample, TeleopState, step
 
 PORT = 8765
-PAGE_VERSION = 6   # subir al cambiar la pagina: el nodo avisa si el visor tiene una version vieja abierta
+PAGE_VERSION = 7   # subir al cambiar la pagina: el nodo avisa si el visor tiene una version vieja abierta
 DEG = 3.141592653589793 / 180.0
 
 PAGE = r"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -66,7 +66,7 @@ document.getElementById('b').addEventListener('click',async()=>{       // gatill
   src=all.find(s=>s.handedness===HAND)||all[0]||null;          // el configurado o cualquiera
   let grip=false;
   if(src){const g=src.gamepad;grip=g.buttons.length>1&&g.buttons[1].value>0.5;
-   if(t-last>33){last=t;const ps=frame.getPose(src.gripSpace||src.targetRaySpace,ref);
+   if(t-last>15){last=t;const ps=frame.getPose(src.gripSpace||src.targetRaySpace,ref);
     const pose=ps?{p:[ps.transform.position.x,ps.transform.position.y,ps.transform.position.z],
      q:[ps.transform.orientation.x,ps.transform.orientation.y,ps.transform.orientation.z,ps.transform.orientation.w]}:null;
     send({hand:src.handedness,axes:Array.from(g.axes),buttons:g.buttons.map(b=>b.value),pose:pose});}}
@@ -86,10 +86,15 @@ class QuestTeleop(Node):
         super().__init__("quest_teleop")
         self.declare_parameter("hand", "right")
         self.declare_parameter("max_speed_dps", 20.0)
-        self.declare_parameter("rate_hz", 20.0)
+        self.declare_parameter("rate_hz", 25.0)
         self.declare_parameter("open_browser", True)
         self.declare_parameter("arm_status_timeout_s", 0.5)
         self.declare_parameter("mode", "cartesian")          # cartesian (pose 6D del control) | joint
+        self.declare_parameter("one_euro", True)             # filtro 1-euro (temblor sin retraso)
+        self.declare_parameter("euro_mincutoff", 1.2)
+        self.declare_parameter("euro_beta", 0.03)
+        self.declare_parameter("damping_min", 5.0)           # amortiguacion adaptativa: 5 lejos, ik_damping cerca de singularidad
+        self.declare_parameter("ik_iters", 6)
         self.declare_parameter("scale", 1.0)                 # escala de la traslacion mano -> pinza
         self.declare_parameter("max_joint_dps", 45.0)        # velocidad maxima por articulacion (modo cartesiano)
         self.declare_parameter("keep_awake", True)
@@ -106,7 +111,7 @@ class QuestTeleop(Node):
         self.declare_parameter("grip_toggle", True)     # gatillo alterna abierta <-> 50 %
         self.declare_parameter("gripper_open_mm", 90.0)
         self.declare_parameter("gripper_half_mm", 45.0)           # seguir funcionando con el visor quitado (se revierte al salir)
-        self.declare_parameter("rot_scale", 2.0)             # sensibilidad de giro: angulo de la pinza = k x angulo de la mano
+        self.declare_parameter("rot_scale", 1.0)             # sensibilidad de giro: angulo de la pinza = k x angulo de la mano
         self.declare_parameter("max_wrist_dps", 90.0)        # velocidad maxima de la muneca (j4..j6)
         self.hand = str(self.get_parameter("hand").value)
         self.max_speed = float(self.get_parameter("max_speed_dps").value)
@@ -119,6 +124,7 @@ class QuestTeleop(Node):
         self.real = bool(self.get_parameter("real").value)
         self.homed = False
         self.was_engaged = False
+        self.prev_grip = False
         self.home_q = None
         if self.real:
             self.get_logger().warn("MODO ROBOT REAL: movimiento solo con X mantenido; primero HOME")
@@ -140,7 +146,9 @@ class QuestTeleop(Node):
         self.create_subscription(String, "/arm/status", self._arm_cb, 10)
         self.create_timer(self.dt, self._tick)
         self._start_http()
+        self.adb_ok = False
         self._setup_adb()
+        self.create_timer(5.0, self._retry_adb)     # p. ej. el Quest se autoriza o se conecta despues
         if bool(self.get_parameter("keep_awake").value):
             self._keep_awake(True)
             self.create_timer(30.0, lambda: self._keep_awake(True, quiet=True))
@@ -163,7 +171,7 @@ class QuestTeleop(Node):
 
             def do_GET(self):
                 page = PAGE.replace("PAGE_VERSION", str(PAGE_VERSION))
-                txt = (("Mantener X: el brazo va a HOME y despues copia tu mano. Soltar X = frena. Y = giro on/off. Gatillo = pinza."
+                txt = (("GRIP: apuntar el control hacia donde mira el robot y apretar = calibrar frente. Mantener X: va a HOME y despues copia tu mano. Soltar X = frena. Y = giro on/off. Gatillo = pinza."
                         if node.real else "Mantener GRIP: la pinza copia tu mano. Soltar = frena. X = giro on/off. Gatillo = pinza.")
                        if node.mode == "cartesian" else
                        "Mantener GRIP para mover. Joystick = articulaciones. X/A = cambiar par. Gatillo = pinza.")
@@ -237,6 +245,7 @@ class QuestTeleop(Node):
             if r.returncode != 0:
                 self.get_logger().warn(f"adb reverse fallo ({r.stderr.strip()}): ¿Quest conectado y autorizado?")
                 return
+            self.adb_ok = True
             self.get_logger().info("adb reverse OK: el Quest ve http://localhost:8765")
             if bool(self.get_parameter("open_browser").value):
                 subprocess.run(["adb", "shell", "am", "start", "-a", "android.intent.action.VIEW",
@@ -244,6 +253,21 @@ class QuestTeleop(Node):
                                capture_output=True, text=True, timeout=8)
         except (OSError, subprocess.TimeoutExpired) as e:
             self.get_logger().warn(f"adb no disponible: {e}")
+
+    def _retry_adb(self):
+        """Rearma el tunel si el Quest se autorizo, se reconecto o se reinicio."""
+        try:
+            r = subprocess.run(["adb", "reverse", "--list"], capture_output=True, text=True, timeout=4)
+            active = r.returncode == 0 and f"tcp:{PORT}" in r.stdout
+        except (OSError, subprocess.TimeoutExpired):
+            active = False
+        if active:
+            self.adb_ok = True
+            return
+        self.adb_ok = False
+        self._setup_adb()
+        if self.adb_ok and bool(self.get_parameter("keep_awake").value):
+            self._keep_awake(True)
 
     def _keep_awake(self, on: bool, quiet: bool = False):
         """Visor quitado sin cortar la sesion: sensor de proximidad simulado y pantalla despierta por USB.
@@ -305,7 +329,7 @@ def _publish_traj(node, q_deg):
     msg.joint_names = [f"joint{i}" for i in range(1, 7)]
     p = JointTrajectoryPoint()
     p.positions = [v * DEG for v in q_deg]
-    p.time_from_start = Duration(sec=0, nanosec=int(node.dt * 3 * 1e9))
+    p.time_from_start = Duration(sec=0, nanosec=int(node.dt * 1.25 * 1e9))   # ~1 ciclo: con 3 ciclos solo se recorria 1/3 de cada tramo (retraso)
     msg.points = [p]
     node.pub_traj.publish(msg)
 
@@ -349,6 +373,13 @@ def _tick_cartesian(self, now, sample, pose, measured, fresh_arm):
     age = 99.0 if sample is None else now - sample.t
     buttons = sample.buttons if sample is not None else []
     if self.real:
+        # GRIP (sin mover nada) = calibrar "frente": apuntar el control hacia donde mira el robot y apretar
+        g = len(buttons) > 1 and buttons[1] > 0.5
+        if g and not self.prev_grip and pose is not None and age < 0.3:
+            self.cstate.forward_yaw = qc.heading_yaw(qc.quat_to_R(pose[1]))
+            self.cstate.engaged = False
+            self.get_logger().info(f"Frente calibrado: rumbo {np.degrees(self.cstate.forward_yaw):.0f} grados = adelante del robot")
+        self.prev_grip = g
         if not self.homed:
             _tick_home(self, now, sample, measured, bool(self.arm.get("enabled")))
             return
@@ -369,7 +400,12 @@ def _tick_cartesian(self, now, sample, pose, measured, fresh_arm):
                           deadband_deg=float(self.get_parameter("deadband_deg").value),
                           grip_toggle=bool(self.get_parameter("grip_toggle").value),
                           grip_open=float(self.get_parameter("gripper_open_mm").value),
-                          grip_half=float(self.get_parameter("gripper_half_mm").value))
+                          grip_half=float(self.get_parameter("gripper_half_mm").value),
+                          one_euro=bool(self.get_parameter("one_euro").value),
+                          euro_mincutoff=float(self.get_parameter("euro_mincutoff").value),
+                          euro_beta=float(self.get_parameter("euro_beta").value),
+                          ik_iters=int(self.get_parameter("ik_iters").value),
+                          damping_min=float(self.get_parameter("damping_min").value))
     for line in st.log:
         self.get_logger().info(line)
     st.log.clear()

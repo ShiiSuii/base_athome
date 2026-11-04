@@ -122,6 +122,7 @@ Escala: **P0** desbloquea seguridad/progreso · **P1** valor demostrable · **P2
 | ID | Tarea | Quién | Criterio |
 |---|---|---|---|
 | HOME-52 | Teleop Quest en el brazo real: prueba completa (HOME → seguimiento → pinza), medir `track_mm`/`track_deg` y ajustar `scale`, `smooth`, velocidades | humano + Claude | error medio < 10 mm a 12°/s |
+| HOME-56 | LAB: verificar `installation_pos` del Piper (montaje lateral; confirmar lado con el cable hacia atrás) y medir la lag real de firmware con `track_mm` (`stream_speed_pct`) | humano + Claude | seguimiento y sostén medidos antes/después |
 | HOME-53 | Grabación de demostraciones (`ros2 bag` de estado, comandos, pose objetivo, cámara de muñeca) para entrenar | Claude | episodios reproducibles, formato documentado |
 | HOME-54 | Pan-tilt: reparar la alimentación (12 V bajo carga, power hub U2D2, masa) y volver a lanzar el nodo desde `jetson-head` | humano + Claude | 0 desconexiones en 10 min con torque y movimiento |
 | HOME-55 | Receptionist en el robot: barrido de 2 filas (~16 s), seguimiento leve del rostro, revisión del pan-tilt al arrancar | humano + Claude | persona sentada detectada; revisión ✔ |

@@ -22,6 +22,17 @@ R_MOUNT = np.array([[1.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, -1.0, 0.0]])
 M_XR_TO_ROBOT = np.array([[0.0, 0.0, -1.0], [-1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])   # v_robot = M @ v_xr
 
 
+def heading_yaw(R_xr) -> float:
+    """Rumbo (rad, giro sobre +Y de WebXR) del eje 'adelante' del control (-Z), proyectado en el plano horizontal."""
+    f = R_xr @ np.array([0.0, 0.0, -1.0])
+    return math.atan2(-f[0], -f[2])
+
+
+def yaw_matrix(yaw: float):
+    c, s = math.cos(yaw), math.sin(yaw)
+    return np.array([[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]])
+
+
 def fk(q_rad: Sequence[float]):
     """TCP (mm) y rotacion en el marco del hombro con ejes de base_link."""
     T = np.eye(4)
@@ -64,7 +75,33 @@ def rot_err(R, Rt):
     return R @ (v * ang)   # en el marco del mundo
 
 
-def ik_step(q_deg, p_target_mm, R_target, use_rot=True, iters=6, rot_w=200.0, damping=8.0):
+class OneEuro:
+    """Filtro 1-euro (Casiez et al.): corte bajo con la mano lenta (sin temblor), alto con la mano rapida (sin retraso)."""
+
+    def __init__(self, mincutoff=1.2, beta=0.03, dcutoff=1.0):
+        self.mincutoff, self.beta, self.dcutoff = mincutoff, beta, dcutoff
+        self.dx = 0.0
+
+    @staticmethod
+    def alpha(cutoff, dt):
+        tau = 1.0 / (2.0 * math.pi * cutoff)
+        return 1.0 / (1.0 + tau / dt)
+
+    def gain(self, speed, dt):
+        """Ganancia (0..1) para esta muestra segun la velocidad medida (unidades/s)."""
+        self.dx += self.alpha(self.dcutoff, dt) * (speed - self.dx)
+        return self.alpha(self.mincutoff + self.beta * abs(self.dx), dt)
+
+
+def adaptive_damping(J, d_min, d_max, sigma0=40.0):
+    """Amortiguacion segun el menor valor singular de J: minima lejos de singularidades, maxima cerca."""
+    smin = float(np.linalg.svd(J, compute_uv=False)[-1])
+    if smin >= sigma0:
+        return d_min
+    return d_min + (d_max - d_min) * (1.0 - (smin / sigma0) ** 2)
+
+
+def ik_step(q_deg, p_target_mm, R_target, use_rot=True, iters=6, rot_w=200.0, damping=8.0, damping_min=None):
     """Mínimos cuadrados amortiguados desde q (grados). Devuelve (q_nuevo_grados, error_mm, error_grados)."""
     q = np.radians(np.asarray(q_deg, float))
     lo, hi = np.radians(JOINT_LIMITS_DEG[:, 0] + 1.0), np.radians(JOINT_LIMITS_DEG[:, 1] - 1.0)
@@ -78,7 +115,8 @@ def ik_step(q_deg, p_target_mm, R_target, use_rot=True, iters=6, rot_w=200.0, da
             p2, R2 = fk(q + dq)
             J[:3, j] = (p2 - p) / 1e-4
             J[3:, j] = rot_w * rot_err(R, R2) / 1e-4 if use_rot else 0.0
-        dq = J.T @ np.linalg.solve(J @ J.T + damping ** 2 * np.eye(6), e)
+        lam = damping if damping_min is None else adaptive_damping(J, damping_min, damping)
+        dq = J.T @ np.linalg.solve(J @ J.T + lam ** 2 * np.eye(6), e)
         q = np.clip(q + dq, lo, hi)
     p, R = fk(q)
     return np.degrees(q), float(np.linalg.norm(p_target_mm - p)), math.degrees(np.linalg.norm(rot_err(R, R_target)))
@@ -103,6 +141,9 @@ class CartesianState:
     prev_trig: bool = False
     f_p: Optional[np.ndarray] = None   # pose del control FILTRADA (quita el temblor de la mano)
     f_R: Optional[np.ndarray] = None
+    euro_p: Optional[OneEuro] = None
+    euro_r: Optional[OneEuro] = None
+    forward_yaw: float = 0.0        # calibracion: rumbo del control que corresponde al +X (adelante) del robot
     reason: str = "sin datos"
     log: List[str] = field(default_factory=list)
 
@@ -121,7 +162,8 @@ def scale_rotation(R, k):
 def cart_step(st: CartesianState, pose, buttons, measured_deg, now_age_s, dt,
               scale=1.0, max_joint_dps=45.0, timeout_s=0.3, grip_open=90.0, grip_closed=10.0,
               rot_scale=1.0, max_wrist_dps=None, max_lead_deg=15.0, ik_damping=80.0,
-              smooth=0.35, deadband_mm=1.5, deadband_deg=0.7, grip_toggle=False, grip_half=45.0):
+              smooth=0.35, deadband_mm=1.5, deadband_deg=0.7, grip_toggle=False, grip_half=45.0,
+              one_euro=False, euro_mincutoff=1.2, euro_beta=0.03, ik_iters=10, damping_min=None):
     """pose = (pos_xyz_m, quat_xyzw) del control en WebXR. Devuelve st con q_cmd (None = no mandar)."""
     if measured_deg is None:
         st.engaged, st.q_cmd, st.reason = False, None, "sin feedback del brazo"
@@ -149,6 +191,13 @@ def cart_step(st: CartesianState, pose, buttons, measured_deg, now_age_s, dt,
     # filtro exponencial de la pose (posicion lineal; rotacion por el angulo relativo) + zona muerta
     if st.f_p is None:
         st.f_p, st.f_R = raw_p, raw_R
+        st.euro_p, st.euro_r = OneEuro(euro_mincutoff, euro_beta), OneEuro(euro_mincutoff, euro_beta * 20.0)
+    elif one_euro:                           # mm/s y grados/s: la ganancia depende de la velocidad de la mano
+        dpf = raw_p - st.f_p
+        st.f_p = st.f_p + st.euro_p.gain(float(np.linalg.norm(dpf)) / dt, dt) * dpf
+        dRf = raw_R @ st.f_R.T
+        ang = math.degrees(math.acos(max(-1.0, min(1.0, (np.trace(dRf) - 1) / 2))))
+        st.f_R = scale_rotation(dRf, st.euro_r.gain(ang / dt, dt)) @ st.f_R
     else:
         dpf = raw_p - st.f_p
         st.f_p = st.f_p + (smooth if np.linalg.norm(dpf) > deadband_mm else 0.0) * dpf
@@ -166,19 +215,28 @@ def cart_step(st: CartesianState, pose, buttons, measured_deg, now_age_s, dt,
         st.c0_p, st.c0_R = pos, Rc
         st.t0_p, st.t0_R = fk(np.radians(measured_deg))
         st.q_cmd = list(measured_deg)
-    dp = M_XR_TO_ROBOT @ (pos - st.c0_p) * scale
-    dR = scale_rotation(M_XR_TO_ROBOT @ (Rc @ st.c0_R.T) @ M_XR_TO_ROBOT.T, rot_scale)
+    # Ejes: WebXR -> "frente calibrado" -> robot. Sin calibrar, el frente es hacia donde miraba el visor al entrar en VR.
+    M = M_XR_TO_ROBOT @ yaw_matrix(-st.forward_yaw)
+    dp = M @ (pos - st.c0_p) * scale
+    dR = scale_rotation(M @ (Rc @ st.c0_R.T) @ M.T, rot_scale)
     st.target_p = st.t0_p + dp
     st.target_R = dR @ st.t0_R if st.use_rot else st.t0_R
     # amortiguacion alta: cerca de la singularidad de muneca (j5 ~ 0, p.ej. en HOME) evita giros grandes y
     # opuestos de j4/j6 (medido: 40 grados con 8 -> 7 grados con 80, mismo error de la pinza ~1 mm)
-    q_new, st.err_mm, st.err_deg = ik_step(st.q_cmd, st.target_p, st.target_R, use_rot=True, iters=10,
-                                           damping=ik_damping)
+    q_new, st.err_mm, st.err_deg = ik_step(st.q_cmd, st.target_p, st.target_R, use_rot=True, iters=ik_iters,
+                                           damping=ik_damping, damping_min=damping_min)
     # velocidad maxima por articulacion; la muneca (j4..j6) puede ir mas rapido para que el giro responda
     lim = np.array([max_joint_dps] * 3 + [max_wrist_dps or max_joint_dps] * 3) * dt
     q_prev = np.asarray(st.q_cmd, float)
-    q_new = q_prev + np.clip(q_new - q_prev, -lim, lim)
-    q_new = np.minimum(np.asarray(measured_deg) + max_lead_deg, np.maximum(np.asarray(measured_deg) - max_lead_deg, q_new))
+    # Limites que conservan la DIRECCION: se escala todo el paso por igual (recortar cada articulacion por
+    # separado deforma la trayectoria de la pinza).
+    dq = q_new - q_prev
+    k = min(1.0, float(np.min(lim / np.maximum(np.abs(dq), 1e-9))))
+    q_new = q_prev + k * dq
+    lead = q_new - np.asarray(measured_deg)
+    peak = float(np.max(np.abs(lead)))
+    if peak > max_lead_deg:
+        q_new = np.asarray(measured_deg) + lead * (max_lead_deg / peak)
     st.q_cmd = [float(v) for v in q_new]
     st.reason = (f"siguiendo el control (error {st.err_mm:.0f} mm / {st.err_deg:.0f} grados"
                  + (", FUERA DE ALCANCE" if st.err_mm > 15.0 else "") + ")")

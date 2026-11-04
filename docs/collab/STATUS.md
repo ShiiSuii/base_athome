@@ -3,7 +3,7 @@
 Corto y actualizado: se **reemplaza** lo viejo, no se acumula (`AGENTS.md` §9). Lo histórico se
 recupera por commit (§8). Editado por el integrador (Claude).
 
-**Última actualización:** 2026-11-03 (noche) · Claude Code · modo `DESARROLLO` · pausa pedida por el usuario.
+**Última actualización:** 2026-11-04 · Claude Code · modo `DESARROLLO` · fidelidad de la teleop.
 
 ## 1. Estado comprobado al pausar
 
@@ -11,9 +11,9 @@ recupera por commit (§8). Editado por el integrador (Claude).
 |---|---|---|
 | NUC | Ubuntu 24.04, kernel 7.0.0-42 (reiniciada hoy), Jazzy, CycloneDDS, dominio 10 | `NUC_VERIFIED` |
 | Jetson | L4T R39.2.1, Jazzy; `jetson-head` activo | `JETSON_VERIFIED` |
-| Piper | **energizado y habilitado por el usuario**; controlador desplegado md5 `2e347c49` (S-14, FollowJointTrajectory, rampa de pinza independiente); `can0` con tráfico | `JETSON_VERIFIED` |
-| Pan-tilt | **falla eléctrica abierta**: con torque el U2D2 se cae por USB en segundos; sin torque estable. Software corregido (vueltas multivuelta, `pwm_limit`, `position_p_gain`). Corre como **proceso manual** (ver §4) | `JETSON_VERIFIED` |
-| Teleop Meta Quest 2 | **detenida** al pausar (el Quest volvió a su energía normal). Probada: simulación (pose 6D) y robot real (va a HOME con X; seguimiento real pendiente de una prueba completa) | `SIM_PASS`; real parcial |
+| Piper | energizado, **deshabilitado** tras reiniciarse la Jetson (colgando en reposo, feedback válido); controlador md5 `2e347c49` | `JETSON_VERIFIED` 2026-11-04 |
+| Pan-tilt | **falla eléctrica abierta**: con torque el U2D2 se cae por USB en segundos; sin torque estable. Software corregido (vueltas multivuelta, `pwm_limit`, `position_p_gain`). Corre desde `jetson-head` (la Jetson se reinició; ya no hay proceso manual) | `JETSON_VERIFIED` |
+| Teleop Meta Quest 2 | **nodo corriendo** en la Jetson (dominio 10, `real:=true`, 20/40°/s), sin mover nada hasta X. Quest desconectado al último chequeo (rearma `adb` solo). Fidelidad mejorada y validada en sim; seguimiento real pendiente | `SIM_PASS`; real parcial |
 | Simulación | cerrada | — |
 | Tests offline | Jetson scripts 32 + Quest 18, percepción 122, skills 33, bringup (elevador) 6, sim 7, pan-tilt 8, agentes 40 | `UNIT_PASS` 2026-11-03 |
 
@@ -28,15 +28,15 @@ recupera por commit (§8). Editado por el integrador (Claude).
 
 1. Quest por USB a la **Jetson**, depuración USB autorizada (`adb devices` → `device`).
 2. **Cerrar todas las pestañas del navegador del Quest** (las viejas se restauran y mandan datos sin pose: fue la causa
-   de "no se mueve"). Abrir una sola: `http://localhost:8765` (debe decir **v 6**).
+   de "no se mueve"). Abrir una sola: `http://localhost:8765` (debe decir **v 7**).
 3. Lanzar en la Jetson (robot real, dominio 10):
    ```bash
    source /opt/ros/jazzy/setup.bash; export ROS_DOMAIN_ID=10 CYCLONEDDS_URI=file:///home/ubuntu/cyclonedds.xml
-   cd ~ && python3 quest_teleop_node.py --ros-args -p mode:=cartesian -p real:=true -p max_joint_dps:=12.0 \
-     -p max_wrist_dps:=25.0 -p max_lead_deg:=5.0 -p scale:=0.8 -p rot_scale:=1.5 -p grip_toggle:=true
+   cd ~ && python3 quest_teleop_node.py --ros-args -p mode:=cartesian -p real:=true -p max_joint_dps:=20.0 \
+     -p max_wrist_dps:=40.0 -p max_lead_deg:=5.0
    ```
    Simulación: `ROS_DOMAIN_ID=42`, sin `real:=true`, con `base_athome_sim` en la NUC usando `~/cyclonedds.xml` (red).
-4. En el visor: gatillo sobre la página → **mantener X**: primero va a HOME (15°/s), después la pinza copia la mano;
+4. Habilitar el brazo a mano (`/arm/set_enable`; el nodo nunca lo hace). En el visor: gatillo sobre la página → **GRIP apuntando hacia donde mira el robot** (calibra el frente) → **mantener X**: primero va a HOME (15°/s), después la pinza copia la mano;
    soltar X = frena en el lugar; Y = giro on/off; gatillo = pinza abierta ↔ 50 %.
 5. Medir precisión real: `/quest_teleop/status` → `track_mm`, `track_deg` (objetivo vs FK de lo medido).
 
@@ -44,7 +44,7 @@ recupera por commit (§8). Editado por el integrador (Claude).
 
 | Dónde | Proceso | Qué hacer |
 |---|---|---|
-| Jetson | `pan_tilt_node` lanzado **a mano** (PID 10753 al pausar), con el código nuevo y torque **apagado** | antes de reiniciar `jetson-head`: `kill -TERM` ese PID (si no, dos nodos abren el U2D2) |
+| Jetson | `quest_teleop_node.py` lanzado a mano (dominio 10) | `kill -TERM` al terminar (revierte el Quest) |
 | Jetson | `adb` server + regla udev `/etc/udev/rules.d/51-meta-quest.rules` | dejar (necesarios para el Quest) |
 | Jetson | `ros-jazzy-control-msgs` y `adb` instalados por apt | rollback: `~/deploy_backups/{control_msgs,adb}_20261103/installed.txt` |
 
