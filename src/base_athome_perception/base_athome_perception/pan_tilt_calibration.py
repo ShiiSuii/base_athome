@@ -3,6 +3,8 @@ Los parametros del nodo son FISICOS (ticks del servo): fisico = direccion * logi
 import math
 from typing import Dict, List, Sequence, Tuple
 
+import cv2
+import numpy as np
 import yaml
 
 SCAN_PANS = (-60.0, -30.0, 0.0, 30.0, 60.0)    # el barrido del receptionist
@@ -104,6 +106,26 @@ def tracking_stats(samples: Sequence[Tuple[float, float, float, float, float]]) 
             best = (rms, k)
     return dict(n=len(samples), rms_deg=math.sqrt(sum(x * x for x in errs) / len(errs)), max_deg=max(errs),
                 lag_s=best[1] * dt, rms_sin_lag_deg=best[0])
+
+
+def image_shift(before: np.ndarray, after: np.ndarray) -> Tuple[float, float, float]:
+    """Cuanto se corrio el contenido de la imagen: (dx a la derecha, dy hacia abajo, confianza 0..1)."""
+    def gray(img):
+        g = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
+        return np.float32(cv2.resize(g, (320, int(320 * g.shape[0] / g.shape[1]))))
+    a, b = gray(before), gray(after)
+    (dx, dy), response = cv2.phaseCorrelate(a, b, cv2.createHanningWindow((a.shape[1], a.shape[0]), cv2.CV_32F))
+    scale = before.shape[1] / 320.0
+    return dx * scale, dy * scale, float(response)
+
+
+def sense_from_shift(command_deg: float, shift_px: float, confidence: float, axis: str,
+                     min_px: float = 15.0, min_confidence: float = 0.05) -> str:
+    """Girar a la izquierda (pan +) corre la escena a la derecha; subir (tilt +) la corre hacia abajo.
+    Es lo que asume el seguimiento de rostro. Devuelve ok, inverted o unknown."""
+    if confidence < min_confidence or abs(shift_px) < min_px:
+        return "unknown"
+    return "ok" if command_deg * shift_px > 0 else "inverted"
 
 
 def verdict(step_errors: Sequence[float], stats: Dict[str, float], link_drops: int, usb_drops: int,

@@ -128,7 +128,7 @@ Escala: **P0** desbloquea seguridad/progreso · **P1** valor demostrable · **P2
 | HOME-56 | LAB: verificar `installation_pos` del Piper (montaje lateral; confirmar lado con el cable hacia atrás) y medir la lag real de firmware con `track_mm` (`stream_speed_pct`) | humano + Claude | seguimiento y sostén medidos antes/después |
 | HOME-53 | Grabación de demostraciones (`ros2 bag` de estado, comandos, pose objetivo, cámara de muñeca) para entrenar | Claude | episodios reproducibles, formato documentado |
 | HOME-54 | Pan-tilt: reparar la alimentación (12 V bajo carga, power hub U2D2, masa) y volver a lanzar el nodo desde `jetson-head` | humano + Claude | 0 desconexiones en 10 min con torque y movimiento |
-| HOME-61 | Calibrador `calibrar_pantilt` usado en el robot: la prueba completa (`M`) mide enlace, sentido, error y retardo. Requiere HOME-54: el 04/11 hubo 118 desconexiones USB del U2D2 (`Cannot enable. Maybe the USB cable is bad?`, error -71, solo el puerto del U2D2) | Humano + Claude | script listo; sin correr con torque en el robot |
+| HOME-61 | Calibrador `calibrar_pantilt` usado en el robot: la prueba completa (`M`) mide enlace, sentido, error y retardo. Requiere HOME-54: el 04/11 hubo 118 desconexiones USB del U2D2 (`Cannot enable. Maybe the USB cable is bad?`, error -71, solo el puerto del U2D2) | Humano + Claude | script listo; el usuario lo corrió con torque. Falta `V` (sentido con la cámara) y `M`. `head_pan_sign` sigue sin verificar |
 | HOME-55 | Receptionist en el robot: barrido de 2 filas (~16 s), seguimiento leve del rostro, revisión del pan-tilt al arrancar | humano + Claude | persona sentada detectada; revisión ✔ |
 
 ### P2 — Manipulación y competencia

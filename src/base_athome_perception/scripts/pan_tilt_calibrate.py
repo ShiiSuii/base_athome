@@ -3,9 +3,10 @@
 
 Usa las interfaces de pan_tilt_node (el puerto serie es de ese nodo). La cabeza solo se mueve al tocar una tecla.
 Si el receptionist esta abierto, queda en modo lectura para no pelearse por la cabeza.
-  Flechas/WASD  mover    +/-  paso      0  ir al centro       T  torque on/off (sin torque se mueve a mano)
+  Flechas/WASD  mover (A = izquierda DEL ROBOT: de frente a el, se ve al reves)
+  +/-  paso      0  ir al centro       T  torque on/off (sin torque se mueve a mano)
   C  marcar centro aca   1/2  pan izquierda/derecha   3/4  tilt arriba/abajo (marcar limites, mejor a mano)
-  M  prueba completa     G  guardar     H  ayuda              Q  salir (no cambia el torque)
+  V  verificar el sentido con la camara  M  prueba completa  G  guardar  H  ayuda  Q  salir (no cambia el torque)
 Guardar deja la calibracion en la Jetson (con copia de respaldo) y en el repo. El nodo la lee al arrancar.
 """
 import argparse
@@ -19,18 +20,20 @@ import threading
 import time
 import tty
 
+import numpy as np
 import rclpy
 from geometry_msgs.msg import Vector3
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
-from rclpy.qos import DurabilityPolicy, QoSProfile
-from sensor_msgs.msg import JointState
+from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data
+from sensor_msgs.msg import Image, JointState
 from std_msgs.msg import Bool
 from std_srvs.srv import SetBool
 
 from base_athome_perception import pan_tilt_calibration as cal
 
 JETSON = "ubuntu@10.42.0.12"
+CAMERA_TOPIC = "/camera/camera/color/image_raw"
 REMOTE_YAML = "~/athome_ws/src/pan_tilt_controller/config/pan_tilt_params.yaml"
 REPO_YAML = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "jetson_head", "src",
                          "pan_tilt_controller", "config", "pan_tilt_params.yaml")
@@ -276,6 +279,69 @@ class PanTiltCalibrator(Node):
             self.out("  -> " + line)
         return report
 
+    # ------------------------------------------------------------------ sentido real, medido con la camara
+    def _image(self, timeout=3.0):
+        """Una imagen tomada DESPUES de este llamado (None si no llega)."""
+        got = []
+
+        def on_image(msg):
+            if not got and msg.encoding in ("rgb8", "bgr8", "mono8"):
+                got.append(np.frombuffer(msg.data, np.uint8).reshape(msg.height, msg.width, -1).squeeze().copy())
+        sub = self.create_subscription(Image, CAMERA_TOPIC, on_image, qos_profile_sensor_data)
+        end = time.time() + timeout
+        while not got and time.time() < end:
+            time.sleep(0.02)
+        self.destroy_subscription(sub)
+        return got[0] if got else None
+
+    def _measure_sense(self, axis, amount):
+        """Mueve un eje, compara la imagen y vuelve. Mantener la escena quieta. Devuelve ok, inverted o unknown."""
+        start = self.goal
+        results = []
+        for delta in (amount, -amount):
+            target = self._clip((start[0] + delta, start[1]) if axis == "pan" else (start[0], start[1] + delta))
+            command = target[0] - start[0] if axis == "pan" else target[1] - start[1]
+            if abs(command) < 3.0:
+                continue
+            time.sleep(0.5)
+            before = self._image()
+            self._follow(target, JOG_DPS)
+            time.sleep(0.8)
+            after = self._image()
+            self._follow(start, JOG_DPS)
+            if before is None or after is None:
+                results.append("unknown")
+                continue
+            dx, dy, conf = cal.image_shift(before, after)
+            shift = dx if axis == "pan" else dy
+            results.append(cal.sense_from_shift(command, shift, conf, axis))
+            self.out(f"  {axis} {command:+.0f} grados: imagen {shift:+.0f} px (confianza {conf:.2f}) -> {results[-1]}")
+        known = [r for r in results if r != "unknown"]
+        if len(known) == len(results) and known and len(set(known)) == 1:
+            return known[0]
+        return "unknown"
+
+    def verify_sense(self):
+        """El sentido real respecto del robot, sin depender de desde donde se mire."""
+        if not self._can_move():
+            return None
+        self.out("Verificando el sentido con la camara: que nadie se mueva delante (unos 15 s)...")
+        result = {}
+        try:
+            for axis, amount in (("pan", 10.0), ("tilt", 6.0)):
+                result[axis] = self._measure_sense(axis, amount)
+        except Aborted:
+            self.out("Se cayo el enlace: verificacion cortada.")
+            return None
+        text = {"ok": "CORRECTO", "inverted": "INVERTIDO", "unknown": "sin dato (repetir con la escena quieta y con textura)"}
+        for axis in result:
+            self.out(f"{axis}: {text[result[axis]]}")
+        if result.get("pan") == "ok":
+            self.out("Pan correcto: A gira a la izquierda del robot. Si lo mirabas de frente, se ve al reves; no hay que cambiar nada.")
+        if "inverted" in result.values():
+            self.out("Hay que cambiar pan_direction/tilt_direction del nodo: el seguimiento de rostro iria al reves.")
+        return result
+
     # ------------------------------------------------------------------ teclado
     def key(self, ch):
         s = self.step_deg
@@ -299,6 +365,8 @@ class PanTiltCalibrator(Node):
             self.step_deg = max(1.0, s - 1.0)
         elif ch == "m":
             self.full_test()
+        elif ch == "v":
+            self.verify_sense()
         elif ch == "g":
             self.save()
         elif ch == "h":

@@ -6,6 +6,8 @@ import threading
 import time
 from pathlib import Path
 
+import cv2
+import numpy as np
 import pytest
 
 from base_athome_perception import pan_tilt_calibration as cal
@@ -69,6 +71,28 @@ def test_verdict_blames_electrics_first_and_says_ok_when_clean():
     assert any("SENTIDO" in x for x in lines) and any("NO LLEGA" in x for x in lines)
 
 
+def _scene(seed=3, h=480, w=640):
+    rng = np.random.default_rng(seed)
+    return cv2.GaussianBlur(rng.integers(0, 255, (h, w, 3), dtype=np.uint8), (15, 15), 0)
+
+
+def test_image_shift_sign_right_and_down_are_positive():
+    a = _scene()
+    b = np.roll(a, 60, axis=1)                           # el contenido se corre 60 px a la derecha
+    dx, dy, conf = cal.image_shift(a, b)
+    assert dx == pytest.approx(60, abs=4) and abs(dy) < 4 and conf > 0.05
+    dx, dy, _ = cal.image_shift(a, np.roll(a, 40, axis=0))
+    assert dy == pytest.approx(40, abs=4)
+
+
+def test_sense_is_about_the_image_not_the_viewer():
+    assert cal.sense_from_shift(10.0, 90.0, 0.5, "pan") == "ok"           # izquierda: escena a la derecha
+    assert cal.sense_from_shift(10.0, -90.0, 0.5, "pan") == "inverted"
+    assert cal.sense_from_shift(-10.0, -90.0, 0.5, "pan") == "ok"
+    assert cal.sense_from_shift(10.0, 90.0, 0.01, "pan") == "unknown"     # imagen sin informacion
+    assert cal.sense_from_shift(10.0, 3.0, 0.5, "pan") == "unknown"       # casi no se movio: no concluir
+
+
 # ---------------------------------------------------------------- flujo con ROS
 os.environ.setdefault("ROS_DOMAIN_ID", "77")
 if os.environ.get("ROS_DOMAIN_ID") != "77":
@@ -78,7 +102,8 @@ from geometry_msgs.msg import Vector3  # noqa: E402
 from rclpy.executors import MultiThreadedExecutor  # noqa: E402
 from rclpy.node import Node  # noqa: E402
 from rclpy.qos import DurabilityPolicy, QoSProfile  # noqa: E402
-from sensor_msgs.msg import JointState  # noqa: E402
+from rclpy.qos import qos_profile_sensor_data  # noqa: E402
+from sensor_msgs.msg import Image, JointState  # noqa: E402
 from std_msgs.msg import Bool  # noqa: E402
 from std_srvs.srv import SetBool  # noqa: E402
 
@@ -102,6 +127,17 @@ class FakeHead(Node):
         self.create_subscription(Vector3, "/pan_tilt/target_degrees", self._cmd, 20)
         self.create_service(SetBool, "/pan_tilt/set_torque", self._srv)
         self.create_timer(0.05, self._tick)
+        self.scene = _scene()
+        self.image_sense = 1.0                           # -1: el motor gira al reves de lo que dice su posicion
+        self.pub_img = self.create_publisher(Image, tool.CAMERA_TOPIC, qos_profile_sensor_data)
+        self.create_timer(0.066, self._image)
+
+    def _image(self):
+        px = int(round(self.image_sense * self.pan * 10.0))    # ~10 px por grado
+        py = int(round(self.image_sense * self.tilt * 10.0))
+        img = np.roll(np.roll(self.scene, px, axis=1), py, axis=0)
+        self.pub_img.publish(Image(height=img.shape[0], width=img.shape[1], encoding="bgr8", step=img.shape[1] * 3,
+                                   data=img.tobytes()))
 
     def _cmd(self, m):
         self.commands += 1
@@ -199,3 +235,35 @@ def test_save_writes_only_with_marks(rig, tmp_path, monkeypatch):
     node.marks = dict(pan_center=5.0, tilt_center=0.0)
     assert node.save() is True
     assert cal.params_from_yaml(target.read_text())["pan_center_tick"] != node.params["pan_center_tick"]
+
+
+def test_verify_sense_says_ok_when_image_agrees(rig):
+    _, node, said = rig
+    node.set_torque(True)
+    assert node.verify_sense() == dict(pan="ok", tilt="ok")
+    assert any("no hay que cambiar nada" in x for x in said)
+
+
+def test_verify_sense_detects_a_really_inverted_motor(rig):
+    head, node, said = rig
+    node.set_torque(True)
+    head.image_sense = -1.0
+    assert node.verify_sense() == dict(pan="inverted", tilt="inverted")
+    assert any("pan_direction" in x for x in said)
+
+
+def test_verify_sense_does_not_conclude_without_camera(rig, monkeypatch):
+    _, node, _ = rig
+    node.set_torque(True)
+    monkeypatch.setattr(node, "_image", lambda timeout=3.0: None)
+    assert node.verify_sense() == dict(pan="unknown", tilt="unknown")
+
+
+def test_verify_sense_needs_torque_and_returns_to_start(rig):
+    head, node, _ = rig
+    assert node.verify_sense() is None and head.commands == 0
+    node.set_torque(True)
+    node.jog(5.0, 0.0)
+    node.verify_sense()
+    time.sleep(0.4)
+    assert head.tp == pytest.approx(5.0, abs=0.5) and head.tt == pytest.approx(0.0, abs=0.5)
