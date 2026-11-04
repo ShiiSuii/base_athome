@@ -95,6 +95,9 @@ class QuestTeleop(Node):
         self.declare_parameter("euro_beta", 0.03)
         self.declare_parameter("damping_min", 5.0)           # amortiguacion adaptativa: 5 lejos, ik_damping cerca de singularidad
         self.declare_parameter("ik_iters", 6)
+        # Punto de control: 0 = centro de la muneca (girar el control mueve solo j4..j6, como la mano real);
+        # negativo = yemas (TCP). Con las yemas, girar exigia trasladar la muneca con hombro y codo.
+        self.declare_parameter("pivot_d6_mm", 0.0)
         self.declare_parameter("scale", 1.0)                 # escala de la traslacion mano -> pinza
         self.declare_parameter("max_joint_dps", 45.0)        # velocidad maxima por articulacion (modo cartesiano)
         self.declare_parameter("keep_awake", True)
@@ -112,7 +115,7 @@ class QuestTeleop(Node):
         self.declare_parameter("gripper_open_mm", 90.0)
         self.declare_parameter("gripper_half_mm", 45.0)           # seguir funcionando con el visor quitado (se revierte al salir)
         self.declare_parameter("rot_scale", 1.0)             # sensibilidad de giro: angulo de la pinza = k x angulo de la mano
-        self.declare_parameter("max_wrist_dps", 90.0)        # velocidad maxima de la muneca (j4..j6)
+        self.declare_parameter("max_wrist_dps", 90.0)          # velocidad maxima de la muneca (j4..j6)
         self.hand = str(self.get_parameter("hand").value)
         self.max_speed = float(self.get_parameter("max_speed_dps").value)
         self.dt = 1.0 / float(self.get_parameter("rate_hz").value)
@@ -125,6 +128,7 @@ class QuestTeleop(Node):
         self.homed = False
         self.was_engaged = False
         self.prev_grip = False
+        self.x_armed = False     # tras arrancar, exige ver X suelto antes de mover (reinicio con X apretado)
         self.home_q = None
         if self.real:
             self.get_logger().warn("MODO ROBOT REAL: movimiento solo con X mantenido; primero HOME")
@@ -254,6 +258,10 @@ class QuestTeleop(Node):
         except (OSError, subprocess.TimeoutExpired) as e:
             self.get_logger().warn(f"adb no disponible: {e}")
 
+    def _pivot(self):
+        v = float(self.get_parameter("pivot_d6_mm").value)
+        return None if v < 0 else v
+
     def _retry_adb(self):
         """Rearma el tunel si el Quest se autorizo, se reconecto o se reinicio."""
         try:
@@ -344,18 +352,26 @@ def _tick_home(self, now, sample, measured, enabled):
     """Ir a HOME en espacio articular, despacio, solo mientras X esta apretado. True cuando llego."""
     home = [float(v) for v in self.get_parameter("home_deg").value]
     xs = sample is not None and now - sample.t < 0.3 and len(sample.buttons) > 4 and sample.buttons[4] > 0.5
+    page_alive = now - self.page_seen_t < 2.0
     if measured is None:
         reason = "sin feedback del brazo real"
+    elif not page_alive:
+        reason = f"la pagina NO esta abierta en el visor: abrir http://localhost:{PORT}"
+    elif not self.page_xr:
+        reason = "pagina abierta: apretar el gatillo sobre la pagina"
+    elif not enabled:
+        reason = "brazo DESHABILITADO: habilitarlo con /arm/set_enable"
     elif max(abs(a - b) for a, b in zip(measured, home)) < 2.0:
         self.homed = True
         self.home_q = None
         self.get_logger().info("HOME alcanzado: mantener X para que el brazo siga la mano")
         reason = "en HOME: mantener X para seguir la mano"
-    elif not xs:
+    elif not xs or not self.x_armed:
         self.home_q = None
-        reason = "ir a HOME primero: mantener X (el brazo se mueve despacio a HOME)"
-    elif not enabled:
-        reason = "brazo DESHABILITADO: habilitarlo con /arm/set_enable"
+        if not xs:
+            self.x_armed = True      # X suelto visto: recien ahora una pulsacion puede iniciar el movimiento
+        reason = ("ir a HOME primero: mantener X (el brazo se mueve despacio a HOME)" if self.x_armed else
+                  "soltar X y volver a apretarlo para ir a HOME")
     else:
         if self.home_q is None:
             self.home_q = list(measured)
@@ -365,7 +381,10 @@ def _tick_home(self, now, sample, measured, enabled):
         _publish_traj(self, self.home_q)
         reason = f"yendo a HOME (faltan {max(abs(a - b) for a, b in zip(measured, home)):.0f} grados)"
     self.pub_status.publish(String(data=json.dumps(dict(reason=reason, mode="real-home", homed=self.homed,
-                                                          deadman=bool(xs), arm_enabled=enabled))))
+                                                          deadman=bool(xs), arm_enabled=enabled, page_alive=page_alive,
+                                                          xr=self.page_xr, hand=self.page_hand, posts=self.post_count,
+                                                          page_version=self.page_version,
+                                                          pose_received=now - self.pose_t < 0.3))))
     return self.homed
 
 
@@ -405,7 +424,8 @@ def _tick_cartesian(self, now, sample, pose, measured, fresh_arm):
                           euro_mincutoff=float(self.get_parameter("euro_mincutoff").value),
                           euro_beta=float(self.get_parameter("euro_beta").value),
                           ik_iters=int(self.get_parameter("ik_iters").value),
-                          damping_min=float(self.get_parameter("damping_min").value))
+                          damping_min=float(self.get_parameter("damping_min").value),
+                          pivot_d6=self._pivot())
     for line in st.log:
         self.get_logger().info(line)
     st.log.clear()
@@ -419,7 +439,7 @@ def _tick_cartesian(self, now, sample, pose, measured, fresh_arm):
     # precision REAL: objetivo de la pinza vs posicion medida (FK de las articulaciones medidas)
     track = (None, None)
     if st.engaged and st.target_p is not None and measured is not None:
-        pm, Rm = qc.fk([v * DEG for v in measured])
+        pm, Rm = qc.fk([v * DEG for v in measured], self._pivot())
         track = (round(float(np.linalg.norm(st.target_p - pm)), 1),
                  round(float(np.degrees(np.linalg.norm(qc.rot_err(Rm, st.target_R)))), 1))
     page_alive = now - self.page_seen_t < 2.0
@@ -443,7 +463,9 @@ def _tick_cartesian(self, now, sample, pose, measured, fresh_arm):
         if st.target_p is not None:
             ps = PoseStamped()
             ps.header.stamp, ps.header.frame_id = js.header.stamp, "arm_base_link_robot_axes"
-            ps.pose.position.x, ps.pose.position.y, ps.pose.position.z = (float(v) / 1000.0 for v in st.target_p)
+            pv = self._pivot()     # se publica el objetivo de las YEMAS aunque se controle la muneca
+            tcp_t = st.target_p + st.target_R[:, 2] * (qc.TCP_D6_MM - (qc.TCP_D6_MM if pv is None else pv))
+            ps.pose.position.x, ps.pose.position.y, ps.pose.position.z = (float(v) / 1000.0 for v in tcp_t)
             ps.pose.orientation.w = 1.0
             x, y, z, w = qc.R_to_quat(st.target_R)
             ps.pose.orientation.x, ps.pose.orientation.y, ps.pose.orientation.z, ps.pose.orientation.w = x, y, z, w

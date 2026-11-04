@@ -13,7 +13,9 @@ from typing import List, Optional, Sequence
 
 import numpy as np
 
-JOINT_LIMITS_DEG = np.array([(-154.0, 154.0), (0.0, 195.0), (-175.0, 0.0), (-110.0, 110.0), (-80.0, 80.0), (-180.0, 180.0)])
+# Limites REALES para la IK: medidos el 2026-11-04 con el brazo real saturando en j2=180, j3=-170, j4=100, j5=-70
+# (ficha del fabricante; el URDF es mas amplio). j1: ficha. j6: se midio -159, mas alla de los +-120 de la ficha.
+JOINT_LIMITS_DEG = np.array([(-150.0, 150.0), (0.0, 180.0), (-170.0, 0.0), (-100.0, 100.0), (-70.0, 70.0), (-180.0, 180.0)])
 _A = [0.0, 0.0, 285.03, -21.98, 0.0, 0.0]
 _ALPHA = [0.0, -math.pi / 2, 0.0, math.pi / 2, -math.pi / 2, math.pi / 2]
 _THETA0 = [0.0, -math.pi * 172.22 / 180.0, -102.78 / 180.0 * math.pi, 0.0, 0.0, 0.0]
@@ -33,15 +35,19 @@ def yaw_matrix(yaw: float):
     return np.array([[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]])
 
 
-def fk(q_rad: Sequence[float]):
-    """TCP (mm) y rotacion en el marco del hombro con ejes de base_link."""
+TCP_D6_MM = _D[5]      # d6 de las yemas; 0 = centro de la muneca (cruce de j4, j5, j6)
+
+
+def fk(q_rad: Sequence[float], d6: Optional[float] = None):
+    """Punto de control (mm; por defecto TCP, d6=0: centro de muneca) y rotacion, en el marco del hombro."""
     T = np.eye(4)
     for i in range(6):
         ca, sa = math.cos(_ALPHA[i]), math.sin(_ALPHA[i])
         th = q_rad[i] + _THETA0[i]
         ct, st = math.cos(th), math.sin(th)
-        T = T @ np.array([[ct, -st, 0, _A[i]], [st * ca, ct * ca, -sa, -sa * _D[i]],
-                          [st * sa, ct * sa, ca, ca * _D[i]], [0, 0, 0, 1.0]])
+        d = _D[i] if (i < 5 or d6 is None) else d6
+        T = T @ np.array([[ct, -st, 0, _A[i]], [st * ca, ct * ca, -sa, -sa * d],
+                          [st * sa, ct * sa, ca, ca * d], [0, 0, 0, 1.0]])
     return R_MOUNT @ T[:3, 3], R_MOUNT @ T[:3, :3]
 
 
@@ -101,24 +107,24 @@ def adaptive_damping(J, d_min, d_max, sigma0=40.0):
     return d_min + (d_max - d_min) * (1.0 - (smin / sigma0) ** 2)
 
 
-def ik_step(q_deg, p_target_mm, R_target, use_rot=True, iters=6, rot_w=200.0, damping=8.0, damping_min=None):
+def ik_step(q_deg, p_target_mm, R_target, use_rot=True, iters=6, rot_w=200.0, damping=8.0, damping_min=None, d6=None):
     """Mínimos cuadrados amortiguados desde q (grados). Devuelve (q_nuevo_grados, error_mm, error_grados)."""
     q = np.radians(np.asarray(q_deg, float))
-    lo, hi = np.radians(JOINT_LIMITS_DEG[:, 0] + 1.0), np.radians(JOINT_LIMITS_DEG[:, 1] - 1.0)
+    lo, hi = np.radians(JOINT_LIMITS_DEG[:, 0] + 2.0), np.radians(JOINT_LIMITS_DEG[:, 1] - 2.0)
     for _ in range(iters):
-        p, R = fk(q)
+        p, R = fk(q, d6)
         e = np.concatenate([p_target_mm - p, rot_w * rot_err(R, R_target) if use_rot else np.zeros(3)])
         J = np.zeros((6, 6))
         for j in range(6):
             dq = np.zeros(6)
             dq[j] = 1e-4
-            p2, R2 = fk(q + dq)
+            p2, R2 = fk(q + dq, d6)
             J[:3, j] = (p2 - p) / 1e-4
             J[3:, j] = rot_w * rot_err(R, R2) / 1e-4 if use_rot else 0.0
         lam = damping if damping_min is None else adaptive_damping(J, damping_min, damping)
         dq = J.T @ np.linalg.solve(J @ J.T + lam ** 2 * np.eye(6), e)
         q = np.clip(q + dq, lo, hi)
-    p, R = fk(q)
+    p, R = fk(q, d6)
     return np.degrees(q), float(np.linalg.norm(p_target_mm - p)), math.degrees(np.linalg.norm(rot_err(R, R_target)))
 
 
@@ -163,7 +169,8 @@ def cart_step(st: CartesianState, pose, buttons, measured_deg, now_age_s, dt,
               scale=1.0, max_joint_dps=45.0, timeout_s=0.3, grip_open=90.0, grip_closed=10.0,
               rot_scale=1.0, max_wrist_dps=None, max_lead_deg=15.0, ik_damping=80.0,
               smooth=0.35, deadband_mm=1.5, deadband_deg=0.7, grip_toggle=False, grip_half=45.0,
-              one_euro=False, euro_mincutoff=1.2, euro_beta=0.03, ik_iters=10, damping_min=None):
+              one_euro=False, euro_mincutoff=1.2, euro_beta=0.03, ik_iters=10, damping_min=None,
+              max_excess_mm=30.0, max_excess_deg=20.0, pivot_d6=None):
     """pose = (pos_xyz_m, quat_xyzw) del control en WebXR. Devuelve st con q_cmd (None = no mandar)."""
     if measured_deg is None:
         st.engaged, st.q_cmd, st.reason = False, None, "sin feedback del brazo"
@@ -213,7 +220,7 @@ def cart_step(st: CartesianState, pose, buttons, measured_deg, now_age_s, dt,
     if not st.engaged:                         # embragar: referencias desde lo MEDIDO
         st.engaged = True
         st.c0_p, st.c0_R = pos, Rc
-        st.t0_p, st.t0_R = fk(np.radians(measured_deg))
+        st.t0_p, st.t0_R = fk(np.radians(measured_deg), pivot_d6)
         st.q_cmd = list(measured_deg)
     # Ejes: WebXR -> "frente calibrado" -> robot. Sin calibrar, el frente es hacia donde miraba el visor al entrar en VR.
     M = M_XR_TO_ROBOT @ yaw_matrix(-st.forward_yaw)
@@ -224,8 +231,17 @@ def cart_step(st: CartesianState, pose, buttons, measured_deg, now_age_s, dt,
     # amortiguacion alta: cerca de la singularidad de muneca (j5 ~ 0, p.ej. en HOME) evita giros grandes y
     # opuestos de j4/j6 (medido: 40 grados con 8 -> 7 grados con 80, mismo error de la pinza ~1 mm)
     q_new, st.err_mm, st.err_deg = ik_step(st.q_cmd, st.target_p, st.target_R, use_rot=True, iters=ik_iters,
-                                           damping=ik_damping, damping_min=damping_min)
+                                           damping=ik_damping, damping_min=damping_min, d6=pivot_d6)
     # velocidad maxima por articulacion; la muneca (j4..j6) puede ir mas rapido para que el giro responda
+    # Anti-acumulacion: si el objetivo esta fuera de alcance, las referencias se corren para que quede pegado al
+    # borde alcanzable. Asi, al volver, la pinza responde enseguida (antes habia que recuperar todo el exceso).
+    pa, Ra = fk(np.radians(q_new), pivot_d6)
+    e = st.target_p - pa
+    en = float(np.linalg.norm(e))
+    if en > max_excess_mm:
+        st.t0_p = st.t0_p - e * (1.0 - max_excess_mm / en)
+    if st.err_deg > max_excess_deg and st.use_rot:
+        st.t0_R = scale_rotation(Ra @ st.target_R.T, 1.0 - max_excess_deg / st.err_deg) @ st.t0_R
     lim = np.array([max_joint_dps] * 3 + [max_wrist_dps or max_joint_dps] * 3) * dt
     q_prev = np.asarray(st.q_cmd, float)
     # Limites que conservan la DIRECCION: se escala todo el paso por igual (recortar cada articulacion por

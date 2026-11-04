@@ -8,7 +8,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import quest_cartesian_core as qc  # noqa: E402
 
-PRE = [72.0, 184.7, -78.3, 75.4, -74.8, -80.4]
+PRE = [72.0, 177.0, -78.3, 75.4, -66.0, -80.4]   # pre_grasp llevada dentro de los limites reales (j2<=180, j5>=-70)
 Q_ID = (0.0, 0.0, 0.0, 1.0)
 
 
@@ -197,3 +197,43 @@ def test_forward_calibration_rotates_axes():
         st = qc.cart_step(st, ((-0.04, 1, 0), Q_ID), [0, 1, 0, 0, 0, 0], st.q_cmd, 0.0, 0.05)
     d = qc.fk(np.radians(st.q_cmd))[0] - p0
     assert d[0] > 30.0 and abs(d[1]) < 6.0
+
+
+def test_ik_respects_real_firmware_limits():
+    """El brazo real satura en j2=180, j3=-170, j4=100, j5=-70: la IK no debe pedir mas alla."""
+    start = [80.0, 170.0, -150.0, 80.0, -55.0, -100.0]
+    st = qc.cart_step(qc.CartesianState(), ((0, 1, 0), Q_ID), [0, 1, 0, 0, 0, 0], start, 0.0, 0.04)
+    for k in range(300):
+        st = qc.cart_step(st, ((0.0, 1.0, -0.002 * k), Q_ID), [0, 1, 0, 0, 0, 0], st.q_cmd, 0.0, 0.04, max_joint_dps=45.0)
+    for v, (lo, hi) in zip(st.q_cmd, qc.JOINT_LIMITS_DEG):
+        assert lo <= v <= hi
+
+
+def test_out_of_reach_does_not_wind_up():
+    """Mano 1 m mas alla del alcance: al volver, la pinza reacciona enseguida."""
+    st = qc.cart_step(qc.CartesianState(), ((0, 1, 0), Q_ID), [0, 1, 0, 0, 0, 0], CENTRAL, 0.0, 0.04)
+    z = 0.0
+    for _ in range(250):                  # 1 m hacia adelante: imposible
+        z -= 0.004
+        st = qc.cart_step(st, ((0, 1, z), Q_ID), [0, 1, 0, 0, 0, 0], st.q_cmd, 0.0, 0.04, max_joint_dps=90.0)
+    excess = np.linalg.norm(st.target_p - qc.fk(np.radians(st.q_cmd))[0])
+    assert excess < 80.0                  # el objetivo queda pegado al borde, no a 1 m
+    x_far = qc.fk(np.radians(st.q_cmd))[0][0]
+    for _ in range(50):                   # volver 8 cm: debe retroceder ya, sin recuperar el exceso
+        z += 0.0016
+        st = qc.cart_step(st, ((0, 1, z), Q_ID), [0, 1, 0, 0, 0, 0], st.q_cmd, 0.0, 0.04, max_joint_dps=90.0)
+    assert qc.fk(np.radians(st.q_cmd))[0][0] < x_far - 20.0
+
+
+def test_wrist_pivot_rotation_moves_only_the_wrist():
+    """Girar el control con punto de control en la muneca: hombro y codo quietos, giro fiel."""
+    q0 = [75.0, 140.0, -90.0, 20.0, -35.0, -40.0]
+    kw = dict(one_euro=True, damping_min=5.0, ik_iters=6, max_joint_dps=20.0, max_wrist_dps=90.0, pivot_d6=0.0)
+    q20 = (math.sin(math.radians(20) / 2), 0.0, 0.0, math.cos(math.radians(20) / 2))
+    st = qc.cart_step(qc.CartesianState(), ((0, 1, 0), Q_ID), [0, 1, 0, 0, 0, 0], q0, 0.0, 0.04, **kw)
+    R0 = st.t0_R.copy()
+    for _ in range(100):
+        st = qc.cart_step(st, ((0, 1, 0), q20), [0, 1, 0, 0, 0, 0], st.q_cmd, 0.0, 0.04, **kw)
+    assert max(abs(a - b) for a, b in zip(st.q_cmd[:3], q0[:3])) < 0.5
+    R = qc.fk(np.radians(st.q_cmd))[1]
+    assert abs(math.degrees(math.acos((np.trace(R0.T @ R) - 1) / 2)) - 20.0) < 1.0
