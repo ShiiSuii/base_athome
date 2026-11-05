@@ -1,6 +1,6 @@
 INSTRUCTIVO PARA ESCRIBIR EL TDP DE BASE@HOME CON CLAUDE
 Equipo UruBots - RoboCup@Home OPL
-Escrito el 2026-11-04. Los datos de abajo envejecen: el repositorio manda sobre este archivo.
+Actualizado el 2026-11-05. Los datos de abajo envejecen: el repositorio manda sobre este archivo.
 
 
 1. PREPARAR LA COMPUTADORA
@@ -23,7 +23,7 @@ El repositorio es PUBLICO. Antes de subir el TDP o sus figuras, revisar que no t
 2. PRIMER MENSAJE PARA CLAUDE (copiar y pegar)
 ----------------------------------------------
     Vamos a escribir el Team Description Paper de UruBots para RoboCup@Home OPL, en ingles.
-    Primero lee docs/TDP_INSTRUCTIVO.txt completo y seguilo. Despues lee docs/ROBOT.md,
+    Primero lee docs/TDP_INSTRUCTIVO.txt y docs/VIDEO_CUALIFICACION.txt y seguilos. Despues lee docs/ROBOT.md,
     docs/ROADMAP.md, docs/collab/STATUS.md y src/base_athome_skills/README.md.
     No escribas todavia. Devolveme: (a) las reglas vigentes del TDP que pudiste confirmar y de
     donde salen, (b) una propuesta de indice con paginas por seccion, (c) una tabla de cada
@@ -31,28 +31,21 @@ El repositorio es PUBLICO. Antes de subir el TDP o sus figuras, revisar que no t
     Trabajamos en tdp/. No inventes ningun dato.
 
 
-3. REGLAS DEL TDP: CONFIRMAR ANTES DE ESCRIBIR
-----------------------------------------------
-Lo que sabemos hoy:
-  - Reglamento que usa el proyecto: RuleBook 2026.2
-    https://github.com/RoboCupAtHome/RuleBook/releases/tag/2026.2
-    La calificacion pide TDP de 8 paginas, video de hasta 10 minutos y web en ingles con codigo abierto.
-  - Plantilla oficial: https://github.com/RoboCupAtHome/TDPTemplate
-    Formato Springer LNCS/LNAI, limite de 8 paginas INCLUIDAS las referencias, con una descripcion
-    del robot aparte (RobotDescriptionOPL.tex).
+3. REGLAS DEL TDP (CONVOCATORIA 2027, VERIFICADA EL 2026-11-05)
+---------------------------------------------------------------
+Fuente: https://athome.robocup.org/call-for-participation-robocuphome-2027/
+  - ENTREGA: domingo 6 de diciembre de 2026, 23:59 GMT (20:59 en Uruguay), junto con video y web.
+  - Maximo 8 paginas incluyendo figuras y citas, en Springer LNAI, sin tocar margenes ni espaciado.
+    "Exceeding the number of pages will automatically void your application."
+  - Annex despues de las referencias, de no mas de 2 paginas: fotos del robot, software de terceros,
+    computo externo y hardware, con asterisco en el software propio. El RuleBook 2026.2 pide algo
+    distinto (una novena pagina): hacerlo de una sola pagina cumple ambos.
+  - Todo en ingles, tambien figuras y tablas.
+  - Plantilla: https://github.com/RoboCupAtHome/TDPTemplate (dice 2020; verificar que la convocatoria
+    la siga enlazando).
 
-Lo que NO esta confirmado:
-  - La plantilla dice "2020" y no se actualiza desde 2022.
-  - El limite cambio otros anios (la convocatoria 2021 pidio 6 paginas). Una convocatoria anterior
-    avisaba que pasarse de paginas anula la postulacion.
-  - No encontramos la convocatoria de la competencia a la que vamos.
-
-Hay que buscar la convocatoria (Call for Participation) vigente en https://athome.robocup.org y
-confirmar: limite de paginas, plantilla, si la descripcion del robot cuenta para el limite, fecha
-limite y forma de entrega. Si contradice este archivo, gana la convocatoria.
-
-Enfoque: las convocatorias anteriores piden destacar la contribucion cientifica y no una
-descripcion breve de todo el sistema. Todo el contenido va en ingles, tambien figuras y tablas.
+Plan completo, requisitos del video, mediciones y que mostrar en el TDP: docs/VIDEO_CUALIFICACION.txt.
+Leerlo antes de escribir. El reglamento sigue "subject to change": revisar la convocatoria antes de entregar.
 
 
 4. INDICE SUGERIDO (ajustar a la plantilla)

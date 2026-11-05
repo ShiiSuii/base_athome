@@ -305,7 +305,7 @@ class HriReceptionistChallengeNode(Node):
         # Pose del robot (solo lectura de AMCL) para orientar la cabeza hacia los asientos.
         self.robot_pose = None  # (x, y, yaw) en frame map
         self.create_subscription(PoseWithCovarianceStamped, "/amcl_pose", self._amcl_pose_cb, 10)
-        self.head_pan_sign = 1.0  # +1: pan positivo = izquierda (REP-103). PENDIENTE verificar en hardware
+        self.head_pan_sign = 1.0  # +1: pan positivo = izquierda (REP-103); nodo corregido el 2026-11-04 (pan_direction +1)
         self.fallback_guest_pan_deg = [25.0, -25.0]  # si no hay pose: invitado 1 / invitado 2
         self.pub_arm_joint = self.create_publisher(JointState, "/arm/joint_cmd", 5)
         self.pub_arm_gripper = self.create_publisher(Float32, "/arm/gripper_cmd", 5)
@@ -1326,16 +1326,22 @@ class HriReceptionistChallengeNode(Node):
             return self.cam_fx_cx[0]
         return img_w / (2.0 * math.tan(math.radians(34.5)))
 
-    def _detect_furniture(self, frame: np.ndarray) -> List[Tuple[str, List[float], float]]:
-        """Sillas, sofas y bancos con YOLOv8n (COCO). Carga perezosa del modelo."""
+    def _load_furniture_model(self) -> bool:
+        """Carga YOLOv8n y hace la primera prediccion (~4 s sin refrescar la ventana): se hace en el pre-vuelo,
+        no en medio del barrido."""
         if self.furniture_model is None:
             try:
                 from ultralytics import YOLO
                 self.furniture_model = YOLO(os.path.join(self.models_dir, "yolov8n.pt"))
+                self.furniture_model.predict(np.zeros((480, 640, 3), np.uint8), conf=0.35, verbose=False, device="cpu")
             except Exception as e:
                 self.get_logger().warn(f"Detector de muebles no disponible: {e}", throttle_duration_sec=30.0)
                 self.furniture_model = False
-        if not self.furniture_model:
+        return bool(self.furniture_model)
+
+    def _detect_furniture(self, frame: np.ndarray) -> List[Tuple[str, List[float], float]]:
+        """Sillas, sofas y bancos con YOLOv8n (COCO)."""
+        if not self._load_furniture_model():
             return []
         names = {13: "bench", 56: "chair", 57: "couch"}
         out = []
@@ -1509,6 +1515,10 @@ class HriReceptionistChallengeNode(Node):
                         self.get_logger().info("✔ [Pre-vuelo]: Servidor Nav2 (navigate_to_pose) listo y respondiendo.")
                 self.nav2_verified = True
 
+            if self.furniture_model is None:
+                self.current_banner_text = "Cargando el detector de muebles..."
+                self.pump_gui(1)
+                self._load_furniture_model()
             if self.pt_selftest is None:
                 self.current_banner_text = "Revisando el pan-tilt de la camara..."
                 self.pan_tilt_self_test()
@@ -1535,6 +1545,7 @@ class HriReceptionistChallengeNode(Node):
             print(f"  [✔] Reconocimiento Facial: SFace (128-d) + YuNet inicializados")
             print(f"  [✔] Navegación           : {'SIMULADA (Segura sin base)' if self.sim_nav else 'Nav2 REAL'}")
             print(f"  [✔] Audio & Síntesis     : Piper TTS + Whisper ASR")
+            print(f"  [{'✔' if self.furniture_model else '✘'}] Detector de muebles  : YOLOv8n (COCO)")
             print(f"  [✔] Waypoints Semánticos : Entrada '{self.door_wp}' | Sala '{self.living_room_wp}'")
             for name, ok, detail in (self.pt_selftest or {}).get("checks", []):
                 print(f"  [{'✔' if ok else '✘'}] Pan-tilt: {name}{' - ' + detail if detail else ''}")

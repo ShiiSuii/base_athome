@@ -1,0 +1,381 @@
+GUIA DEL VIDEO DE CUALIFICACION Y DEL TDP - UruBots, RoboCup@Home OPL 2027
+Escrita el 2026-11-05. Fechas y requisitos verificados en la convocatoria 2027 ese dia. Revisar antes de entregar:
+el reglamento sigue "subject to change".
+
+
+LO PRIMERO: HAY FECHA Y ES PRONTO
+---------------------------------
+La convocatoria 2027 ya salio (Nuremberg, Alemania, 15 al 21 de junio de 2027):
+
+  30 oct 2026   Paso 1, intencion de participar (recomendado, no obligatorio). YA PASO.
+  06 dic 2026   Paso 2, TDP + video + web. OBLIGATORIO, por Google Form. 23:59 GMT.
+  23 dic 2026   Anuncio de cualificados.
+  22 ene 2027   Paso 3, confirmar participacion. OBLIGATORIO si se cualifica.
+
+Quedan 31 dias desde hoy. Fuente:
+https://athome.robocup.org/call-for-participation-robocuphome-2027/
+
+La convocatoria dice que los rechazados pueden mejorar el material y presentarse en una segunda
+convocatoria. Es una red de seguridad, pero sus fechas todavia no existen y esos lugares son menos.
+
+Los formularios son de Google y los tiene que completar una persona del equipo:
+  Paso 1: https://docs.google.com/forms/d/e/1FAIpQLScgtY5lfgJmux3h5OKJ9aFkipAj9eY1TuDQDFCZDLiUmv494A/viewform
+  Paso 2: https://docs.google.com/forms/d/e/1FAIpQLSd1wkdnlfvrcL-RPyAwqJ_5g3jLxbwo68O4FVksQ_p9pcl2Hg/viewform
+  Paso 3: https://docs.google.com/forms/d/e/1FAIpQLSfASNglou0ZLNyk6uX-QDlr7xK-xpEGTwlYau2_LpHdhPSyFg/viewform
+
+
+==========================================================================================
+A. REQUISITOS
+==========================================================================================
+Abreviaturas de las fuentes:
+  CFP2027 = convocatoria 2027 (URL de arriba). Es la que manda para esta entrega.
+  RB      = RuleBook 2026.2, pages/general_rules/TeamRegistration.tex
+            https://github.com/RoboCupAtHome/RuleBook/releases/tag/2026.2
+  master  = RuleBook master "2027 Rev-1" (commit al 2026-10-14). Ese archivo es IDENTICO al de 2026.2.
+            La prueba HRI y su hoja de puntaje tampoco cambian. El CHANGELOG sí quita Restaurant.
+
+A.1 VIDEO - confirmado para esta entrega
+  - Minimo: "the robot(s) successfully solving a task involving the integration of at least
+    5 different abilities". (CFP2027)
+  - "The shown task execution must look continuous, smooth, and robust." (CFP2027)
+  - "must not be longer than 10 minutes and must be shot in wide format". (CFP2027)
+  - "A continuous shot is preferred to multiple cuts." (CFP2027)
+  - "Material from real competitions, if available, is preferred over video filmed in a
+    laboratory." (CFP2027) UruBots: no tengo dato de material de competencia @Home. [FALTA CONFIRMAR]
+  - Si se acelera, hay que indicar el factor. (CFP2027) RB da el ejemplo "2x" y aplica igual a
+    camara lenta.
+  - Lo que se habla y se muestra, en ingles; otro idioma exige subtitulos con traduccion. (CFP2027)
+  - Subtitulos muy recomendados, sobre todo para la voz del robot y acentos fuertes. (CFP2027)
+  - Subirlo a YouTube: muy recomendado. Solo una URL de video por equipo. El Form es lo obligatorio.
+    (YouTube: CFP2027; "una URL": convocatorias 2023-2026, sin confirmar en 2027)
+  - Sugerencia fuerte: resolver una o mas pruebas del reglamento 2026. (CFP2027)
+  - Al enviarlo se autoriza a RoboCup a copiarlo, modificarlo y distribuirlo, y algunos videos se
+    publican en el canal de la liga. (CFP2027) Esto afecta los permisos de las personas filmadas.
+  - RB exige ademas: autoexplicativo, para publico general, mostrar tareas complejas relevantes y
+    "must demonstrate that the robot is able to successfully solve at least one test from the
+    current or previous year's rule book".
+  - Sobre autonomia: ni CFP2027 ni RB la mencionan como regla del video. RB lo presenta como
+    "proof of running hardware". Tratar de que todo sea autonomo y decir lo que no lo sea.
+
+A.2 VIDEO - como se evalua (CFP2027, literal)
+  "Qualification Video (number of demonstrated abilities, integration, difficulty of the task,
+  applicability in the real world)". Cumplir el minimo no asegura lugar.
+
+A.3 CONTRADICCION ENTRE FUENTES: usar siempre la regla mas dura
+  - Habilidades: RB y master piden "al menos 2" de una lista; CFP2027 pide 5 integradas en una tarea.
+    Apuntar a 5 integradas en una sola tarea continua.
+  - Annex del TDP: RB pide novena pagina; CFP2027 dice que no pase de 2 paginas. Hacer una sola pagina.
+
+A.4 HABILIDADES (RB)
+  Lista minima: interaccion humano-robot, navegacion segura en interiores con evasion de obstaculos,
+  deteccion y manipulacion de objetos, deteccion de personas, reconocimiento de voz, sintesis de voz
+  clara y fuerte.
+  Recomendadas: reconocimiento de actividad, voz compleja, planificacion compleja, gestos,
+  recuperacion ante fallas.
+
+A.5 TDP - confirmado para esta entrega (CFP2027)
+  - Maximo 8 paginas contando figuras y referencias, sin tocar margenes ni espaciado. Excederlas anula
+    la postulacion.
+  - Formato Springer LNAI. Plantilla: https://github.com/RoboCupAtHome/TDPTemplate
+    (la plantilla dice 2020, pero es la que enlaza CFP2027).
+  - Todo en ingles, tambien figuras y tablas.
+  - Contenido: tecnologia innovadora y contribucion cientifica, y descripcion breve y general del
+    sistema resolviendo una tarea domestica.
+  - Annex despues de las referencias, de hasta 2 paginas: fotos del robot, software de terceros,
+    computo externo, hardware. Software propio marcado con asterisco.
+  - Evaluacion: "clarity, scientific contributions, reusability by the league, applicability in the
+    real world". Se pondera mas lo reciente.
+  - Puede publicarse en la wiki de la liga.
+  - RB agrega: foco de investigacion, tecnologia, reutilizacion, aplicabilidad, fotos; en el apendice,
+    nombre del equipo, contacto, URL, integrantes.
+
+A.6 WEB (CFP2027, RB)
+  - Obligatoria, sin IP como direccion. En ingles por defecto (RB).
+  - Fotos y videos; enfoques y logros; publicaciones de 5 anos, mejor descargables; repositorios para la
+    comunidad; Investigador Principal con enlace, Team Leader, Persona de contacto; participaciones y
+    rankings previos; enlace a la web de la liga (RB).
+  - "Only documented active software repositories are considered as contributions to the league."
+  - Tener todo en la web: una convocatoria anterior (2025) decia que lo evaluable debe estar ahi.
+
+A.7 OTROS CRITERIOS (CFP2027)
+  Resultados en torneos locales y competencias anteriores; publicaciones descargables; novedad para
+  @Home.
+
+A.8 DE ANOS ANTERIORES (pueden cambiar)
+  - Lugares: 12 OPL en la segunda convocatoria 2025; "up to eleven" en la segunda de 2026. 2027 no lo dice.
+  - La lista 2026 muestra 29 equipos OPL, 6 de ellos sin participar. Hay competencia real.
+    https://athome.robocup.org/2026-qualified-teams/
+
+A.9 SIN CONFIRMAR: preguntar a rc-home-oc[at]lists.robocup.org si importa
+  - Si un equipo sin historia @Home cuenta como penalizacion o solo no suma.
+  - Si la prueba HRI 2026 debe verse completa, incluida la bolsa (ver B.2). Es LA pregunta a hacer.
+  - Campos exactos del Form 2. Abrirlo cuanto antes para no descubrirlos el ultimo dia.
+  - Que pasa si el video no muestra el robot del equipo: las reglas viejas de plataforma estandar
+    hablan de eso, pero nada lo trata para OPL. "Proof of running hardware" indica que debe ser el
+    robot propio. No usar nunca simulacion como si fuera el robot.
+  - Si se permite aparecer con cortes: "preferred" no es "required"; solo se sabe que se prefiere.
+  - Formato del Form para adjuntar el TDP y limites de tamano.
+
+
+==========================================================================================
+B. ¿ALCANZA UN VIDEO BASADO EN EL RECEPTIONIST?
+==========================================================================================
+Respuesta corta: es la mejor base, pero con lo que hoy esta demostrado NO alcanza todavia. Sirve si se
+consiguen tres cosas: una corrida real completa, la parte de la bolsa o una respuesta de la OC, y
+ojala un bloque de manipulacion.
+
+B.1 LO QUE EL RECEPTIONIST PUEDE MOSTRAR, si funciona en el robot
+  Habilidad                      Codigo         Estado real
+  Navegacion segura (Nav2)       existe         Hay Nav2 en el robot. Falta mostrar esquive real.
+  Deteccion de personas          existe         Hecho para sillas y personas; validar.
+  Reconocimiento de rostro       existe         "Validar en robot" (ROADMAP §5).
+  Voz: nombre y bebida           existe         Whisper real anda; ojo con ruido (voz continua).
+  Sintesis de voz                existe         Hay que oirla en el video.
+  HRI: mirada y seguimiento      existe         Pan y seguimiento corregidos; FALTA probarlos en el robot.
+  Asiento libre                  existe         "Validar en robot".
+  Presentar invitados            existe         "Validar en robot".
+  Recuperacion ante fallas       parcial        Mostrarlo solo si pasa de verdad.
+
+  Son mas de 5, integradas en una tarea. El punto de "al menos 5" se cumple si corre bien.
+
+B.2 EL PROBLEMA PRINCIPAL: la prueba vigente es mas que recibir invitados
+  La prueba 2026 se llama Human Robot Interaction Challenge. Su objetivo principal incluye que "the second
+  guest brings a bag to be placed somewhere in the house" (tasks/HumanRobotInteractionChallenge.tex).
+  Bolsa, seguir al anfitrion y soltar la bolsa valen 300 puntos y no estan implementados (ROADMAP §5).
+  Master no cambia eso.
+  RB pide resolver "at least one test from the current or previous year". Para 2027 eso apunta a 2027 o
+  2026. Un receptionist sin bolsa muestra la prueba solo parcialmente. La hoja permite puntaje parcial,
+  pero no se si la OC lo acepta como "solved".
+  CFP2027, en cambio, solo pide "a task" con 5 habilidades y "strongly advise" las pruebas 2026.
+  Mi lectura, no confirmada: un receptionist sin bolsa podria pasar el minimo del CFP, pero es debil
+  frente a la regla del RB. Por eso:
+    Opcion 1 (recomendada): preguntar ya a la OC.
+    Opcion 2, en paralelo: agregar una bolsa minima. Colocarla en la estructura del robot, aunque la
+      hoja le quite puntos; seguir al anfitrion es lo caro. Decidir el 15 de noviembre.
+    Opcion 3: llamar a la tarea por su nombre real y decir en subtitulos "first part of the HRI
+      Challenge". No decir que se resuelve toda la prueba si no es asi.
+
+B.3 LO QUE FALTA PARA QUE PESE
+  Criterio "dificultad" e "integracion". Otros equipos muestran varias pruebas. Ejemplos verificados por
+  metadatos de YouTube (titulo, duracion, capitulos en la descripcion). NO mire los videos:
+    - FBOT, 2024: 9:23. Capitulos: intro 0:29, Carry My Luggage, Follow Me, Storing Groceries,
+      Receptionist desde 6:00. Lista en la descripcion equipo, liga, pais, afiliacion, contacto,
+      rankings locales y web. https://www.youtube.com/watch?v=c8JxbtkI8Dc
+    - Team ToBI, 2023: 5:25. https://www.youtube.com/watch?v=tNkCyATHV74
+    - RoboFEI@Home, 2023: 11:37 (hoy pasaria el limite).
+      https://www.youtube.com/watch?v=cAQzdmVhv8U
+  Lecturas: un video de 5 a 9 minutos es normal, y mostrar una sola prueba puede quedar corto frente a
+  quien muestra cuatro.
+
+  Bloque recomendado de manipulacion, por orden de realismo hoy:
+    a) Agarre autonomo real de botella o taza en mesa: detector COCO los ve. Requiere torso_state
+       corriendo (sin eso el agarre se niega), docking o objeto a menos de ~22-25 cm de avance. HOME-50
+       sin hacer. Sin eso no se muestra.
+    b) Commander por voz: "go to the kitchen" sin brazo. Muestra voz, planificacion y navegacion.
+       Nunca corrio una mision en el robot real segun STATUS. Si sale, es una contribucion distinta.
+    c) Teleop con Quest: es real pero NO es autonomia. Maximo 15 s, y con cartel "teleoperated". Yo lo
+       dejaria afuera salvo que ayude a contar la investigacion.
+  Lo que no se debe mostrar: simulacion como si fuera real, RViz sin robot, Pringles o latas (el detector no
+  las ve), tomas repetidas hasta que salga presentadas como confiabilidad.
+
+B.4 CAMINO CON FECHAS (31 dias; ajustar)
+  Hasta 09 nov  Pan-tilt: V y M del calibrador pasan, 0 caidas USB 10 min con torque (HOME-54). Si no pasa,
+                resolverlo: sin mirada no hay video bueno.
+  Hasta 15 nov  Receptionist real, 2 invitados, completo, al menos una vez. Decidir bolsa y manipulacion.
+                Abrir Form 2. Pregunta a la OC enviada.
+  Hasta 22 nov  Ensayos con medicion (seccion D). Bloque extra si se decidio.
+  23-29 nov     Grabacion. Varios intentos enteros.
+  30 nov-03 dic Edicion, subtitulos, revision, web y TDP completos.
+  04 dic        Entregar con 2 dias de margen. El 6 es domingo 23:59 GMT (20:59 de Uruguay).
+
+  Decision de corte: el 29 de noviembre se usa la mejor corrida real aunque le falten cosas. Si no hay
+  ninguna corrida completa, mostrar partes reales rotuladas como partes, y decir que falta. No inventar.
+
+B.5 ANTES DE GRABAR EN EL RECEPTIONIST
+  Estos puntos del ROADMAP afectan el video:
+  - Pregunta "Is that correct?": en la prueba real resta el bono de no preguntar. En video no es falta,
+    pero conviene decidirlo para competencia.
+  - Mirar hacia donde navega: parcial. Se ve en camara.
+  - Cabeza: si la revision inicial falla, el seguimiento queda apagado. Mirar el cartel antes de ESPACIO; P la repite.
+  - Robot dice "I am Robot": decidir un nombre.
+  - La pantalla tactil y las teclas no deben usarse durante la toma: seria interfaz alternativa.
+  - Waypoints: por defecto el programa usa "A" y "B". Lanzarlo con los correctos.
+
+
+==========================================================================================
+C. GUIA PRACTICA PARA GRABAR
+==========================================================================================
+Pensada para alguien que no programo el robot. Lo marcado [DEPENDE] requiere que esa conducta ya haya
+funcionado en el robot real. Si no funciono, sacar la escena: nunca simularla.
+
+C.1 IDEA DEL VIDEO
+  Una sola historia: "un robot de bajo costo hecho por el equipo recibe invitados en una casa". Dura 6 a 8
+  minutos. Toma principal continua, acelerada solo en los trayectos largos y con el factor en pantalla.
+
+C.2 GUION
+  Tiempo       Escena                     Que debe verse
+  0:00-0:20    1. Titulo                  UruBots, RoboCup@Home OPL 2027, pais/institucion. Frase en
+                                          ingles: "All robot behavior in this video is autonomous unless
+                                          noted." Solo si es verdad.
+  0:20-0:50    2. El robot                Plano general. Texto corto: base, elevador, brazo Piper, cabeza,
+                                          microfono, computadoras. Sin musica tapando.
+  0:50-1:10    3. Inicio                  Plano general de la casa; una persona da la senal; nadie vuelve
+                                          a tocar teclado. Pantalla con mapa en un rincon.
+  1:10-1:50    4. Ir a la puerta          [DEPENDE] Robot navega solo. Una persona o caja se cruza y lo
+                                          esquiva o frena. Factor si se acelera.
+  1:50-2:50    5. Invitado 1              [DEPENDE] Saludo, nombre y bebida por voz. Seguimiento de rostro
+                                          mientras el invitado se mueve algo a los lados. Subtitulos de ambos.
+  2:50-3:30    6. Guiar al living         [DEPENDE] El robot guia, mirando hacia donde va, invitado detras.
+  3:30-4:10    7. Ofrecer asiento         [DEPENDE] Barrido de cabeza; detecta lugar libre e indica. Invitado
+                                          se sienta. HUD en un rincon mostrando detecciones.
+  4:10-5:20    8. Invitado 2              [DEPENDE] Igual, mas corto; se puede acelerar el trayecto.
+                                          [DEPENDE, si existe] entrega de bolsa.
+  5:20-6:10    9. Presentacion            [DEPENDE] Mira a cada invitado y dice nombre y bebida del otro. Es
+                                          el momento fuerte: mostrar audio limpio.
+  6:10-7:00    10. Manipulacion           [DEPENDE, opcional] Bloque extra: pedido por voz, va a la mesa,
+                                          detecta, agarra, coloca.
+  7:00-7:20    11. Falla y recuperacion   [DEPENDE, solo si fue real] Ej.: no entendio y pidio repetir.
+  7:20-7:40    12. Cierre                 Lista de habilidades mostradas, web, repositorio.
+
+  Sin bloque 10 u 11, el video queda en ~6 minutos. Esta bien: corto y limpio gana a largo y dudoso.
+
+C.3 CAMARAS
+  - Horizontal 16:9, 1080p, 30 cuadros o mas. Celular en horizontal sirve. Nunca vertical (regla "wide").
+  - Camara principal fija en tripode, abierta, con robot y persona enteros. Es la toma continua.
+  - Segunda camara, opcional, en mano y acompañando; solo para planos cortos de la cara y la pinza.
+  - Luz sin contraluz. Que el robot no entre y salga de cuadro.
+  - Camara detras del robot o a un costado: que no estorbe al lidar ni se confunda con persona.
+  - Que el camarografo no quede en la vista de la RealSense durante la deteccion.
+
+C.4 PANTALLA
+  Grabar por separado, y poner en un rincon solo lo que ayuda. Para grabar el escritorio de la NUC:
+    ffmpeg -f x11grab -framerate 15 -video_size 1920x1080 -i :1 pantalla.mp4
+  (Ajustar tamaño y pantalla. Comprobar antes que no le saque rendimiento al robot.)
+  - RViz: mapa, robot, ruta. Se entiende en segundos.
+  - HUD del receptionist: caras y estado.
+  - No mostrar: claves, IP, correos, terminales con datos privados, rostros de otras personas.
+
+C.5 AUDIO
+  - La voz del robot tiene que oirse: es una habilidad a evaluar ("clear and loud").
+  - Microfono externo cerca, o el de la camara si se entiende bien. Probar antes.
+  - Sala sin ruido y sin conversaciones: el ASR detecto "voz continua" en otra prueba; aparte de arruinar
+    el audio, le puede fallar al robot. Silencio absoluto de los que miran.
+  - Sin musica sobre diálogos. Si se usa musica en el titulo, que sea libre de derechos.
+
+C.6 SUBTITULOS
+  En ingles, para la voz del robot y de los invitados, y carteles breves: "Face tracking", "2x". Hacer
+  archivo .srt y subirlo a YouTube, y ademas dejarlos grabados si la voz no se entiende. Corregirlos a mano:
+  deben decir lo que se oye, aunque el robot se equivoque.
+
+C.7 PERSONAS Y PERMISOS
+  - Consentimiento por escrito de cada persona que aparezca: el video se publica y RoboCup puede reusarlo.
+  - Sin menores ni gente de fondo sin permiso.
+  - Los invitados hablan ingles claro; no entrenarlos con frases raras, pero tampoco leerles el codigo.
+  - El video no se sube al repositorio: es regla del proyecto. La web lo enlaza.
+
+C.8 PREPARAR ANTES (el dia anterior)
+  [ ] Mapa guardado y Nav2 lo tiene (el editor lo confirma; o reiniciar navegacion)
+  [ ] Waypoints door, living_room, home. Asientos si hacen falta. Marcar en el mapa
+  [ ] Bateria cargada; repuesto a mano; cables sujetos, en especial el USB del U2D2
+  [ ] calibrar_pantilt: V correcto y M sin caidas
+  [ ] Ensayo completo con la camara en su lugar
+  [ ] Sin ArUco visible; decoracion estable; sillas donde el robot las pueda ver
+  [ ] Permisos firmados
+  [ ] Decidir que dice el robot que es (nombre)
+
+C.9 DIA DE GRABACION
+  1. Encender Jetson, luego NUC. Comprobar jetson-head y brazo en estado seguro.
+  2. Abrir navegacion, verificar en RViz la ubicacion (2D Pose Estimate si hace falta).
+  3. calibrar_pantilt: T, V, M. Si hay caidas, parar y resolver antes de grabar.
+  4. Empezar a grabar camaras y pantalla. Aplaudir una vez para sincronizar.
+  5. Lanzar, en una terminal:
+     receptionist --door-wp door --living-room-wp living_room --max-guests 2
+  6. Esperar "All systems online. Press space to start" y mirar que el cartel diga todo OK.
+  7. ESPACIO. Manos fuera del teclado. No apretar nada hasta que termine.
+  8. Anotar: hora, numero de intento, que paso. Una persona con la libreta (tabla en D.2).
+  9. Si algo falla, DEJAR que el robot lo resuelva. Si para, cerrar y empezar desde el paso 5.
+  E-stop siempre a mano con una persona responsable. Seguridad primero: si hay riesgo, se corta.
+
+C.10 TOMAS DE RESERVA
+  - Grabar todo intento entero, salga bien o no. Al menos 5.
+  - Plano del robot en la casa, en vacio, para titulo y cierre.
+  - Plano cerrado de cabeza mirando; plano de cada invitado sentado.
+  - Mapa en RViz con buena pinta. Una corrida solo de navegacion con obstaculo.
+
+C.11 EDICION: QUE SE PUEDE Y QUE NO
+  Permitido por regla: acelerar con factor indicado; subtitulos. "Prefered" una sola toma continua.
+  Criterio propio:
+    Si: quitar arranque y cierre; acelerar trayectos largos indicando "2x"; cartel "Cut" si se corta.
+    No: unir la mejor mitad de dos intentos sin avisar; ocultar un operador que ayuda; cambiar la voz del
+    robot o mezclar respuestas; editar lo que entendio. Si hubo ayuda humana, decirlo en pantalla.
+  Revision final con preguntas: ¿se entiende sin explicar? ¿se oye? ¿dura menos de 10:00? ¿todo en
+  ingles? ¿factor visible? ¿horizontal? ¿abre en una ventana privada?
+  Descripcion YouTube, como FBOT: nombre, liga, pais, afiliacion, contacto, rankings y web.
+
+
+==========================================================================================
+D. EL TDP PARA QUE REFUERCE AL VIDEO
+==========================================================================================
+D.1 QUE CONTAR
+  Lo evaluan por claridad, contribucion cientifica, reutilizacion y aplicacion real. "Avoid brief
+  descriptions of the overall system" se dijo en convocatorias anteriores.
+
+  Ejemplos que lei: TDP 2026 de RoBorregos (FRIDA), 9 paginas. El resumen nombra tres contribuciones,
+  una con su numero (95 % en colocacion), y enlaza el repositorio. Tiene una tabla simple de exitos sobre
+  intentos: agarre 16/20, colocacion 19/20. NimbRo 2026: 10 paginas, hardware, enfoques por area, y una
+  seccion aparte de investigacion con publicaciones. LAR@Home 2026: 9 paginas, por funcionalidad.
+  Enlaces en https://athome.robocup.org/2026-qualified-teams/
+
+  Por eso conviene copiar la forma de RoBorregos: pocas contribuciones, con tabla exito/intentos.
+
+  Candidatos propios (elegir 2 o 3; cada uno con su evidencia hoy):
+    a) Plataforma de bajo costo con base de hoverboard, reutilizable. Es lo mas distintivo. Evidencia: robot
+       existe. Falta: costo, medidas, que corra. Es lo mas facil de sostener si el video sale.
+    b) De voz a mision sin LLM en el bucle de seguridad: compilador determinista, validacion, confirmacion
+       y rechazo explicito. Evidencia: tests y simulacion. Falta: real. No afirmar nada mas alla de eso.
+    c) Cadena de voz con VAD, IDs por pedido y resultado siempre explicito. Evidencia: documento propio,
+       mediciones de latencia; falta exactitud con personas reales.
+    d) Vision en Jetson: 55 FPS con TensorRT frente a 5,2 en CPU. Evidencia: medido 2026-11-03.
+    e) Teleop con Quest por WebXR, base de aprendizaje. Evidencia: simulacion; real parcial.
+    f) Cuidado: el premio open source y "reusability" piden repositorio documentado. Hoy el trabajo vive en una
+       rama. Pasar a main o dejarlo claro antes de enviar. El README debe estar en ingles para sumar.
+
+D.2 MEDICIONES REALES DURANTE ENSAYOS Y GRABACION
+  Registrar TODOS los intentos, no solo el que queda en el video. Hacer al menos 10 de la mision o lo que
+  se llegue, y decir el numero real.
+
+  Tabla, una fila por intento:
+    fecha, hora, intento, personas, ruido (bajo/medio/alto), duracion, exito completo si/no, donde fallo,
+    ayuda humana si/no y cual.
+  Por invitado: nombre bien/mal, bebida bien/mal, repeticiones pedidas, rostro reconocido en la
+    presentacion, asiento libre correcto, presentacion correcta.
+  Navegacion: llego/no, tiempo, colision si/no, obstaculo esquivado.
+  Cabeza: caidas de enlace y USB. El calibrador las reporta; y en la Jetson:
+    sudo dmesg | grep -c 'FTDI USB Serial Device converter now attached'   (antes y despues)
+  ASR: /voice/result trae tiempos por pedido. Guardarlos.
+  Registro util, sin imagenes:
+    ros2 bag record /voice/result /pan_tilt/joint_states /pan_tilt/connected /amcl_pose /cmd_vel /tf /tf_static
+  Revisar espacio y que no enlentezca nada.
+  Manipulacion si la hay (HOME-50): serie de 10 por distancia a 10, 15 y 20 cm, exito sobre intentos.
+
+  Estas tablas son datos sobre personas: guardar solo numeros y sin audio ni rostros en el repo.
+
+D.3 QUE NO ESCRIBIR
+  - Nada de "funciona" sin decir donde: simulacion, banco o robot.
+  - Ninguna tasa de exito de un solo intento.
+  - No citar el 102 mm de la teleop (anterior a los arreglos).
+  - No afirmar participaciones, integrantes ni financiacion sin que el equipo lo confirme.
+  - No poner Pringles ni latas como reconocidos: hoy no.
+  - Referencias verificadas una por una.
+
+D.4 COHERENCIA VIDEO, TDP Y WEB
+  - Lo que el TDP llama contribucion tiene que verse en el video o tener su tabla.
+  - La figura principal del TDP puede salir de la misma prueba: secuencia de 4 cuadros de la presentacion.
+  - La web tiene que enlazar el video, el TDP y el repositorio, y estar en ingles.
+  - Que el nombre del robot sea el mismo en los tres.
+  - El annex debe marcar con asterisco lo propio. Tercero: Nav2, MoveIt, YOLO, Whisper/faster-whisper,
+    Piper TTS, YuNet/SFace, Silero VAD. Verificar la lista contra el repo.
+
+FALTA QUE DEFINA EL EQUIPO
+  Institucion, Investigador Principal, Team Leader, Contacto, integrantes, participaciones y rankings previos,
+  web, nombre del robot, financiacion. Sin eso el Form y el TDP no se pueden cerrar.

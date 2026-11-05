@@ -159,9 +159,11 @@ class GentleFaceTracker:
     arriba) y pan +-pan_max alrededor del frente.
     """
 
-    def __init__(self, gain: float = 0.25, deadband_deg: float = 5.0, max_step_deg: float = 2.0,
-                 min_interval_s: float = 0.3, alpha: float = 0.4, tilt_min: float = -10.0, tilt_max: float = 25.0,
-                 pan_max: float = 25.0):
+    # El reglamento (HRI §5.1) solo da los puntos si se sigue a la persona de forma continua. Medido en lazo cerrado
+    # con un invitado que se mueve +-14 grados cada 4 s: los valores anteriores (0.25, 5, 2, 0.3) quedaban hasta 16 atras.
+    def __init__(self, gain: float = 0.6, deadband_deg: float = 3.0, max_step_deg: float = 6.0,
+                 min_interval_s: float = 0.12, alpha: float = 0.5, tilt_min: float = -10.0, tilt_max: float = 25.0,
+                 pan_max: float = 40.0):
         self.gain, self.deadband, self.max_step = gain, deadband_deg, max_step_deg
         self.min_interval, self.alpha = min_interval_s, alpha
         self.tilt_min, self.tilt_max, self.pan_max = tilt_min, tilt_max, pan_max

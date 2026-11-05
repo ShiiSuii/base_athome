@@ -35,7 +35,7 @@ y cuenta la mejor puntuación.
 - §3.6.9/3.6.14: un restart (≤60 s, antes de 40 pts); 30 s quieto = retirado → el secuenciador debe hablar/pedir tiempo.
 - §3.7: asistencia humana como último recurso, pedida explícitamente y verificada. §3.7.4: ASR custom −10 %, interfaz alternativa hasta −20 %.
 - Skill certificates (§1.7.5): ≥75 % de los puntos de una habilidad en todas las pruebas.
-- Calificación: TDP de 8 páginas (guía: `docs/TDP_INSTRUCTIVO.txt`), video ≤10 min, web en inglés con código abierto. Premio open-source (§1.7.6): candidato el editor URDF.
+- Calificación 2027 (entrega 6/12/2026): TDP de 8 páginas, video ≤10 min con al menos 5 habilidades integradas, web en inglés con código abierto (`docs/VIDEO_CUALIFICACION.txt`). Premio open-source (§1.7.6): candidato el editor URDF.
 
 **Checklist de inspección (§4.4) — pendiente:** E-stop corta base+brazo+elevador+pan-tilt · robot ≤200×70 cm sin cables sueltos · freno ante persona · voz clara y salida de audio para RF · señal de inicio aprobada · ninguna WiFi propia (NUC y Jetson) · sin ArUco visible · dispositivos externos informados.
 
@@ -129,6 +129,7 @@ Escala: **P0** desbloquea seguridad/progreso · **P1** valor demostrable · **P2
 | HOME-53 | Grabación de demostraciones (`ros2 bag` de estado, comandos, pose objetivo, cámara de muñeca) para entrenar | Claude | episodios reproducibles, formato documentado |
 | HOME-54 | Pan-tilt: reparar la alimentación (12 V bajo carga, power hub U2D2, masa) y volver a lanzar el nodo desde `jetson-head` | humano + Claude | 0 desconexiones en 10 min con torque y movimiento |
 | HOME-61 | Calibrador `calibrar_pantilt` usado en el robot: la prueba completa (`M`) mide enlace, sentido, error y retardo. Requiere HOME-54: el 04/11 hubo 118 desconexiones USB del U2D2 (`Cannot enable. Maybe the USB cable is bad?`, error -71, solo el puerto del U2D2) | Humano + Claude | script listo; el usuario lo corrió con torque. Falta `V` (sentido con la cámara) y `M`. `pan_direction` pasó a +1 el 04/11 por observación del usuario; `V` lo confirma |
+| HOME-62 | **Cualificación 2027: TDP, video y web antes del 6/12/2026** (Nuremberg, 15–21/6/2027). Plan en `docs/VIDEO_CUALIFICACION.txt`. Falta: corrida real completa del receptionist, decidir bolsa y manipulación, consultar a la organización, datos del equipo | Humano + Claude | pendiente, prioridad máxima |
 | HOME-55 | Receptionist en el robot: barrido de 2 filas (~16 s), seguimiento leve del rostro, revisión del pan-tilt al arrancar | humano + Claude | persona sentada detectada; revisión ✔ |
 
 ### P2 — Manipulación y competencia

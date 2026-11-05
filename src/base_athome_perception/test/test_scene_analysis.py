@@ -93,7 +93,7 @@ def test_gentle_tracker_looks_up_at_tall_person_in_small_steps():
     for _ in range(40):
         out = tr.update(320, 60, 640, 480, 600.0, 600.0, pan, tilt, t)
         if out:
-            assert abs(out[1] - tilt) <= 2.0 + 1e-9      # pasos chicos
+            assert abs(out[1] - tilt) <= 6.0 + 1e-9      # pasos limitados
             pan, tilt = out
         t += 0.1
     assert tilt > 5.0 and tilt <= 25.0                    # subio, sin pasar el limite
@@ -107,7 +107,7 @@ def test_gentle_tracker_ignores_small_errors_and_limits_rate():
     tr2 = GentleFaceTracker()
     first = tr2.update(320, 40, 640, 480, 600.0, 600.0, 0.0, 0.0, 0.0)
     assert first is not None
-    assert tr2.update(320, 40, 640, 480, 600.0, 600.0, first[0], first[1], 0.1) is None  # < 0,3 s: no se mueve
+    assert tr2.update(320, 40, 640, 480, 600.0, 600.0, first[0], first[1], 0.1) is None  # < 0,12 s: no se mueve
 
 
 def test_gentle_tracker_respects_limits():
@@ -118,4 +118,49 @@ def test_gentle_tracker_respects_limits():
         out = tr.update(0, 0, 640, 480, 600.0, 600.0, pan, tilt, float(i))
         if out:
             pan, tilt = out
-    assert pan <= 25.0 + 1e-9 and tilt <= 25.0 + 1e-9
+    assert pan <= 40.0 + 1e-9 and tilt <= 25.0 + 1e-9
+
+
+def _track(amp=14.0, period=4.0, offset=0.0, noise_px=0.0, tilt_face=0.0, seconds=40.0):
+    """Lazo cerrado: la cara se mueve, la camara ve con retardo, la cabeza sigue con su propia dinamica."""
+    import math
+    import random
+    rng = random.Random(1)
+    w, h, fx, dt = 640, 480, 615.0, 0.01
+    tracker = sa.GentleFaceTracker()
+    pan = tilt = target_pan = target_tilt = 0.0
+    queue, errs, moves, next_det, t = [], [], 0, 0.0, 0.0
+    while t < seconds:
+        face = offset + amp * math.sin(2 * math.pi * t / period)
+        pan += (target_pan - pan) * min(1.0, dt / 0.08)
+        tilt += (target_tilt - tilt) * min(1.0, dt / 0.08)
+        if t >= next_det:
+            next_det = t + 0.1
+            u = w / 2 - fx * math.tan(math.radians(face - pan)) + rng.gauss(0, noise_px)
+            v = h / 2 - fx * math.tan(math.radians(tilt_face - tilt)) + rng.gauss(0, noise_px)
+            queue.append((t + 0.15, u, v))
+        while queue and queue[0][0] <= t:
+            _, u, v = queue.pop(0)
+            out = tracker.update(u, v, w, h, fx, fx, target_pan, target_tilt, t)
+            if out:
+                target_pan, target_tilt = out
+                moves += 1
+        if t > 10:
+            errs.append(abs(face - pan))
+        t += dt
+    return max(errs), moves, tilt
+
+
+def test_tracker_goes_toward_a_still_face_and_stops():
+    worst, moves, tilt = _track(amp=0.0, offset=20.0, tilt_face=15.0)
+    assert worst <= 4.0 and abs(tilt - 15.0) <= 4.0 and moves < 30
+
+
+def test_tracker_keeps_up_with_a_guest_pacing_side_to_side():
+    worst, _, _ = _track(amp=14.0, period=4.0)
+    assert worst <= 12.0                                 # antes: 16.6 con los valores del seguimiento lento
+
+
+def test_tracker_does_not_chase_detection_noise():
+    _, moves, _ = _track(amp=0.0, noise_px=6.0)
+    assert moves < 10                                    # con ruido normal de la deteccion la cabeza queda quieta

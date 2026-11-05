@@ -3,7 +3,7 @@
 Corto y actualizado: se **reemplaza** lo viejo, no se acumula (`AGENTS.md` §9). Lo histórico se
 recupera por commit (§8). Editado por el integrador (Claude).
 
-**Última actualización:** 2026-11-04 · Claude Code · modo `DESARROLLO` · sentido del pan corregido.
+**Última actualización:** 2026-11-05 · Claude Code · modo `DESARROLLO` · receptionist revisado, guía del video de cualificación.
 
 ## 1. Estado comprobado al pausar
 
@@ -56,13 +56,15 @@ recupera por commit (§8). Editado por el integrador (Claude).
 |---|---|---|
 | Humano | Pan-tilt: revisar fuente de 12 V bajo carga, cableado del power hub del U2D2 y masa común; cambiar cable USB del U2D2 | **bloquea** el seguimiento de rostro |
 | Humano | HOME-SEC: revocar el token (también está en el registro de Orca); contraseña de la Jetson | pendiente |
-| Humano + Claude | **Activo:** receptionist. El usuario prueba en el robot y reporta problemas; Claude los corrige | en curso |
+| Humano + Claude | **Prioridad: cualificación 2027, entrega 6/12/2026** (HOME-62, `docs/VIDEO_CUALIFICACION.txt`). Receptionist en el robot: seguimiento y carga corregidos, falta probarlos | en curso |
 | Claude | En pausa, retomar después (detalle en `ROADMAP.md`): commander con Nav2 real y personas (HOME-57, HOME-49), docking (HOME-58), detector World en Jetson (HOME-59), `guide_person` (HOME-60), teleop (HOME-52) | guardado |
 | Humano | TDP: seguir `docs/TDP_INSTRUCTIVO.txt` desde la otra computadora | pendiente |
 | Claude | Receptionist: probar en el robot el barrido nuevo (2 filas, ~16 s), seguimiento leve y la revisión del pan-tilt | código listo (`SIM_PASS` parcial) |
 | Claude | HOME-46 mesa en la escena MoveIt; HOME-43 correr `torso_state` con el ESP32 conectado | pendiente |
 
 ## 6. Cambios de esta sesión (detalle en Git)
+
+- Receptionist: el detector de muebles se carga en el pre-vuelo (bloqueaba la ventana ~4 s en medio del barrido) y el seguimiento de rostro responde más rápido (error máximo simulado de 16,6° a menos de 12° con un invitado que se mueve). Parámetros sin probar en el robot.
 
 - Receptionist: espera ESPACIO al terminar de cargar (`--no-wait` lo omite; en competencia no se permite teclado, §3.6.8) y `P` repite la revisión del pan-tilt. Calibrador: `calibrar_pantilt`. `SIM_PASS`/tests con nodo falso; la cabeza real solo se leyó.
 - **Incidente:** `commander` dejaba procesos vivos al cerrar la terminal (HUP sin trampa): el 04/11 quedaron 4 ejecutores reales y un Nav2 completo duplicando al de `navegacion`. Cerrados por grupo con el robot quieto. Arreglo: `session_lib.sh` cierra también con HUP y limpia restos de sesiones anteriores.
