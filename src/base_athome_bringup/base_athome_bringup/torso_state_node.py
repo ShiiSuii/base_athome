@@ -3,6 +3,8 @@
 tambien lo mueve, siempre con la posicion medida, a traves de /torso/goal y de los sensores del firmware.
 
   sub /torso/goal          std_msgs/Float64      torso_lift_joint objetivo (0 arriba, negativo abajo); NaN = parar
+  srv /torso/calibrate, /torso/go_top            calibracion completa; subir hasta el sensor superior
+La carrera medida queda en ~/.config/base_athome/elevador.json. Con ella, tocar el sensor superior ya ubica al elevador.
 
   pub /torso/joint_states  sensor_msgs/JointState  torso_lift_joint (solo si el firmware esta CALIBRADO)
   pub /torso/status        std_msgs/String JSON    {connected, calibrated, position_m, steps, max_steps,
@@ -13,6 +15,7 @@ stepper_controller (CLI).
 """
 import json
 import math
+import os
 import time
 
 import rclpy
@@ -21,8 +24,10 @@ from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64, String
 from std_srvs.srv import Trigger
 
-from base_athome_bringup.torso_state import parse_status
+from base_athome_bringup.torso_state import TorsoReference, parse_status
 
+MEMORY_FILE = os.environ.get("ATHOME_TORSO_MEMORY") or os.path.expanduser("~/.config/base_athome/elevador.json")
+TOP_GOAL_M = -0.001        # pedir "arriba" es ir hasta el sensor: asi la proxima vez se sabe la posicion sin moverse
 DEFAULT_PORT = "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5CBD013609-if00"
 
 
@@ -45,6 +50,8 @@ class TorsoStateNode(Node):
         self.declare_parameter("stale_s", 1.5)
         self.declare_parameter("allow_motion", False)
         self.port_factory = port_factory
+        self.memory_file = MEMORY_FILE
+        self.ref = TorsoReference(self._load_travel())
         self.ser = None
         self.buf = ""
         self.last = None
@@ -53,16 +60,42 @@ class TorsoStateNode(Node):
         self.pub_st = self.create_publisher(String, "/torso/status", 10)
         self.create_subscription(Float64, "/torso/goal", self._goal, 5)
         self.create_service(Trigger, "/torso/calibrate", self._calibrate)
+        self.create_service(Trigger, "/torso/go_top", self._go_top)
         self.create_timer(1.0 / float(self.get_parameter("poll_hz").value), self._tick)
 
+    def _load_travel(self):
+        try:
+            with open(self.memory_file, encoding="utf-8") as f:
+                return int(json.load(f)["max_steps"])
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+
+    def _save_travel(self):
+        os.makedirs(os.path.dirname(self.memory_file), exist_ok=True)
+        tmp = self.memory_file + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(dict(max_steps=self.ref.max_steps, measured=time.strftime("%Y-%m-%dT%H:%M:%S")), f)
+        os.replace(tmp, self.memory_file)
+        self.get_logger().info(f"Carrera del elevador guardada: {self.ref.max_steps} pasos")
+
     def _calibrate(self, _req, res):
-        """Calibracion del firmware: recorre hasta los dos sensores. El puerto es de este nodo: no usar el CLI a la vez."""
+        """Calibracion completa del firmware: recorre hasta los dos sensores. El puerto es de este nodo."""
         res.success = bool(self.get_parameter("allow_motion").value) and self.ser is not None
         if res.success:
             self.ser.write(b"CALIBRATE\n")
             res.message = "calibrando: el elevador recorre hasta los dos sensores"
         else:
             res.message = "no se calibra: allow_motion=false o sin conexion"
+        return res
+
+    def _go_top(self, _req, res):
+        """Sube hasta el sensor superior, donde el firmware frena solo. Con la carrera guardada, alcanza para ubicarse."""
+        res.success = bool(self.get_parameter("allow_motion").value) and self.ser is not None
+        if res.success:
+            self.ser.write(b"F\n")
+            res.message = "subiendo hasta el sensor superior"
+        else:
+            res.message = "no se mueve: allow_motion=false o sin conexion"
         return res
 
     def _goal(self, msg: Float64):
@@ -76,13 +109,18 @@ class TorsoStateNode(Node):
             self.ser.write(b"S\n")
             return
         fresh = self.last_t is not None and time.monotonic() - self.last_t < float(self.get_parameter("stale_s").value)
-        steps = self.last.steps_to(msg.data, float(self.get_parameter("stroke_m").value)) if fresh else None
+        steps = self.ref.steps_to(self.last, msg.data, float(self.get_parameter("stroke_m").value)) if fresh else None
         if steps is None:
-            self.get_logger().warn("Pedido de mover el elevador ignorado: sin estado reciente o sin calibrar")
+            self.get_logger().warn("Pedido de mover el elevador ignorado: sin estado reciente o sin ubicar")
             return
         if self.last.moving:
             self.ser.write(b"S\n")
             time.sleep(0.05)
+        if msg.data >= TOP_GOAL_M:
+            if not self.last.top_hit:
+                self.get_logger().info("Elevador arriba: hasta el sensor")
+                self.ser.write(b"F\n")
+            return
         if steps:
             self.get_logger().info(f"Elevador a {msg.data:+.3f} m: M {steps}")
             self.ser.write(f"M {steps}\n".encode())
@@ -111,6 +149,8 @@ class TorsoStateNode(Node):
                     st = parse_status(line)
                     if st is not None:
                         self.last, self.last_t = st, time.monotonic()
+                        if self.ref.observe(st):
+                            self._save_travel()
             except Exception as e:  # noqa: BLE001
                 self.get_logger().warn(f"Elevador: error de lectura ({e}); reconectando")
                 try:
@@ -124,9 +164,10 @@ class TorsoStateNode(Node):
         age = None if self.last_t is None else time.monotonic() - self.last_t
         fresh = age is not None and age < float(self.get_parameter("stale_s").value)
         st = self.last if fresh else None
-        pos = st.joint_position(float(self.get_parameter("stroke_m").value)) if st else None
+        pos = self.ref.joint_position(st, float(self.get_parameter("stroke_m").value)) if st else None
         self.pub_st.publish(String(data=json.dumps(dict(
-            connected=self.ser is not None, fresh=fresh, calibrated=bool(st and st.calibrated),
+            connected=self.ser is not None, fresh=fresh, calibrated=pos is not None,
+            travel_steps=self.ref.max_steps,
             position_m=None if pos is None else round(pos, 4), steps=st.steps if st else None,
             max_steps=st.max_steps if st else None, top_hit=st.top_hit if st else None,
             bottom_hit=st.bottom_hit if st else None, moving=st.moving if st else None,

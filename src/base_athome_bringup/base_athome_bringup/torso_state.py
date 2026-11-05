@@ -53,3 +53,51 @@ def parse_status(line: str) -> Optional[TorsoStatus]:
         return None
     return TorsoStatus(mode=m["mode"], top_hit=m["top"].upper() == "PULSADO", bottom_hit=m["bot"].upper() == "PULSADO",
                        steps=int(m["pos"]), max_steps=int(m["max"]) if m["max"] else None)
+
+
+class TorsoReference:
+    """Donde esta el elevador aunque el ESP32 haya perdido la calibracion.
+
+    El firmware cuenta pasos siempre. La carrera en pasos (`max_steps`) se mide una vez con CALIBRATE y se guarda en disco.
+    Con eso alcanza con ver el sensor superior: en ese momento el contador vale "arriba". El contador se pierde si el
+    ESP32 se reinicia, y entonces hay que volver a tocar el sensor.
+    """
+
+    RESET_JUMP_STEPS = 200    # el contador cayo a 0 de golpe: el ESP32 se reinicio
+
+    def __init__(self, max_steps: Optional[int] = None):
+        self.max_steps = max_steps
+        self.top_steps: Optional[int] = None
+        self._last_steps: Optional[int] = None
+
+    def observe(self, st: TorsoStatus) -> bool:
+        """Actualiza con un estado nuevo. True si cambio la carrera medida (hay que guardarla)."""
+        measured = False
+        if st.calibrated:
+            measured = st.max_steps != self.max_steps
+            self.max_steps = st.max_steps
+            self.top_steps = st.max_steps
+        else:
+            if self._last_steps is not None and st.steps == 0 and abs(self._last_steps) > self.RESET_JUMP_STEPS:
+                self.top_steps = None
+            if st.top_hit and self.max_steps:
+                self.top_steps = st.steps
+        self._last_steps = st.steps
+        return measured
+
+    @property
+    def referenced(self) -> bool:
+        return bool(self.max_steps) and self.top_steps is not None
+
+    def joint_position(self, st: TorsoStatus, stroke_m: float = 0.60) -> Optional[float]:
+        if not self.referenced:
+            return None
+        return max(-stroke_m, min(0.0, -stroke_m * (self.top_steps - st.steps) / float(self.max_steps)))
+
+    def steps_to(self, st: TorsoStatus, target_m: float, stroke_m: float = 0.60, margin_m: float = 0.01) -> Optional[int]:
+        """Pasos relativos (+ sube), sin llegar al sensor inferior. None si no se sabe la posicion."""
+        if not self.referenced:
+            return None
+        target = max(-(stroke_m - margin_m), min(0.0, float(target_m)))
+        return self.top_steps + round(target / stroke_m * self.max_steps) - st.steps
+

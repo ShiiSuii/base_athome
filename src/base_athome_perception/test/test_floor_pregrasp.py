@@ -178,3 +178,12 @@ def test_describe_accepts_the_default_pose_and_rejects_a_long_advance():
     assert tool.describe(GOOD, kin)[2] == []
     _, _, problems = tool.describe(GOOD, kin, max_advance_m=0.05)
     assert any("avanzar" in p for p in problems)
+
+
+def test_full_calibration_refuses_unless_the_arm_is_in_the_floor_pose():
+    spec2 = importlib.util.spec_from_file_location("calibrar_elevador", SCRIPT.parent / "calibrar_elevador.py")
+    mod = importlib.util.module_from_spec(spec2)
+    spec2.loader.exec_module(mod)
+    assert mod.arm_near_pose(GOOD, GOOD)[0] is True
+    hanging = [84.8, 172.2, -162.4, -102.3, -2.3, -38.0]   # colgando, medido en el robot
+    assert mod.arm_near_pose(hanging, GOOD)[0] is False

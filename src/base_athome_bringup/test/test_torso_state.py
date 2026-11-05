@@ -5,6 +5,12 @@ import time
 
 import pytest
 
+import os
+import tempfile
+
+# Nunca el archivo real: una carrera falsa haria que el robot baje con una medida inventada
+os.environ["ATHOME_TORSO_MEMORY"] = os.path.join(tempfile.mkdtemp(), "elevador.json")
+
 from base_athome_bringup.torso_state import parse_status
 
 CAL = ("[STATUS] Modo: IDLE | Accion: SUBIENDO (Hacia Pin 7) | Retraso: 250 us (4000 pasos/s | ~150.0 RPM) | "
@@ -128,6 +134,9 @@ def _torso_node(allow, steps=500):
     node.set_parameters([rclpy.parameter.Parameter("allow_motion", value=allow)])
     node.ser = _FakeSerial()
     node.last = TorsoStatus(mode="IDLE", top_hit=False, bottom_hit=False, steps=steps, max_steps=1000)
+    node.memory_file = "/nonexistent/no-usar"
+    node.ref = tsn.TorsoReference(1000)
+    node.ref.top_steps = 1000
     node.last_t = __import__("time").monotonic()
     return node
 
@@ -164,3 +173,75 @@ def test_goal_refused_with_stale_or_uncalibrated_state():
     node._goal(Float64(data=-0.15))
     assert node.ser.sent == []
     _close(node)
+
+
+def _st(steps, top=False, max_steps=None, mode="IDLE"):
+    from base_athome_bringup.torso_state import TorsoStatus
+    return TorsoStatus(mode=mode, top_hit=top, bottom_hit=False, steps=steps, max_steps=max_steps)
+
+
+def test_saved_travel_plus_top_sensor_locates_the_lift_without_calibrating():
+    from base_athome_bringup.torso_state import TorsoReference
+    ref = TorsoReference(1000)
+    assert not ref.referenced and ref.joint_position(_st(0)) is None and ref.steps_to(_st(0), -0.3) is None
+    ref.observe(_st(77, top=True))                 # el contador arranca en cualquier valor
+    assert ref.referenced and ref.joint_position(_st(77)) == pytest.approx(0.0)
+    assert ref.joint_position(_st(77 - 500)) == pytest.approx(-0.30)
+    assert ref.steps_to(_st(77), -0.30) == -500    # bajar: negativo
+
+
+def test_top_sensor_without_saved_travel_is_not_enough():
+    from base_athome_bringup.torso_state import TorsoReference
+    ref = TorsoReference(None)
+    ref.observe(_st(0, top=True))
+    assert not ref.referenced
+
+
+def test_full_calibration_measures_and_asks_to_save():
+    from base_athome_bringup.torso_state import TorsoReference
+    ref = TorsoReference(None)
+    assert ref.observe(_st(750, max_steps=1000)) is True
+    assert ref.observe(_st(750, max_steps=1000)) is False
+    assert ref.joint_position(_st(500, max_steps=1000)) == pytest.approx(-0.30)
+
+
+def test_esp32_reset_loses_the_position_until_the_sensor_is_seen_again():
+    from base_athome_bringup.torso_state import TorsoReference
+    ref = TorsoReference(1000)
+    ref.observe(_st(800, top=True))
+    ref.observe(_st(0))                            # reinicio: el contador cae a 0
+    assert not ref.referenced
+    ref.observe(_st(5, top=True))
+    assert ref.referenced
+
+
+def test_going_up_means_going_to_the_sensor_and_never_to_the_bottom_one():
+    from base_athome_bringup.torso_state import TorsoReference
+    ref = TorsoReference(1000)
+    ref.observe(_st(1000, top=True))
+    assert ref.steps_to(_st(1000), -5.0) == round(-(0.60 - 0.01) / 0.60 * 1000)   # margen sobre el sensor inferior
+    from std_msgs.msg import Float64
+    node = _torso_node(True)
+    node.last = _st(500)
+    node._goal(Float64(data=0.0))
+    assert node.ser.sent == [b"F\n"]
+    node.last = _st(1000, top=True)
+    node.ser.sent.clear()
+    node._goal(Float64(data=0.0))
+    assert node.ser.sent == []                     # ya esta en el sensor
+    _close(node)
+
+
+def test_travel_survives_a_restart(tmp_path):
+    from base_athome_bringup import torso_state_node as tsn
+    node = _torso_node(True)
+    node.memory_file = str(tmp_path / "e.json")
+    node.ref.max_steps = 4321
+    node._save_travel()
+    assert node._load_travel() == 4321
+    _close(node)
+
+
+def test_tests_never_touch_the_real_travel_file():
+    from base_athome_bringup import torso_state_node as tsn
+    assert ".config" not in tsn.MEMORY_FILE
