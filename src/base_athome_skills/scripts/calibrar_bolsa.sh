@@ -18,7 +18,8 @@ echo "$NODES" | grep -q '/joint_state_publisher' || session_start joints ros2 ru
   "$WS/src/hoverboard_base/urdf/robot.urdf" --ros-args -p rate:=10 -p "source_list:=['/arm/joint_states','/pan_tilt/joint_states','/torso/joint_states']"
 timeout 6 ros2 topic list 2>/dev/null | grep -q '^/camera/camera/color/image_raw$' || session_start realsense ros2 launch base_athome_bringup realsense_nuc.launch.py
 # allow_motion: el elevador solo se mueve si alguien publica en /torso/goal; este script no lo hace
-if ! echo "$NODES" | grep -q '/torso_state' && ! pgrep -f 'stepper_controller' >/dev/null && [ -e /dev/serial/by-id/usb-1a86_USB_Single_Serial_5CBD013609-if00 ]; then
+# Por proceso, no por `ros2 node list`: el daemon puede seguir mostrando un nodo que ya se cerro
+if ! pgrep -f 'lib/base_athome_bringup/torso_state' >/dev/null && ! pgrep -f 'stepper_controller' >/dev/null && [ -e /dev/serial/by-id/usb-1a86_USB_Single_Serial_5CBD013609-if00 ]; then
   session_start torso ros2 run base_athome_bringup torso_state --ros-args -p allow_motion:=true
 fi
 sleep 4
