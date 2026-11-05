@@ -98,7 +98,8 @@ class MissionExecutorNode(Node):
         self.ros_executor = None  # lo asigna main(): la manipulacion se agrega como nodo del mismo proceso
 
         # Bolsa senalada: pedido al detector, elevador y tramo final (bag_task.py)
-        self.bag_target = None                # (x, y, z) en map
+        self.bag_target = None                # (x, y, z) en map, medido por la cabeza
+        self.bag_memory = None                # (x, y, z) en base_link, ya junto a la bolsa: la base no se mueve mas
         self.robot_pose = None                # (x, y, yaw) en map, de AMCL
         self.odom_xy = None
         self.front_range = None
@@ -119,7 +120,7 @@ class MissionExecutorNode(Node):
                         return_home=self.h_return_home, speak=self.h_speak, listen=self.h_listen, wait=self.h_wait,
                         detect_object=self.h_detect, pick_object=self.h_pick, place_object=self.h_place,
                         arm_pose=self.h_arm_pose, find_pointed_bag=self.h_find_pointed_bag, approach_person=self.h_approach_person,
-                        approach_bag=self.h_approach_bag, dock_bag=self.h_dock_bag, set_torso=self.h_set_torso)
+                        approach_bag=self.h_approach_bag, dock_bag=self.h_dock_bag, remember_bag=self.h_remember_bag, set_torso=self.h_set_torso)
         self.executor_core = MissionExecutor(self.registry, handlers, mode=self.mode, on_update=self._publish)
         self._thread: Optional[threading.Thread] = None
         self.pub_skills.publish(String(data=json.dumps(self.registry.describe())))
@@ -340,12 +341,13 @@ class MissionExecutorNode(Node):
 
     def h_pick(self, ctx: SkillContext) -> SkillResult:
         label = str(ctx.args["object"])
-        plane_z = None
+        plane_z, memory = None, None
         if ctx.args.get("use_bag_target") and self.bag_target is not None:
             plane_z = self.bag_target[2]     # la cabeza da la altura; la camara de muneca, la posicion
+            memory = self.bag_memory
         # con la bolsa no se va a post_grasp: quedaria pegada al cuerpo; viaja adelante, en la pose de piso
         retreat = not ctx.args.get("use_bag_target")
-        r = self._with_manip(ctx, lambda m: m.pick_blocking(label, plane_z, retreat=retreat), "grasp_failed")
+        r = self._with_manip(ctx, lambda m: m.pick_blocking(label, plane_z, retreat=retreat, memory_xyz=memory), "grasp_failed")
         if not r.ok and "agarre vacio" in r.message:
             r.error = "grasp_empty"
         elif not r.ok and r.message.startswith("no veo"):
@@ -416,13 +418,31 @@ class MissionExecutorNode(Node):
         return self._navigate(ctx, "hacia la persona", pose)
 
     def h_find_pointed_bag(self, ctx: SkillContext) -> SkillResult:
-        self.bag_target = None
+        self.bag_target, self.bag_memory = None, None
         res, err = self._ask_finder(ctx, "pointed_bag", min(float(ctx.args.get("find_timeout_s", 30.0)), ctx.remaining()))
         if err is not None:
             return err
         self.bag_target = tuple(float(v) for v in res["bag"])
         return SkillResult.success(f"bolsa en ({self.bag_target[0]:.2f}, {self.bag_target[1]:.2f}, "
                                    f"{self.bag_target[2]:.2f})", bag=list(self.bag_target))
+
+    def h_remember_bag(self, ctx: SkillContext) -> SkillResult:
+        """Ya junto a la bolsa y con el elevador arriba: guarda donde esta. Sin medicion de la muneca, queda la de la cabeza."""
+        if self.bag_target is None or self.robot_pose is None:
+            return SkillResult.failure("no_bag_target", "no hay bolsa ubicada")
+        head = list(bag_task.object_in_base(self.bag_target, self.robot_pose))
+        head[2] -= bag_task.GROUND_TO_BASE_LINK_M
+        z = self.bag_target[2]
+        res = self._with_manip(ctx, lambda m: m.locate_bag_blocking(z, head), "bag_not_found")
+        if ctx.cancel.is_set():
+            return res
+        if res.ok and res.data.get("base_link_xyz"):
+            self.bag_memory = tuple(res.data["base_link_xyz"])
+            return SkillResult.success(f"bolsa guardada segun la muneca: {[round(v, 3) for v in self.bag_memory]} "
+                                       f"(la cabeza decia {[round(v, 3) for v in head]})", bag=list(self.bag_memory))
+        self.bag_memory = tuple(head)
+        return SkillResult.success(f"la muneca no la vio ({res.message}); guardo lo de la cabeza: "
+                                   f"{[round(v, 3) for v in head]}", bag=head)
 
     def _floor_grasp(self):
         """Geometria de la pose de piso ensenada, leida del archivo en cada pedido. (geometria, motivo de rechazo)."""

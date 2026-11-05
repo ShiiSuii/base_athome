@@ -35,7 +35,7 @@ def plan_to_speech(plan: Dict[str, Any], objects: Optional[List[Dict[str, Any]]]
             phrase = "find the bag you point at"
         elif skill == "approach_bag":
             phrase = "go to the bag"
-        elif skill in ("set_torso", "dock_bag"):
+        elif skill in ("set_torso", "dock_bag", "remember_bag"):
             continue                          # detalle interno, como la pose del brazo
         elif skill == "speak" and str(args.get("text", "")).startswith("Please point"):
             continue

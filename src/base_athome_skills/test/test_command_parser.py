@@ -333,9 +333,10 @@ def test_take_out_the_trash_in_both_languages():
 def test_arm_goes_up_before_the_torso_goes_down():
     c = compile_command("take out the trash", TRASH_MAP)
     calls = _calls(c)
-    order = [calls.index(x) for x in (("find_pointed_bag", None), ("approach_bag", None), ("arm_pose", "pre_grasp_floor"),
-                                      ("dock_bag", None), ("set_torso", True), ("pick_object", "bag"))]
-    assert order == sorted(order), "frenar lejos, posicionar, acercarse arriba, bajar y recien ahi agarrar"
+    order = [calls.index(x) for x in (("approach_person", None), ("find_pointed_bag", None), ("arm_pose", "pre_grasp_floor"),
+                                      ("approach_bag", None), ("dock_bag", None), ("remember_bag", None), ("set_torso", True),
+                                      ("pick_object", "bag"))]
+    assert order == sorted(order), "gesto, pregrasp, acercarse, guardar la posicion, bajar y recien ahi agarrar"
 
 
 def test_arm_goes_home_only_after_the_torso_is_up_again():
