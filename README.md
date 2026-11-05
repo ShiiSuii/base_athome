@@ -58,6 +58,7 @@ desde cero: `jetson_head/scripts/bootstrap_jazzy.sh` (ver `docs/ROBOT.md` §11).
 | Receptionist (HRI Challenge) | `ros2 launch base_athome_perception hri_receptionist.launch.py` (en la NUC también el alias `receptionist` de `~/.bashrc`) |
 | Commander por voz | alias `commander` en la NUC |
 | Demo en pantalla de sacar la basura (simulación) | alias `sim_basura` en la NUC |
+| Enseñar la pose de agarre de piso | alias `ensenar_pregrasp` en la NUC |
 | Calibrar y probar el pan-tilt | alias `calibrar_pantilt` en la NUC (`python3 src/base_athome_perception/scripts/pan_tilt_calibrate.py`) |
 | Secuenciador de misiones | `mision`; pedir: `mision_pedir <orden>` |
 | Manipulación (enseñar poses, agarrar con MoveIt) | `manipulacion` (simple) · `manipulacion_avanzada` |

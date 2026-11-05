@@ -52,20 +52,20 @@
   <!-- ==================== CHASIS ==================== -->
   <link name="base_link">
     <visual>
-      <origin rpy="0 0 0" xyz="0 0 0.065"/>
+      <origin rpy="0 0 0" xyz="0 0 0.15"/>
       <geometry>
-        <box size="0.48 0.48 0.05"/>
+        <box size="0.48 0.48 0.22"/>
       </geometry>
       <material name="chassis_blue"/>
     </visual>
     <collision>
-      <origin rpy="0 0 0" xyz="0 0 0.065"/>
+      <origin rpy="0 0 0" xyz="0 0 0.15"/>
       <geometry>
-        <box size="0.48 0.48 0.05"/>
+        <box size="0.48 0.48 0.22"/>
       </geometry>
     </collision>
     <inertial>
-      <origin rpy="0 0 0" xyz="0 0 0.065"/>
+      <origin rpy="0 0 0" xyz="0 0 0.15"/>
       <mass value="12.0"/>
       <inertia ixx="0.233" ixy="0.0" ixz="0.0" iyy="0.233" iyz="0.0" izz="0.461"/>
     </inertial>

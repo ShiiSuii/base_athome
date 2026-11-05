@@ -7,25 +7,70 @@ Orden para no golpear nada: frenar lejos -> brazo a la pose de piso -> avanzar c
 por encima de la bolsa) -> bajar -> agarrar. El brazo nunca baja colgando sobre la base.
 """
 import math
+import os
+import re
+from dataclasses import dataclass
 from typing import List, Optional, Sequence, Tuple
 
 Point3 = Sequence[float]
 
-# Buscada con piper_kinematics dentro de los limites del firmware: pinza 30 grados del vertical, inclinada hacia afuera.
-FLOOR_PREGRASP_DEG = [-25.3, 173.0, -130.4, 77.7, 80.0, -135.1]
-REACH_X, REACH_Y = 0.60, 0.064      # objeto respecto de la base en esa pose, 12 cm por delante de la pinza
-REF_OBJECT_Z = 0.977                # altura del objeto para ese mismo agarre con torso_lift_joint = 0
-CHASSIS_FRONT_M = 0.24              # xacro: chassis_length / 2
-LASER_X_M = 0.22                    # xacro: laser_offset_x
+
+def _robot_properties() -> dict:
+    """Numeros de urdf/xacro/properties.xacro. Vacio si el paquete no esta instalado (quedan los valores por defecto)."""
+    try:
+        from ament_index_python.packages import get_package_share_directory
+        path = os.path.join(get_package_share_directory("hoverboard_base"), "urdf", "xacro", "properties.xacro")
+        with open(path, encoding="utf-8") as f:
+            found = re.findall(r'<xacro:property\s+name="(\w+)"\s+value="(-?[0-9.]+)"', f.read())
+        return {k: float(v) for k, v in found}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+_XACRO = _robot_properties()
+
+# Buscada con piper_kinematics dentro de los limites del firmware: pinza 24 grados del vertical, inclinada hacia afuera,
+# y a 17 cm de una bolsa de 30 cm con el elevador abajo (tope de avance real: 26 cm).
+FLOOR_PREGRASP_DEG = [-15.4, 161.1, -112.4, 83.9, 78.0, -50.9]
+REACH_X, REACH_Y = 0.58, 0.12       # objeto respecto de la base en esa pose, 12 cm por delante de la pinza
+GROUND_TO_BASE_LINK_M = 0.06        # base.xacro. Las alturas de objetos se miden desde el PISO; la cinematica, desde base_link
+REF_OBJECT_Z = 0.933                # altura desde el piso del objeto para ese agarre con torso_lift_joint = 0
+CHASSIS_FRONT_M = _XACRO.get("chassis_length", 0.48) / 2.0    # la base sale del modelo del robot: un solo lugar
+LASER_X_M = _XACRO.get("laser_offset_x", 0.22)
 MIN_BASE_CLEARANCE_M = 0.05         # margen minimo aceptado entre el chasis y la bolsa
 DEFAULT_BAG_RADIUS_M = 0.20
-STROKE_M = 0.60                     # carrera entre sensores (xacro: torso_switch_stroke)
+GRASP_GAP_M = 0.12                  # el objeto, por delante de la pinza en la pose de piso
+STROKE_M = _XACRO.get("torso_switch_stroke", 0.60)     # carrera entre sensores
 STROKE_MARGIN_M = 0.02              # no llegar a tocar el sensor en uso normal
 DOCK_DISTANCE_M = 0.40              # tramo final en linea recta y lento: Nav2 no se acerca mas (robot_radius 0.44)
 MIN_POINT_ANGLE_DEG = 35.0          # brazo separado del cuerpo: si no, esta colgando y no es un gesto
 MAX_POINT_RANGE_M = 6.0
 MAX_BAG_FROM_RAY_M = 1.0            # bolsa aceptada alrededor del punto senalado
 PLACE_TORSO_M = -0.45               # altura para soltar la bolsa en el piso
+
+
+@dataclass(frozen=True)
+class FloorGrasp:
+    """Donde queda el objeto respecto de la base con la pose de piso y el elevador arriba."""
+    reach_x: float = REACH_X
+    reach_y: float = REACH_Y
+    ref_z: float = REF_OBJECT_Z
+
+
+def floor_grasp_from_tcp(tcp_in_base: Sequence[float], approach: Sequence[float], gap_m: float = GRASP_GAP_M) -> FloorGrasp:
+    """A partir de la pose ensenada: el objeto va `gap_m` por delante de la pinza."""
+    return FloorGrasp(float(tcp_in_base[0]) + gap_m * float(approach[0]), float(tcp_in_base[1]) + gap_m * float(approach[1]),
+                      float(tcp_in_base[2]) + gap_m * float(approach[2]) + GROUND_TO_BASE_LINK_M)
+
+
+def grasp_advance(tcp_in_base: Sequence[float], approach: Sequence[float], z_object: float, grasp: FloorGrasp,
+                  back_m: float = 0.02) -> float:
+    """Cuanto tiene que avanzar la pinza desde la pose de piso, con el elevador ya abajo, hasta un objeto a esa altura."""
+    torso = torso_for_object(z_object, grasp=grasp)
+    center = [float(tcp_in_base[i]) - back_m * float(approach[i]) for i in range(3)]
+    center[2] += torso
+    obj = (grasp.reach_x, grasp.reach_y, float(z_object) - GROUND_TO_BASE_LINK_M)
+    return math.sqrt(sum((obj[i] - center[i]) ** 2 for i in range(3)))
 
 
 def _sub(a: Point3, b: Point3) -> List[float]:
@@ -68,21 +113,21 @@ def choose_bag(target_xy: Sequence[float], bags: Sequence[Point3],
     return best
 
 
-def stand_pose(bag_xy: Sequence[float], from_xy: Sequence[float],
-               extra_back_m: float = 0.0) -> Tuple[float, float, float]:
+def stand_pose(bag_xy: Sequence[float], from_xy: Sequence[float], extra_back_m: float = 0.0,
+               grasp: FloorGrasp = FloorGrasp()) -> Tuple[float, float, float]:
     """Pose de la base (x, y, yaw) que deja la bolsa en el punto de agarre, llegando desde `from_xy`.
     `extra_back_m` la retrasa sobre el eje de avance: desde ahi basta avanzar derecho."""
     heading = math.atan2(float(bag_xy[1]) - float(from_xy[1]), float(bag_xy[0]) - float(from_xy[0]))
-    yaw = heading - math.atan2(REACH_Y, REACH_X)
+    yaw = heading - math.atan2(grasp.reach_y, grasp.reach_x)
     c, s = math.cos(yaw), math.sin(yaw)
-    rx, ry = REACH_X + extra_back_m, REACH_Y
+    rx, ry = grasp.reach_x + extra_back_m, grasp.reach_y
     return float(bag_xy[0]) - (c * rx - s * ry), float(bag_xy[1]) - (s * rx + c * ry), yaw
 
 
-def torso_for_object(z_object: float, stroke_m: float = STROKE_M) -> float:
+def torso_for_object(z_object: float, stroke_m: float = STROKE_M, grasp: FloorGrasp = FloorGrasp()) -> float:
     """torso_lift_joint (0 arriba, negativo abajo) para agarrar a esa altura, dentro de la carrera."""
     low = -(float(stroke_m) - STROKE_MARGIN_M)
-    return max(low, min(0.0, float(z_object) - REF_OBJECT_Z))
+    return max(low, min(0.0, float(z_object) - grasp.ref_z))
 
 
 def object_in_base(point_map: Point3, robot_xy_yaw: Sequence[float]) -> Tuple[float, float, float]:
@@ -92,9 +137,9 @@ def object_in_base(point_map: Point3, robot_xy_yaw: Sequence[float]) -> Tuple[fl
     return c * dx + s * dy, -s * dx + c * dy, float(point_map[2])
 
 
-def base_clearance(bag_radius_m: float = DEFAULT_BAG_RADIUS_M) -> float:
+def base_clearance(bag_radius_m: float = DEFAULT_BAG_RADIUS_M, grasp: FloorGrasp = FloorGrasp()) -> float:
     """Espacio libre entre el frente del chasis y el borde de la bolsa, ya en la pose de agarre."""
-    return REACH_X - float(bag_radius_m) - CHASSIS_FRONT_M
+    return grasp.reach_x - float(bag_radius_m) - CHASSIS_FRONT_M
 
 
 def dock_stop_range(margin_m: float = MIN_BASE_CLEARANCE_M) -> float:

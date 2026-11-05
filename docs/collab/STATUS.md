@@ -3,7 +3,7 @@
 Corto y actualizado: se **reemplaza** lo viejo, no se acumula (`AGENTS.md` §9). Lo histórico se
 recupera por commit (§8). Editado por el integrador (Claude).
 
-**Última actualización:** 2026-11-05 · Claude Code · modo `DESARROLLO` · sacar la basura en simulación.
+**Última actualización:** 2026-11-05 · Claude Code · modo `DESARROLLO` · bolsa con cámara de muñeca, pose de piso enseñable, base de 22 cm.
 
 ## 1. Estado comprobado al pausar
 
@@ -64,7 +64,7 @@ recupera por commit (§8). Editado por el integrador (Claude).
 
 ## 6. Cambios de esta sesión (detalle en Git)
 
-- Sacar la basura (HOME-63): "take out the trash" por voz → señalar → frenar lejos → brazo a `pre_grasp_floor` → avanzar con elevador arriba → bajar → agarrar → punto `trash_drop`. `SIM_PASS` con MoveIt; margen medido chasis-bolsa 17,2 cm. Sin probar en el robot. Rollback: revertir el commit.
+- Sacar la basura (HOME-63): "take out the trash" → la cabeza ubica el gesto y la bolsa → frenar lejos → `pre_grasp_floor` (`ensenar_pregrasp`; sin enseñar, una calculada) → avanzar con elevador arriba → bajar → agarrar con la cámara de muñeca y YOLO-World → punto `trash_drop`. `SIM_PASS` con MoveIt. Base del modelo a 22 cm (32 cm del piso, medido); columna y brazo sin cambios. Sin probar en el robot. Rollback: revertir el commit.
 
 - Receptionist: el detector de muebles se carga en el pre-vuelo (bloqueaba la ventana ~4 s en medio del barrido) y el seguimiento de rostro responde más rápido (error máximo simulado de 16,6° a menos de 12° con un invitado que se mueve). Parámetros sin probar en el robot.
 

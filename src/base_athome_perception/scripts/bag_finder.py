@@ -4,7 +4,7 @@
   sub /bag_finder/request  String JSON {id, timeout_s}
   pub /bag_finder/result   String JSON {id, ok, bag:[x,y,z], pointed:[x,y]} o {id, ok:false, error, message}
 z es la parte superior de la bolsa (donde esta la manija). Marco map. Los calculos estan en base_athome_skills.mission.bag_task.
-Detector: yolov8s-worldv2.pt con clases por texto si esta en models/ (puede ver bolsas de basura); si no, COCO (no las ve).
+Detector de bolsas: YOLO-World (wrist_detector.BagDetector). La camara de muneca usa el mismo para el agarre.
 """
 import json
 import math
@@ -22,12 +22,10 @@ from sensor_msgs.msg import CameraInfo, Image
 from std_msgs.msg import String
 from tf2_ros import Buffer, TransformListener
 
+from base_athome_perception.wrist_detector import BagDetector
 from base_athome_skills.mission import bag_task
 
 MODELS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "models")
-WORLD_MODEL = os.path.join(MODELS, "yolov8s-worldv2.pt")
-WORLD_CLASSES = ["trash bag", "garbage bag", "plastic bag", "bag", "handbag", "backpack"]
-COCO_BAGS = {24: "backpack", 26: "handbag", 28: "suitcase"}
 L_SHOULDER, R_SHOULDER, L_WRIST, R_WRIST, L_HIP, R_HIP = 5, 6, 9, 10, 11, 12
 MIN_KP_CONF = 0.4
 FRAME = "camera_color_optical_frame"
@@ -64,14 +62,14 @@ class BagFinder(Node):
         self.head = (0.0, 0.0)
         from ultralytics import YOLO
         self.pose_model = YOLO(os.path.join(MODELS, "yolov8n-pose.pt"))
-        self.world = os.path.exists(WORLD_MODEL)
-        self.bag_model = YOLO(WORLD_MODEL if self.world else os.path.join(MODELS, "yolov8n.pt"))
-        if self.world:
-            self.bag_model.set_classes(WORLD_CLASSES)
+        self.bags = BagDetector(MODELS)
+        if not self.bags.available():
+            raise SystemExit(f"Faltan los pesos del detector de bolsas: {self.bags.weights}")
+        self.bags.load()
         blank = np.zeros((480, 640, 3), np.uint8)
         self.pose_model.predict(blank, verbose=False, device="cpu")
-        self.bag_model.predict(blank, verbose=False, device="cpu")
-        self.get_logger().info(f"bag_finder listo; detector de bolsas: {'YOLO-World' if self.world else 'COCO'}")
+        self.bags.detect(blank)
+        self.get_logger().info("bag_finder listo; detector de bolsas: YOLO-World")
 
     def _rgb(self, m):
         img = np.frombuffer(m.data, np.uint8).reshape(m.height, m.width, -1)
@@ -121,12 +119,8 @@ class BagFinder(Node):
 
     def _bags(self, rgb, depth):
         """Bolsas de la imagen: [x, y, z superior] en map."""
-        if self.world:
-            res = self.bag_model.predict(rgb, conf=0.15, verbose=False, device="cpu")[0]
-        else:
-            res = self.bag_model.predict(rgb, conf=0.25, classes=list(COCO_BAGS), verbose=False, device="cpu")[0]
         out = []
-        for b in res.boxes.xyxy.cpu().numpy():
+        for b, _, _ in self.bags.detect(rgb):
             cu, cv = (b[0] + b[2]) / 2, (b[1] + b[3]) / 2
             z = depth_at(depth, cu, cv)
             if z is None or self.K is None:

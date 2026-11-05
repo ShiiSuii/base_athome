@@ -20,6 +20,8 @@ import time
 import uuid
 from typing import Optional
 
+import numpy as np
+
 import rclpy
 from rclpy.action import ActionClient
 from rclpy.callback_groups import ReentrantCallbackGroup
@@ -338,12 +340,12 @@ class MissionExecutorNode(Node):
 
     def h_pick(self, ctx: SkillContext) -> SkillResult:
         label = str(ctx.args["object"])
-        known = None
-        if ctx.args.get("use_bag_target") and self.bag_target is not None and self.robot_pose is not None:
-            known = bag_task.object_in_base(self.bag_target, self.robot_pose)
+        plane_z = None
+        if ctx.args.get("use_bag_target") and self.bag_target is not None:
+            plane_z = self.bag_target[2]     # la cabeza da la altura; la camara de muneca, la posicion
         # con la bolsa no se va a post_grasp: quedaria pegada al cuerpo; viaja adelante, en la pose de piso
         retreat = not ctx.args.get("use_bag_target")
-        r = self._with_manip(ctx, lambda m: m.pick_blocking(label, known, retreat=retreat), "grasp_failed")
+        r = self._with_manip(ctx, lambda m: m.pick_blocking(label, plane_z, retreat=retreat), "grasp_failed")
         if not r.ok and "agarre vacio" in r.message:
             r.error = "grasp_empty"
         elif not r.ok and r.message.startswith("no veo"):
@@ -405,13 +407,31 @@ class MissionExecutorNode(Node):
             time.sleep(0.05)
         return SkillResult.failure("finder_unavailable", "bag_finder no respondio")
 
+    def _floor_grasp(self):
+        """Geometria de la pose de piso ensenada, leida del archivo en cada pedido. (geometria, motivo de rechazo)."""
+        m, why = self._manipulation()
+        if m is None:
+            return None, why
+        m.reload_poses()
+        tcp_mm, R = m.kin.forward_kinematics([math.radians(v) for v in m.poses["pre_grasp_floor"]["joints_deg"]])
+        tcp = np.asarray(m.shoulder_in_base()) - [0.0, 0.0, m.torso_pos or 0.0] + np.asarray(tcp_mm) / 1000.0
+        grasp = bag_task.floor_grasp_from_tcp(tcp, R[:, 2])
+        clearance = bag_task.base_clearance(grasp=grasp)
+        if clearance < bag_task.MIN_BASE_CLEARANCE_M:
+            return None, (f"con la pose de piso, una bolsa quedaria a {clearance * 100:.0f} cm del chasis: "
+                          "ensenarla mas adelante")
+        return grasp, ""
+
     def _stop_base(self):
         self.pub_cmd_vel.publish(Twist())
 
     def h_approach_bag(self, ctx: SkillContext) -> SkillResult:
         if self.bag_target is None or self.robot_pose is None:
             return SkillResult.failure("no_bag_target", "no hay bolsa ubicada o no se la pose del robot")
-        pose = bag_task.stand_pose(self.bag_target, self.robot_pose, extra_back_m=bag_task.DOCK_DISTANCE_M)
+        grasp, why = self._floor_grasp()
+        if grasp is None:
+            return SkillResult.failure("pose_too_close", why)
+        pose = bag_task.stand_pose(self.bag_target, self.robot_pose, extra_back_m=bag_task.DOCK_DISTANCE_M, grasp=grasp)
         return self._navigate(ctx, "lejos de la bolsa", pose)
 
     def h_dock_bag(self, ctx: SkillContext) -> SkillResult:
@@ -443,7 +463,10 @@ class MissionExecutorNode(Node):
         if ctx.args.get("for_bag"):
             if self.bag_target is None:
                 return SkillResult.failure("no_bag_target", "no hay bolsa ubicada")
-            target = bag_task.torso_for_object(self.bag_target[2])
+            grasp, why = self._floor_grasp()
+            if grasp is None:
+                return SkillResult.failure("pose_too_close", why)
+            target = bag_task.torso_for_object(self.bag_target[2], grasp=grasp)
         else:
             target = float(ctx.args.get("target_m", 0.0))
         st = self.torso_status

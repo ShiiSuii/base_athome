@@ -152,6 +152,7 @@ def test_stop_cancels_a_running_mission_and_other_orders_wait(world):
     before = world.cancels
     world.script[:] = ["Go to the kitchen.", "Stop."]
     assert _until(lambda: world.cancels > before), world.said
-    assert any("I am busy" in s for s in world.said) and any("Stopping" in s for s in world.said)
+    assert _until(lambda: any("Stopping" in s for s in world.said)), world.said    # se dice justo despues de cancelar
+    assert any("I am busy" in s for s in world.said)
     assert world.plans == []
     world.mission("IDLE")

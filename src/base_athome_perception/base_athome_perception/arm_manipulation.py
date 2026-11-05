@@ -48,6 +48,7 @@ from visualization_msgs.msg import Marker, MarkerArray
 from geometry_msgs.msg import Point
 from std_srvs.srv import SetBool
 from rclpy.action import ActionClient
+from tf2_ros import Buffer, TransformListener
 try:  # HOME-45: ejecucion con resultado verificado por el controlador (real o simulado)
     from control_msgs.action import FollowJointTrajectory
 except ImportError:  # pragma: no cover
@@ -58,7 +59,7 @@ from base_athome_perception import wrist_geometry as wg
 from base_athome_perception.moveit_bridge import MoveItBridge, decimate, pose_from, quat_from_matrix
 from base_athome_perception.piper_kinematics import PiperKinematicsSolver
 from base_athome_perception.teach_wizard import LABELS, POSES, TeachWizard
-from base_athome_perception.wrist_detector import TargetTracker, make_detector
+from base_athome_perception.wrist_detector import TargetTracker, make_bag_detector, make_detector
 
 CONFIG = os.path.expanduser("~/base_athome_ws/src/base_athome_perception/config/arm_poses_and_limits.yaml")
 if os.environ.get("ATHOME_SIM") == "1":  # en simulacion no pisar la calibracion del robot real
@@ -68,8 +69,8 @@ if os.environ.get("ATHOME_SIM") == "1":  # en simulacion no pisar la calibracion
         os.makedirs(os.path.dirname(_SIM_CONFIG), exist_ok=True)
         shutil.copy(CONFIG, _SIM_CONFIG)
     CONFIG = _SIM_CONFIG
-FLOOR_POSE = "pre_grasp_floor"     # base_athome_skills.mission.bag_task
-FLOOR_PREGRASP_DEG = [-25.3, 173.0, -130.4, 77.7, 80.0, -135.1]
+FLOOR_POSE = "pre_grasp_floor"     # se ensena con ensenar_pregrasp; si no hay, la calculada
+FLOOR_PREGRASP_DEG = [-15.4, 161.1, -112.4, 83.9, 78.0, -50.9]
 SHOULDER_IN_BASE = np.array([0.005, 0.175, 1.065])  # arm_base_link en base_link (URDF) con el elevador ARRIBA
 # (torso_lift_joint=0). Con el elevador abajo z baja en |torso_lift_joint| (prismatico vertical): ver
 # shoulder_in_base(). La altura MEDIDA llega por /torso/joint_states (base_athome_bringup torso_state).
@@ -117,6 +118,12 @@ class Manipulacion(Node):
         self.object_hold_s = float(env.get("object_hold_s", 8.0))
         models = os.path.expanduser("~/base_athome_ws/src/base_athome_perception/models")
         self.detector = make_detector(models)
+        self.models_dir = models
+        self.bag_detector = None      # se carga al primer pedido de una bolsa
+        self.bag_vision = False
+        self.plane_z = None
+        self.tf_buf = Buffer()
+        self.tf_listener = TransformListener(self.tf_buf, self)
         self.tracker = TargetTracker()
         self.det_label = ""
         self.obj_base = None  # centro del objeto en base_link, deteccion EN VIVO (None si se perdio)
@@ -195,8 +202,8 @@ class Manipulacion(Node):
         return None
 
     def reload_poses(self):
-        self.poses = {n: p for n, p in pose_store.load_named_poses(CONFIG).items() if n in POSES}
-        # Pose calculada, no ensenada: si algun dia se guarda una con este nombre, manda la guardada.
+        self.poses = {n: p for n, p in pose_store.load_named_poses(CONFIG).items() if n in POSES or n == FLOOR_POSE}
+        # Sin pose ensenada, la calculada.
         self.poses.setdefault(FLOOR_POSE, dict(joints_deg=list(FLOOR_PREGRASP_DEG), gripper_mm=GRIPPER_OPEN_MM))
 
     # ------------------------------------------------------------ movimiento
@@ -378,23 +385,52 @@ class Manipulacion(Node):
             time.sleep(0.05)
         return False, f"no veo {'un ' + want if want else 'ningun objeto'}", {}
 
-    def pick_blocking(self, label: str = "", known_xyz=None, retreat: bool = True):
+    def _start_bag_vision(self, plane_z: float):
+        """Pasa la camara de muneca al detector de bolsas y a medir sobre el plano z (altura vista por la cabeza)."""
+        if self.bag_detector is None:
+            self.bag_detector = make_bag_detector(self.models_dir)
+        if hasattr(self.bag_detector, "available") and not self.bag_detector.available():
+            return False, f"faltan los pesos del detector de bolsas: {self.bag_detector.weights}"
+        self.tracker = type(self.tracker)()      # sin arrastrar lo que veia antes
+        self.target, self.detection = None, None
+        self.plane_z, self.bag_vision = float(plane_z), True
+        return True, ""
+
+    def _bag_point(self, box):
+        """Punto a agarrar en base_link: rayo de la camara por la parte alta de la bolsa, cortado con plane_z."""
+        try:
+            cam = self.tf_buf.lookup_transform("base_link", "arm_camera_optical_frame", rclpy.time.Time())
+            ground = self.tf_buf.lookup_transform("base_footprint", "base_link", rclpy.time.Time())
+        except Exception as e:  # noqa: BLE001 - sin TF no hay medicion: no se agarra a ciegas
+            self.get_logger().warn(f"Sin TF de la camara de muneca: {e}", throttle_duration_sec=5.0)
+            return None
+        t, q = cam.transform.translation, cam.transform.rotation
+        x, y, z, w = q.x, q.y, q.z, q.w
+        R = np.array([[1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+                      [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+                      [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)]])
+        x1, y1, x2, y2 = box
+        u, v = (x1 + x2) / 2.0, y1 + self.bag_detector.grasp_box_fraction * (y2 - y1)
+        return wg.ray_plane_point([t.x, t.y, t.z], R, u, v, self.calib, self.plane_z - ground.transform.translation.z)
+
+    def pick_blocking(self, label: str = "", plane_z=None, retreat: bool = True):
         """Agarre completo con confirmacion por el ancho MEDIDO de la pinza. (ok, mensaje, datos).
-        `known_xyz` (base_link): posicion ya medida con profundidad (RealSense). Reemplaza a la camara de muneca,
-        que estima la distancia por el tamano de la caja y solo sirve para objetos de diametro calibrado; una bolsa no.
-        La pinza igual confirma si agarro algo."""
+        `plane_z`: altura del objeto, medida por la camara de la cabeza. La camara de muneca lo ubica con el detector
+        de bolsas y el rayo del pixel cortado con esa altura; el tamano de la caja no sirve sin diametro conocido."""
         self.abort = False
         if not self.torso_known():
             return False, "altura del elevador sin medir (/torso/joint_states): no se calcula un agarre a ciegas", {}
-        if known_xyz is not None:
-            self.target = dict(self.target or {}, obj=[float(v) for v in known_xyz], t=time.time(), label="external")
-            self.detection = None
-            data = dict(source="head_camera", base_link_xyz=[round(float(v), 3) for v in known_xyz])
-        else:
-            ok, msg, data = self.detect_blocking(label)
+        if plane_z is not None:
+            ok, why = self._start_bag_vision(plane_z)
+            if not ok:
+                return False, why, {}
+        try:
+            ok, msg, data = self.detect_blocking(label, timeout_s=8.0 if plane_z is not None else 5.0)
             if not ok:
                 return False, msg, data
-        ok, why = self._grasp_core()
+            ok, why = self._grasp_core()
+        finally:
+            self.plane_z, self.bag_vision = None, False
         if not ok:
             return False, why, data
         time.sleep(0.3)
@@ -430,7 +466,7 @@ class Manipulacion(Node):
                 time.sleep(0.05)
                 continue
             try:
-                dets = self.detector.detect(frame)
+                dets = (self.bag_detector if self.bag_vision else self.detector).detect(frame)
             except Exception as e:
                 self.get_logger().warn(f"Detector: {e}", throttle_duration_sec=10.0)
                 time.sleep(0.5)
@@ -444,7 +480,14 @@ class Manipulacion(Node):
                 z = wg.size_distance(width, self.calib)
                 with self.lock:
                     q_det = list(self.joints_deg)
-                obj = self._object_point(box, z, q_det)
+                if self.plane_z is not None:
+                    obj = self._bag_point(box)
+                    if obj is None:
+                        self.detection = None
+                        time.sleep(0.05)
+                        continue
+                else:
+                    obj = self._object_point(box, z, q_det)
                 self.detection = (box, z)
                 self.det_label = f"{self.tracker.label} {self.tracker.conf:.2f} ({self.detector.source})"
                 self.obj_base = obj

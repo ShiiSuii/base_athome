@@ -69,8 +69,8 @@ def test_dock_stops_on_distance_or_obstacle():
 
 
 def test_a_big_bag_stays_clear_of_the_chassis():
-    assert bt.base_clearance(0.14) == pytest.approx(0.22)
-    assert bt.base_clearance(0.30) >= bt.MIN_BASE_CLEARANCE_M
+    assert bt.base_clearance(0.14) == pytest.approx(0.20)
+    assert bt.base_clearance(0.25) >= bt.MIN_BASE_CLEARANCE_M
 
 
 def test_lidar_stops_the_dock_before_the_chassis_touches():
@@ -91,7 +91,12 @@ def test_floor_pose_matches_the_reach_point():
     spec.loader.exec_module(pk)
     tcp, R = pk.PiperKinematicsSolver().forward_kinematics(np.radians(bt.FLOOR_PREGRASP_DEG))
     point = np.array([0.005, 0.175, 1.065]) + tcp / 1000.0 + 0.12 * R[:, 2]
-    assert point == pytest.approx([bt.REACH_X, bt.REACH_Y, bt.REF_OBJECT_Z], abs=0.005)
+    assert point[:2] == pytest.approx([bt.REACH_X, bt.REACH_Y], abs=0.005)
+    assert point[2] + bt.GROUND_TO_BASE_LINK_M == pytest.approx(bt.REF_OBJECT_Z, abs=0.005)
+    tcp_base = np.array([0.005, 0.175, 1.065]) + tcp / 1000.0
+    grasp = bt.floor_grasp_from_tcp(tcp_base, R[:, 2])
+    assert bt.grasp_advance(tcp_base, R[:, 2], 0.30, grasp) < 0.26          # tope real de avance
+    assert tcp_base[2] + bt.torso_for_object(0.30, grasp=grasp) > 0.24 + 0.05  # la pinza baja hasta quedar encima
     assert R[0, 2] > 0.2 and R[2, 2] < -0.7                  # apunta hacia adelante y abajo: lejos de la base
     source = (root / "arm_manipulation.py").read_text()
     assert str(bt.FLOOR_PREGRASP_DEG) in source

@@ -6,7 +6,8 @@
   <!-- ==================== PROPIEDADES CONFIGURABLES ==================== -->
   <xacro:property name="chassis_length" value="0.48"/>
   <xacro:property name="chassis_width"  value="0.48"/>
-  <xacro:property name="chassis_height" value="0.05"/>
+  <!-- Medido 2026-11-05 por el usuario: 22 cm de la cara de abajo a la de arriba, donde se fija el lidar. -->
+  <xacro:property name="chassis_height" value="0.22"/>
   <xacro:property name="ground_clearance" value="0.04"/>
 
   <!-- Distancia efectiva calibrada entre ruedas: 56.20 cm -> offset Y = +/- 0.281m -->
@@ -25,6 +26,8 @@
   <xacro:property name="laser_offset_z" value="0.18"/>
 
   <!-- Sistema de Elevación Torso / Columna (Exactamente en el medio de la base, 1.30 m altura) -->
+  <!-- Altura fija de la base de la columna: que la caja del chasis crezca no sube columna, brazo ni cabeza. -->
+  <xacro:property name="column_mount_z"         value="0.09"/>
   <xacro:property name="column_x"               value="0.0"/>
   <xacro:property name="column_y"               value="0.0"/>
   <xacro:property name="column_height"          value="1.30"/>

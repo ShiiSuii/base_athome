@@ -10,11 +10,13 @@ Las acciones sobre el hardware se piden con callbacks (set_torque, save).
 from typing import Callable, List, Optional, Sequence
 
 POSES = ("home", "pre_grasp", "post_grasp")
-LABELS = {"home": "HOME", "pre_grasp": "PRE-GRASP", "post_grasp": "POST-GRASP"}
+FLOOR_POSE = "pre_grasp_floor"
+LABELS = {"home": "HOME", "pre_grasp": "PRE-GRASP", "post_grasp": "POST-GRASP", FLOOR_POSE: "PRE-GRASP DE PISO"}
 HINTS = {
     "home": "Pose de reposo / segura del brazo.",
     "pre_grasp": "Pinza abierta, mirando el objeto desde ~25-30 cm.",
     "post_grasp": "Donde llevar el objeto despues de agarrarlo.",
+    FLOOR_POSE: "Elevador ARRIBA. Pinza abierta, adelante y hacia abajo, lejos de la base.",
 }
 
 
@@ -40,7 +42,7 @@ class TeachWizard:
         """Ensena las 3 poses en orden, o solo `only` ('home' | 'pre_grasp' | 'post_grasp')."""
         if self.active:
             return
-        self.sequence = [only] if only in POSES else list(POSES)
+        self.sequence = [only] if only in LABELS else list(POSES)
         self.saved = []
         self.index = 0
         self._set_torque(False)

@@ -64,8 +64,9 @@ la cámara, por clase (`other` usa el nombre).
 
 **Sacar la basura.** "take out the trash" / "sacá la basura" exige el waypoint `trash_drop` (botón en el editor de mapa).
 Orden, para no golpear nada: ver el gesto y la bolsa → Nav2 hasta 0,40 m antes → brazo a `pre_grasp_floor` → avanzar en línea
-recta con el elevador arriba (la pinza pasa por encima) → bajar → agarrar con la posición de la RealSense → subir → ir → bajar →
+recta con el elevador arriba (la pinza pasa por encima) → bajar → agarrar con la cámara de muñeca (detector de bolsas; la altura la da la cabeza) → subir → ir → bajar →
 soltar → subir → recién ahí HOME. La bolsa viaja en la pose de piso, lejos del cuerpo. Demo en pantalla: `sim_basura`.
+La pose se enseña a mano con `ensenar_pregrasp`, con el elevador arriba: de ella salen dónde se para el robot y cuánto baja.
 
 ### Plan
 ```yaml

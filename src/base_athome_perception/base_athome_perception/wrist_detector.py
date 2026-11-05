@@ -110,9 +110,50 @@ class WristDetector:
         return []
 
 
+# Medido 2026-11-05 con 24 fotos de bolsas: con estos distractores World vio 17; solo las clases de bolsa, 6; COCO, 4.
+# Los distractores le dan otra respuesta posible y la confianza de las bolsas sube de ~0,2 a ~0,6.
+BAG_WORLD_CLASSES = ["black garbage bag", "trash bag", "plastic bag", "bag", "person", "chair", "table", "bottle", "box",
+                     "wall", "floor"]
+BAG_NAMES = {"black garbage bag", "trash bag", "plastic bag", "bag"}
+
+
+class BagDetector:
+    """Bolsas con YOLO-World en la CPU de la NUC (~125 ms). Pesos: models/yolov8s-worldv2.pt, no versionados."""
+
+    source = "YOLO-World bolsas"
+    grasp_box_fraction = 0.15     # plane_z es la parte alta de la bolsa: el rayo pasa cerca del borde de arriba
+
+    def __init__(self, models_dir: str, conf: float = 0.15):
+        self.weights = os.path.join(models_dir, "yolov8s-worldv2.pt")
+        self.conf = conf
+        self.model = None
+
+    def available(self) -> bool:
+        return os.path.exists(self.weights)
+
+    def load(self) -> None:
+        if self.model is None:
+            from ultralytics import YOLOWorld
+            cwd = os.getcwd()
+            try:
+                os.chdir(os.path.expanduser("~"))  # pesos de CLIP en ~/weights/clip
+                self.model = YOLOWorld(self.weights)
+                self.model.set_classes(BAG_WORLD_CLASSES)
+            finally:
+                os.chdir(cwd)
+
+    def detect(self, frame) -> List[Tuple[Box, float, str]]:
+        self.load()
+        r = self.model.predict(frame, imgsz=640, conf=self.conf, verbose=False, device="cpu")[0]
+        return [(tuple(float(v) for v in b.xyxy[0].tolist()), float(b.conf), r.names[int(b.cls)]) for b in r.boxes
+                if r.names[int(b.cls)] in BAG_NAMES]
+
+
 class SimColorDetector:
     """Detector para la simulacion (ATHOME_SIM=1): segmenta el objeto magenta que dibuja sim_robot.
     Misma interfaz que WristDetector.detect -> [(caja, confianza, etiqueta)]."""
+
+    grasp_box_fraction = 0.5      # el objeto simulado esta centrado en plane_z
 
     def __init__(self, *_, **__):
         self.source = "sim-color"
@@ -135,6 +176,11 @@ class SimColorDetector:
                 dets.append(((float(x), float(y), float(x + w), float(y + h)), 0.9,
                              os.environ.get("ATHOME_SIM_OBJECT_LABEL", "pringles can")))
         return dets
+
+
+def make_bag_detector(models_dir: str):
+    """Detector de bolsas real, o el de la simulacion."""
+    return SimColorDetector() if os.environ.get("ATHOME_SIM") == "1" else BagDetector(models_dir)
 
 
 def make_detector(models_dir: str):

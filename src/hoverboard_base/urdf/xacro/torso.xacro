@@ -29,7 +29,7 @@
   <joint name="torso_column_joint" type="fixed">
     <parent link="base_link"/>
     <child link="torso_column"/>
-    <origin xyz="${column_x} ${column_y} ${ground_clearance + chassis_height}" rpy="0 0 0"/>
+    <origin xyz="${column_x} ${column_y} ${column_mount_z}" rpy="0 0 0"/>
   </joint>
 
   <!-- Plataforma superior móvil del elevador (Carriage) -->

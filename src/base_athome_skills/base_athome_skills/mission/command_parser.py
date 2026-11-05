@@ -26,7 +26,7 @@ PLACE_ALIASES = {
     "home": ["casa", "home", "inicio", "base"],
     "trash_drop": ["basura", "afuera", "trash", "garbage", "outside", "trash point", "punto de basura", "contenedor"],
 }
-BAG_LABELS = "bag|backpack|suitcase"       # lo que puede decir el detector COCO sobre una bolsa
+BAG_LABELS = "bag"                         # toda clase de bolsa del detector lo contiene
 OBJECT_ALIASES = {
     "bottle": ["botella", "bottle"], "can": ["lata", "can"], "cup": ["taza", "vaso", "cup", "glass"],
     "apple": ["manzana", "apple"], "banana": ["banana", "platano"], "book": ["libro", "book"],
