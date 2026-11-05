@@ -3,7 +3,7 @@
 Corto y actualizado: se **reemplaza** lo viejo, no se acumula (`AGENTS.md` §9). Lo histórico se
 recupera por commit (§8). Editado por el integrador (Claude).
 
-**Última actualización:** 2026-11-05 · Claude Code · modo `DESARROLLO` · bolsa con cámara de muñeca, pose de piso enseñable, base de 22 cm.
+**Última actualización:** 2026-11-05 · Claude Code · modo `DESARROLLO` · listo para validar la basura en real; se apaga para energizar con baterías.
 
 ## 1. Estado comprobado al pausar
 
@@ -25,6 +25,15 @@ recupera por commit (§8). Editado por el integrador (Claude).
   `waypoints.yaml` y `~/waypoints_base_athome.yaml` quedaron vacíos por un test (ver §6); regenerados desde `semantic_map.yaml` el 2026-11-04.
   (incluye la `home` re-enseñada `[73.87, 169.72, -138.02, 26.69, -15.7, -117.17]`).
 - Reparación tras el reinicio de la NUC: commit vacío `c98344d` rehecho como `f16f457`; respaldo `~/git_backup_20261103_165442`; `core.fsync=committed`.
+
+## 2b. Validar "take out the trash" en el robot real (nunca corrió; supervisar con E-stop a mano)
+
+1. Energizar. Comprobar `ros2 topic echo --once /arm/status`: `feedback_ok: true` (con energía apagada da false). `calibrar_pantilt`: `T`, `V`, `M`, sin caídas.
+2. Elevador arriba: `stepper`, comando `top`, salir.
+3. Pose: `ensenar_pregrasp`. `T` suelta el brazo (se cae: sostenerlo), llevarlo adelante y abajo, `ENTER` guarda y traba. Dejarlo ahí: **con el brazo colgando en HOME, el elevador no debe bajar**.
+4. Elevador solo: `ros2 run base_athome_bringup torso_state --ros-args -p allow_motion:=true`; en otra terminal `calibrar_elevador` (recorre hasta los dos sensores) y luego `ros2 topic pub --once /torso/goal std_msgs/msg/Float64 "{data: -0.10}"`, -0.30, -0.58, 0.0. Medir con cinta el recorrido (el modelo asume 60 cm). `NaN` o E-stop para parar. Cerrar el nodo.
+5. Mapa: `editor_mapa`, sección de waypoints, "Punto de la Basura (Afuera)", clic y arrastrar hacia dónde mira, Guardar. Puerta abierta si queda afuera.
+6. Prueba: `commander`, ver ubicación en RViz. Bolsa liviana en zona despejada, manija <7 cm, sin nada bajo en el camino (el lidar no ve por debajo de 38 cm). Persona frente a la cabeza. Decir en inglés "Take out the trash" → "Yes" → señalar con el brazo separado del cuerpo y sostener → apartarse al avanzar. "Stop" cancela. Logs: `/tmp/commander_<pid>/` (copiarlos: se borran al reiniciar).
 
 ## 3. Cómo retomar la teleoperación con el Quest (pendiente: prueba completa en el brazo real)
 
@@ -58,6 +67,7 @@ recupera por commit (§8). Editado por el integrador (Claude).
 | Humano | HOME-SEC: revocar el token (también está en el registro de Orca); contraseña de la Jetson | pendiente |
 | Humano + Claude | **Prioridad: cualificación 2027, entrega 6/12/2026** (HOME-62, `docs/VIDEO_CUALIFICACION.txt`). Receptionist en el robot: seguimiento y carga corregidos, falta probarlos | en curso |
 | Antigravity | HOME-65 ideas de papers, worktree `antigravity-home-65-papers`, base `af07316`, dispatch `ctx_b7bbeff893e3` | despachada; revisar con `git diff` y referencias al terminar |
+| Antigravity | HOME-66 AnyDesk, worktree `antigravity-home-66-anydesk`, dispatch `ctx_0f1f8e86ab0a`; sudo por ayudante local | despachada; ambos frenados en una aprobación al 2026-11-05 |
 | Claude | En pausa, retomar después (detalle en `ROADMAP.md`): commander con Nav2 real y personas (HOME-57, HOME-49), docking (HOME-58), detector World en Jetson (HOME-59), `guide_person` (HOME-60), teleop (HOME-52) | guardado |
 | Humano | TDP: seguir `docs/TDP_INSTRUCTIVO.txt` desde la otra computadora | pendiente |
 | Claude | Receptionist: probar en el robot el barrido nuevo (2 filas, ~16 s), seguimiento leve y la revisión del pan-tilt | código listo (`SIM_PASS` parcial) |
