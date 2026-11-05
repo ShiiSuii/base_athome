@@ -3,7 +3,8 @@
 HERE=$(cd "$(dirname "$0")" && pwd)
 WS=$(cd "$HERE/../../.." && pwd)
 source /opt/ros/jazzy/setup.bash; source "$WS/install/setup.bash"
-export ROS_DOMAIN_ID=10
+export ROS_DOMAIN_ID=10 DISPLAY=${DISPLAY:-:1}
+[ -z "${XAUTHORITY:-}" ] && [ -f "/run/user/$(id -u)/gdm/Xauthority" ] && export XAUTHORITY="/run/user/$(id -u)/gdm/Xauthority"
 . "$HERE/session_lib.sh"
 session_init "/tmp/calibrar_bolsa_$$"
 NODES=$(timeout 6 ros2 node list 2>/dev/null)

@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Compara donde ve la bolsa cada camara, para calibrar (alias `calibrar_bolsa`). SOLO LECTURA: no mueve nada.
+"""Debug visual de la bolsa (alias `calibrar_bolsa`). SOLO LECTURA: no mueve nada.
 
-Coordenadas en metros desde el piso, bajo el centro del robot: x adelante, y a su izquierda, z arriba.
-Medi la bolsa con una cinta y comparala con lo que dice cada camara. Imagenes con las cajas: /tmp/calibrar_bolsa_*.jpg
+Ventana con las dos camaras. Verde: bolsa. Gris: otras clases que vio el detector. Amarillo: brazo que senala.
+Coordenadas en metros desde el piso, bajo el centro del robot: x adelante, y a su izquierda. Comparalas con una cinta.
+Teclas sobre la ventana: Q salir, S guardar imagen en /tmp, + y - cambiar la confianza minima.
 """
 import importlib.util
 import math
 import os
+import re
+import subprocess
 import sys
 import threading
 import time
@@ -22,7 +25,8 @@ from tf2_ros import Buffer, TransformListener
 
 from base_athome_perception import pose_store
 from base_athome_perception import wrist_geometry as wg
-from base_athome_perception.wrist_detector import BagDetector
+from base_athome_perception.wrist_detector import BAG_NAMES, BagDetector
+from base_athome_skills.mission import bag_task
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG = os.path.join(HERE, "..", "config", "arm_poses_and_limits.yaml")
@@ -68,6 +72,9 @@ class Checker(Node):
         if not self.bags.available():
             raise SystemExit(f"Faltan los pesos del detector: {self.bags.weights}")
         self.bags.load()
+        self.views, self.min_conf = {}, 0.15
+        from ultralytics import YOLO
+        self.pose_model = YOLO(os.path.join(HERE, "..", "models", "yolov8n-pose.pt"))
 
     def _depth(self, m):
         self.depth = np.frombuffer(m.data, np.uint16).reshape(m.height, m.width).copy()
@@ -87,13 +94,49 @@ class Checker(Node):
         return np.array([t.translation.x, t.translation.y, t.translation.z]), quat_to_R(t.rotation)
 
     def _best(self, img, name):
-        dets = self.bags.detect(img)
-        view = img.copy()
-        for b, c, label in dets:
-            cv2.rectangle(view, (int(b[0]), int(b[1])), (int(b[2]), int(b[3])), (0, 255, 0), 2)
-            cv2.putText(view, f"{label} {c:.2f}", (int(b[0]), max(15, int(b[1]) - 5)), 0, 0.5, (0, 255, 0), 1)
-        cv2.imwrite(f"/tmp/calibrar_bolsa_{name}.jpg", view)
-        return max(dets, key=lambda d: d[1]) if dets else None
+        """Dibuja todo lo que ve el detector y devuelve la bolsa de mayor confianza."""
+        r = self.bags.model.predict(img, imgsz=640, conf=self.min_conf, verbose=False, device="cpu")[0]
+        view, best = img.copy(), None
+        for box in r.boxes:
+            b, c, label = box.xyxy[0].tolist(), float(box.conf), r.names[int(box.cls)]
+            bag = label in BAG_NAMES
+            color = (0, 255, 0) if bag else (150, 150, 150)
+            cv2.rectangle(view, (int(b[0]), int(b[1])), (int(b[2]), int(b[3])), color, 3 if bag else 1)
+            cv2.putText(view, f"{label} {c:.2f}", (int(b[0]) + 2, max(16, int(b[1]) - 5)), 0, 0.55, color, 2 if bag else 1)
+            if bag and (best is None or c > best[1]):
+                best = (b, c, label)
+        self.views[name] = view
+        return best
+
+    def pointing(self):
+        """Dibuja el gesto sobre la vista de la cabeza. Devuelve el punto del piso senalado o un texto."""
+        if self.head_img is None or self.depth is None or self.K is None or self.pose_model is None:
+            return None, "sin imagen"
+        cam = self._tf("camera_color_optical_frame")
+        if cam is None:
+            return None, "sin TF"
+        r = self.pose_model.predict(self.head_img, conf=0.45, verbose=False, device="cpu")[0]
+        if r.keypoints is None or r.keypoints.conf is None or len(r.keypoints.xy) == 0:
+            return None, "no ve personas"
+        view = self.views.get("cabeza")
+        for kp, conf in zip(r.keypoints.xy.cpu().numpy(), r.keypoints.conf.cpu().numpy()):
+            for sh, wr, hip in ((5, 9, 11), (6, 10, 12)):
+                if min(conf[sh], conf[wr], conf[hip]) < 0.4:
+                    continue
+                pts = []
+                for i in (sh, wr, hip):
+                    z = depth_at(self.depth, kp[i][0], kp[i][1])
+                    pts.append(None if z is None else cam[0] + cam[1] @ deproject(kp[i][0], kp[i][1], z, *self.K))
+                if view is not None:
+                    cv2.line(view, tuple(int(v) for v in kp[sh]), tuple(int(v) for v in kp[wr]), (0, 220, 255), 3)
+                if any(p is None for p in pts):
+                    continue
+                if bag_task.is_pointing(pts[0], pts[1], pts[2]):
+                    target = bag_task.pointed_floor_point(pts[0], pts[1])
+                    if target:
+                        return target, ""
+                    return None, "brazo separado, pero no apunta al piso"
+        return None, "ve persona, sin gesto de senalar"
 
     def head(self):
         """(x, y, z superior) desde la cabeza, o un texto si no se puede."""
@@ -129,6 +172,27 @@ class Checker(Node):
         return (None, "el rayo no corta esa altura") if p is None else ((p[0], p[1], best[1]), "")
 
 
+def _screen_is_portrait():
+    try:
+        out = subprocess.run(["xdpyinfo"], capture_output=True, text=True, timeout=3).stdout
+        w, h = re.search(r"dimensions:\s+(\d+)x(\d+)", out).groups()
+        return int(h) > int(w)
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _panel(view, lines, size=(640, 480)):
+    img = cv2.resize(view, size) if view is not None else np.zeros((size[1], size[0], 3), np.uint8)
+    cv2.rectangle(img, (0, 0), (size[0], 26 * len(lines) + 8), (30, 30, 30), -1)
+    for i, (text, color) in enumerate(lines):
+        cv2.putText(img, text, (8, 24 + 26 * i), 0, 0.6, color, 2)
+    return img
+
+
+PORTRAIT = _screen_is_portrait()
+GREEN, RED, WHITE, YELLOW = (80, 255, 80), (80, 80, 255), (240, 240, 240), (0, 220, 255)
+
+
 def main():
     rclpy.init()
     node = Checker()
@@ -137,21 +201,45 @@ def main():
     threading.Thread(target=ex.spin, daemon=True).start()
     print(__doc__.split("\n\n", 1)[1])
     default_z = float(sys.argv[1]) if len(sys.argv) > 1 else 0.30
+    name = "Debug bolsa (solo lectura) - Q sale"
+    cv2.namedWindow(name, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(name, 640, 960) if PORTRAIT else cv2.resizeWindow(name, 1280, 480)
     try:
         while True:
-            time.sleep(1.0)
             h, why_h = node.head()
+            target, why_p = node.pointing()
             z = h[2] if h else default_z
             w, why_w = node.wrist(z)
             torso = "sin medir" if node.torso is None else f"{node.torso:+.2f} m"
-            print(f"elevador {torso}")
-            print("  cabeza: " + (f"x {h[0]:.2f}  y {h[1]:+.2f}  alto {h[2]:.2f}  (conf {h[3]:.2f})" if h else why_h))
-            print("  muneca: " + (f"x {w[0]:.2f}  y {w[1]:+.2f}  a altura {z:.2f}  (conf {w[2]:.2f})" if w else why_w))
+            l_head = [(f"CABEZA  conf min {node.min_conf:.2f}  elevador {torso}", WHITE)]
+            l_head.append((f"BOLSA x {h[0]:.2f} y {h[1]:+.2f} alto {h[2]:.2f} ({h[3]:.2f})", GREEN) if h else (f"bolsa: {why_h}", RED))
+            l_head.append((f"SENALA al piso en x {target[0]:.2f} y {target[1]:+.2f}", YELLOW) if target else (f"gesto: {why_p}", WHITE))
+            if target and h:
+                d = math.hypot(target[0] - h[0], target[1] - h[1])
+                l_head.append((f"del gesto a la bolsa: {d * 100:.0f} cm ({'la acepta' if d <= bag_task.MAX_BAG_FROM_RAY_M else 'muy lejos'})", GREEN if d <= bag_task.MAX_BAG_FROM_RAY_M else RED))
+            l_wrist = [(f"MUNECA  usando alto {z:.2f}" + ("" if h else " (por defecto)"), WHITE)]
+            l_wrist.append((f"BOLSA x {w[0]:.2f} y {w[1]:+.2f} ({w[2]:.2f})", GREEN) if w else (f"bolsa: {why_w}", RED))
             if h and w:
-                print(f"  diferencia entre camaras: {math.hypot(h[0] - w[0], h[1] - w[1]) * 100:.0f} cm")
+                d = math.hypot(h[0] - w[0], h[1] - w[1]) * 100
+                l_wrist.append((f"diferencia entre camaras: {d:.0f} cm", GREEN if d <= 5 else RED))
+            panels = [_panel(node.views.get("cabeza", node.head_img), l_head), _panel(node.views.get("muneca", node.wrist_img), l_wrist)]
+            canvas = np.vstack(panels) if PORTRAIT else np.hstack(panels)
+            cv2.imshow(name, canvas)
+            key = cv2.waitKey(30) & 0xFF
+            if key in (ord("q"), ord("Q"), 27):
+                break
+            if key in (ord("s"), ord("S")):
+                path = time.strftime("/tmp/debug_bolsa_%H%M%S.jpg")
+                cv2.imwrite(path, canvas)
+                print("Guardada", path)
+            if key in (ord("+"), ord("=")):
+                node.min_conf = min(0.9, node.min_conf + 0.05)
+            if key == ord("-"):
+                node.min_conf = max(0.05, node.min_conf - 0.05)
     except KeyboardInterrupt:
         pass
     finally:
+        cv2.destroyAllWindows()
         ex.shutdown()
         node.destroy_node()
         if rclpy.ok():
