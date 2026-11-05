@@ -624,13 +624,14 @@ class SimRobot(Node):
             m.header.stamp, m.header.frame_id = stamp, frame
             m.ns, m.id, m.type, m.action = "sim_bag_scene", mid, kind, Marker.ADD
             m.pose.orientation.w = 1.0
+            m.scale.x = m.scale.y = m.scale.z = 0.01   # RViz marca como error una escala 0, aun al borrar
             marks.append(m)
             return m
         px, py = self.person_xy
         body = mark(1, Marker.CYLINDER)
         body.pose.position.x, body.pose.position.y, body.pose.position.z = px, py, 0.8
         body.scale.x, body.scale.y, body.scale.z = 0.35, 0.35, 1.6
-        body.color.r, body.color.g, body.color.b, body.color.a = 0.2, 0.5, 0.9, 0.9
+        body.color.r, body.color.g, body.color.b, body.color.a = 0.2, 0.5, 0.9, 0.35
         if not self.obj_attached and not self.bag_delivered:
             shoulder, _ = self._pointing_arm()
             ray = mark(2, Marker.LINE_STRIP)

@@ -18,8 +18,9 @@ from geometry_msgs.msg import PointStamped, Vector3
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
-from sensor_msgs.msg import CameraInfo, Image
+from sensor_msgs.msg import CameraInfo, Image, JointState
 from std_msgs.msg import String
+from std_srvs.srv import SetBool
 from tf2_ros import Buffer, TransformListener
 
 from base_athome_perception.wrist_detector import BagDetector
@@ -59,7 +60,9 @@ class BagFinder(Node):
         self.create_subscription(String, "/bag_finder/request", self._request, 5)
         self.pub = self.create_publisher(String, "/bag_finder/result", 5)
         self.pub_head = self.create_publisher(Vector3, "/pan_tilt/target_degrees", 5)
-        self.head = (0.0, 0.0)
+        self.head = (0.0, 0.0)                 # posicion MEDIDA, en grados
+        self.cli_torque = self.create_client(SetBool, "/pan_tilt/set_torque")
+        self.create_subscription(JointState, "/pan_tilt/joint_states", self._head_state, 10)
         from ultralytics import YOLO
         self.pose_model = YOLO(os.path.join(MODELS, "yolov8n-pose.pt"))
         self.bags = BagDetector(MODELS)
@@ -79,6 +82,19 @@ class BagFinder(Node):
     def _depth(self, m):
         with self.lock:
             self.depth = np.frombuffer(m.data, np.uint16).reshape(m.height, m.width).copy()
+
+    def _head_state(self, m):
+        d = dict(zip(m.name, m.position))
+        if "pan_joint" in d and "tilt_joint" in d:
+            self.head = (math.degrees(d["pan_joint"]), math.degrees(d["tilt_joint"]))
+
+    def _ensure_torque(self):
+        """Sin torque el nodo ignora los comandos de la cabeza."""
+        if self.cli_torque.wait_for_service(timeout_sec=2.0):
+            self.cli_torque.call_async(SetBool.Request(data=True))
+            time.sleep(0.5)
+        else:
+            self.get_logger().warn("Sin /pan_tilt/set_torque: la cabeza no va a poder mirar la bolsa")
 
     def _info(self, m):
         self.K = (m.k[0], m.k[4], m.k[2], m.k[5])
@@ -142,8 +158,8 @@ class BagFinder(Node):
         dpan = math.degrees(math.atan2(math.sin(want - now_bearing), math.cos(want - now_bearing)))
         pitch_now = math.degrees(math.atan2(ahead[2] - here[2], math.hypot(ahead[0] - here[0], ahead[1] - here[1])))
         pitch_want = math.degrees(math.atan2(-here[2], math.hypot(xy[0] - here[0], xy[1] - here[1])))
-        self.head = (max(-65.0, min(65.0, self.head[0] + dpan)), max(-35.0, min(25.0, self.head[1] + pitch_want - pitch_now)))
-        self.pub_head.publish(Vector3(x=self.head[0], y=self.head[1], z=0.0))
+        goal = (max(-65.0, min(65.0, self.head[0] + dpan)), max(-35.0, min(25.0, self.head[1] + pitch_want - pitch_now)))
+        self.pub_head.publish(Vector3(x=goal[0], y=goal[1], z=0.0))
 
     def _request(self, msg):
         threading.Thread(target=self._find, args=(json.loads(msg.data),), daemon=True).start()
@@ -161,6 +177,7 @@ class BagFinder(Node):
         if len(hits) == 3:
             target = (float(np.median([h[0] for h in hits])), float(np.median([h[1] for h in hits])))
             self.get_logger().info(f"Senala al piso en ({target[0]:.2f}, {target[1]:.2f})")
+            self._ensure_torque()
             self._look_at(target)
             time.sleep(1.5)
             out = dict(id=req.get("id"), ok=False, error="bag_not_found", message="no veo una bolsa donde senala")

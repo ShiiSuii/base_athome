@@ -540,6 +540,7 @@ class Manipulacion(Node):
             m.type = mtype
             m.action = Marker.ADD if self.held_target() is not None else Marker.DELETE
             m.pose.orientation.w = 1.0
+            m.scale.x = m.scale.y = m.scale.z = 0.01   # RViz marca como error una escala 0, aun al borrar
             m.lifetime.nanosec = 500_000_000
             return m
         cyl, grasp, arrow, txt = mk(0, Marker.CYLINDER), mk(1, Marker.SPHERE), mk(2, Marker.ARROW), mk(3, Marker.TEXT_VIEW_FACING)

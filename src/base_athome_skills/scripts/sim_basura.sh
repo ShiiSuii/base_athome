@@ -2,6 +2,7 @@
 # Demo en pantalla: "take out the trash" en simulacion, con RViz siguiendo al robot. Ctrl-C cierra todo. No mueve el robot.
 HERE=$(cd "$(dirname "$0")" && pwd)
 export DISPLAY=${DISPLAY:-:1} RVIZ=1 ATHOME_SIM_BAG=${ATHOME_SIM_BAG:-1.5,1.2,0.30} ATHOME_SIM_OBJECT_LABEL=handbag
+export ATHOME_SIM_PERSON=${ATHOME_SIM_PERSON:-2.6,0.3}   # del otro lado: la camara de RViz mira desde el lado del brazo
 export COMMANDER_ARGS="-p voice:=true -p tts:=false"
 [ -z "${XAUTHORITY:-}" ] && [ -f "/run/user/$(id -u)/gdm/Xauthority" ] && export XAUTHORITY="/run/user/$(id -u)/gdm/Xauthority"
 (
