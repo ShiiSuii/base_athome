@@ -271,6 +271,8 @@ class BagFinder(Node):
 
 
 def main():
+    import torch
+    torch.set_num_threads(2)      # no quitarle CPU a Nav2 ni a los controladores
     rclpy.init()
     node = BagFinder()
     ex = MultiThreadedExecutor(num_threads=3)

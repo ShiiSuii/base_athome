@@ -10,6 +10,7 @@ import importlib.util
 import math
 import os
 import re
+import signal
 import subprocess
 import sys
 import threading
@@ -18,6 +19,7 @@ import time
 import cv2
 import numpy as np
 import rclpy
+import torch
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
@@ -194,10 +196,13 @@ def _panel(view, lines, size=(640, 480)):
 
 
 PORTRAIT = _screen_is_portrait()
+PERIOD_S = 0.5                # 2 veces por segundo alcanzan para mirar; es solo un debug
 GREEN, RED, WHITE, YELLOW = (80, 255, 80), (80, 80, 255), (240, 240, 240), (0, 220, 255)
 
 
 def main():
+    signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))     # cerrar de verdad con TERM
+    torch.set_num_threads(2)      # no quitarle CPU a Nav2 ni a los controladores
     rclpy.init()
     node = Checker()
     ex = MultiThreadedExecutor(num_threads=3)
@@ -210,6 +215,7 @@ def main():
     cv2.resizeWindow(name, 640, 960) if PORTRAIT else cv2.resizeWindow(name, 1280, 480)
     try:
         while True:
+            started = time.time()
             h, why_h = node.head()
             target, why_p = node.pointing()
             z = h[2] if h else default_z
@@ -229,7 +235,7 @@ def main():
             panels = [_panel(node.views.get("cabeza", node.head_img), l_head), _panel(node.views.get("muneca", node.wrist_img), l_wrist)]
             canvas = np.vstack(panels) if PORTRAIT else np.hstack(panels)
             cv2.imshow(name, canvas)
-            key = cv2.waitKey(30) & 0xFF
+            key = cv2.waitKey(max(1, int((PERIOD_S - (time.time() - started)) * 1000))) & 0xFF
             if key in (ord("q"), ord("Q"), 27):
                 break
             if key in (ord("s"), ord("S")):

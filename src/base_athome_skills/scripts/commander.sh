@@ -40,9 +40,11 @@ if ! timeout 6 ros2 topic list 2>/dev/null | grep -q '^/camera/camera/color/imag
 fi
 # Junta brazo, cabeza y elevador: sin esto no hay TF de la camara de muneca y no se puede ubicar la bolsa
 if ! timeout 6 ros2 node list 2>/dev/null | grep -q '/joint_state_publisher'; then
-  session_start joints ros2 run joint_state_publisher joint_state_publisher "$WS/src/hoverboard_base/urdf/robot.urdf" --ros-args -p rate:=20 \
+  session_start joints ros2 run joint_state_publisher joint_state_publisher "$WS/src/hoverboard_base/urdf/robot.urdf" --ros-args -p rate:=10 \
     -p "source_list:=['/arm/joint_states','/pan_tilt/joint_states','/torso/joint_states']"
 fi
+# Los detectores corren en la CPU: sin este tope usan todos los nucleos y dejan a Nav2 sin aire
+export OMP_NUM_THREADS=2
 session_start bag_finder /home/athome/ros2_vision_venv/bin/python3 "$WS/src/base_athome_perception/scripts/bag_finder.py"
 session_start executor ros2 run base_athome_skills mission_executor --ros-args -p mode:=real -p supervised:=true \
   -p allow_manipulation_real:=true

@@ -498,6 +498,8 @@ class MissionExecutorNode(Node):
                 self.pub_torso.publish(Float64(data=float("nan")))     # parar
                 return SkillResult.failure(ERR_CANCELED, "elevador detenido")
             st = self.torso_status
+            if time.time() - st.get("_t", 0.0) > 2.0:
+                return SkillResult.failure("torso_unavailable", "torso_state dejo de informar")
             pos = st.get("position_m")
             if time.time() - started > 0.5 and pos is not None and not st.get("moving"):
                 if abs(pos - target) <= TORSO_TOLERANCE_M:
