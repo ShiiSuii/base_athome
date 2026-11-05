@@ -5,7 +5,6 @@ import time
 
 import pytest
 
-import os
 import tempfile
 
 # Nunca el archivo real: una carrera falsa haria que el robot baje con una medida inventada
@@ -50,6 +49,13 @@ class FakePort:
 
     def close(self):
         pass
+
+
+@pytest.fixture(autouse=True)
+def _fresh_memory(tmp_path, monkeypatch):
+    """Cada test arranca sin carrera guardada, en un archivo propio."""
+    from base_athome_bringup import torso_state_node as tsn
+    monkeypatch.setattr(tsn, "MEMORY_FILE", str(tmp_path / "elevador.json"))
 
 
 @pytest.mark.parametrize("line,expect_js", [(CAL, True), (UNCAL, False)])
@@ -244,4 +250,28 @@ def test_travel_survives_a_restart(tmp_path):
 
 def test_tests_never_touch_the_real_travel_file():
     from base_athome_bringup import torso_state_node as tsn
-    assert ".config" not in tsn.MEMORY_FILE
+    assert ".config" not in tsn.MEMORY_FILE and ".config" not in os.environ["ATHOME_TORSO_MEMORY"]
+
+
+def test_node_uses_the_saved_travel_when_the_firmware_lost_its_calibration():
+    """Reinicio del ESP32: sin calibrar, pero apoyado en el sensor superior y con la carrera guardada."""
+    rclpy = pytest.importorskip("rclpy")
+    from base_athome_bringup import torso_state_node as tsn
+    with open(tsn.MEMORY_FILE, "w") as f:
+        json.dump(dict(max_steps=150000), f)
+    rclpy.init()
+    try:
+        line = "[STATUS] Modo: IDLE | Limites: [TOP(Pin7)=PULSADO, BOT(Pin8)=LIBRE] | Restante: 0 | Pos: 12"
+        port = FakePort(line)
+        node = tsn.TorsoStateNode(port_factory=lambda _p: port)
+        js, st = [], []
+        node.pub_js.publish = js.append
+        node.pub_st.publish = st.append
+        node._tick()
+        node._tick()
+        status = json.loads(st[-1].data)
+        assert status["calibrated"] is True and status["position_m"] == pytest.approx(0.0) and status["travel_steps"] == 150000
+        assert js and set(port.written) == {b"?\n"}        # ubicado sin moverse
+        node.destroy_node()
+    finally:
+        rclpy.shutdown()
