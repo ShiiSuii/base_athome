@@ -180,6 +180,7 @@ def _fetch_pointed_bag(c: "_Ctx", raw: str) -> bool:
     if c.holding:
         c.errors.append(f"'{raw}': ya tengo '{c.holding}' en la pinza; primero hay que dejarlo")
         return False
+    c.add("approach_person", {}, "buscar a la persona, mirarla y acercarse si esta lejos", timeout=120)
     c.add("speak", {"text": "Please point at the bag."}, "pedir que señalen la bolsa", recover=False)
     c.add("find_pointed_bag", {}, "ver a quien señala y ubicar la bolsa", retries=1, timeout=45)
     c.add("approach_bag", {}, "ir hasta cerca de la bolsa, sin tocarla", retries=1, timeout=240)

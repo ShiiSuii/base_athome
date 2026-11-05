@@ -100,3 +100,13 @@ def test_floor_pose_matches_the_reach_point():
     assert R[0, 2] > 0.2 and R[2, 2] < -0.7                  # apunta hacia adelante y abajo: lejos de la base
     source = (root / "arm_manipulation.py").read_text()
     assert str(bt.FLOOR_PREGRASP_DEG) in source
+
+
+def test_person_far_means_walk_to_a_distance_where_the_gesture_is_visible():
+    x, y, yaw = bt.person_stand_pose((5.0, 0.0), (0.0, 0.0))
+    assert x == pytest.approx(5.0 - bt.PERSON_STOP_M) and y == pytest.approx(0.0) and yaw == pytest.approx(0.0)
+    assert math.hypot(5.0 - x, y) > 0.44 + 0.5                # no se le va encima
+
+
+def test_person_close_means_stay():
+    assert bt.person_stand_pose((1.5, 0.5), (0.0, 0.0)) is None

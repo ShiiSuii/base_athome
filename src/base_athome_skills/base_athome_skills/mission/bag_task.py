@@ -47,6 +47,8 @@ MIN_POINT_ANGLE_DEG = 35.0          # brazo separado del cuerpo: si no, esta col
 MAX_POINT_RANGE_M = 6.0
 MAX_BAG_FROM_RAY_M = 1.0            # bolsa aceptada alrededor del punto senalado
 PLACE_TORSO_M = -0.45               # altura para soltar la bolsa en el piso
+PERSON_NEAR_M = 2.2                 # mas cerca de esto ya se ve bien el gesto: no hace falta moverse
+PERSON_STOP_M = 1.5                 # distancia para hablar y ver el cuerpo entero con la RealSense
 
 
 @dataclass(frozen=True)
@@ -135,6 +137,16 @@ def object_in_base(point_map: Point3, robot_xy_yaw: Sequence[float]) -> Tuple[fl
     dx, dy = float(point_map[0]) - float(robot_xy_yaw[0]), float(point_map[1]) - float(robot_xy_yaw[1])
     c, s = math.cos(float(robot_xy_yaw[2])), math.sin(float(robot_xy_yaw[2]))
     return c * dx + s * dy, -s * dx + c * dy, float(point_map[2])
+
+
+def person_stand_pose(person_xy: Sequence[float], robot_xy: Sequence[float], near_m: float = PERSON_NEAR_M,
+                      stop_m: float = PERSON_STOP_M) -> Optional[Tuple[float, float, float]]:
+    """Donde pararse para ver bien el gesto: sobre la linea hacia la persona, mirandola. None si ya esta cerca."""
+    dx, dy = float(person_xy[0]) - float(robot_xy[0]), float(person_xy[1]) - float(robot_xy[1])
+    dist = math.hypot(dx, dy)
+    if dist <= near_m:
+        return None
+    return float(person_xy[0]) - stop_m * dx / dist, float(person_xy[1]) - stop_m * dy / dist, math.atan2(dy, dx)
 
 
 def base_clearance(bag_radius_m: float = DEFAULT_BAG_RADIUS_M, grasp: FloorGrasp = FloorGrasp()) -> float:

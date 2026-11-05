@@ -23,6 +23,7 @@ from std_msgs.msg import String
 from std_srvs.srv import SetBool
 from tf2_ros import Buffer, TransformListener
 
+from base_athome_perception import scene_analysis as scene
 from base_athome_perception.wrist_detector import BagDetector
 from base_athome_skills.mission import bag_task
 
@@ -30,6 +31,9 @@ MODELS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "models"
 L_SHOULDER, R_SHOULDER, L_WRIST, R_WRIST, L_HIP, R_HIP = 5, 6, 9, 10, 11, 12
 MIN_KP_CONF = 0.4
 FRAME = "camera_color_optical_frame"
+SEARCH_PANS = (0.0, 30.0, -30.0, 60.0, -60.0)
+SEARCH_TILT = 0.0
+SEARCH_VIEW_S = 1.5
 
 
 def deproject(u, v, depth_m, fx, fy, cx, cy):
@@ -119,12 +123,54 @@ class BagFinder(Node):
         z = depth_at(depth, kp[i][0], kp[i][1])
         return None if z is None else self._to_map(deproject(kp[i][0], kp[i][1], z, *self.K))
 
-    def _pointed(self, rgb, depth):
-        """Punto del piso que senala alguna persona de la imagen, o None."""
+    def _poses(self, rgb):
         res = self.pose_model.predict(rgb, conf=0.45, verbose=False, device="cpu")[0]
-        if res.keypoints is None or res.keypoints.conf is None:
-            return None
-        for kp, conf in zip(res.keypoints.xy.cpu().numpy(), res.keypoints.conf.cpu().numpy()):
+        if res.keypoints is None or res.keypoints.conf is None or res.boxes is None:
+            return []
+        out = [(box, kp, conf) for box, kp, conf in zip(res.boxes.xyxy.cpu().numpy(), res.keypoints.xy.cpu().numpy(),
+                                                        res.keypoints.conf.cpu().numpy())]
+        return sorted(out, key=lambda p: -(p[0][2] - p[0][0]) * (p[0][3] - p[0][1]))     # la mas cercana primero
+
+    @staticmethod
+    def _torso_pixel(person):
+        """Centro del torso: al centrarlo entran los brazos y las caderas que hacen falta para leer el gesto."""
+        box, kp, conf = person
+        pts = [kp[i] for i in (L_SHOULDER, R_SHOULDER, L_HIP, R_HIP) if conf[i] >= MIN_KP_CONF]
+        if pts:
+            return float(np.mean([p[0] for p in pts])), float(np.mean([p[1] for p in pts]))
+        return float((box[0] + box[2]) / 2), float((box[1] + box[3]) / 2)
+
+    def _track(self, person, img_w, img_h):
+        """Un paso de seguimiento: lleva el torso de la persona al centro de la imagen."""
+        if self.K is None:
+            return
+        u, v = self._torso_pixel(person)
+        dpan, dtilt = scene.face_tracking_step(u, v, img_w, img_h, self.K[0], self.K[1], gain=0.6, deadband_deg=3.0, max_step_deg=8.0)
+        if dpan or dtilt:
+            self._send_head(self.head[0] + dpan, self.head[1] + dtilt)
+
+    def _send_head(self, pan, tilt):
+        self.pub_head.publish(Vector3(x=max(-65.0, min(65.0, float(pan))), y=max(-35.0, min(25.0, float(tilt))), z=0.0))
+
+    def _search_person(self, end):
+        """Busca una persona barriendo con la cabeza. Devuelve (persona, rgb, depth) o None."""
+        self._ensure_torque()
+        for pan in SEARCH_PANS:
+            self._send_head(pan, SEARCH_TILT)
+            view_end = min(end, time.time() + SEARCH_VIEW_S)
+            while time.time() < view_end:
+                rgb, depth = self._frames()
+                people = self._poses(rgb) if rgb is not None else []
+                if people:
+                    return people[0], rgb, depth
+                time.sleep(0.1)
+            if time.time() >= end:
+                break
+        return None
+
+    def _pointed_by(self, people, depth):
+        """Punto del piso que senala alguna de las personas, o None."""
+        for _, kp, conf in people:
             for sh, wr, hip in ((L_SHOULDER, L_WRIST, L_HIP), (R_SHOULDER, R_WRIST, R_HIP)):
                 s, w, h = self._kp_map(kp, conf, sh, depth), self._kp_map(kp, conf, wr, depth), self._kp_map(kp, conf, hip, depth)
                 if s and w and h and bag_task.is_pointing(s, w, h):
@@ -132,6 +178,31 @@ class BagFinder(Node):
                     if target:
                         return target
         return None
+
+    def _locate_person(self, req):
+        """Encuentra a la persona, la centra y devuelve donde esta en el mapa."""
+        end = time.time() + float(req.get("timeout_s", 30.0))
+        fail = dict(id=req.get("id"), ok=False, error="no_person", message="no veo a nadie")
+        found = self._search_person(end)
+        if found is None:
+            return fail
+        spots = []
+        while time.time() < end and len(spots) < 5:
+            rgb, depth = self._frames()
+            people = self._poses(rgb) if rgb is not None else []
+            if people:
+                self._track(people[0], rgb.shape[1], rgb.shape[0])
+                u, v = self._torso_pixel(people[0])
+                z = depth_at(depth, u, v) if self.K is not None else None
+                spot = self._to_map(deproject(u, v, z, *self.K)) if z else None
+                if spot:
+                    spots.append(spot)
+            time.sleep(0.15)
+        if not spots:
+            return dict(fail, message="veo a alguien, sin distancia valida")
+        person = [float(np.median([s[0] for s in spots])), float(np.median([s[1] for s in spots]))]
+        self.get_logger().info(f"Persona en ({person[0]:.2f}, {person[1]:.2f})")
+        return dict(id=req.get("id"), ok=True, person=person)
 
     def _bags(self, rgb, depth):
         """Bolsas de la imagen: [x, y, z superior] en map."""
@@ -158,26 +229,33 @@ class BagFinder(Node):
         dpan = math.degrees(math.atan2(math.sin(want - now_bearing), math.cos(want - now_bearing)))
         pitch_now = math.degrees(math.atan2(ahead[2] - here[2], math.hypot(ahead[0] - here[0], ahead[1] - here[1])))
         pitch_want = math.degrees(math.atan2(-here[2], math.hypot(xy[0] - here[0], xy[1] - here[1])))
-        goal = (max(-65.0, min(65.0, self.head[0] + dpan)), max(-35.0, min(25.0, self.head[1] + pitch_want - pitch_now)))
-        self.pub_head.publish(Vector3(x=goal[0], y=goal[1], z=0.0))
+        self._send_head(self.head[0] + dpan, self.head[1] + pitch_want - pitch_now)
 
     def _request(self, msg):
-        threading.Thread(target=self._find, args=(json.loads(msg.data),), daemon=True).start()
+        threading.Thread(target=self._serve, args=(json.loads(msg.data),), daemon=True).start()
+
+    def _serve(self, req):
+        out = self._locate_person(req) if req.get("mode") == "locate_person" else self._find(req)
+        self.pub.publish(String(data=json.dumps(out)))
 
     def _find(self, req):
+        """Sigue a la persona mientras espera el gesto, y despues mira donde senala y busca la bolsa."""
         end = time.time() + float(req.get("timeout_s", 30.0))
         out = dict(id=req.get("id"), ok=False, error="not_pointing", message="no vi a nadie senalando")
+        self._ensure_torque()
         hits = []
         while time.time() < end and len(hits) < 3:        # tres vistas coherentes: un gesto, no un brazo de paso
             rgb, depth = self._frames()
-            target = self._pointed(rgb, depth) if rgb is not None else None
-            if target:
-                hits.append(target)
+            people = self._poses(rgb) if rgb is not None else []
+            if people:
+                self._track(people[0], rgb.shape[1], rgb.shape[0])
+                target = self._pointed_by(people, depth)
+                if target:
+                    hits.append(target)
             time.sleep(0.15)
         if len(hits) == 3:
             target = (float(np.median([h[0] for h in hits])), float(np.median([h[1] for h in hits])))
             self.get_logger().info(f"Senala al piso en ({target[0]:.2f}, {target[1]:.2f})")
-            self._ensure_torque()
             self._look_at(target)
             time.sleep(1.5)
             out = dict(id=req.get("id"), ok=False, error="bag_not_found", message="no veo una bolsa donde senala")
@@ -189,7 +267,7 @@ class BagFinder(Node):
                     out = dict(id=req.get("id"), ok=True, bag=[float(v) for v in bag], pointed=list(target))
                     break
                 time.sleep(0.2)
-        self.pub.publish(String(data=json.dumps(out)))
+        return out
 
 
 def main():

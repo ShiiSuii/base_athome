@@ -48,6 +48,14 @@ def test_bag_classes_keep_distractors_out_of_the_results():
     assert all("bag" in n for n in BAG_NAMES)           # el pedido de la mision busca "bag"
 
 
+def test_own_gripper_and_base_at_the_bottom_of_the_image_are_not_a_bag():
+    from base_athome_perception.wrist_detector import is_own_robot_box
+    assert is_own_robot_box((482, 351, 639, 479), 480)    # chasis, imagen real del 2026-11-05 (conf 0,15)
+    assert is_own_robot_box((0, 360, 110, 480), 480)      # garra
+    assert not is_own_robot_box((277, 5, 514, 238), 480)  # la bolsa real de esa imagen (conf 0,57)
+    assert not is_own_robot_box((200, 150, 440, 400), 480)
+
+
 def test_wizard_can_teach_only_the_floor_pose():
     saved = []
     wiz = TeachWizard(lambda on: True, lambda n, q, g: saved.append(n))

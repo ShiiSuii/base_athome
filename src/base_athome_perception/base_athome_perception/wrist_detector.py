@@ -117,15 +117,27 @@ BAG_WORLD_CLASSES = ["black garbage bag", "trash bag", "plastic bag", "bag", "pe
 BAG_NAMES = {"black garbage bag", "trash bag", "plastic bag", "bag"}
 
 
+# La camara de muneca ve abajo su propia garra y, segun la pose, la rueda y el chasis (imagen real, 2026-11-05).
+# Una caja centrada en esa franja no se toma como bolsa, y la confianza minima deja afuera esos falsos (0,15; la bolsa dio 0,57).
+OWN_ROBOT_BAND_FRAC = 0.70
+WRIST_BAG_MIN_CONF = 0.30
+
+
+def is_own_robot_box(box: Box, img_h: float, band_frac: float = OWN_ROBOT_BAND_FRAC) -> bool:
+    """Caja centrada en la franja inferior de la camara de muneca, donde aparece el propio robot."""
+    return (float(box[1]) + float(box[3])) / 2.0 >= band_frac * float(img_h)
+
+
 class BagDetector:
     """Bolsas con YOLO-World en la CPU de la NUC (~125 ms). Pesos: models/yolov8s-worldv2.pt, no versionados."""
 
     source = "YOLO-World bolsas"
     grasp_box_fraction = 0.15     # plane_z es la parte alta de la bolsa: el rayo pasa cerca del borde de arriba
 
-    def __init__(self, models_dir: str, conf: float = 0.15):
+    def __init__(self, models_dir: str, conf: float = 0.15, ignore_own_robot: bool = False):
         self.weights = os.path.join(models_dir, "yolov8s-worldv2.pt")
         self.conf = conf
+        self.ignore_own_robot = ignore_own_robot
         self.model = None
 
     def available(self) -> bool:
@@ -145,8 +157,11 @@ class BagDetector:
     def detect(self, frame) -> List[Tuple[Box, float, str]]:
         self.load()
         r = self.model.predict(frame, imgsz=640, conf=self.conf, verbose=False, device="cpu")[0]
-        return [(tuple(float(v) for v in b.xyxy[0].tolist()), float(b.conf), r.names[int(b.cls)]) for b in r.boxes
-                if r.names[int(b.cls)] in BAG_NAMES]
+        out = [(tuple(float(v) for v in b.xyxy[0].tolist()), float(b.conf), r.names[int(b.cls)]) for b in r.boxes
+               if r.names[int(b.cls)] in BAG_NAMES]
+        if self.ignore_own_robot:
+            out = [d for d in out if not is_own_robot_box(d[0], frame.shape[0])]
+        return out
 
 
 class SimColorDetector:
@@ -180,7 +195,9 @@ class SimColorDetector:
 
 def make_bag_detector(models_dir: str):
     """Detector de bolsas real, o el de la simulacion."""
-    return SimColorDetector() if os.environ.get("ATHOME_SIM") == "1" else BagDetector(models_dir)
+    if os.environ.get("ATHOME_SIM") == "1":
+        return SimColorDetector()
+    return BagDetector(models_dir, conf=WRIST_BAG_MIN_CONF, ignore_own_robot=True)
 
 
 def make_detector(models_dir: str):

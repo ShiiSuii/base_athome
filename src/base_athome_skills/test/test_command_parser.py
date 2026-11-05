@@ -374,3 +374,9 @@ def test_bag_travels_in_the_floor_pose_never_near_the_body():
     c = compile_command("take out the trash", TRASH_MAP)
     pick = next(s for s in c.plan["steps"] if s["skill"] == "pick_object")
     assert pick["args"]["use_bag_target"] is True      # sin post_grasp: quedaria pegada al cuerpo
+
+
+def test_robot_goes_to_the_person_before_asking_to_point():
+    calls = _calls(compile_command("take out the trash", TRASH_MAP))
+    assert calls[0] == ("approach_person", None)
+    assert calls[1][0] == "speak" and calls[2] == ("find_pointed_bag", None)

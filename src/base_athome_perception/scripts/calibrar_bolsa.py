@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Debug visual de la bolsa (alias `calibrar_bolsa`). SOLO LECTURA: no mueve nada.
 
-Ventana con las dos camaras. Verde: bolsa. Gris: otras clases que vio el detector. Amarillo: brazo que senala.
+Ventana con las dos camaras. Verde: bolsa. Rojo: descartada (propio robot o poca confianza). Gris: otras clases.
+Amarillo: brazo que senala.
 Coordenadas en metros desde el piso, bajo el centro del robot: x adelante, y a su izquierda. Comparalas con una cinta.
 Teclas sobre la ventana: Q salir, S guardar imagen en /tmp, + y - cambiar la confianza minima.
 """
@@ -25,7 +26,7 @@ from tf2_ros import Buffer, TransformListener
 
 from base_athome_perception import pose_store
 from base_athome_perception import wrist_geometry as wg
-from base_athome_perception.wrist_detector import BAG_NAMES, BagDetector
+from base_athome_perception.wrist_detector import BAG_NAMES, WRIST_BAG_MIN_CONF, BagDetector, is_own_robot_box
 from base_athome_skills.mission import bag_task
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -100,7 +101,10 @@ class Checker(Node):
         for box in r.boxes:
             b, c, label = box.xyxy[0].tolist(), float(box.conf), r.names[int(box.cls)]
             bag = label in BAG_NAMES
-            color = (0, 255, 0) if bag else (150, 150, 150)
+            ignored = bag and name == "muneca" and (is_own_robot_box(b, img.shape[0]) or c < WRIST_BAG_MIN_CONF)
+            if ignored:                # lo mismo que descarta la mision: propio robot o confianza baja
+                bag, label = False, f"IGNORADA {label}"
+            color = (0, 0, 255) if ignored else (0, 255, 0) if bag else (150, 150, 150)
             cv2.rectangle(view, (int(b[0]), int(b[1])), (int(b[2]), int(b[3])), color, 3 if bag else 1)
             cv2.putText(view, f"{label} {c:.2f}", (int(b[0]) + 2, max(16, int(b[1]) - 5)), 0, 0.55, color, 2 if bag else 1)
             if bag and (best is None or c > best[1]):

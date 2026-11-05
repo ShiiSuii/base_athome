@@ -118,7 +118,7 @@ class MissionExecutorNode(Node):
         handlers = dict(navigate_to=self.h_navigate_to, navigate_sequence=self.h_navigate_sequence,
                         return_home=self.h_return_home, speak=self.h_speak, listen=self.h_listen, wait=self.h_wait,
                         detect_object=self.h_detect, pick_object=self.h_pick, place_object=self.h_place,
-                        arm_pose=self.h_arm_pose, find_pointed_bag=self.h_find_pointed_bag,
+                        arm_pose=self.h_arm_pose, find_pointed_bag=self.h_find_pointed_bag, approach_person=self.h_approach_person,
                         approach_bag=self.h_approach_bag, dock_bag=self.h_dock_bag, set_torso=self.h_set_torso)
         self.executor_core = MissionExecutor(self.registry, handlers, mode=self.mode, on_update=self._publish)
         self._thread: Optional[threading.Thread] = None
@@ -386,26 +386,43 @@ class MissionExecutorNode(Node):
         except ValueError:
             pass
 
-    def h_find_pointed_bag(self, ctx: SkillContext) -> SkillResult:
+    def _ask_finder(self, ctx: SkillContext, mode: str, timeout: float):
+        """Pedido a bag_finder. Devuelve (respuesta, None) o (None, SkillResult de error)."""
         if self.pub_bag_req.get_subscription_count() == 0:
-            return SkillResult.failure("finder_unavailable", "bag_finder no esta corriendo")
+            return None, SkillResult.failure("finder_unavailable", "bag_finder no esta corriendo")
         rid = uuid.uuid4().hex[:8]
-        timeout = min(float(ctx.args.get("find_timeout_s", 30.0)), ctx.remaining())
-        self.bag_target = None
-        self.pub_bag_req.publish(String(data=json.dumps(dict(id=rid, timeout_s=timeout))))
+        self.pub_bag_req.publish(String(data=json.dumps(dict(id=rid, mode=mode, timeout_s=timeout))))
         end = time.time() + timeout + 3.0
         while time.time() < end:
             if ctx.cancel.is_set():
-                return SkillResult.failure(ERR_CANCELED, "busqueda cancelada")
+                return None, SkillResult.failure(ERR_CANCELED, "busqueda cancelada")
             res = self.bag_results.pop(rid, None)
             if res is not None:
-                if not res.get("ok"):
-                    return SkillResult.failure(str(res.get("error", "bag_not_found")), str(res.get("message", "")))
-                self.bag_target = tuple(float(v) for v in res["bag"])
-                return SkillResult.success(f"bolsa en ({self.bag_target[0]:.2f}, {self.bag_target[1]:.2f}, "
-                                           f"{self.bag_target[2]:.2f})", bag=list(self.bag_target))
+                if res.get("ok"):
+                    return res, None
+                return None, SkillResult.failure(str(res.get("error", "bag_not_found")), str(res.get("message", "")))
             time.sleep(0.05)
-        return SkillResult.failure("finder_unavailable", "bag_finder no respondio")
+        return None, SkillResult.failure("finder_unavailable", "bag_finder no respondio")
+
+    def h_approach_person(self, ctx: SkillContext) -> SkillResult:
+        res, err = self._ask_finder(ctx, "locate_person", min(float(ctx.args.get("find_timeout_s", 30.0)), ctx.remaining()))
+        if err is not None:
+            return err
+        if self.robot_pose is None:
+            return SkillResult.failure("no_person", "no se la pose del robot")
+        pose = bag_task.person_stand_pose(res["person"], self.robot_pose)
+        if pose is None:
+            return SkillResult.success("la persona ya esta cerca", person=res["person"])
+        return self._navigate(ctx, "hacia la persona", pose)
+
+    def h_find_pointed_bag(self, ctx: SkillContext) -> SkillResult:
+        self.bag_target = None
+        res, err = self._ask_finder(ctx, "pointed_bag", min(float(ctx.args.get("find_timeout_s", 30.0)), ctx.remaining()))
+        if err is not None:
+            return err
+        self.bag_target = tuple(float(v) for v in res["bag"])
+        return SkillResult.success(f"bolsa en ({self.bag_target[0]:.2f}, {self.bag_target[1]:.2f}, "
+                                   f"{self.bag_target[2]:.2f})", bag=list(self.bag_target))
 
     def _floor_grasp(self):
         """Geometria de la pose de piso ensenada, leida del archivo en cada pedido. (geometria, motivo de rechazo)."""

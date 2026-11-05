@@ -601,6 +601,13 @@ class SimRobot(Node):
     def _bag_request(self, msg):
         """Mismo contrato que scripts/bag_finder.py, con los mismos calculos, y las posiciones del mundo simulado."""
         req = json.loads(msg.data)
+        if req.get("mode") == "locate_person":
+            # como el real: la cabeza se centra en la persona
+            bearing = math.atan2(self.person_xy[1] - self.base.y, self.person_xy[0] - self.base.x) - self.base.yaw
+            self.pt.target = (max(-65.0, min(65.0, math.degrees(math.atan2(math.sin(bearing), math.cos(bearing))))), 0.0)
+            out = dict(id=req.get("id"), ok=True, person=list(self.person_xy))
+            threading.Timer(1.0, lambda: self.pub_bag_res.publish(String(data=json.dumps(out)))).start()
+            return
         out = dict(id=req.get("id"), ok=False, error="not_pointing", message="nadie esta senalando")
         if self.bag_map is not None and not self.obj_attached and not self.bag_delivered:
             shoulder, wrist = self._pointing_arm()

@@ -34,7 +34,7 @@ recupera por commit (§8). Editado por el integrador (Claude).
 4. Elevador solo: `ros2 run base_athome_bringup torso_state --ros-args -p allow_motion:=true`; en otra terminal `calibrar_elevador` (recorre hasta los dos sensores) y luego `ros2 topic pub --once /torso/goal std_msgs/msg/Float64 "{data: -0.10}"`, -0.30, -0.58, 0.0. Medir con cinta el recorrido (el modelo asume 60 cm). `NaN` o E-stop para parar. Cerrar el nodo.
 4b. Cámaras: `calibrar_bolsa` (solo lectura; requiere `odometria` abierto, Ctrl-C después): bolsa frente al robot, comparar con cinta lo que dice cada cámara.
 5. Mapa: `editor_mapa`, sección de waypoints, "Punto de la Basura (Afuera)", clic y arrastrar hacia dónde mira, Guardar. Puerta abierta si queda afuera.
-6. Prueba: `commander`, ver ubicación en RViz. Bolsa liviana en zona despejada, manija <7 cm, sin nada bajo en el camino (el lidar no ve por debajo de 38 cm). Persona frente a la cabeza. Decir en inglés "Take out the trash" → "Yes" → señalar con el brazo separado del cuerpo y sostener → apartarse al avanzar. "Stop" cancela. Logs: `/tmp/commander_<pid>/` (copiarlos: se borran al reiniciar).
+6. Prueba: `commander`, ver ubicación en RViz. Bolsa liviana en zona despejada, manija <7 cm, sin nada bajo en el camino (el lidar no ve por debajo de 38 cm). Decir en inglés "Take out the trash" → "Yes": busca a la persona con la cabeza, la centra y se acerca si está a más de 2,2 m → señalar con el brazo separado del cuerpo y sostener → apartarse al avanzar. "Stop" cancela. Logs: `/tmp/commander_<pid>/` (copiarlos: se borran al reiniciar).
 
 ## 3. Cómo retomar la teleoperación con el Quest (pendiente: prueba completa en el brazo real)
 
