@@ -9,6 +9,9 @@ WS=$(cd "$HERE/../../.." && pwd)
 if pgrep -f 'hri_receptionist' >/dev/null; then
   echo "El receptionist esta corriendo: usa el mismo microfono. Cerralo antes."; exit 1
 fi
+if pgrep -f 'hoverboard_driver' >/dev/null && ! timeout 6 ros2 action list 2>/dev/null | grep -q '^/navigate_to_pose$'; then
+  echo "Ya hay un driver de ruedas abierto sin Nav2 (odometria o control). Cerralo con Ctrl-C: commander abre el suyo."; exit 1
+fi
 if ss -ltn | grep -q ':8770 '; then echo "Ya hay un commander abierto (puerto 8770)."; exit 1; fi
 set +u; source /opt/ros/jazzy/setup.bash; source "$WS/install/setup.bash"; set -u
 export ROS_DOMAIN_ID=10
