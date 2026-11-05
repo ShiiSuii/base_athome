@@ -132,12 +132,19 @@ def _torso_node(allow, steps=500):
     return node
 
 
+def _close(node):
+    """Deja ROS como estaba: otros modulos de prueba hacen su propio rclpy.init()."""
+    import rclpy
+    node.destroy_node()
+    rclpy.shutdown()
+
+
 def test_goal_is_ignored_unless_motion_is_allowed():
     from std_msgs.msg import Float64
     node = _torso_node(False)
     node._goal(Float64(data=-0.15))
     assert node.ser.sent == []
-    node.destroy_node()
+    _close(node)
 
 
 def test_goal_sends_relative_steps_and_nan_stops():
@@ -147,7 +154,7 @@ def test_goal_sends_relative_steps_and_nan_stops():
     assert node.ser.sent == [b"M 250\n"]
     node._goal(Float64(data=float("nan")))
     assert node.ser.sent[-1] == b"S\n"
-    node.destroy_node()
+    _close(node)
 
 
 def test_goal_refused_with_stale_or_uncalibrated_state():
@@ -156,4 +163,4 @@ def test_goal_refused_with_stale_or_uncalibrated_state():
     node.last_t = -1e6
     node._goal(Float64(data=-0.15))
     assert node.ser.sent == []
-    node.destroy_node()
+    _close(node)
