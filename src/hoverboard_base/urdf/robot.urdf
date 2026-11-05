@@ -157,7 +157,7 @@
   <joint name="laser_joint" type="fixed">
     <parent link="base_link"/>
     <child link="laser"/>
-    <origin rpy="0 0 0" xyz="0.22 0.0 0.18"/>
+    <origin rpy="0 0 0" xyz="0.22 0.0 0.32"/>
   </joint>
   <!-- Torso: columna, elevador prismatico (torso_lift_joint), prisma estructural y pantalla HRI. -->
   <!-- ==================== SISTEMA DE SUBIR Y BAJAR (TORSO VERTICAL) ==================== -->

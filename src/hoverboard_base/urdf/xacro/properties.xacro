@@ -23,7 +23,8 @@
   <!-- Sensor LiDAR Hokuyo -->
   <xacro:property name="laser_offset_x" value="0.22"/>
   <xacro:property name="laser_offset_y" value="0.00"/>
-  <xacro:property name="laser_offset_z" value="0.18"/>
+  <!-- Medido 2026-11-05 por el usuario: base del lidar a 32 cm del piso, haz 6 cm mas arriba (38 cm). base_link esta a 6 cm. -->
+  <xacro:property name="laser_offset_z" value="0.32"/>
 
   <!-- Sistema de Elevación Torso / Columna (Exactamente en el medio de la base, 1.30 m altura) -->
   <!-- Altura fija de la base de la columna: que la caja del chasis crezca no sube columna, brazo ni cabeza. -->

@@ -149,7 +149,9 @@ def dock_stop_range(margin_m: float = MIN_BASE_CLEARANCE_M) -> float:
 
 def dock_verdict(travelled_m: float, front_range_m: Optional[float], goal_m: float = DOCK_DISTANCE_M,
                  stop_range_m: Optional[float] = None) -> str:
-    """Decision del tramo final: 'go', 'done' o 'blocked' (algo mas cerca de lo esperable frente al lidar)."""
+    """Decision del tramo final: 'go', 'done' o 'blocked' (algo mas cerca de lo esperable frente al lidar).
+    El haz esta a 38 cm del piso: frena ante lo alto, pero NO ve una bolsa mas baja. Con la bolsa, el margen lo da
+    la distancia medida por la cabeza."""
     if float(travelled_m) >= float(goal_m):
         return "done"
     stop = dock_stop_range() if stop_range_m is None else float(stop_range_m)
