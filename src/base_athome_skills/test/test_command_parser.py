@@ -311,3 +311,66 @@ def test_speech_for_plan_and_errors():
     assert "tell me the object number" in error_to_speech(_map("pick up the bottle").errors)
     assert "cannot do that yet" in error_to_speech(compile_command("follow the person", ES_MAP).errors)
     assert error_to_speech(compile_command("make me a coffee", ES_MAP).errors).startswith("Sorry")
+
+
+# --- sacar la basura: senalar, agarrar y dejar afuera ---
+TRASH_MAP = {"kitchen": (0, 0, 0), "home": (0, 0, 0), "trash_drop": (0, 0, 0)}
+
+
+def _skills(c):
+    return [s["skill"] for s in c.plan["steps"]]
+
+
+def test_take_out_the_trash_in_both_languages():
+    for text in ("quiero que saques la basura", "Saca la basura", "Take out the trash.", "I want you to take out the garbage",
+                 "please throw away the trash"):
+        c = compile_command(text, TRASH_MAP)
+        assert c.ok, (text, c.errors)
+        assert validate_plan(parse_plan(c.plan), REG, TRASH_MAP) == [], text
+        assert {"place": "trash_drop"} in [s["args"] for s in c.plan["steps"]], text
+
+
+def test_arm_goes_up_before_the_torso_goes_down():
+    c = compile_command("take out the trash", TRASH_MAP)
+    calls = _calls(c)
+    order = [calls.index(x) for x in (("find_pointed_bag", None), ("approach_bag", None), ("arm_pose", "pre_grasp_floor"),
+                                      ("dock_bag", None), ("set_torso", True), ("pick_object", "bag|backpack|suitcase"))]
+    assert order == sorted(order), "frenar lejos, posicionar, acercarse arriba, bajar y recien ahi agarrar"
+
+
+def test_arm_goes_home_only_after_the_torso_is_up_again():
+    calls = _calls(compile_command("take out the trash", TRASH_MAP))
+    assert calls[-1] == ("arm_pose", "home") and calls[-2] == ("set_torso", 0.0)
+    drop = calls.index(("navigate_to", "trash_drop"))
+    assert calls[drop + 1] == ("set_torso", -0.45)
+
+
+def test_recovery_raises_the_torso_before_driving_home():
+    ids = [s["id"] for s in compile_command("take out the trash", TRASH_MAP).plan["recovery"]]
+    assert ids.index("subir") < ids.index("volver")
+
+
+def test_no_trash_point_is_rejected_with_a_reason():
+    c = compile_command("take out the trash", {"kitchen": (0, 0, 0)})
+    assert not c.ok and "punto de basura" in c.errors[0]
+
+
+def test_pick_the_pointed_bag_and_carry_it():
+    c = compile_command("agarra la bolsa que senalo", TRASH_MAP)
+    assert c.ok, c.errors
+    assert "navigate_to" not in _skills(c) and "pick_object" in _skills(c)
+    c = compile_command("pick up the bag and take it to the kitchen", TRASH_MAP)
+    assert c.ok, c.errors
+    assert ("navigate_to", "kitchen") in _calls(c)
+
+
+def test_trash_speech_hides_internal_steps():
+    from base_athome_skills.mission.voice_dialog import plan_to_speech
+    text = plan_to_speech(compile_command("take out the trash", TRASH_MAP).plan)
+    assert "find the bag you point at" in text and "the trash drop" in text and "Please point" not in text
+
+
+def test_bag_travels_in_the_floor_pose_never_near_the_body():
+    c = compile_command("take out the trash", TRASH_MAP)
+    pick = next(s for s in c.plan["steps"] if s["skill"] == "pick_object")
+    assert pick["args"]["use_bag_target"] is True      # sin post_grasp: quedaria pegada al cuerpo

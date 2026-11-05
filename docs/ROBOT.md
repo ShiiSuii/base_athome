@@ -293,6 +293,8 @@ duplicada: eliminada (S-05).
 | `/hri/guest_input` (JSON `{type, value}`), `/hri/say_something`, `/robot/emotion`, `/mission/command` | — | HRI / pantalla / misiones |
 | `/mission/run` (plan JSON), srv `/mission/cancel`, `/mission/status` (JSON, latched), `/mission/skills` | String / Trigger | `mission_executor` (`src/base_athome_skills/README.md`) |
 | `/commander/command` (texto), `/commander/result` (JSON), web `127.0.0.1:8770`, micrófono con `voice:=true` (`/voice/*`) | String | usuario → `commander` → `/mission/run` |
+| `/torso/goal` (Float64, NaN = parar), srv `/torso/calibrate` | Float64 / Trigger | ejecutor → `torso_state` con `allow_motion:=true` (**actuador**) |
+| `/bag_finder/request`, `/bag_finder/result` | String JSON | ejecutor ↔ `bag_finder` (RealSense; mueve la cabeza) |
 
 ### Seguridad del software de actuadores (vigente, no revertir)
 
@@ -393,7 +395,7 @@ no arranca la RealSense, detector por color (`SimColorDetector`).
 |---|---|---|
 | Percepción/HRI | `python3 -m pytest -q src/base_athome_perception/test` | 111 passed |
 | Simulación | `python3 -m pytest -q src/base_athome_sim/test` | 6 passed |
-| Skills (puerta + misiones + commander) | `env -u PYTHONPATH python3 -m pytest -q src/base_athome_skills/test` | 76 passed, 1 skipped (2026-11-04) |
+| Skills (puerta + misiones + commander) | `env -u PYTHONPATH python3 -m pytest -q src/base_athome_skills/test` | ver `STATUS.md` |
 | Elevador | `ROS_DOMAIN_ID=77 python3 -m pytest -q src/base_athome_bringup/test/test_torso_state.py` | 6 passed |
 | Aprobación acotada Antigravity | `cd tools/agents && python3 -m pytest -q` | 40 passed |
 | Misiones en simulación | `[RVIZ=1] src/base_athome_skills/scripts/sim_mission.sh <plan.yaml> <mapa_sim>` | demo_fetch_bottle SUCCEEDED (72–112 s) |

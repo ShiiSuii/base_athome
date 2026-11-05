@@ -3,7 +3,7 @@
 Corto y actualizado: se **reemplaza** lo viejo, no se acumula (`AGENTS.md` §9). Lo histórico se
 recupera por commit (§8). Editado por el integrador (Claude).
 
-**Última actualización:** 2026-11-05 · Claude Code · modo `DESARROLLO` · receptionist revisado, guía del video de cualificación.
+**Última actualización:** 2026-11-05 · Claude Code · modo `DESARROLLO` · sacar la basura en simulación.
 
 ## 1. Estado comprobado al pausar
 
@@ -63,6 +63,8 @@ recupera por commit (§8). Editado por el integrador (Claude).
 | Claude | HOME-46 mesa en la escena MoveIt; HOME-43 correr `torso_state` con el ESP32 conectado | pendiente |
 
 ## 6. Cambios de esta sesión (detalle en Git)
+
+- Sacar la basura (HOME-63): "take out the trash" por voz → señalar → frenar lejos → brazo a `pre_grasp_floor` → avanzar con elevador arriba → bajar → agarrar → punto `trash_drop`. `SIM_PASS` con MoveIt; margen medido chasis-bolsa 17,2 cm. Sin probar en el robot. Rollback: revertir el commit.
 
 - Receptionist: el detector de muebles se carga en el pre-vuelo (bloqueaba la ventana ~4 s en medio del barrido) y el seguimiento de rostro responde más rápido (error máximo simulado de 16,6° a menos de 12° con un invitado que se mueve). Parámetros sin probar en el robot.
 

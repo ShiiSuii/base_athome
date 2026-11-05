@@ -26,9 +26,17 @@ def plan_to_speech(plan: Dict[str, Any], objects: Optional[List[Dict[str, Any]]]
         elif skill == "detect_object":
             phrase = f"look for the {args.get('object')}"
         elif skill == "pick_object":
-            phrase = f"pick up the {args.get('object')}"
+            phrase = "pick it up" if args.get("use_bag_target") else f"pick up the {args.get('object')}"
         elif skill == "place_object":
             phrase = "put it down"
+        elif skill == "find_pointed_bag":
+            phrase = "find the bag you point at"
+        elif skill == "approach_bag":
+            phrase = "go to the bag"
+        elif skill in ("set_torso", "dock_bag"):
+            continue                          # detalle interno, como la pose del brazo
+        elif skill == "speak" and str(args.get("text", "")).startswith("Please point"):
+            continue
         elif skill == "speak":
             phrase = f"say: {args.get('text')}"
         elif skill == "wait":
@@ -60,6 +68,8 @@ def error_to_speech(errors: List[str]) -> str:
         return "There are several tables. Please tell me which one."
     if "agregale un waypoint" in e:
         return "I do not have a place to stand at that table."
+    if "punto de basura" in e:
+        return "I do not know where to leave the trash. Please add the trash point on the map."
     if "cae dentro" in e or "no tiene punto" in e:
         return "I cannot reach that object. Its position on the map must be fixed."
     if "no esta implementado" in e:
@@ -75,7 +85,7 @@ def asr_prompt(places: List[str], objects: List[Dict[str, Any]]) -> str:
     """Vocabulario para sesgar a Whisper hacia lo que el robot puede hacer."""
     names = [p.replace("_", " ") for p in places if not p.startswith("object:")]
     things = sorted({o["name"] for o in objects} | {o["cls"] for o in objects if o["cls"] != "other"})
-    text = "Go to the kitchen, pick up object 1, find the bottle, bring it to the table, go back home, stop."
+    text = "Go to the kitchen, pick up object 1, find the bottle, bring it to the table, take out the trash, go back home, stop."
     if names:
         text += " Places: " + ", ".join(names) + "."
     if things:

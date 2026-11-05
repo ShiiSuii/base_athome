@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""Nodo `torso_state`: publica la posicion MEDIDA del elevador. Solo LEE: envia unicamente `?`
-(consulta de estado) al ESP32; nunca comandos de movimiento.
+"""Nodo `torso_state`: publica la posicion MEDIDA del elevador. Por defecto solo LEE (`?`); con allow_motion:=true
+tambien lo mueve, siempre con la posicion medida, a traves de /torso/goal y de los sensores del firmware.
+
+  sub /torso/goal          std_msgs/Float64      torso_lift_joint objetivo (0 arriba, negativo abajo); NaN = parar
 
   pub /torso/joint_states  sensor_msgs/JointState  torso_lift_joint (solo si el firmware esta CALIBRADO)
   pub /torso/status        std_msgs/String JSON    {connected, calibrated, position_m, steps, max_steps,
@@ -10,12 +12,14 @@ para no resetear el ESP32 (perderia la calibracion). Un solo dueno del puerto: n
 stepper_controller (CLI).
 """
 import json
+import math
 import time
 
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
-from std_msgs.msg import String
+from std_msgs.msg import Float64, String
+from std_srvs.srv import Trigger
 
 from base_athome_bringup.torso_state import parse_status
 
@@ -39,6 +43,7 @@ class TorsoStateNode(Node):
         self.declare_parameter("stroke_m", 0.60)
         self.declare_parameter("poll_hz", 5.0)
         self.declare_parameter("stale_s", 1.5)
+        self.declare_parameter("allow_motion", False)
         self.port_factory = port_factory
         self.ser = None
         self.buf = ""
@@ -46,14 +51,49 @@ class TorsoStateNode(Node):
         self.last_t = None
         self.pub_js = self.create_publisher(JointState, "/torso/joint_states", 10)
         self.pub_st = self.create_publisher(String, "/torso/status", 10)
+        self.create_subscription(Float64, "/torso/goal", self._goal, 5)
+        self.create_service(Trigger, "/torso/calibrate", self._calibrate)
         self.create_timer(1.0 / float(self.get_parameter("poll_hz").value), self._tick)
+
+    def _calibrate(self, _req, res):
+        """Calibracion del firmware: recorre hasta los dos sensores. El puerto es de este nodo: no usar el CLI a la vez."""
+        res.success = bool(self.get_parameter("allow_motion").value) and self.ser is not None
+        if res.success:
+            self.ser.write(b"CALIBRATE\n")
+            res.message = "calibrando: el elevador recorre hasta los dos sensores"
+        else:
+            res.message = "no se calibra: allow_motion=false o sin conexion"
+        return res
+
+    def _goal(self, msg: Float64):
+        if not bool(self.get_parameter("allow_motion").value):
+            self.get_logger().warn("Pedido de mover el elevador ignorado: allow_motion=false")
+            return
+        if self.ser is None:
+            self.get_logger().warn("Pedido de mover el elevador ignorado: sin conexion")
+            return
+        if math.isnan(msg.data):          # parar siempre se manda, este como este el estado
+            self.ser.write(b"S\n")
+            return
+        fresh = self.last_t is not None and time.monotonic() - self.last_t < float(self.get_parameter("stale_s").value)
+        steps = self.last.steps_to(msg.data, float(self.get_parameter("stroke_m").value)) if fresh else None
+        if steps is None:
+            self.get_logger().warn("Pedido de mover el elevador ignorado: sin estado reciente o sin calibrar")
+            return
+        if self.last.moving:
+            self.ser.write(b"S\n")
+            time.sleep(0.05)
+        if steps:
+            self.get_logger().info(f"Elevador a {msg.data:+.3f} m: M {steps}")
+            self.ser.write(f"M {steps}\n".encode())
 
     def _ensure_port(self) -> bool:
         if self.ser is not None:
             return True
         try:
             self.ser = self.port_factory(str(self.get_parameter("port").value))
-            self.get_logger().info(f"Elevador conectado en {self.get_parameter('port').value} (solo lectura)")
+            self.get_logger().info(f"Elevador conectado en {self.get_parameter('port').value}; "
+                                   f"movimiento {'PERMITIDO' if self.get_parameter('allow_motion').value else 'desactivado'}")
             return True
         except Exception as e:  # noqa: BLE001 - sin puerto: se informa desconectado
             self.get_logger().warn(f"Elevador sin conexion: {e}", throttle_duration_sec=30.0)

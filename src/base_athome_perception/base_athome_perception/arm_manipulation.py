@@ -68,6 +68,8 @@ if os.environ.get("ATHOME_SIM") == "1":  # en simulacion no pisar la calibracion
         os.makedirs(os.path.dirname(_SIM_CONFIG), exist_ok=True)
         shutil.copy(CONFIG, _SIM_CONFIG)
     CONFIG = _SIM_CONFIG
+FLOOR_POSE = "pre_grasp_floor"     # base_athome_skills.mission.bag_task
+FLOOR_PREGRASP_DEG = [-25.3, 173.0, -130.4, 77.7, 80.0, -135.1]
 SHOULDER_IN_BASE = np.array([0.005, 0.175, 1.065])  # arm_base_link en base_link (URDF) con el elevador ARRIBA
 # (torso_lift_joint=0). Con el elevador abajo z baja en |torso_lift_joint| (prismatico vertical): ver
 # shoulder_in_base(). La altura MEDIDA llega por /torso/joint_states (base_athome_bringup torso_state).
@@ -194,6 +196,8 @@ class Manipulacion(Node):
 
     def reload_poses(self):
         self.poses = {n: p for n, p in pose_store.load_named_poses(CONFIG).items() if n in POSES}
+        # Pose calculada, no ensenada: si algun dia se guarda una con este nombre, manda la guardada.
+        self.poses.setdefault(FLOOR_POSE, dict(joints_deg=list(FLOOR_PREGRASP_DEG), gripper_mm=GRIPPER_OPEN_MM))
 
     # ------------------------------------------------------------ movimiento
     def send_joints(self, q_deg, duration_s: float):
@@ -361,11 +365,12 @@ class Manipulacion(Node):
         """Espera una deteccion fresca (opcionalmente que la etiqueta contenga `label`).
         Devuelve (ok, mensaje, datos) con caja, distancia estimada y centro en base_link."""
         t_end = time.time() + timeout_s
-        want = (label or "").lower().strip()
+        wants = [w.strip() for w in (label or "").lower().split("|") if w.strip()]
+        want = wants[0] if len(wants) == 1 else "/".join(wants)
         while time.time() < t_end and not self.abort:
             tg = self.held_target()
             lab = (tg or {}).get("label", "")
-            if tg is not None and (not want or want in lab.lower() or lab.lower() in want):
+            if tg is not None and (not wants or any(w in lab.lower() for w in wants) or lab.lower() in want):
                 held = self.detection is None
                 data = dict(label=lab, box=[round(float(v), 1) for v in tg["box"]], distance_m=round(float(tg["z"]), 3),
                             base_link_xyz=[round(float(v), 3) for v in tg["obj"]], held=held)
@@ -373,14 +378,22 @@ class Manipulacion(Node):
             time.sleep(0.05)
         return False, f"no veo {'un ' + want if want else 'ningun objeto'}", {}
 
-    def pick_blocking(self, label: str = ""):
-        """Agarre completo con confirmacion por el ancho MEDIDO de la pinza. (ok, mensaje, datos)."""
+    def pick_blocking(self, label: str = "", known_xyz=None, retreat: bool = True):
+        """Agarre completo con confirmacion por el ancho MEDIDO de la pinza. (ok, mensaje, datos).
+        `known_xyz` (base_link): posicion ya medida con profundidad (RealSense). Reemplaza a la camara de muneca,
+        que estima la distancia por el tamano de la caja y solo sirve para objetos de diametro calibrado; una bolsa no.
+        La pinza igual confirma si agarro algo."""
         self.abort = False
         if not self.torso_known():
             return False, "altura del elevador sin medir (/torso/joint_states): no se calcula un agarre a ciegas", {}
-        ok, msg, data = self.detect_blocking(label)
-        if not ok:
-            return False, msg, data
+        if known_xyz is not None:
+            self.target = dict(self.target or {}, obj=[float(v) for v in known_xyz], t=time.time(), label="external")
+            self.detection = None
+            data = dict(source="head_camera", base_link_xyz=[round(float(v), 3) for v in known_xyz])
+        else:
+            ok, msg, data = self.detect_blocking(label)
+            if not ok:
+                return False, msg, data
         ok, why = self._grasp_core()
         if not ok:
             return False, why, data
@@ -390,7 +403,7 @@ class Manipulacion(Node):
         if width <= GRIPPER_CLOSE_MM + 5.0:
             self.gripper(GRIPPER_OPEN_MM)
             return False, f"agarre vacio: la pinza cerro hasta {width:.0f} mm (sin objeto)", data
-        if "post_grasp" in self.poses:
+        if retreat and "post_grasp" in self.poses:
             ok2, msg2 = self.go_to_blocking("post_grasp")
             if not ok2:
                 return False, f"objeto tomado pero no pude retirarme: {msg2}", data

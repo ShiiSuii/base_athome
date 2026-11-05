@@ -89,3 +89,71 @@ def test_node_without_port_reports_disconnected():
         node.destroy_node()
     finally:
         rclpy.shutdown()
+
+
+def test_steps_to_target_goes_up_positive_and_stays_inside_the_stroke():
+    from base_athome_bringup.torso_state import TorsoStatus
+    st = TorsoStatus(mode="IDLE", top_hit=False, bottom_hit=False, steps=500, max_steps=1000)   # en -0.30 m
+    assert st.steps_to(-0.30) == 0
+    assert st.steps_to(-0.15) == 250              # subir: positivo
+    assert st.steps_to(-0.45) == -250             # bajar: negativo
+    assert st.steps_to(5.0) == 1000 - round(1000 * 0.01 / 0.60) - 500     # nunca hasta el sensor superior
+    assert st.steps_to(-5.0) == round(1000 * 0.01 / 0.60) - 500           # ni hasta el inferior
+
+
+def test_steps_to_refuses_without_calibration():
+    from base_athome_bringup.torso_state import TorsoStatus
+    assert TorsoStatus(mode="IDLE", top_hit=False, bottom_hit=False, steps=0, max_steps=None).steps_to(-0.2) is None
+
+
+class _FakeSerial:
+    def __init__(self):
+        self.sent = []
+
+    def write(self, data):
+        self.sent.append(data)
+
+    def read(self, _n):
+        return b""
+
+
+def _torso_node(allow, steps=500):
+    import rclpy
+    from std_msgs.msg import Float64  # noqa: F401
+    from base_athome_bringup import torso_state_node as tsn
+    from base_athome_bringup.torso_state import TorsoStatus
+    if not rclpy.ok():
+        rclpy.init()
+    node = tsn.TorsoStateNode(port_factory=lambda _p: _FakeSerial())
+    node.set_parameters([rclpy.parameter.Parameter("allow_motion", value=allow)])
+    node.ser = _FakeSerial()
+    node.last = TorsoStatus(mode="IDLE", top_hit=False, bottom_hit=False, steps=steps, max_steps=1000)
+    node.last_t = __import__("time").monotonic()
+    return node
+
+
+def test_goal_is_ignored_unless_motion_is_allowed():
+    from std_msgs.msg import Float64
+    node = _torso_node(False)
+    node._goal(Float64(data=-0.15))
+    assert node.ser.sent == []
+    node.destroy_node()
+
+
+def test_goal_sends_relative_steps_and_nan_stops():
+    from std_msgs.msg import Float64
+    node = _torso_node(True)
+    node._goal(Float64(data=-0.15))
+    assert node.ser.sent == [b"M 250\n"]
+    node._goal(Float64(data=float("nan")))
+    assert node.ser.sent[-1] == b"S\n"
+    node.destroy_node()
+
+
+def test_goal_refused_with_stale_or_uncalibrated_state():
+    from std_msgs.msg import Float64
+    node = _torso_node(True)
+    node.last_t = -1e6
+    node._goal(Float64(data=-0.15))
+    assert node.ser.sent == []
+    node.destroy_node()

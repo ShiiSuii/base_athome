@@ -859,6 +859,13 @@ HTML_PAGE = r'''<!DOCTYPE html>
           </div>
           <span class="pill-badge green">door</span>
         </div>
+        <div class="template-card" onclick="placeWaypointTemplate('trash_drop', 'outside')">
+          <div class="template-info">
+            <span class="template-name">🗑️ Punto de la Basura (Afuera)</span>
+            <span class="template-desc">Donde el robot deja la bolsa | Clic y arrastrá hacia dónde mira</span>
+          </div>
+          <span class="pill-badge orange">trash_drop</span>
+        </div>
         <div class="template-card" onclick="placeWaypointTemplate('living_room', 'living_room')">
           <div class="template-info">
             <span class="template-name">🛋️ Punto Sala de Estar (living_room)</span>

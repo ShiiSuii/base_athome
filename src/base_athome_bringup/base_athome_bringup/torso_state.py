@@ -34,6 +34,14 @@ class TorsoStatus:
         frac = min(1.0, max(0.0, self.steps / float(self.max_steps)))
         return -stroke_m * (1.0 - frac)
 
+    def steps_to(self, target_m: float, stroke_m: float = 0.60, margin_m: float = 0.01) -> Optional[int]:
+        """Pasos relativos (+ sube) para llegar a torso_lift_joint = target_m. None si no esta calibrado."""
+        if not self.calibrated:
+            return None
+        target = max(-(stroke_m - margin_m), min(-margin_m, float(target_m)))
+        goal = round((1.0 + target / stroke_m) * self.max_steps)
+        return goal - self.steps
+
     @property
     def moving(self) -> bool:
         return self.mode.upper() != "IDLE"

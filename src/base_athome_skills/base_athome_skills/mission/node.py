@@ -13,9 +13,11 @@ supervised:=true (decision humana, AGENTS.md §3) porque navigate_* mueve la bas
 Uso:  ROS_DOMAIN_ID=42 ros2 run base_athome_skills mission_executor --ros-args -p mode:=sim
 """
 import json
+import math
 import os
 import threading
 import time
+import uuid
 from typing import Optional
 
 import rclpy
@@ -23,10 +25,14 @@ from rclpy.action import ActionClient
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
-from rclpy.qos import DurabilityPolicy, QoSProfile
-from std_msgs.msg import Bool, String
+from geometry_msgs.msg import PoseWithCovarianceStamped, Twist
+from nav_msgs.msg import Odometry
+from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data
+from sensor_msgs.msg import LaserScan
+from std_msgs.msg import Bool, Float64, String
 from std_srvs.srv import Trigger
 
+from . import bag_task
 from .executor import MissionExecutor, SkillContext
 from .places import home_place, load_places, resolve
 from .plan import PlanError, parse_plan, validate_plan
@@ -39,6 +45,8 @@ except ImportError:  # pragma: no cover
     NavigateToPose = None
 
 NAV_SUCCEEDED, NAV_CANCELED, NAV_ABORTED = 4, 5, 6
+DOCK_SPEED_MPS = 0.08      # tramo final hasta la bolsa
+TORSO_TOLERANCE_M = 0.02
 
 
 def _share_config(name: str) -> str:
@@ -87,11 +95,29 @@ class MissionExecutorNode(Node):
         self._manip_lock = threading.Lock()
         self.ros_executor = None  # lo asigna main(): la manipulacion se agrega como nodo del mismo proceso
 
+        # Bolsa senalada: pedido al detector, elevador y tramo final (bag_task.py)
+        self.bag_target = None                # (x, y, z) en map
+        self.robot_pose = None                # (x, y, yaw) en map, de AMCL
+        self.odom_xy = None
+        self.front_range = None
+        self.torso_status = {}
+        self.bag_results = {}
+        self.pub_torso = self.create_publisher(Float64, "/torso/goal", 5)
+        self.pub_cmd_vel = self.create_publisher(Twist, "/cmd_vel", 5)
+        self.pub_bag_req = self.create_publisher(String, "/bag_finder/request", 5)
+        latched_pose = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self.create_subscription(PoseWithCovarianceStamped, "/amcl_pose", self._amcl, latched_pose)
+        self.create_subscription(Odometry, "/odom", self._odom, 10)
+        self.create_subscription(LaserScan, "/scan", self._scan, qos_profile_sensor_data)
+        self.create_subscription(String, "/torso/status", self._torso_status, 10)
+        self.create_subscription(String, "/bag_finder/result", self._bag_result, 10)
+
         self.registry = default_registry()
         handlers = dict(navigate_to=self.h_navigate_to, navigate_sequence=self.h_navigate_sequence,
                         return_home=self.h_return_home, speak=self.h_speak, listen=self.h_listen, wait=self.h_wait,
                         detect_object=self.h_detect, pick_object=self.h_pick, place_object=self.h_place,
-                        arm_pose=self.h_arm_pose)
+                        arm_pose=self.h_arm_pose, find_pointed_bag=self.h_find_pointed_bag,
+                        approach_bag=self.h_approach_bag, dock_bag=self.h_dock_bag, set_torso=self.h_set_torso)
         self.executor_core = MissionExecutor(self.registry, handlers, mode=self.mode, on_update=self._publish)
         self._thread: Optional[threading.Thread] = None
         self.pub_skills.publish(String(data=json.dumps(self.registry.describe())))
@@ -312,7 +338,12 @@ class MissionExecutorNode(Node):
 
     def h_pick(self, ctx: SkillContext) -> SkillResult:
         label = str(ctx.args["object"])
-        r = self._with_manip(ctx, lambda m: m.pick_blocking(label), "grasp_failed")
+        known = None
+        if ctx.args.get("use_bag_target") and self.bag_target is not None and self.robot_pose is not None:
+            known = bag_task.object_in_base(self.bag_target, self.robot_pose)
+        # con la bolsa no se va a post_grasp: quedaria pegada al cuerpo; viaja adelante, en la pose de piso
+        retreat = not ctx.args.get("use_bag_target")
+        r = self._with_manip(ctx, lambda m: m.pick_blocking(label, known, retreat=retreat), "grasp_failed")
         if not r.ok and "agarre vacio" in r.message:
             r.error = "grasp_empty"
         elif not r.ok and r.message.startswith("no veo"):
@@ -321,6 +352,121 @@ class MissionExecutorNode(Node):
 
     def h_place(self, ctx: SkillContext) -> SkillResult:
         return self._with_manip(ctx, lambda m: m.place_blocking(), "place_failed")
+
+    # ------------------------------------------------------------------ bolsa senalada
+    def _amcl(self, msg):
+        p = msg.pose.pose
+        self.robot_pose = (p.position.x, p.position.y, 2.0 * math.atan2(p.orientation.z, p.orientation.w))
+
+    def _odom(self, msg):
+        self.odom_xy = (msg.pose.pose.position.x, msg.pose.pose.position.y)
+
+    def _scan(self, msg):
+        """Lo mas cercano adelante (+-20 grados) o None."""
+        best = None
+        for i, r in enumerate(msg.ranges):
+            angle = msg.angle_min + i * msg.angle_increment
+            if abs(angle) <= math.radians(20.0) and msg.range_min < r < msg.range_max and (best is None or r < best):
+                best = r
+        self.front_range = best
+
+    def _torso_status(self, msg):
+        try:
+            self.torso_status = json.loads(msg.data)
+            self.torso_status["_t"] = time.time()
+        except ValueError:
+            pass
+
+    def _bag_result(self, msg):
+        try:
+            d = json.loads(msg.data)
+            self.bag_results[str(d.get("id"))] = d
+        except ValueError:
+            pass
+
+    def h_find_pointed_bag(self, ctx: SkillContext) -> SkillResult:
+        if self.pub_bag_req.get_subscription_count() == 0:
+            return SkillResult.failure("finder_unavailable", "bag_finder no esta corriendo")
+        rid = uuid.uuid4().hex[:8]
+        timeout = min(float(ctx.args.get("find_timeout_s", 30.0)), ctx.remaining())
+        self.bag_target = None
+        self.pub_bag_req.publish(String(data=json.dumps(dict(id=rid, timeout_s=timeout))))
+        end = time.time() + timeout + 3.0
+        while time.time() < end:
+            if ctx.cancel.is_set():
+                return SkillResult.failure(ERR_CANCELED, "busqueda cancelada")
+            res = self.bag_results.pop(rid, None)
+            if res is not None:
+                if not res.get("ok"):
+                    return SkillResult.failure(str(res.get("error", "bag_not_found")), str(res.get("message", "")))
+                self.bag_target = tuple(float(v) for v in res["bag"])
+                return SkillResult.success(f"bolsa en ({self.bag_target[0]:.2f}, {self.bag_target[1]:.2f}, "
+                                           f"{self.bag_target[2]:.2f})", bag=list(self.bag_target))
+            time.sleep(0.05)
+        return SkillResult.failure("finder_unavailable", "bag_finder no respondio")
+
+    def _stop_base(self):
+        self.pub_cmd_vel.publish(Twist())
+
+    def h_approach_bag(self, ctx: SkillContext) -> SkillResult:
+        if self.bag_target is None or self.robot_pose is None:
+            return SkillResult.failure("no_bag_target", "no hay bolsa ubicada o no se la pose del robot")
+        pose = bag_task.stand_pose(self.bag_target, self.robot_pose, extra_back_m=bag_task.DOCK_DISTANCE_M)
+        return self._navigate(ctx, "lejos de la bolsa", pose)
+
+    def h_dock_bag(self, ctx: SkillContext) -> SkillResult:
+        if self.odom_xy is None:
+            return SkillResult.failure("blocked", "sin odometria para el tramo final")
+        start = self.odom_xy
+        end = time.time() + bag_task.DOCK_DISTANCE_M / DOCK_SPEED_MPS * 3.0 + 2.0
+        try:
+            while time.time() < end:
+                if ctx.cancel.is_set():
+                    return SkillResult.failure(ERR_CANCELED, "acercamiento cancelado")
+                done = math.hypot(self.odom_xy[0] - start[0], self.odom_xy[1] - start[1])
+                verdict = bag_task.dock_verdict(done, self.front_range)
+                if verdict == "done":
+                    return SkillResult.success(f"junto a la bolsa (tramo final {done:.2f} m)")
+                if verdict == "blocked":
+                    return SkillResult.failure("blocked", f"algo a {self.front_range:.2f} m adelante: paro")
+                msg = Twist()
+                msg.linear.x = DOCK_SPEED_MPS
+                self.pub_cmd_vel.publish(msg)
+                time.sleep(0.05)
+            return SkillResult.failure("blocked", "el tramo final no termino a tiempo")
+        finally:
+            self._stop_base()
+
+    def h_set_torso(self, ctx: SkillContext) -> SkillResult:
+        if self.mode == "real" and not bool(self.get_parameter("allow_manipulation_real").value):
+            return SkillResult.failure("torso_unavailable", "mover el elevador exige allow_manipulation_real:=true")
+        if ctx.args.get("for_bag"):
+            if self.bag_target is None:
+                return SkillResult.failure("no_bag_target", "no hay bolsa ubicada")
+            target = bag_task.torso_for_object(self.bag_target[2])
+        else:
+            target = float(ctx.args.get("target_m", 0.0))
+        st = self.torso_status
+        if time.time() - st.get("_t", 0.0) > 2.0 or not st.get("connected"):
+            return SkillResult.failure("torso_unavailable", "torso_state no informa o el elevador no responde")
+        if not st.get("calibrated"):
+            return SkillResult.failure("torso_not_calibrated", "elevador sin calibrar: mandar CALIBRATE")
+        self.pub_torso.publish(Float64(data=float(target)))
+        started = time.time()
+        while time.time() - started < ctx.remaining():
+            if ctx.cancel.is_set():
+                self.pub_torso.publish(Float64(data=float("nan")))     # parar
+                return SkillResult.failure(ERR_CANCELED, "elevador detenido")
+            st = self.torso_status
+            pos = st.get("position_m")
+            if time.time() - started > 0.5 and pos is not None and not st.get("moving"):
+                if abs(pos - target) <= TORSO_TOLERANCE_M:
+                    return SkillResult.success(f"elevador en {pos:+.3f} m", position_m=pos)
+                if time.time() - started > 3.0:
+                    return SkillResult.failure("torso_timeout", f"elevador quieto en {pos:+.3f} m, objetivo {target:+.3f} m")
+            time.sleep(0.05)
+        self.pub_torso.publish(Float64(data=float("nan")))
+        return SkillResult.failure("torso_timeout", "el elevador no llego a tiempo")
 
     def h_wait(self, ctx: SkillContext) -> SkillResult:
         if ctx.sleep(float(ctx.args["seconds"])):

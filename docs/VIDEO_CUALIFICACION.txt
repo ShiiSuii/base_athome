@@ -149,6 +149,8 @@ B.2 EL PROBLEMA PRINCIPAL: la prueba vigente es mas que recibir invitados
   CFP2027, en cambio, solo pide "a task" con 5 habilidades y "strongly advise" las pruebas 2026.
   Mi lectura, no confirmada: un receptionist sin bolsa podria pasar el minimo del CFP, pero es debil
   frente a la regla del RB. Por eso:
+    Ojo: agarrar una bolsa del piso senalada (ya simulado, "take out the trash") NO es lo que puntua esta prueba, que
+    pide recibirla de la mano (handover) y seguir al anfitrion. Sirve como bloque de manipulacion del video, no los reemplaza.
     Opcion 1 (recomendada): preguntar ya a la OC.
     Opcion 2, en paralelo: agregar una bolsa minima. Colocarla en la estructura del robot, aunque la
       hoja le quite puntos; seguir al anfitrion es lo caro. Decidir el 15 de noviembre.
@@ -166,6 +168,19 @@ B.3 LO QUE FALTA PARA QUE PESE
       https://www.youtube.com/watch?v=cAQzdmVhv8U
   Lecturas: un video de 5 a 9 minutos es normal, y mostrar una sola prueba puede quedar corto frente a
   quien muestra cuatro.
+
+  Revisados el 2026-11-05 con cuadros cada 15 s y transcripcion automatica (no vistos enteros, sin cuenta):
+    - SocRob@Home, para 2027, 9:37. https://www.youtube.com/watch?v=yzsoa-J12Ks  Material de competencia real.
+      HRI con bolsa: "Place your bag on my gripper"; sigue a la persona, manipula, GPSR con un juez. Lo que dice el
+      robot va subtitulado entre comillas ("Bob: ...") y marca "x5" en los tramos acelerados.
+    - PyLoT Robotics, 2026, 8:59. https://www.youtube.com/watch?v=KrRk8DFq-Vg  Cartel con el nombre de la prueba arriba
+      y CARTEL DE HABILIDAD abajo (Navigation, Speech Interaction, Task Planning, Grasping, Hand over). Recuadros con la
+      vista de la camara o el mapa. Marca "x3"/"x4". Mezcla competencia y laboratorio propio.
+    - LASR, 2026, 12:54 (hoy pasaria el limite). https://www.youtube.com/watch?v=GoF-Hnoc_ws  Hace justo lo nuestro:
+      "Please point me the bag", "I'm looking at where you're pointing", "I'm navigating to the bag", "Please step away".
+    - TRAIL 2026 (7:25) y rUNSWeep 2026 (4:38): empiezan narrando el sistema y las mejoras antes de las tareas.
+  Para copiar: carteles de habilidad y de velocidad, subtitulos de la voz del robot, recuadro con mapa o camara, y
+  que el robot diga en voz alta lo que esta haciendo: se entiende sin narrador y hace visibles las 5 habilidades.
 
   Bloque recomendado de manipulacion, por orden de realismo hoy:
     a) Agarre autonomo real de botella o taza en mesa: detector COCO los ve. Requiere torso_state
@@ -232,8 +247,9 @@ C.2 GUION
                                           [DEPENDE, si existe] entrega de bolsa.
   5:20-6:10    9. Presentacion            [DEPENDE] Mira a cada invitado y dice nombre y bebida del otro. Es
                                           el momento fuerte: mostrar audio limpio.
-  6:10-7:00    10. Manipulacion           [DEPENDE, opcional] Bloque extra: pedido por voz, va a la mesa,
-                                          detecta, agarra, coloca.
+  6:10-7:00    10. Manipulacion           [DEPENDE, opcional] Bloque extra: "take out the trash", senalan la bolsa,
+                                          se posiciona, baja el elevador, agarra y la deja en el punto de basura.
+                                          Con carteles: Speech, Pointing, Navigation, Lift, Grasp.
   7:00-7:20    11. Falla y recuperacion   [DEPENDE, solo si fue real] Ej.: no entendio y pidio repetir.
   7:20-7:40    12. Cierre                 Lista de habilidades mostradas, web, repositorio.
 

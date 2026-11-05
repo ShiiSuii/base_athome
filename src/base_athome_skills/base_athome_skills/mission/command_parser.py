@@ -24,7 +24,9 @@ PLACE_ALIASES = {
     "bedroom": ["dormitorio", "cuarto", "habitacion", "bedroom", "room"],
     "bathroom": ["bano", "bathroom"],
     "home": ["casa", "home", "inicio", "base"],
+    "trash_drop": ["basura", "afuera", "trash", "garbage", "outside", "trash point", "punto de basura", "contenedor"],
 }
+BAG_LABELS = "bag|backpack|suitcase"       # lo que puede decir el detector COCO sobre una bolsa
 OBJECT_ALIASES = {
     "bottle": ["botella", "bottle"], "can": ["lata", "can"], "cup": ["taza", "vaso", "cup", "glass"],
     "apple": ["manzana", "apple"], "banana": ["banana", "platano"], "book": ["libro", "book"],
@@ -33,6 +35,8 @@ OBJECT_ALIASES = {
 FILLERS = ("primero", "luego", "despues", "entonces", "tambien", "por favor", "robot", "first", "then", "next",
            "after that", "afterwards", "also", "please", "and", "y", "finalmente", "finally", "por ultimo")
 ARTICLES = r"(?:el|la|los|las|un|una|al|a|del|de|en|hacia|hasta|the|an|to|at|in|on|into|towards?)"
+PLACE_TORSO_M = -0.45
+FLOOR_POSE = "pre_grasp_floor"
 DEFAULT_GREETING = "Hello! Nice to meet you."
 RE_NUM = {"un": 1, "una": 1, "dos": 2, "tres": 3, "cuatro": 4, "cinco": 5, "diez": 10, "one": 1, "two": 2, "three": 3,
           "four": 4, "five": 5, "ten": 10}
@@ -74,6 +78,7 @@ class _Ctx:
     objects: List[Dict[str, Any]] = field(default_factory=list)   # objetos del mapa, en orden numerico
     tables: Dict[str, Dict[str, str]] = field(default_factory=dict)
     place: Optional[str] = None           # donde va a estar el robot en este punto del plan
+    goal_override: bool = False           # el plan termina con un paso que no es la ultima accion (bajar el brazo)
     n: int = 0
 
     def add(self, skill, args, desc, retries=0, recover=True, timeout=None):
@@ -159,6 +164,53 @@ def _unknown_place(c: "_Ctx", cleaned: str) -> str:
             return f"'{tid}' no tiene waypoint ni objetos encima: agregale un waypoint con su nombre en el editor"
     known = sorted(k for k in c.places if not k.startswith("object:"))
     return f"no conozco el lugar '{cleaned}' (conozco: {', '.join(known) or 'ninguno'})"
+
+
+TRASH_PLACE = "trash_drop"
+TRASH_RE = re.compile(r"(?:^|\b)(?:saca|sacar|saques|sacame|tira|tirar|tires|tirame|lleva|llevar|take|taking|throw|put|bring)\b"
+                      r".*\b(?:basura|trash|garbage|rubbish)\b")
+BAG_RE = re.compile(r"\b(?:bolsa|bag|bolso)\b(?!\s+(?:de|of)\b)")
+POINT_RE = re.compile(r"\b(?:senalo|senalando|apunto|apuntando|pointing|point|indicando|indico)\b")
+REQUEST_PREFIX_RE = re.compile(r"^(?:quiero que|necesito que|podes|podrias|i want you to|i need you to|can you|could you|"
+                               r"would you|you should|por favor|please)\s+")
+
+
+def _fetch_pointed_bag(c: "_Ctx", raw: str) -> bool:
+    """Ver a quien senala, frenar lejos, posicionar el brazo, acercarse con el elevador arriba, bajar y agarrar."""
+    if c.holding:
+        c.errors.append(f"'{raw}': ya tengo '{c.holding}' en la pinza; primero hay que dejarlo")
+        return False
+    c.add("speak", {"text": "Please point at the bag."}, "pedir que señalen la bolsa", recover=False)
+    c.add("find_pointed_bag", {}, "ver a quien señala y ubicar la bolsa", retries=1, timeout=45)
+    c.add("approach_bag", {}, "ir hasta cerca de la bolsa, sin tocarla", retries=1, timeout=240)
+    c.add("arm_pose", {"pose": FLOOR_POSE}, "posicionar el brazo para agarrar del piso", timeout=60)
+    c.add("dock_bag", {}, "acercarse despacio con el elevador arriba", timeout=30)
+    c.add("set_torso", {"for_bag": True}, "bajar el elevador a la altura de la bolsa", timeout=120)
+    c.add("pick_object", {"object": BAG_LABELS, "use_bag_target": True}, "agarrar la bolsa", retries=1, timeout=120)
+    c.add("set_torso", {"target_m": 0.0}, "subir el elevador con la bolsa", timeout=120)
+    c.holding, c.seen, c.observing = "bag", None, False
+    c.place, c.last_obj = None, "bag"
+    return True
+
+
+def _drop_bag(c: "_Ctx", dest: str) -> None:
+    """Soltar en el piso: elevador abajo, abrir (pre_grasp abre), elevador arriba y recien ahi brazo a HOME."""
+    c.add("set_torso", {"target_m": PLACE_TORSO_M}, "bajar el elevador para dejar la bolsa", timeout=120)
+    c.add("arm_pose", {"pose": FLOOR_POSE}, f"soltar la bolsa en '{dest}'", timeout=60)
+    c.add("set_torso", {"target_m": 0.0}, "subir el elevador", timeout=120)
+    c.add("arm_pose", {"pose": "home"}, "bajar el brazo", timeout=60)
+    c.holding, c.seen, c.observing = None, None, False
+
+
+def _take_out_trash(c: "_Ctx", raw: str) -> None:
+    if resolve(c.places, TRASH_PLACE) is None:
+        c.errors.append(f"'{raw}': no hay punto de basura en el mapa: agregalo en el editor (trash_drop)")
+        return
+    if not _fetch_pointed_bag(c, raw):
+        return
+    _go(c, TRASH_PLACE, raw)
+    _drop_bag(c, TRASH_PLACE)
+    c.goal_override = True
 
 
 GENERIC_OBJECT = ("objeto", "object", "item", "cosa", "thing")
@@ -360,6 +412,22 @@ def _clause(c: _Ctx, raw: str, quotes: Dict[str, str]) -> None:
                 changed = True
     if t in FILLERS or not t:
         return
+    t = REQUEST_PREFIX_RE.sub("", t).strip()
+    if TRASH_RE.search(t):
+        _take_out_trash(c, raw)
+        return
+    if BAG_RE.search(t) and not c.holding and not c.objects and re.match(
+            r"(?:agarra|agarrar|agarrala|agarres|toma|tomar|trae|traer|traeme|traigas|busca|buscar|levanta|recoge|pick|grab|get|"
+            r"fetch|bring|take|find)\b", t):
+        dest = re.search(r"\b(?:a|al|hasta|hacia|to|into)\s+((?:la |el |the )?[\w ]+)$", t)
+        target = find_place(dest.group(1), c.places, c.tables)[0] if dest and not POINT_RE.search(dest.group(1)) else None
+        if not _fetch_pointed_bag(c, raw):
+            return
+        if target is not None:
+            _go(c, dest.group(1), raw)
+            _drop_bag(c, target)
+            c.goal_override = True
+        return
     fc = FAIL_COND_RE.match(t)
     if fc:
         if not c.last_detect:
@@ -512,6 +580,8 @@ def compile_command(text: str, places: Dict[str, Any], name: str = "pedido",
     recovery = [{"id": "avisar", "skill": "speak", "args": {"text": "I could not complete the request."}}]
     if resolve(places, "home") is not None or resolve(places, "default") is not None:
         recovery.append({"id": "volver", "skill": "return_home", "timeout_s": 180})
+    if any(s["skill"] == "set_torso" for s in c.steps):
+        recovery.insert(1, {"id": "subir", "skill": "set_torso", "args": {"target_m": 0.0}, "timeout_s": 120})
     plan = {"name": name, "steps": c.steps, "recovery": recovery}
     if goal:
         plan["success_if"] = goal

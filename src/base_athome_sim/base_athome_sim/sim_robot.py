@@ -23,6 +23,7 @@ import numpy as np
 import rclpy
 import yaml
 from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped, TransformStamped, Twist, Vector3
+from geometry_msgs.msg import Point
 from nav2_msgs.action import NavigateToPose
 from nav_msgs.msg import OccupancyGrid, Odometry
 from rclpy.action import ActionServer, CancelResponse, GoalResponse
@@ -37,6 +38,7 @@ from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data
 from sensor_msgs.msg import CameraInfo, Image, JointState, LaserScan
 from std_msgs.msg import Bool, Float32, Float64, String
 from std_srvs.srv import SetBool, Trigger
+from base_athome_skills.mission import bag_task
 from tf2_ros import Buffer, StaticTransformBroadcaster, TransformBroadcaster, TransformListener
 from trajectory_msgs.msg import JointTrajectory
 from visualization_msgs.msg import Marker, MarkerArray
@@ -98,6 +100,15 @@ class SimRobot(Node):
         if os.environ.get("ATHOME_SIM_OBJECT_XYZ"):  # pruebas de alcance: "x,y,z" en base_footprint
             self.obj = [float(v) for v in os.environ["ATHOME_SIM_OBJECT_XYZ"].split(",")]
         self.obj_attached = False
+        # Bolsa fija en el mapa (ATHOME_SIM_BAG="x,y,z", z = la manija): sin esto el objeto sigue al robot
+        self.bag_map = [float(v) for v in os.environ["ATHOME_SIM_BAG"].split(",")] if os.environ.get("ATHOME_SIM_BAG") else None
+        person = os.environ.get("ATHOME_SIM_PERSON", "0.5,1.8")
+        self.person_xy = [float(v) for v in person.split(",")]
+        self.torso_pos, self.torso_goal = 0.0, 0.0
+        self.bag_delivered = False
+        self.pub_torso_js = self.create_publisher(JointState, "/torso/joint_states", 10)
+        self.pub_torso_st = self.create_publisher(String, "/torso/status", 10)
+        self.pub_bag_res = self.create_publisher(String, "/bag_finder/result", 10)
         self.guest_present = False
         self.guest_idx = 0
         self.guest_d = float(gp("guest_distance_m"))
@@ -152,6 +163,8 @@ class SimRobot(Node):
         sub(Bool, "/sim/auto_guest", lambda m: setattr(self, "auto_guest", bool(m.data)))
         sub(PoseStamped, "/goal_pose", self._goal_pose)  # "2D Goal Pose" de RViz, como bt_navigator
         sub(Twist, "/cmd_vel", lambda m: setattr(self, "cmd_vel", (m.linear.x, m.angular.z, time.time())))
+        sub(Float64, "/torso/goal", self._torso_goal)
+        sub(String, "/bag_finder/request", self._bag_request)
         srv = lambda t, n, f: self.create_service(t, n, f, callback_group=self.cb)
         srv(SetBool, "/arm/set_enable", self._srv_enable)
         srv(SetBool, "/pan_tilt/set_torque", self._srv_torque)
@@ -184,6 +197,7 @@ class SimRobot(Node):
             self.create_timer(1.0 / float(gp("camera_rate_hz")), self._cameras)
             self.create_timer(0.1, self._scan)
         self.create_timer(0.5, self._slow)
+        self.create_timer(0.05, self._fast)
         self.create_timer(0.05, self._arm_status)
         if self.map is not None:
             self.pub_map.publish(self.map["msg"])
@@ -421,6 +435,8 @@ class SimRobot(Node):
         with self.lock:
             self.arm.update(now)
         self.pt.update(dt)
+        step = 0.10 * dt       # elevador simulado, 10 cm/s
+        self.torso_pos += max(-step, min(step, self.torso_goal - self.torso_pos))
         if self.gz:
             self._gz_tick(now)
         elif self.base.goal is not None:
@@ -437,7 +453,7 @@ class SimRobot(Node):
         arm.header.stamp = stamp
         pt = JointState(name=["pan_joint", "tilt_joint"], position=[self.pt.pan * D2R, self.pt.tilt * D2R])
         pt.header.stamp = stamp
-        full = JointState(name=arm.name + pt.name + ["torso_lift_joint"], position=list(arm.position) + list(pt.position) + [0.0])
+        full = JointState(name=arm.name + pt.name + ["torso_lift_joint"], position=list(arm.position) + list(pt.position) + [self.torso_pos])
         full.header.stamp = stamp
         self.pub_js.publish(full)
         self.pub_arm_js.publish(arm)
@@ -548,12 +564,96 @@ class SimRobot(Node):
         a.pose.pose.position.x, a.pose.pose.position.y = self.base.x, self.base.y
         _, _, a.pose.pose.orientation.z, a.pose.pose.orientation.w = yaw_quat(self.base.yaw)
         self.pub_amcl.publish(a)
+        self._update_object(stamp)
+        self._publish_scene(stamp)
+
+    def _fast(self):
+        """Odometria y elevador a 20 Hz: el tramo final hasta la bolsa se controla con la odometria."""
+        stamp = self.get_clock().now().to_msg()
         if not self.gz:
             o = Odometry()
             o.header.stamp, o.header.frame_id, o.child_frame_id = stamp, "odom", "base_footprint"
-            o.pose.pose = a.pose.pose
+            o.pose.pose.position.x, o.pose.pose.position.y = self.base.x, self.base.y
+            _, _, o.pose.pose.orientation.z, o.pose.pose.orientation.w = yaw_quat(self.base.yaw)
             self.pub_odom.publish(o)
-        self._update_object(stamp)
+        js = JointState(name=["torso_lift_joint"], position=[self.torso_pos])
+        js.header.stamp = stamp
+        self.pub_torso_js.publish(js)
+        moving = abs(self.torso_goal - self.torso_pos) > 1e-3
+        self.pub_torso_st.publish(String(data=json.dumps(dict(connected=True, fresh=True, calibrated=True,
+                                                              position_m=round(self.torso_pos, 4), moving=moving))))
+
+    def _torso_goal(self, msg):
+        if math.isnan(msg.data):
+            self.torso_goal = self.torso_pos
+        else:
+            self.torso_goal = max(-0.59, min(0.0, float(msg.data)))
+            self.get_logger().info(f"Elevador (sim) hacia {self.torso_goal:+.2f} m")
+
+    def _pointing_arm(self):
+        """Hombro y muneca de la persona simulada, apuntando a la bolsa."""
+        px, py = self.person_xy
+        shoulder = [px, py, 1.40]
+        dx, dy, dz = self.bag_map[0] - px, self.bag_map[1] - py, 0.0 - 1.40
+        n = math.sqrt(dx * dx + dy * dy + dz * dz)
+        return shoulder, [px + 0.6 * dx / n, py + 0.6 * dy / n, 1.40 + 0.6 * dz / n]
+
+    def _bag_request(self, msg):
+        """Mismo contrato que scripts/bag_finder.py, con los mismos calculos, y las posiciones del mundo simulado."""
+        req = json.loads(msg.data)
+        out = dict(id=req.get("id"), ok=False, error="not_pointing", message="nadie esta senalando")
+        if self.bag_map is not None and not self.obj_attached and not self.bag_delivered:
+            shoulder, wrist = self._pointing_arm()
+            target = bag_task.pointed_floor_point(shoulder, wrist)
+            bag = bag_task.choose_bag(target, [self.bag_map]) if target else None
+            if bag is None:
+                out.update(error="bag_not_found", message="no veo una bolsa donde senala")
+            else:
+                out = dict(id=req.get("id"), ok=True, bag=list(bag), pointed=list(target))
+                self.get_logger().info(f"Bolsa senalada (sim): {bag}")
+        threading.Timer(1.5, lambda: self.pub_bag_res.publish(String(data=json.dumps(out)))).start()
+
+    def _publish_scene(self, stamp):
+        """Persona, gesto y punto de basura, para verlos en RViz."""
+        if self.bag_map is None:
+            return
+        marks = []
+
+        def mark(mid, kind, frame="map"):
+            m = Marker()
+            m.header.stamp, m.header.frame_id = stamp, frame
+            m.ns, m.id, m.type, m.action = "sim_bag_scene", mid, kind, Marker.ADD
+            m.pose.orientation.w = 1.0
+            marks.append(m)
+            return m
+        px, py = self.person_xy
+        body = mark(1, Marker.CYLINDER)
+        body.pose.position.x, body.pose.position.y, body.pose.position.z = px, py, 0.8
+        body.scale.x, body.scale.y, body.scale.z = 0.35, 0.35, 1.6
+        body.color.r, body.color.g, body.color.b, body.color.a = 0.2, 0.5, 0.9, 0.9
+        if not self.obj_attached and not self.bag_delivered:
+            shoulder, _ = self._pointing_arm()
+            ray = mark(2, Marker.LINE_STRIP)
+            ray.scale.x = 0.03
+            ray.color.r, ray.color.g, ray.color.a = 1.0, 0.9, 1.0
+            ray.points = [Point(x=shoulder[0], y=shoulder[1], z=shoulder[2]),
+                          Point(x=self.bag_map[0], y=self.bag_map[1], z=0.0)]
+        else:
+            gone = mark(2, Marker.LINE_STRIP)
+            gone.action = Marker.DELETE
+        for waypoint, wid in (("trash_drop", 3),):
+            wp = self._waypoints().get(waypoint)
+            if wp:
+                t = mark(wid, Marker.CUBE)
+                t.pose.position.x, t.pose.position.y, t.pose.position.z = float(wp["x"]) + 0.4, float(wp["y"]), 0.02
+                t.scale.x, t.scale.y, t.scale.z = 0.8, 0.8, 0.04
+                t.color.g, t.color.r, t.color.a = 0.8, 0.2, 0.6
+                label = mark(wid + 1, Marker.TEXT_VIEW_FACING)
+                label.pose.position.x, label.pose.position.y, label.pose.position.z = float(wp["x"]), float(wp["y"]), 0.5
+                label.scale.z = 0.25
+                label.color.r, label.color.g, label.color.b, label.color.a = 1.0, 1.0, 1.0, 1.0
+                label.text = "BASURA"
+        self.pub_world.publish(MarkerArray(markers=marks))
 
     def _lookup(self, target, source):
         try:
@@ -581,8 +681,18 @@ class SimRobot(Node):
             elif self.obj_attached and self.arm.gripper_mm > dia_mm + 10.0:
                 self.obj_attached = False
                 self.get_logger().info("Objeto SOLTADO (sim)")
+                if self.bag_map is not None:    # la bolsa cae al piso donde se solto, parada sobre su base
+                    c, s = math.cos(self.base.yaw), math.sin(self.base.yaw)
+                    self.bag_map = [self.base.x + c * self.obj[0] - s * self.obj[1],
+                                    self.base.y + s * self.obj[0] + c * self.obj[1], 0.30]
+                    self.bag_delivered = True
+                    self.get_logger().info(f"Bolsa en el piso (sim): ({self.bag_map[0]:.2f}, {self.bag_map[1]:.2f})")
             if self.obj_attached:
                 self.obj = tcp[1].tolist()
+        if self.bag_map is not None and not self.obj_attached:
+            c, s = math.cos(self.base.yaw), math.sin(self.base.yaw)
+            dx, dy = self.bag_map[0] - self.base.x, self.bag_map[1] - self.base.y
+            self.obj = [c * dx + s * dy, -s * dx + c * dy, self.bag_map[2]]
         m = Marker()
         m.header.stamp, m.header.frame_id = stamp, "base_footprint"
         m.ns, m.id, m.type, m.action = "sim_object", 0, Marker.CYLINDER, Marker.ADD
@@ -591,6 +701,11 @@ class SimRobot(Node):
         m.scale.x = m.scale.y = float(self.get_parameter("object_diameter_m").value)
         m.scale.z = 0.23
         m.color.r, m.color.g, m.color.b, m.color.a = 0.85, 0.1, 0.85, 1.0
+        if self.bag_map is not None:     # bolsa: bulto debajo de la manija, que es el punto que se agarra
+            m.type = Marker.CUBE
+            m.pose.position.z = self.obj[2] - 0.15
+            m.scale.x, m.scale.y, m.scale.z = 0.28, 0.28, 0.30
+            m.color.r, m.color.g, m.color.b = 0.05, 0.05, 0.05
         self.pub_world.publish(MarkerArray(markers=[m]))
 
     def _overlay_guest(self, rgb, depth, W=640, H=480, f=615.0):
