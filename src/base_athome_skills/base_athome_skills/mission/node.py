@@ -407,6 +407,12 @@ class MissionExecutorNode(Node):
         return None, SkillResult.failure("finder_unavailable", "bag_finder no respondio")
 
     def h_approach_person(self, ctx: SkillContext) -> SkillResult:
+        # Avisar antes de moverse: sin elevador calibrado la mision fallaria recien junto a la bolsa
+        st = self.torso_status
+        if time.time() - st.get("_t", 0.0) > 2.0 or not st.get("connected"):
+            return SkillResult.failure("torso_unavailable", "el elevador no responde (torso_state)")
+        if not st.get("calibrated"):
+            return SkillResult.failure("torso_not_calibrated", "elevador sin calibrar: correr calibrar_elevador")
         res, err = self._ask_finder(ctx, "locate_person", min(float(ctx.args.get("find_timeout_s", 30.0)), ctx.remaining()))
         if err is not None:
             return err
