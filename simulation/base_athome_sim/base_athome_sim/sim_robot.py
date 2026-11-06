@@ -113,6 +113,9 @@ class SimRobot(Node):
         self.person_pointing = False
         self.person_points = os.environ.get("ATHOME_SIM_PERSON_POINTS", "1") == "1"   # 0: nunca hace el gesto
         self.point_err = float(os.environ.get("ATHOME_SIM_POINT_ERR_M", "0.15"))     # la gente no apunta con precision
+        self.grasp_slips = os.environ.get("ATHOME_SIM_GRASP_SLIPS", "0") == "1"       # ningun agarre del piso sujeta la bolsa
+        self.person_hands_over = os.environ.get("ATHOME_SIM_PERSON_HANDS", "1") == "1"  # 0: no se la da
+        self.bag_in_hand = False
         self.person_sway = float(os.environ.get("ATHOME_SIM_PERSON_SWAY_M", "0.0"))
         self.bag2 = [float(v) for v in os.environ["ATHOME_SIM_BAG2"].split(",")] if os.environ.get("ATHOME_SIM_BAG2") else None
         self.wrist_tilt_err = math.radians(float(os.environ.get("ATHOME_SIM_WRIST_TILT_ERR_DEG", "0")))   # montaje real distinto del modelo
@@ -519,6 +522,11 @@ class SimRobot(Node):
             self.create_timer(0.2, self._gz_people)
             threading.Thread(target=self._gz_spawn_scene, daemon=True).start()
 
+    def _tcp_in_map(self):
+        tcp = self._lookup("base_footprint", "tcp_link")[1]
+        c, s = math.cos(self.base.yaw), math.sin(self.base.yaw)
+        return (self.base.x + c * tcp[0] - s * tcp[1], self.base.y + s * tcp[0] + c * tcp[1], float(tcp[2]) - self.bag_top / 2.0 + 0.04)
+
     def _gz_run(self, cmd):
         try:
             return subprocess.run(cmd, capture_output=True, text=True, timeout=10).stdout
@@ -674,8 +682,11 @@ class SimRobot(Node):
 
     def _heard_robot(self, msg):
         """La persona simulada obedece: senala cuando el robot se lo pide."""
-        if "point" in msg.data.lower() and self.person_points:
+        text = msg.data.lower()
+        if "point" in text and self.person_points:
             self.person_pointing = True
+        if "between my fingers" in text and self.bag_map is not None and self.person_hands_over:   # plan B: se la da en la mano
+            self.bag_in_hand = True
 
     def _person(self):
         """La persona ahora: mira al robot y, si corresponde, apunta a la bolsa con el error de una persona real."""
@@ -768,6 +779,10 @@ class SimRobot(Node):
             d = float(np.linalg.norm(tcp[1] - target))
             dia_mm = self.BAG_KNOT_MM if self.bag_map is not None else 1000.0 * float(self.get_parameter("object_diameter_m").value)
             # Objeto entre los dedos (TCP a < 6 cm): la pinza no puede cerrar por debajo de su diametro
+            if self.grasp_slips and not self.bag_in_hand:
+                d = 1.0                # el nudo se escapa: la pinza cierra vacia
+            if self.bag_in_hand and not self.obj_attached:
+                d = 0.0
             self.arm.grip_block_mm = dia_mm if (d < 0.06 or self.obj_attached) else None
             closing = self.arm.gripper_mm <= dia_mm + 2.0
             if closing and not self.gripper_was_closed and self.bag_map is not None:     # la verdad, para medir el error
@@ -778,6 +793,8 @@ class SimRobot(Node):
                 self.obj_attached = True
                 self.get_logger().info("Objeto AGARRADO (sim)")
                 if self.gz and self.bag_map is not None:
+                    if self.bag_in_hand:   # la persona la acerco: llevarla a la pinza antes de unirla
+                        self._gz_run(gz_model.set_pose_command(GZ_WORLD, gz_model.BAG_MODEL, self._tcp_in_map()))
                     self.pub_bag_attach.publish(Empty())
             elif self.obj_attached and self.arm.gripper_mm > dia_mm + 10.0:
                 self.obj_attached = False

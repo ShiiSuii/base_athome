@@ -76,6 +76,11 @@ def create_command(world: str, sdf: str) -> list:
             "--reptype", "gz.msgs.Boolean", "--timeout", "5000", "--req", "sdf: " + json.dumps(sdf)]
 
 
+def set_pose_command(world: str, name: str, xyz) -> list:
+    return ["gz", "service", "-s", f"/world/{world}/set_pose", "--reqtype", "gz.msgs.Pose", "--reptype", "gz.msgs.Boolean",
+            "--timeout", "2000", "--req", f'name: "{name}" position: {{x: {xyz[0]} y: {xyz[1]} z: {xyz[2]}}}']
+
+
 def remove_command(world: str, name: str) -> list:
     return ["gz", "service", "-s", f"/world/{world}/remove", "--reqtype", "gz.msgs.Entity",
             "--reptype", "gz.msgs.Boolean", "--timeout", "2000", "--req", f'name: "{name}" type: MODEL']

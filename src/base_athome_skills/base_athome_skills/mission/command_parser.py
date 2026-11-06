@@ -167,6 +167,7 @@ def _unknown_place(c: "_Ctx", cleaned: str) -> str:
 
 
 TRASH_PLACE = "trash_drop"
+HANDOVER_SPEECH = "I could not pick up the bag. Please put its handle between my fingers. I will close them in five seconds."
 TRASH_RE = re.compile(r"(?:^|\b)(?:saca|sacar|saques|sacame|tira|tirar|tires|tirame|lleva|llevar|take|taking|throw|put|bring)\b"
                       r".*\b(?:basura|trash|garbage|rubbish)\b")
 BAG_RE = re.compile(r"\b(?:bolsa|bag|bolso)\b(?!\s+(?:de|of)\b)")
@@ -182,14 +183,20 @@ def _fetch_pointed_bag(c: "_Ctx", raw: str) -> bool:
         return False
     c.add("approach_person", {}, "buscar a la persona, mirarla y acercarse si esta lejos", timeout=120)
     c.add("speak", {"text": "Please point at the bag."}, "pedir que señalen la bolsa", recover=False)
-    c.add("find_pointed_bag", {}, "ver a quien señala y ubicar la bolsa", retries=1, timeout=45)
+    c.add("find_pointed_bag", {}, "ver a quien señala y ubicar la bolsa", retries=2, timeout=45)
     c.add("arm_pose", {"pose": FLOOR_POSE}, "posicionar el brazo para agarrar del piso", timeout=60)
     c.add("approach_bag", {}, "ir hasta cerca de la bolsa, sin tocarla", retries=1, timeout=240)
     c.add("dock_bag", {}, "acercarse despacio con el elevador arriba", timeout=30)
     c.add("remember_bag", {}, "medir la bolsa con la camara de la muneca y guardar la posicion", timeout=30)
     c.add("set_torso", {"for_bag": True}, "bajar el elevador a la altura de la bolsa", timeout=120)
     c.add("pick_object", {"object": BAG_LABELS, "use_bag_target": True}, "agarrar la bolsa", retries=1, timeout=120)
+    pick = c.steps[-1]
+    pick["on_failure"] = "continue"      # plan B: pedirla en mano; solo se aborta si eso tambien falla
     c.add("set_torso", {"target_m": 0.0}, "subir el elevador con la bolsa", timeout=120)
+    c.cond = {"step": pick["id"], "state": "FAILED"}
+    c.add("speak", {"text": HANDOVER_SPEECH}, "pedir que la pongan en la pinza", recover=False)
+    c.add("receive_bag", {}, "recibir la bolsa en la mano", timeout=30)
+    c.cond = None
     c.holding, c.seen, c.observing = "bag", None, False
     c.place, c.last_obj = None, "bag"
     return True

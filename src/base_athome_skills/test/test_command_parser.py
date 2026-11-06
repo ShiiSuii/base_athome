@@ -381,3 +381,19 @@ def test_robot_goes_to_the_person_before_asking_to_point():
     calls = _calls(compile_command("take out the trash", TRASH_MAP))
     assert calls[0] == ("approach_person", None)
     assert calls[1][0] == "speak" and calls[2] == ("find_pointed_bag", None)
+
+
+def test_trash_plan_asks_for_the_bag_in_hand_only_if_the_grasp_fails():
+    from base_athome_skills.mission.command_parser import compile_command
+    from base_athome_skills.mission.places import load_places
+    import os
+    root = os.path.join(os.path.dirname(__file__), "..", "..", "..", "simulation", "base_athome_sim", "config")
+    c = compile_command("take out the trash", load_places(os.path.join(root, "sim_semantic_map.yaml")))
+    assert c.ok, c.errors
+    steps = c.plan["steps"]
+    pick = next(s for s in steps if s["skill"] == "pick_object")
+    assert pick["on_failure"] == "continue"
+    receive = next(s for s in steps if s["skill"] == "receive_bag")
+    assert receive["if"] == {"step": pick["id"], "state": "FAILED"} and receive["on_failure"] == "avisar"
+    i = [s["id"] for s in steps]
+    assert i.index(pick["id"]) < i.index(receive["id"]) < i.index(next(s for s in steps if s["skill"] == "navigate_to")["id"])

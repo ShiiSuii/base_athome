@@ -130,3 +130,10 @@ def test_dock_aligns_first_when_the_bag_is_to_a_side():
 def test_reach_margin_keeps_the_bag_on_the_same_ray_closer_to_the_robot():
     g = bt.with_reach_margin(bt.FloorGrasp(reach_x=0.56, reach_y=0.14))
     assert g.reach_x == pytest.approx(0.52) and g.reach_y / g.reach_x == pytest.approx(0.25)
+
+
+def test_correction_phrase_says_what_to_fix():
+    assert "stretch" in bt.correction_phrase("no vi a nadie senalando: ve persona, sin gesto de senalar")
+    assert "step back" in bt.correction_phrase("no vi a nadie senalando: no ve el hombro, la muneca o la cadera: falta cuerpo en la imagen")
+    assert "closer" in bt.correction_phrase("no encuentro la bolsa senalada: a 138 cm de donde deberia estar")
+    assert bt.correction_phrase("bag_finder no respondio") is None

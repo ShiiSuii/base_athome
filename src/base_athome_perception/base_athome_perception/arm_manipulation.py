@@ -478,6 +478,25 @@ class Manipulacion(Node):
                 return False, f"objeto tomado pero no pude retirarme: {msg2}", data
         return True, f"objeto tomado (pinza {width:.0f} mm)", data
 
+    def receive_blocking(self, wait_s: float = 5.0):
+        """Plan B: la persona pone la bolsa en la pinza. Abre, espera, cierra y confirma por ancho. No mueve el brazo."""
+        self.abort = False
+        if not self.enabled and not self.set_torque(True):
+            return False, f"no se pudo habilitar el brazo ({self.status})", {}
+        self.gripper(GRIPPER_OPEN_MM)
+        end = time.time() + wait_s
+        while time.time() < end:
+            if self.abort:
+                return False, "cancelado", {}
+            time.sleep(0.1)
+        self.gripper(GRIPPER_CLOSE_BAG_MM)
+        time.sleep(2.0)
+        width = float(self.gripper_mm)
+        if width <= BAG_EMPTY_MAX_MM:
+            self.gripper(GRIPPER_OPEN_MM)
+            return False, f"agarre vacio: la pinza cerro hasta {width:.0f} mm (sin bolsa)", dict(gripper_mm=round(width, 1))
+        return True, f"bolsa recibida (pinza {width:.0f} mm)", dict(gripper_mm=round(width, 1))
+
     def place_blocking(self):
         """Coloca adelante (PRE-GRASP), abre la pinza, verifica y vuelve a HOME. (ok, mensaje)."""
         self.abort = False

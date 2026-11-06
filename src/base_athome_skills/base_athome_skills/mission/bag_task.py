@@ -171,6 +171,20 @@ def with_reach_margin(grasp: FloorGrasp, margin_m: float = REACH_MARGIN_M) -> Fl
     return dataclasses.replace(grasp, reach_x=grasp.reach_x * k, reach_y=grasp.reach_y * k)
 
 
+def correction_phrase(reason: str) -> Optional[str]:
+    """Que decirle a la persona segun por que no se pudo leer el gesto o ver la bolsa. None si no hay nada que pueda corregir."""
+    text = reason.lower()
+    for key, phrase in (("falta cuerpo", "Please step back so I can see your whole arm."),
+                        ("sin gesto", "Please stretch your arm and point at the bag."),
+                        ("no apunta al piso", "Please point down at the bag on the floor."),
+                        ("no ve personas", "I cannot see you. Please stand in front of me."),
+                        ("no vi a nadie", "I cannot see you. Please stand in front of me."),
+                        ("bolsa", "I do not see a bag there. Please point again, closer to the bag.")):
+        if key in text:
+            return phrase
+    return None
+
+
 def dock_step(bag_in_base: Sequence[float], grasp: FloorGrasp = FloorGrasp()) -> Tuple[str, float]:
     """Que hacer en el tramo final segun donde esta la bolsa AHORA: ('turn', error en rad), ('go', metros que faltan) o
     ('done', 0). Nav2 llega con 18 cm de tolerancia: avanzar una distancia fija deja la bolsa fuera de alcance.
