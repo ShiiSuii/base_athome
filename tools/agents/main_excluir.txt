@@ -15,3 +15,4 @@ docs/ANYDESK_DIAGNOSTICO.txt
 scripts/anydesk_estable.sh
 tools/agents/
 docs/HOME_67_OBSTACULOS_BAJOS.txt
+docs/INVESTIGACION_LLM_VLM.txt
