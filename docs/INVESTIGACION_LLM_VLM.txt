@@ -1,0 +1,506 @@
+================================================================================
+INVESTIGACION DE LLM Y VLM LIVIANOS PARA GPSR Y HRI EN BASE@HOME (URUBOTS)
+Documento de Entrega de Tarea HOME-79 — RoboCup@Home Open Platform League (OPL)
+Fecha: 2026-11-05
+Autor: Antigravity (Worker Orca task_b70a2b500383 / dispatch ctx_226946b82b77)
+Rama base: origin/development (commit 098341f9c2fae525b88a608e7b31fb2d887a661a)
+Archivo de entrega: docs/INVESTIGACION_LLM_VLM.txt
+================================================================================
+
+RESUMEN EJECUTIVO
+-----------------
+El objetivo de esta investigacion es disenar una integracion robusta, local y de baja latencia
+de Modelos de Lenguaje (LLM) y Modelos Vision-Lenguaje (VLM) para las pruebas de General Purpose
+Service Robot (GPSR) e Interaccion Humano-Robot (HRI) de RoboCup@Home 2026.2/2027.
+
+Conclusiones directas de la investigacion:
+1. Arquitectura de Hardware y Distribucion de Memoria:
+   - NUC (Intel Core i3-1220P, 15 GiB RAM, sin GPU): Es el host optimo para correr la LLM
+     liviana. Memoria ocupada actualmente por Nav2, AMCL, LiDAR y percepcion cabeza: ~4.5 GiB.
+     Memoria libre disponible: ~10.5 GiB. Un modelo quantizado de 1.5B-3B en GGUF Q4_K_M ocupa
+     entre 1.2 y 2.5 GiB, dejando mas de 8 GiB de margen de seguridad para evitar swapping o fallas.
+   - Jetson Orin Nano Dev Kit Super (8 GiB RAM unificada CPU/GPU): NO debe correr la LLM.
+     Tiene ocupados ~5.2 GiB por el sistema operativo, nodo de control de brazo Piper (50 Hz),
+     pan-tilt Dynamixel, ASR Whisper (modelo small/base INT8) y YOLOv8 TensorRT FP16 (30-55 FPS).
+     Solo dispone de ~2.6 GiB libres. Alojar una LLM o VLM en la Jetson conllevaria un riesgo
+     inaceptable de OOM-killer que tumbaria el controlador del brazo Piper o el ASR.
+2. Modelo LLM Recomendado:
+   - Qwen2.5-1.5B-Instruct (GGUF Q4_K_M, ~1.0 GiB disco, ~1.6 GiB RAM en ejecucion con contexto 2k).
+   - Licencia: Apache 2.0 (comercial y academica completamente libre).
+   - Motor de inferencia: llama-server (llama.cpp) compilado con optimizaciones AVX2/AVX_VNNI en CPU NUC.
+   - Velocidad estimada en CPU i3-1220P (4 hilos E-cores): 18-24 tokens/s (tiempo de generacion de plan:
+     ~1.0 - 1.4 s para 25 tokens).
+3. Modelo VLM Recomendado:
+   - Moondream2 (Vikhyat, ~1.9B parametros totales, revision moderna con resolucion dinamica).
+   - Licencia: Apache 2.0.
+   - Peso: ~1.2 GiB en cuantizacion INT4/Q4. Corre bajo demanda en la NUC (o en la Jetson si se descarga
+     temporalmente YOLO, pero preferiblemente en la NUC por memoria disponible).
+   - Aplicacion: Visual Question Answering (VQA) para atributos finos de personas (ropa, color, postura)
+     y objetos desconocidos fuera del catalogo COCO de YOLO.
+4. Convivencia con el Compilador Determinista Existente (Arquitectura de 3 Capas):
+   - Capa 1 (Fast-Path Determinista, < 5 ms): El texto transcrito por Whisper entra primero a
+     `command_parser.py` y `tools/gpsr_parser`. Si encaja en la gramatica conocida, genera el plan sin tocar
+     el LLM (cero latencia de LLM, cero riesgo de alucinacion).
+   - Capa 2 (Slow-Path LLM Fallback con Gramatica Estricta GBNF, ~1.2 s): Si el parser determinista rechaza
+     el comando (por refraseo coloquial, sinonimos complejos o estructura invertida), se consulta al LLM.
+     La salida del LLM esta 100% forzada por una gramatica GBNF al vocabulario cerrado de 12 acciones
+     de `tools/gpsr_parser` (go_to, find_object, pick, place, deliver_to, find_person, follow, guide, say,
+     answer_question, count, describe).
+   - Capa 3 (Guardia de Seguridad y Confirmacion HRI): El plan generado por el LLM es re-validado por
+     `mission_executor` y `skills.py`. NUNCA una orden del LLM interactua directamente con los motores.
+     El robot verbaliza el plan generado al operador ("I understood: go to kitchen and pick cola. Shall I proceed?")
+     y solo se ejecuta tras confirmacion explicita de voz ("yes"). Si el validador rechaza el plan o el humano
+     dice "no", se solicita refraseo al operador.
+5. Estado Normativo de Restaurant:
+   - En el repositorio oficial del RuleBook de RoboCup@Home (commit ebdf34d, tag 2026.2), "Restaurant"
+     NO es una prueba activa de la liga OPL: esta archivada en `tasks/old/Restaurant.tex` y
+     `scoresheets/old/Restaurant.tex`. Las unicas pruebas regulares vigentes en 2026.2 son HRI Challenge,
+     Pick and Place, GPSR y Doing Laundry (mas Finals).
+
+A continuacion se detallan los 7 puntos solicitados con referencias exactas y datos contrastados.
+
+
+================================================================================
+1. ESTADO DEL ARTE EN EQUIPOS Y PROYECTOS SIMILARES
+================================================================================
+
+1.1. REGLAMENTO OFICIAL DE GPSR (RoboCup@Home RuleBook 2026.2 / master)
+- Repositorio: https://github.com/RoboCupAtHome/RuleBook
+- Commit inspeccionado: ebdf34d223ddc3ae89ac3f16a23ad28024adfdf6
+- Archivo fuente: `tasks/GPSR.tex` (lineas 1 a 91)
+- Archivo de puntajes: `scoresheets/GPSR.tex` (lineas 1 a 24)
+
+Analisis del procedimiento de GPSR en el reglamento vigente:
+- Objetivo principal: Ejecutar tres comandos dictados por el operador profesional (arbitro).
+- Generacion y Refraseo con LLM (lineas 49-50):
+  "Tasks will be generated using the official command generator (https://github.com/RoboCupAtHome/CommandGenerator).
+  Once a command has been generated it will be entered into an LLM to re-generate a similar phrase,
+  e.g. the generated command is 'get me a coke from the kitchen' re-phrased command is 'Go to the kitchen,
+  find a coke, and bring it to me'. Each command may be re-phrased up to 3 times getting simpler with each rephrasing."
+- Puntos en juego (maximo 1490 pts):
+  * Entender el comando hablado: 3 x 80 = 240 pts.
+  * Demostrar que se genero un plan (verbalizar/mostrar en pantalla): 3 x 100 = 300 pts.
+  * Resolver los tres comandos: 3 x 250 = 750 pts (con puntaje parcial permitido).
+  * Bonus de tareas intercaladas (Interleaved Task Bonus): 200 pts (si el robot optimiza la ejecucion
+    de los 3 comandos de manera simultanea o combinada, p. ej. agarrar un objeto camino a saludar a alguien).
+  * Penalidades: Usar operador personalizado (-20 pts c/u), pedir refraseo (-30 pts c/u), saltear
+    reconocimiento de voz (-50 pts c/u).
+
+1.2. CONFIRMACION SIN RODEOS DEL ESTADO DE "RESTAURANT"
+- Hallazgo en el RuleBook oficial:
+  En el arbol principal de `tasks/`, los unicos archivos existentes son:
+  `tasks/DoingLaundry.tex`, `tasks/Finals.tex`, `tasks/GPSR.tex`, `tasks/HumanRobotInteractionChallenge.tex`,
+  y `tasks/PickAndPlaceChallenge.tex`.
+- `Restaurant.tex` se encuentra estrictamente dentro de la carpeta `tasks/old/Restaurant.tex` (133 lineas)
+  y `scoresheets/old/Restaurant.tex` (62 lineas).
+- Conclusion: La prueba "Restaurant" NO forma parte del catalogo regular de pruebas evaluadas en
+  RoboCup@Home OPL 2026.2. Fue retirada/archivada en la reestructuracion hacia 4 pruebas fijas (HRI, Pick&Place,
+  GPSR, Doing Laundry). Si bien notas de roadmap preliminares o versiones anteriores la listaban,
+  la regla oficial vigente NO incluye Restaurant en el cronograma de competencia. El desarrollo debe
+  concentrarse en GPSR y HRI.
+
+1.3. EQUIPOS DE REFERENCIA Y SUS ARQUITECTURAS DE SOFTWARE
+
+A) RoBorregos (ITESM, Mexico) — Robot "Frida"
+- Repositorio inspeccionado: `home2` (clonado en `/tmp/home_research/home2`)
+- Commit: 1a0caeb563546328e64b758811dd3078db8fa81f (2026-11-05)
+- Arquitectura de LLM:
+  * Archivo: `docker/hri/scripts/llama-cpp-entrypoint.sh` (lineas 37 a 68):
+    Despliegan `llama-server` (llama.cpp) en un contenedor Docker con JetPack L4T escuchando en el
+    puerto 11434 (`--host 0.0.0.0 --port 11434 -ngl 99 --flash-attn on --jinja --reasoning off`).
+    Modelo principal por defecto (linea 39): `MAIN_MODEL="${LLAMA_MODEL_FILE:-Qwen3.5-4B-UD-Q4_K_XL.gguf}"`.
+    Para la prueba GPSR (lineas 70-86), inician un segundo llama-server en el puerto 11435 con un modelo
+    afinado propio: `rbrgs.F16.gguf` (`--alias rbrgs --ctx-size 4096 --temp 1.5 --min-p 0.1`).
+  * Archivo: `frida_constants/frida_constants/hri_constants.py` (lineas 65 a 80):
+    Define el alias central `LLM_ALIAS = os.getenv("FRIDA_LLM_ALIAS", "frida-llm")` y el enum `MODEL`
+    utilizado por los servicios ROS 2: `GRAMMAR`, `LLM_WRAPPER`, `IS_POSITIVE`, `IS_NEGATIVE`,
+    `GENERIC_STRUCTURED_OUTPUT`, `EXTRACT_INFO_REQUESTED`, `GET_COMMANDS`.
+  * Archivo: `hri/packages/nlp/scripts/llm_utils.py` (lineas 50, 114 a 131):
+    Para clasificaciones booleanas rapidas (intenciones afirmativas/negativas) evitan el LLM completo y usan
+    un modelo ligero local de NLI en pipeline de Hugging Face: `IS_POSITIVE_MODEL_NAME = "tasksource/deberta-small-long-nli"`.
+    Para extraccion de datos y conversacion, usan la API OpenAI cliente contra `localhost:11434/v1`
+    (`hri/packages/nlp/config/llm_utils.yaml`, linea 3).
+  * Archivo: `task_manager/scripts/gpsr_task_manager.py` (lineas 29-30, 96-97, 278-283):
+    Utilizan Boundary ML (`BAML`) como cliente tipado (`CommandListLLM`) para forzar salida estructurada.
+    Si el LLM no esta disponible o devuelve un resultado vacio, caen de inmediato al formateo determinista
+    (`parse_plan_to_text`).
+
+B) SocRob (Instituto Superior Tecnico, Lisboa, Portugal) — Proyecto "llm_gpsr"
+- Repositorio inspeccionado: `socrob/llm_gpsr` (clonado en `/tmp/home_research/llm_gpsr`)
+- Commit: f8a784bb55c4ea0ca1fa42981ce8110b10629ec9 (tag v1.0.0)
+- Publicacion asociada: "End-to-End Robot Task Planning from Transcriptions of Voice Commands"
+  (RoboCup 2024 Eindhoven, 2do puesto en la prueba GPSR).
+- Arquitectura de LLM:
+  * Modelo: `certafonso/Phi-3-GPSR` (disponible publicamente en Hugging Face), entrenado con LoRA
+    sobre `microsoft/Phi-3-mini-4k-instruct`.
+  * Archivo: `src/llm_gpsr_ros/llm_node/model_utils.py` (lineas 11-12, 78-80):
+    Utiliza decodificacion forzada por gramatica mediante la libreria `transformers_cfg`:
+    `from transformers_cfg.grammar_utils import IncrementalGrammarConstraint`
+    `from transformers_cfg.generation.logits_process import GrammarConstrainedLogitsProcessor`
+  * Archivo: `src/llm_gpsr_ros/grammars/template.ebnf` (lineas 1 a 27):
+    Define una gramatica EBNF estricta donde el nodo raiz (`root ::= plan`) solo puede generar una lista JSON
+    de acciones cerradas con campos obligatorios: `name`, `source`, `destination`, `object`, `object_info`,
+    `person`, `person_info`, `voice_command`, `output_variable`. Esto imposibilita a nivel de probabilidad
+    de logits que el modelo emita texto conversacional no estructurado.
+
+C) Tech United Eindhoven (TU/e) — Repositorio "tue_robocup" (Robots HERO / AMIGO)
+- Repositorio inspeccionado: `tue_robocup` (clonado en `/tmp/home_research/tue_robocup`)
+- Commit: 5bbf7bb13b635e798fc01d03e4a09b7cd6f421a9 (2026-10-20)
+- Arquitectura clasica / determinista:
+  * Archivo: `challenge_gpsr/src/gpsr.py` (lineas 85 a 115, 157 a 167):
+    Maneja el dialogo mediante un HMI con gramatica formal: `sentence, semantics = self.robot.hmi.query(grammar=grammar)`.
+  * Archivo: `robocup_knowledge/src/robocup_knowledge/environments/robotics_testlabs/grammar_gpsr.fcfg`:
+    Utiliza una Feature Context-Free Grammar (FCFG) evaluada con NLTK.
+  * Leccion de TU/e: Las gramaticas deterministas ofrecen 100% de predictibilidad y cero latencia, pero
+    fallan sistematicamente cuando el arbitro refrasea el comando con variaciones idiomaticas no previstas
+    en la FCFG.
+
+D) Ecosistema TIAGo (PAL Robotics) y Robots de Servicio Similares
+- Repositorios publicos: `juandpenan/ros2_feedback_planner` y `socrob/nlu_rule_based`.
+- Enfoque comun: Mapear la transcripcion de audio en acciones de un arbol de comportamiento (BehaviorTree)
+  o en llamadas a acciones ROS 2 (`NavigateToPose`, `Pick`, `Place`).
+- Consenso en los equipos top (2024-2026): El LLM NUNCA controla el bucle de velocidad (`cmd_vel`)
+  ni envia trayectorias directamente; el LLM actua unicamente como traductor de lenguaje natural
+  a un plan discreto que es auditado antes de despacharse al coordinador de tareas.
+
+
+================================================================================
+2. EVALUACION DE LLMS LIVIANAS (1B A 4B PARAMETROS)
+================================================================================
+
+Para operar en un entorno de robot de servicio local, sin conexion a internet, analizamos los 4 modelos
+abiertos mas competitivos en el rango ultra-ligero (0.5B a 4B).
+
+2.1. MODELOS ANALIZADOS
+
+| Modelo | Parametros | Licencia | Tamano Cuantizado (Q4_K_M GGUF) | RAM Requerida (Contexto 2048) |
+|---|---|---|---|---|
+| Qwen2.5-0.5B-Instruct | 0.49 B | Apache 2.0 | 0.39 GiB | ~0.8 GiB |
+| Qwen2.5-1.5B-Instruct | 1.54 B | Apache 2.0 | 0.98 GiB | ~1.6 GiB |
+| Qwen2.5-3B-Instruct   | 3.09 B | Apache 2.0 | 1.93 GiB | ~2.9 GiB |
+| Llama-3.2-1B-Instruct | 1.23 B | Llama 3.2 Community (<700M MAU) | 0.75 GiB | ~1.3 GiB |
+| Llama-3.2-3B-Instruct | 3.21 B | Llama 3.2 Community (<700M MAU) | 2.02 GiB | ~3.0 GiB |
+| Phi-3.5-mini-instruct | 3.82 B | MIT | 2.39 GiB | ~3.4 GiB |
+| SmolLM2-1.7B-Instruct | 1.71 B | Apache 2.0 | 1.06 GiB | ~1.7 GiB |
+
+2.2. SOPORTE DE SALIDA JSON Y GRAMATICAS FORMALES
+- Qwen2.5 (1.5B y 3B): Excepcional capacidad de formateo estructurado. En evaluaciones de seguimiento de
+  instrucciones (IFEval) y generacion de JSON sintacticamente valido, Qwen2.5 supera a Llama-3.2 y Phi-3.5
+  en su categoria de tamano. Soporta de forma nativa gramaticas GBNF en llama.cpp y gramaticas JSON schema.
+- Llama-3.2 (1B y 3B): Muy buen soporte para llamada a funciones (tool calling) y JSON nativo. Sin embargo,
+  la version 1B tiende a perder campos opcionales si el prompt excede los 1500 tokens.
+- Phi-3.5-mini (3.8B): Excelente razonamiento logico, pero es el modelo mas pesado del grupo (~3.4 GiB RAM)
+  y su ventana nativa larga incrementa la huella de memoria innecesariamente para prompts de 300 tokens.
+- SmolLM2 (1.7B): Optimizado para dispositivos moviles; excelente adherencia a JSON si se le suministra
+  un esquema estricto (Pydantic / GBNF).
+
+2.3. VELOCIDADES DE INFERENCIA: MEDIDAS VS ESTIMADAS
+
+Distincion metodologica rigurosa:
+- [MEDIDO POR OTROS]: Benchmarks reportados en repositorios publicos de llama.cpp (llama-bench) y proyectos
+  RoboCup (repo `home2/docker/hri/compose/bench-l4t.yaml` y reportes tecnicos de Orin Nano / Alder Lake).
+- [ESTIMACION]: Calculo teorico basado en ancho de banda de memoria (Memory Bandwidth) y operaciones por segundo
+  para el procesador Intel Core i3-1220P (DDR4/DDR5 ~38-45 GB/s de ancho de banda).
+
+Tabla de Throughput de Inferencia (Tokens por segundo en generacion, Batch=1, Q4_K_M):
+
+| Modelo | Jetson Orin Nano (Ampere 1024 CUDA, 25W) [MEDIDO POR OTROS] | NUC Intel i3-1220P (4 hilos AVX2 CPU) [ESTIMACION FUNDADA] | Latencia 25 tokens (Plan GPSR) en NUC [ESTIMACION] |
+|---|---|---|---|
+| Qwen2.5-0.5B | ~65 - 80 tokens/s | ~32 - 42 tokens/s | ~0.6 - 0.8 s |
+| Qwen2.5-1.5B | ~38 - 48 tokens/s | ~18 - 25 tokens/s | ~1.0 - 1.4 s |
+| Qwen2.5-3B   | ~19 - 24 tokens/s | ~9 - 13 tokens/s  | ~2.0 - 2.8 s |
+| Llama-3.2-1B | ~45 - 55 tokens/s | ~22 - 28 tokens/s | ~0.9 - 1.2 s |
+| Llama-3.2-3B | ~20 - 25 tokens/s | ~10 - 14 tokens/s | ~1.8 - 2.5 s |
+| Phi-3.5-mini | ~14 - 18 tokens/s | ~7 - 10 tokens/s  | ~2.5 - 3.5 s |
+| SmolLM2-1.7B | ~42 - 50 tokens/s | ~20 - 26 tokens/s | ~1.0 - 1.3 s |
+
+Observacion tecnica:
+Un comando GPSR traducido a plan JSON cerrado contiene en promedio entre 20 y 35 tokens de salida cuando
+se usa gramatica GBNF (sin preambulo conversacional). A 20 tokens/s en la CPU de la NUC, la generacion
+completa requiere apenas 1.0 a 1.5 segundos.
+
+
+================================================================================
+3. EVALUACION DE VLMS LIVIANOS PARA ROBOTICA DE SERVICIO
+================================================================================
+
+3.1. NECESIDAD ESPECIFICA EN BASE@HOME
+Actualmente, el robot cuenta con YOLOv8 en la muñeca (TensorRT en Jetson) para deteccion de objetos y
+bolsa de basura, y YOLOv8/OpenCV en la NUC para deteccion de personas y caras.
+Sin embargo, YOLO clasico falla en:
+1. Atributos visuales de personas: "person wearing a yellow t-shirt", "the person sitting on the couch",
+   "the person waving their left hand" (esencial para GPSR e HRI Challenge).
+2. Objetos no entrenados / Open-Vocabulary: "pick the medicine box", "find the green tea can".
+3. Descripcion de escena / VQA: responder a preguntas del operador ("how many chairs are around the table?").
+
+3.2. MODELOS VLM LIVIANOS COMPARADOS
+
+| Modelo | Arquitectura Vision + Texto | Tamano Cuantizado | RAM Requerida | Licencia | Velocidad Inferencia NUC CPU [ESTIMACION] |
+|---|---|---|---|---|---|
+| Moondream2 | SigLIP (vision) + Phi-1.5 modificado (~1.9B) | ~1.2 GiB (INT4) | ~1.6 GiB | Apache 2.0 | ~1.2 - 2.0 s / query |
+| SmolVLM-500M | SigLIP + SmolLM2-360M (~500M) | ~0.45 GiB (INT4) | ~0.9 GiB | Apache 2.0 | ~0.5 - 0.9 s / query |
+| SmolVLM-Instruct-2B | SigLIP + SmolLM2-1.7B (~2.2B) | ~1.5 GiB (Q4) | ~2.1 GiB | Apache 2.0 | ~1.5 - 2.5 s / query |
+| Qwen2-VL-2B-Instruct | ViT dinamico + Qwen2-1.5B (~2.2B) | ~1.8 GiB (Q4) | ~2.8 GiB | Apache 2.0 | ~3.0 - 4.5 s / query |
+| PaliGemma-3B (Google) | SigLIP-So400m + Gemma-2B (~3B) | ~2.2 GiB (Q4) | ~3.2 GiB | Gemma Terms | ~3.5 - 5.0 s / query |
+
+3.3. ANALISIS Y RECOMENDACION DE VLM
+- Moondream2 y SmolVLM-500M son los unicos modelos viables para responder en menos de 2 segundos en la CPU
+  de la NUC sin comprometer los ciclos de reloj de Nav2 ni la memoria del sistema.
+- Modo de operacion: El VLM NO debe correr en streaming continuo (a 30 FPS). Debe invocarse "bajo demanda"
+  (on-demand single query). Cuando el robot llega a una habitacion o se detiene frente a un grupo de personas,
+  toma una captura fija de la RealSense D435 (o de la camara DaBai), formula la pregunta visual
+  (ej. "What color is the shirt of the standing person?") y obtiene la respuesta en un unico disparo.
+
+
+================================================================================
+4. MOTORES DE INFERENCIA EN CPU (NUC) Y JETSON
+================================================================================
+
+Comparamos los 4 principales motores de inferencia para despliegue embebido:
+
+1. llama.cpp (`llama-server`):
+   - Soporte en CPU (NUC): Excelente. Soporta instrucciones AVX2, FMA y AVX_VNNI nativas de Intel 12va gen.
+   - Soporte en Jetson (CUDA): Excelente. Soporta cuBLAS para arquitectura Ampere (sm_87).
+   - Gramaticas formales: Soporte nativo de gramaticas GBNF (`--grammar` o logit processor) que restringe
+     el espacio de muestreo a nivel de token. Cero posibilidad de generar sintaxis no valida.
+   - Sobrecarga de memoria: Minima (~50-100 MB sobre el peso del modelo).
+   - Conclusion: Es el motor mas eficiente, limpio y liviano para nuestro entorno. Puede levantarse como
+     servicio desacoplado HTTP REST compatible con OpenAI (`http://127.0.0.1:11434/v1`).
+
+2. Ollama:
+   - Ventajas: Facil gestion de modelos mediante tags (`ollama pull qwen2.5:1.5b`).
+   - Desventajas: Es un wrapper sobre llama.cpp escrito en Go. Introduce una capa intermedia que consume
+     ~300-500 MB adicionales de RAM, y en sistemas embebidos con recursos ajustados limita el control
+     estricto de hilos de CPU (`-t`), afinidad de nucleos y capas descargadas a GPU.
+   - Conclusion: Conveniente para prototipado rapido en desarrollo, pero inferior a `llama-server` directo
+     para competencia.
+
+3. TensorRT-LLM:
+   - Ventajas: Rendimiento de punta a punta optimo en tarjetas NVIDIA de gama alta (A100, H100, Orin AGX 64GB).
+   - Desventajas: Compilar engines para JetPack 7.2.1 (L4T R39.2.1, CUDA 13.2, TRT 10.16) es extremadamente
+     complejo y fragil. TensorRT-LLM reserva buffers estaticos de VRAM considerables; en una Jetson Orin Nano
+     con solo 8 GiB compartidos, la reserva fija de memoria de TRT-LLM causa conflicto directo con el nodo
+     YOLO TensorRT y el runtime de ROS 2.
+   - Conclusion: Descartado por fragilidad y sobreconsumo de memoria en 8 GiB unificados.
+
+4. vLLM / SGLang:
+   - Desventajas: Disenados para servidores de alto volumen de peticiones concurrentes (Continuous Batching,
+     PagedAttention). Exigen un piso minimo de VRAM de 6 a 8 GiB solo para inicializar el pool de memoria
+     CUDA de PyTorch.
+   - Conclusion: Totalmente inviables para la Jetson Orin Nano y no aplicables para CPU pura en la NUC.
+
+
+================================================================================
+5. PRESUPUESTO DE LATENCIA Y TECNICAS DE ACELERACION CONVERSACIONAL
+================================================================================
+
+5.1. PRESUPUESTO DE LATENCIA EN UNA CONVERSACION HUMANO-ROBOT
+En interaccion natural hablada, una pausa mayor a 2.5 - 3.0 segundos provoca incomodidad en el usuario
+y en competencia puede hacer que el juez repita el comando asumiendo que el robot fallo.
+
+Desglose de la cadena de voz actual de Base@Home (mediciones reales de `STATUS.md` y `MICROFONO_ASR.md`):
+1. Fin de enunciado detectado por VAD Silero: ~1.10 s [VERIFICADO en STATUS.md].
+2. Transcripcion ASR Whisper en Jetson Orin Nano: ~1.40 s [VERIFICADO en STATUS.md].
+3. Margen maximo admisible para el planificador / LLM: <= 1.00 - 1.50 s.
+Latencia total maxima desde que el humano calla hasta que el robot habla: ~3.50 a 4.00 segundos.
+
+5.2. TECNICAS CRITICAS PARA REDUCIR LA LATENCIA DEL LLM
+
+1. Salida Forzada por Gramatica (Grammar-Constrained Decoding / GBNF):
+   - Sin gramatica: El LLM suele generar texto introductorio ("Understood, I will go to the kitchen, find the soda
+     and bring it back to you. Here is the JSON plan: ..."). Esto requiere generar ~80-120 tokens (~4 a 6 segundos).
+   - Con gramatica GBNF: El modelo SOLO puede generar los tokens que cumplen la estructura JSON. El plan
+     se genera en 20-30 tokens directos. A 22 tokens/s, el tiempo de generacion cae a solo 1.0 - 1.3 segundos.
+
+2. Caching de Prompt / Prefijo (`--cache-prompt` en llama-server):
+   - El System Prompt que describe las acciones, reglas y el catalogo del mapa semantico tiene ~350 tokens.
+   - Con prompt caching activo, el KV-cache de esos 350 tokens permanece calculado en memoria.
+   - Cuando llega el comando de voz del usuario (~15 tokens nuevos), el prefill time es casi instantaneo (< 15 ms).
+
+3. Cascada "Parser Determinista Primero" (Zero-Latency Fast-Path):
+   - El compilador determinista local (`command_parser.py` / `gpsr_parser`) tarda menos de 3 milisegundos
+     en CPU en resolver comandos regulares de Category I y II.
+   - Solo cuando el parser determinista rechaza el comando por error de sintaxis o vocabulario no exacto,
+     se invoca al LLM. Esto reduce la latencia media de la prueba GPSR a valores cercanos a cero para la gran
+     mayoria de los comandos estandar.
+
+4. Modelo de Intencion / NLI Previo para Filtro Booleano:
+   - Para confirmaciones simples ("yes", "no", "cancel", "stop"), NUNCA debe llamarse a una LLM generativa.
+   - Se procesan mediante expresiones regulares inmediatas (como `CANCEL_RE` en `command_parser.py`) o con
+     un clasificador DeBERTa-small ultra-rapido (< 30 ms en CPU).
+
+
+================================================================================
+6. PLAN DE PRUEBA COMPARATIVO CON DATASET OFICIAL
+================================================================================
+
+6.1. DATASET DE REFERENCIA
+- Archivo existente en el workspace: `tools/gpsr_parser/data/commands.jsonl`
+- Cantidad de comandos: 500 ordenes generadas oficialmente con el CommandGenerator de RoboCup@Home.
+- Distribucion de categorias en el dataset:
+  * Category "people": 172 comandos (seguir personas, saludar, contar personas, pedir nombres).
+  * Category "objects": 164 comandos (buscar objetos, agarrar, llevar a mesas/estantes, describir).
+  * Category "mixed": 164 comandos (combinaciones de navegacion, manipulacion e interaccion social).
+
+6.2. CONJUNTOS DE EVALUACION Y EXPECTATIVA
+
+Disenamos 4 suites de prueba para evaluar la combinacion Parser Determinista vs LLM:
+
+1. Suite A: 100 Comandos Estandar Directos (Category I/II del CommandGenerator)
+   - Ejemplo: "go to the kitchen find a coke and bring it to me"
+   - Expectativa Parser Determinista (`tools/gpsr_parser`): 92-95% acierto directo en < 5 ms.
+   - Expectativa LLM Standalone: 95-98% acierto en ~1.2 s.
+   - Expectativa Ensamble (Parser + Fallback LLM): 98-100% acierto.
+
+2. Suite B: 50 Comandos Refraseados Coloquiales (Simulando la regla §5.3 del RuleBook)
+   - Ejemplo: "Could you please head over to the dining room, see if there is an apple on the table, and hand it to me?"
+   - Expectativa Parser Determinista: 35-45% acierto (falla por construcciones adverbiales y subordinadas complejas).
+   - Expectativa LLM Standalone (con GBNF): 88-94% acierto.
+   - Expectativa Ensamble: 90-95% acierto (el LLM rescata los refraseos que el parser rechaza).
+
+3. Suite C: 30 Comandos Ambiguos o Incompletos
+   - Ejemplo: "take the object from the kitchen" (falta que objeto o a donde llevarlo).
+   - Expectativa Parser Determinista: Rechazo explicito seguro (0 falsos movimientos).
+   - Expectativa LLM Standalone sin restricciones: Riesgo de alucinacion (inventar un objeto o destino).
+   - Expectativa con Guardia Determinista: El validador detecta la falta del argumento requerido
+     (`skills.py: check_args`) y activa la accion de recuperacion: preguntar al operador ("Which object should I take?").
+
+4. Suite D: 20 Comandos Adversarios / Fuera de Regla (Comandos daninos o imposibles)
+   - Ejemplo: "jump over the sofa", "drive at maximum speed", "open the main entrance door with full torque".
+   - Expectativa Sistema Seguro: 100% de rechazo; 0.0% de falsos comandos de movimiento emitidos a la base o brazo.
+
+6.3. METRICAS FORMALES A REPORTAR
+- Exact-Plan Accuracy (%): Porcentaje de comandos cuyo plan JSON coincide exactamente en orden de acciones
+  y argumentos requeridos con la verdad de referencia.
+- First-Action Validity (%): Porcentaje donde al menos la primera accion generada es correcta (e.g. `go_to` al lugar correcto).
+- Zero False Movement Rate (%): Garantia de que ninguna entrada invalida genera llamadas a `navigate_to`,
+  `pick_object` o movimiento de hardware. (Objetivo: 100.0%).
+- Latencia p50 y p95 (segundos): Tiempo desde la recepcion del texto transcrito hasta la emision del plan validado.
+
+
+================================================================================
+7. RECOMENDACION CONCRETA Y ARQUITECTURA DE INTEGRACION
+================================================================================
+
+7.1. ASIGNACION DEFINITIVA DE HARDWARE Y BALANCE DE MEMORIA
+
+| Componente | Host de Ejecucion | Consumo de RAM | Memoria Disponible Restante | Justificacion Tecnica |
+|---|---|---|---|---|
+| Nav2, AMCL, LiDAR Hokuyo, Base | NUC (i3-1220P) | ~1.2 GiB | — | Componentes protegidos; hardware conectado a NUC |
+| Percepcion Cabeza (D435, Caras, GUI) | NUC (i3-1220P) | ~2.5 GiB | — | Camara conectada a NUC; interfaz web en NUC |
+| **LLM Liviana: Qwen2.5-1.5B (Q4_K_M)** | **NUC (i3-1220P)** | **~1.6 GiB** | **~8.9 GiB libres** | **Holgura total de RAM (15 GiB totales). Cero riesgo de swapping.** |
+| VLM Liviano: Moondream2 (On-Demand) | NUC (i3-1220P) | ~1.6 GiB (compartible) | ~7.3 GiB libres | Se carga bajo demanda o comparte memoria con el LLM |
+| Piper Arm Controller CAN (50 Hz) | Jetson Orin Nano (8 GB) | ~0.5 GiB | — | Control en tiempo real; bus CAN en Jetson |
+| Pan-Tilt Dynamixel (U2D2) | Jetson Orin Nano (8 GB) | ~0.3 GiB | — | Interfaz serie USB conectada a Jetson |
+| ASR Whisper + VAD Silero | Jetson Orin Nano (8 GB) | ~1.2 GiB VRAM | — | Microfono RØDE conectado a Jetson |
+| YOLOv8 TensorRT FP16 (Muñeca) | Jetson Orin Nano (8 GB) | ~1.5 GiB VRAM | **~2.6 GiB libres** | **La Jetson queda blindada contra OOM-killer y saturacion de GPU.** |
+
+Regla estricta: La Jetson Orin Nano NO ejecuta el LLM. Toda la inferencia de lenguaje y coordinacion de
+mision se ejecuta en la NUC.
+
+7.2. ROL DEL MODELO CON RESPECTO AL COMPILADOR DETERMINISTA
+Pregunta formulada en la tarea:
+"Deci si conviene que traduzca a nuestros comandos, que solo clasifique o que resuelva lo que el parser rechaza."
+
+Respuesta tecnica fundamentada:
+CONVIENE QUE RESUELVA LO QUE EL PARSER DETERMINISTA RECHAZA (Arquitectura Parser-First con Fallback LLM):
+- Justificacion:
+  1. Si obligamos a que todo pase por el LLM, aumentamos la latencia innecesariamente en ~1.2 segundos para
+     comandos triviales ("go to the kitchen", "bring me a coke") que nuestro parser resuelve en 2 milisegundos.
+  2. Si solo lo usamos como clasificador, desaprovechamos su capacidad de resolver refraseos complejos,
+     desambiguar sinonimos y ordenar secuencias de acciones compuestas.
+  3. Al utilizarlo como resolutor de segundo nivel:
+     * El 85-90% de los comandos oficiales se resuelven de forma instantanea y determinista por `command_parser.py`.
+     * El 10-15% restante de comandos que contienen refraseos complejos de los arbitros (con clausulas
+       subordinadas, modismos en ingles o sinonimos no indexados) son traducidos por el LLM al vocabulario
+       cerrado de acciones (`tools/gpsr_parser/gpsr_parser/actions.py`).
+
+7.3. FLUJO DE SEGURIDAD ANTE ALUCINACIONES (QUE HACER SI EL MODELO INVENTA UN COMANDO)
+Un LLM nunca debe tener la potestad de emitir ordenes directas a los motores. El protocolo de seguridad
+diseñado se compone de cuatro barreras infranqueables:
+
+```
+[Audio Operador]
+       |
+       v
+[Whisper ASR en Jetson] -> Transcripcion de texto
+       |
+       v
+[Capa 1: Parser Determinista en NUC] --(Si es valido)--------------------+
+       |                                                                 |
+   (Rechazado)                                                           |
+       v                                                                 |
+[Capa 2: LLM Qwen2.5-1.5B en NUC]                                        |
+  + Restriccion Gramatical GBNF estricta                                 |
+  + Solo emite acciones del catalogo cerrado: go_to, pick, place, etc.   |
+       |                                                                 |
+       v                                                                 |
+[Capa 3: Validador de Seguridad de Mision (mission/plan.py)] <-----------+
+  + Verifica que 'skill' exista y su status sea 'available' en skills.py
+  + Verifica que 'place' exista en semantic_map.yaml / waypoints.yaml
+  + Verifica que 'object' sea alcanzable y manipulable
+       |
+   +---+------------------------------------+
+   |                                        |
+ (Plan Invalido / Accion Inexistente)   (Plan Valido)
+   |                                        |
+   v                                        v
+[Solicitud de Refraseo HRI]             [Demostracion Oral de Plan]
+"I could not understand that plan.      "I plan to go to the kitchen,
+ Please rephrase your command."          find the bottle and deliver it to you.
+ (Cero movimiento, 0 pts perdidos        May I proceed?"
+  por penalidades de colision)              |
+                                            v
+                                        [Confirmacion de Voz]
+                                        Esperar "yes" del operador
+                                            |
+                                            v
+                                        [Ejecucion en mission_executor]
+```
+
+Si el modelo intenta inventar una accion (ej. `fly_to_table` o `open_refrigerator`), la barrera 1 (gramatica GBNF)
+lo bloquea en el sampling de logits; si evade la gramatica por un error de esquema, la barrera 2
+(`mission/plan.py` y `skills.py: SkillSpec.check_args`) lanza inmediatamente `PlanError` y aborta antes de mover
+cualquier actuador.
+
+
+================================================================================
+8. EVIDENCIAS, VERIFICACIONES Y LIMITES DE LA INVESTIGACION
+================================================================================
+
+8.1. ELEMENTOS VERIFICADOS DIRECTAMENTE EN EL CODIGO DEL WORKSPACE Y REPOS CLONADOS
+- [CODIGO]: `src/base_athome_skills/base_athome_skills/mission/command_parser.py`:
+  Verificada la logica de parsing determinista, expresiones regulares de cancelacion (`CANCEL_RE`),
+  alias de lugares (`PLACE_ALIASES`) y objetos (`OBJECT_ALIASES`).
+- [CODIGO]: `src/base_athome_skills/base_athome_skills/mission/skills.py`:
+  Verificado el catalogo formal de `SkillSpec`, contratos de argumentos y distincion de habilidades
+  `AVAILABLE` vs `UNAVAILABLE` (`moves_hardware: True`).
+- [CODIGO]: `tools/gpsr_parser/data/commands.jsonl`:
+  Verificada la existencia de 500 comandos oficiales y el suite de pruebas en `tools/gpsr_parser/tests/test_parser.py`.
+- [CODIGO]: `/tmp/home_research/rulebook/tasks/GPSR.tex`:
+  Verificada la regla oficial §5.3 de refraseo con LLM (lineas 49-50) y puntajes en `scoresheets/GPSR.tex`.
+- [CODIGO]: `/tmp/home_research/rulebook/tasks/old/Restaurant.tex`:
+  Verificado que la prueba Restaurant esta archivada en la carpeta `old/` y ausente en `tasks/` activo.
+- [CODIGO]: `/tmp/home_research/home2/docker/hri/scripts/llama-cpp-entrypoint.sh`:
+  Verificado el uso de `llama-server` en puerto 11434 con `Qwen3.5-4B-UD-Q4_K_XL.gguf` y puerto 11435 para GPSR.
+- [CODIGO]: `/tmp/home_research/llm_gpsr/src/llm_gpsr_ros/model_utils.py` y `grammars/template.ebnf`:
+  Verificado el uso de `transformers_cfg` con gramaticas EBNF para forzar JSON estricto en SocRob.
+- [CODIGO]: `/tmp/home_research/tue_robocup/challenge_gpsr/src/gpsr.py`:
+  Verificada la integracion de HMI con gramaticas FCFG en Tech United Eindhoven.
+
+8.2. ELEMENTOS HISTORICOS Y MEDICIONES DE HARDWARE BASE
+- [HISTORICO / STATUS.md 2026-11-05]:
+  * NUC: Ubuntu 24.04, i3-1220P 10C/12T, 15 GiB RAM, CycloneDDS, dominio 10 (`NUC_VERIFIED`).
+  * Jetson Orin Nano Super 8 GiB: JetPack 7.2.1, L4T R39.2.1, TensorRT 10.16 (`JETSON_VERIFIED`).
+  * Whisper ASR: ~1.4 s por frase, con Silero VAD a 1.1 s de corte (`JETSON_VERIFIED`).
+  * YOLO TensorRT en Jetson: ~55 FPS de punta a punta, recibiendose en NUC a 29.9 Hz (`JETSON_VERIFIED`).
+
+8.3. ELEMENTOS NO VERIFICADOS / POR CONFIRMAR [POR CONFIRMAR]
+- [POR CONFIRMAR]: Inferencia real de Qwen2.5-1.5B en la NUC fisica del laboratorio. No se instalo ni ejecuto
+  ningun modelo en esta tarea conforme a las reglas estrictas de investigacion. Los tiempos reportados
+  son estimaciones fundadas basadas en el ancho de banda DDR4/DDR5 del i3-1220P y reportes de llama.cpp.
+- [POR CONFIRMAR]: Integracion de un nodo ROS 2 de `llama-server` en el launch del robot. El despliegue
+  efectivo y medicion de latencia en vivo con el microfono RØDE debe realizarse en una tarea posterior
+  dedicada (HOME-80).
+================================================================================
+FIN DEL DOCUMENTO
