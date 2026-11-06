@@ -24,6 +24,18 @@ check_and_fix_cyclonedds()
 
 from .face_recognizer import FaceRecognizer
 from .speaker import RoboCupSpeaker
+from .person_attributes import (
+    PersonAttributes,
+    PersonAttributesExtractor,
+    extract_person_attributes,
+)
 
-__all__ = ["FaceRecognizer", "RoboCupSpeaker", "check_and_fix_cyclonedds"]
+__all__ = [
+    "FaceRecognizer",
+    "RoboCupSpeaker",
+    "check_and_fix_cyclonedds",
+    "extract_person_attributes",
+    "PersonAttributes",
+    "PersonAttributesExtractor",
+]
 
