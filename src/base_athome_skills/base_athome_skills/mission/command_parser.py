@@ -404,6 +404,7 @@ VERBS = [
     ("pick", r"(?:agarrala|agarralo|agarrar|agarra|tomala|tomalo|tomar|toma|levantala|levantalo|levantar|levanta|recogela|recogelo|recoger|recoge|pick\s+up|pick|grab|take)\b"),
     ("place", r"(?:dejala|dejalo|dejar|deja|ponela|ponelo|poner|pone|soltala|soltalo|soltar|suelta|colocala|colocalo|colocar|coloca|put|place|drop|leave|release)\b"),
     ("find", r"(?:buscala|buscalo|buscar|busca|encontra|encontrar|encuentra|identifica|identificar|localiza|localizar|detecta|detectar|find|look\s+for|locate|identify|detect|search\s+for)\b"),
+    ("follow", r"(?:seguime|seguila|seguilo|segui|seguir|sigueme|sigue|follow)\b"),
     ("guide", r"(?:guiame|guiala|guialo|guia|guiar|acompaname|acompanala|acompanalo|acompana|acompanar|guide|lead|escort)\b"),
     ("greet", r"(?:saludala|saludalo|saludar|saluda|greet|say\s+hello(?:\s+to)?)\b"),
     ("say", r"(?:decile|deci|decir|di|dile|anuncia|say|tell)\b"),
@@ -481,8 +482,8 @@ def _clause(c: _Ctx, raw: str, quotes: Dict[str, str]) -> None:
     if verb is None and c.last_verb == "go":          # "... despues al B": mismo verbo
         verb, rest = "go", t
     if verb is None:
-        if re.match(r"(?:segui|seguir|sigue|follow|responde|answer|contesta)\b", t):
-            c.errors.append(f"'{raw}': seguir personas y responder preguntas todavia no esta implementado")
+        if re.match(r"(?:responde|answer|contesta)\b", t):
+            c.errors.append(f"'{raw}': responder preguntas todavia no esta implementado")
         else:
             c.errors.append(f"no entendi '{raw}'")
         return
@@ -490,7 +491,10 @@ def _clause(c: _Ctx, raw: str, quotes: Dict[str, str]) -> None:
     if re.search(PERSON_WORDS, rest) and verb in ("find", "pick", "carry"):
         c.errors.append(f"'{raw}': buscar o llevar personas todavia no esta implementado (find_person, guide_person)")
         return
-    if verb == "guide":
+    if verb == "follow":
+        c.add("speak", {"text": "I will follow you. Stop walking when we arrive."}, "avisar que va a seguir", recover=False)
+        c.add("follow_person", {}, "seguir a la persona", timeout=300)
+    elif verb == "guide":
         _guide(c, rest, raw)
     elif verb == "home":
         _go(c, "home", raw)

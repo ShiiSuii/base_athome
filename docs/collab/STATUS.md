@@ -112,6 +112,14 @@ Antes de empezar: E-stop a mano, zona despejada y otra persona atenta. Bolsa liv
 - **Nuevo:** arranque del receptionist por puerta o voz, sin teclado (HOME-88): "start", "go" o "ready" pueden dispararlo por una charla cercana, probar con cuidado. GPSR a plan (HOME-89): de 30 comandos, 26 compilan y 1 con skills ya disponibles. `follow_logic.py` sin conectar (HOME-92). `revisar_competencia.py`, solo lectura (HOME-93), probado solo con tests.
 - **Sin probar:** nada de esto en el robot real.
 
+## 2h. Seguir personas (2026-11-06)
+
+- "follow me" funciona en Gazebo con Nav2: `bag_finder` mueve la cabeza y publica `/bag_finder/people`, `follow_logic.py` decide y Nav2 recibe el objetivo actualizado. Termina cuando la persona queda quieta 8 s y cerca. Con persona que camina: 3 de 3 con el código final; antes falló por una predicción que se iba de largo.
+- **Limitaciones:** sin re-identificación, puede pasarse a otra persona. En simulación el detector es de keypoints, no YOLO. Velocidades sin calibrar en el robot. **Riesgo real:** seguir con el lidar a 38 cm no ve lo bajo.
+- Atributos visuales (`person_attributes.py`) y timbre (`doorbell_detector.py`) están con tests y sin conectar. Mundo `casa_pick_place` con su mapa, sin misión de Pick and Place todavía.
+- `.gitignore` excluía los mapas `.pgm`: en un clon nuevo Nav2 no tenía mapa. Corregido.
+- Durante el seguimiento, la cámara usa el TF del instante de la imagen; si los relojes de NUC y Jetson no coinciden, usa el último. Sincronizar con chrony sigue pendiente.
+
 ## 3. Cómo retomar la teleoperación con el Quest (pendiente: prueba completa en el brazo real)
 
 1. Quest por USB a la **Jetson**, depuración USB autorizada (`adb devices` → `device`).

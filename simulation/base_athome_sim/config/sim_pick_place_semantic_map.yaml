@@ -1,0 +1,119 @@
+# Mapa semantico para el mundo de simulacion casa_pick_place (ROS_DOMAIN_ID=42/77).
+# Define zonas, waypoints, muebles (mesa, estante, lavavajillas, tacho) y objetos de Pick and Place.
+
+map_info:
+  yaml_file: simulation/config/casa_pick_place.yaml
+  image_file: simulation/config/casa_pick_place.pgm
+  resolution: 0.05
+  origin: [-5.0, -5.0, 0.0]
+
+zones:
+  living_room:
+    name: Sala de Estar
+    type: living_room
+    polygon: [[-2.5, -2.5], [1.0, -2.5], [1.0, 1.5], [-2.5, 1.5]]
+  dining_room:
+    name: Comedor
+    type: dining_room
+    polygon: [[1.0, -2.8], [3.5, -2.8], [3.5, -0.2], [1.0, -0.2]]
+  kitchen:
+    name: Cocina
+    type: kitchen
+    polygon: [[-1.0, 1.2], [4.8, 1.2], [4.8, 2.95], [-1.0, 2.95]]
+  entrance:
+    name: Entrada
+    type: entrance
+    polygon: [[-2.9, -1.0], [-1.5, -1.0], [-1.5, 1.0], [-2.9, 1.0]]
+
+waypoints:
+  home: {x: 0.0, y: 0.0, yaw_deg: 0}
+  door: {x: -2.0, y: 0.0, yaw_deg: 180}
+  entrance: {x: -2.0, y: 0.0, yaw_deg: 180}
+  living_room: {x: 0.0, y: 0.0, yaw_deg: 0}
+  kitchen: {x: 2.0, y: 1.5, yaw_deg: 90}
+  dining_room: {x: 1.5, y: -0.6, yaw_deg: -90}
+  table: {x: 2.0, y: -0.6, yaw_deg: -90}
+  mesa: {x: 2.0, y: -0.6, yaw_deg: -90}
+  dining_table: {x: 2.0, y: -0.6, yaw_deg: -90}
+  shelf: {x: 0.0, y: 1.9, yaw_deg: 90}
+  estante: {x: 0.0, y: 1.9, yaw_deg: 90}
+  cabinet: {x: 0.0, y: 1.9, yaw_deg: 90}
+  dishwasher: {x: 3.0, y: 1.8, yaw_deg: 90}
+  lavavajillas: {x: 3.0, y: 1.8, yaw_deg: 90}
+  trash_bin: {x: 4.2, y: 1.8, yaw_deg: 90}
+  tacho: {x: 4.2, y: 1.8, yaw_deg: 90}
+  trash: {x: 4.2, y: 1.8, yaw_deg: 90}
+  trash_drop: {x: 4.2, y: 1.8, yaw_deg: 90}
+
+furniture:
+  mesa:
+    name: Mesa de Comedor
+    type: table
+    height_m: 0.76
+    polygon: [[1.6, -2.1], [2.4, -2.1], [2.4, -0.9], [1.6, -0.9]]
+    center: {x: 2.0, y: -1.5, z: 0.38}
+  estante:
+    name: Estante
+    type: shelf
+    height_m: 1.40
+    polygon: [[-0.45, 2.5], [0.45, 2.5], [0.45, 2.9], [-0.45, 2.9]]
+    center: {x: 0.0, y: 2.7, z: 0.70}
+  lavavajillas:
+    name: Lavavajillas
+    type: dishwasher
+    height_m: 0.85
+    polygon: [[2.7, 2.35], [3.3, 2.35], [3.3, 2.95], [2.7, 2.95]]
+    center: {x: 3.0, y: 2.65, z: 0.425}
+  tacho:
+    name: Tacho de Basura
+    type: trash_bin
+    height_m: 0.65
+    polygon: [[4.0, 2.45], [4.4, 2.45], [4.4, 2.85], [4.0, 2.85]]
+    center: {x: 4.2, y: 2.65, z: 0.325}
+
+objects:
+  obj_1:
+    number: 1
+    name: cereal
+    class: cereal_box
+    x: 1.85
+    y: -1.30
+    z: 0.86
+    on: mesa
+    approach: {x: 2.0, y: -0.6, yaw_deg: -90}
+  obj_2:
+    number: 2
+    name: taza
+    class: cup
+    x: 2.15
+    y: -1.30
+    z: 0.82
+    on: mesa
+    approach: {x: 2.0, y: -0.6, yaw_deg: -90}
+  obj_3:
+    number: 3
+    name: plato
+    class: plate
+    x: 2.00
+    y: -1.65
+    z: 0.78
+    on: mesa
+    approach: {x: 2.0, y: -0.6, yaw_deg: -90}
+  obj_4:
+    number: 4
+    name: snack
+    class: snack
+    x: 0.00
+    y: 2.65
+    z: 1.10
+    on: estante
+    approach: {x: 0.0, y: 1.9, yaw_deg: 90}
+  obj_5:
+    number: 5
+    name: pastilla_lavavajillas
+    class: detergent
+    x: 3.00
+    y: 2.60
+    z: 0.90
+    on: lavavajillas
+    approach: {x: 3.0, y: 1.8, yaw_deg: 90}

@@ -10,6 +10,7 @@ import dataclasses
 import math
 import os
 import re
+import time
 from dataclasses import dataclass
 from typing import List, Optional, Sequence, Tuple
 
@@ -188,6 +189,22 @@ def correction_phrase(reason: str) -> Optional[str]:
         if key in text:
             return phrase
     return None
+
+
+def follow_goal_changed(sent, goal, age_s: float, min_move_m: float = 0.30, max_age_s: float = 3.0) -> bool:
+    """Mandar objetivos seguido hace frenar a Nav2: solo si cambio bastante o paso tiempo."""
+    if sent is None:
+        return True
+    return math.hypot(goal[0] - sent[0], goal[1] - sent[1]) >= min_move_m or age_s >= max_age_s
+
+
+def follow_finished(stationary_s: float, person_xy, robot_xy, still_since, now=None, stop_s: float = 8.0, near_m: float = 1.6):
+    """(termino, desde cuando) Se termina con la persona quieta y cerca, no en cuanto se detiene un momento."""
+    if person_xy is None or stationary_s < 1.0 or math.hypot(person_xy[0] - robot_xy[0], person_xy[1] - robot_xy[1]) > near_m:
+        return False, None
+    t = time.time() if now is None else now
+    since = t if still_since is None else still_since
+    return t - since >= stop_s, since
 
 
 def dock_step(bag_in_base: Sequence[float], grasp: FloorGrasp = FloorGrasp()) -> Tuple[str, float]:

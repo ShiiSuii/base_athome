@@ -38,3 +38,6 @@ venv/
 
 # Biometria (memoria facial): nunca versionar. Vive en ~/.local/share/base_athome/faces_database
 src/base_athome_perception/config/faces_database/
+
+# Mapas generados de los mundos de simulacion: hacen falta para correr Nav2 en un clon nuevo
+!simulation/config/*.pgm

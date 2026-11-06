@@ -171,10 +171,10 @@ def test_redetect_after_moving():
     assert names(r) == ["arm_pose", "detect_object", "navigate_to", "arm_pose", "detect_object", "pick_object"]
 
 
-def test_follow_person_is_explicitly_unimplemented():
-    c = compile_command("segui a la persona", PLACES)
-    assert not c.ok and "no esta implementado" in c.errors[0]
-
+def test_follow_compiles_to_the_follow_skill():
+    c = compile_command("follow me", _sim_places())
+    assert c.ok, c.errors
+    assert [st["skill"] for st in c.plan["steps"]] == ["speak", "follow_person"]
 
 def test_plan_text_shows_the_condition():
     c = compile_command("anda a la mesa, busca una botella, si no la ves deci no esta", PLACES)
@@ -309,7 +309,7 @@ def test_speech_for_plan_and_errors():
     assert "arm" not in text
     assert "object number 9" in error_to_speech(_map("pick up object 9").errors)
     assert "tell me the object number" in error_to_speech(_map("pick up the bottle").errors)
-    assert "cannot do that yet" in error_to_speech(compile_command("follow the person", ES_MAP).errors)
+    assert "cannot do that yet" in error_to_speech(compile_command("answer the question", ES_MAP).errors)
     assert error_to_speech(compile_command("make me a coffee", ES_MAP).errors).startswith("Sorry")
 
 

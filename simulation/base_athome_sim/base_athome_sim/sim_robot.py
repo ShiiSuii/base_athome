@@ -69,11 +69,12 @@ def to_image(arr, encoding, stamp, frame):
     return m
 
 
-GZ_WORLD = "casa_basura"
+GZ_WORLD = os.path.splitext(os.path.basename(os.environ.get("ATHOME_SIM_WORLD") or "casa_basura.sdf"))[0]   # donde se crean bolsa y persona
 
 
 class SimRobot(Node):
     BAG_KNOT_BELOW_TOP_M, BAG_KNOT_MM = 0.04, 10.0
+    PERSON_WALK_MPS = 0.35
 
     def __init__(self):
         super().__init__("sim_robot")
@@ -116,6 +117,9 @@ class SimRobot(Node):
         self.grasp_slips = os.environ.get("ATHOME_SIM_GRASP_SLIPS", "0") == "1"       # ningun agarre del piso sujeta la bolsa
         self.person_hands_over = os.environ.get("ATHOME_SIM_PERSON_HANDS", "1") == "1"  # 0: no se la da
         self.bag_in_hand = False
+        walk = os.environ.get("ATHOME_SIM_PERSON_WALK", "")   # "x,y;x,y": camina al oir que el robot la va a seguir
+        self.person_walk = [[float(v) for v in p.split(",")] for p in walk.split(";") if p]
+        self.walk_start = None
         self.person_sway = float(os.environ.get("ATHOME_SIM_PERSON_SWAY_M", "0.0"))
         self.bag2 = [float(v) for v in os.environ["ATHOME_SIM_BAG2"].split(",")] if os.environ.get("ATHOME_SIM_BAG2") else None
         self.wrist_tilt_err = math.radians(float(os.environ.get("ATHOME_SIM_WRIST_TILT_ERR_DEG", "0")))   # montaje real distinto del modelo
@@ -143,6 +147,7 @@ class SimRobot(Node):
         self.wcx, self.wcy = float(calib.get("cx_px", 320.0)), float(calib.get("cy_px", 240.0))
         self.gz = bool(gp("gazebo"))
         self.gz_arm_ready = False
+        self.gz_shown_xy = None
         self.map = None if self.gz else self._load_map(gp("map_yaml"))
 
         # --- Publicadores (mismos nombres que el robot real) ---
@@ -570,14 +575,16 @@ class SimRobot(Node):
             target = (self.bag_map[0] + self.point_err, self.bag_map[1] - self.point_err)
             kp = sim_scene.make_person(person["xy"], (self.base.x, self.base.y), target)["keypoints"]
             threading.Thread(target=self._gz_show_arm, args=(kp[6], kp[10], pointing), daemon=True).start()
-        if self.person_sway and not self.gz_moving:
+        if (self.person_sway or self.walk_start is not None) and not self.gz_moving:
             self.gz_moving = True
-            threading.Thread(target=self._gz_move_person, args=(person, pointing and self.gz_arm_ready), daemon=True).start()
+            threading.Thread(target=self._gz_move_person, args=(self._person(ahead=True), pointing and self.gz_arm_ready),
+                             daemon=True).start()
 
     def _gz_move_person(self, person, with_arm):
         """Lleva el cuerpo visible, y el brazo, a donde estan sus puntos."""
         try:
             self._gz_run(gz_model.set_pose_command(GZ_WORLD, "persona", (person["xy"][0], person["xy"][1], 0.81)))
+            self.gz_shown_xy = list(person["xy"])
             if with_arm:
                 kp = person["keypoints"]
                 center, _, pitch, yaw = gz_model.arm_with_hand(kp[6], kp[10])
@@ -699,18 +706,35 @@ class SimRobot(Node):
     def _heard_robot(self, msg):
         """La persona simulada obedece: senala cuando el robot se lo pide."""
         text = msg.data.lower()
+        if "follow you" in text and self.person_walk and self.walk_start is None:
+            self.walk_start = time.time()
         if "point" in text and self.person_points:
             self.person_pointing = True
         if "between my fingers" in text and self.bag_map is not None and self.person_hands_over:   # plan B: se la da en la mano
             self.bag_in_hand = True
 
-    def _person(self):
+    def _walked_to(self, elapsed, start):
+        """Camina por los puntos de ATHOME_SIM_PERSON_WALK a velocidad de persona, y se queda en el ultimo."""
+        left, here = self.PERSON_WALK_MPS * elapsed, list(start)
+        for stop in self.person_walk:
+            d = math.hypot(stop[0] - here[0], stop[1] - here[1])
+            if left < d:
+                return [here[0] + (stop[0] - here[0]) * left / d, here[1] + (stop[1] - here[1]) * left / d]
+            left -= d
+            here = list(stop)
+        return here
+
+    def _person(self, ahead=False):
         """La persona ahora: mira al robot y, si corresponde, apunta a la bolsa con el error de una persona real."""
         if self.bag_map is None:
             return None
         xy = list(self.person_xy)
         if self.person_sway:
             xy[1] += self.person_sway * math.sin(2.0 * math.pi * time.time() / 6.0)
+        if self.walk_start is not None:
+            xy = self._walked_to(time.time() - self.walk_start, xy)
+        if not ahead and self.gz and self.gz_shown_xy is not None and (self.person_sway or self.walk_start is not None):
+            xy = list(self.gz_shown_xy)     # los puntos del cuerpo, donde esta el cuerpo visible, no por delante de el
         target = None
         # En Gazebo el brazo visible tarda en aparecer: el gesto cuenta recien cuando la camara lo puede medir
         if self.person_pointing and not self.obj_attached and not self.bag_delivered and (not self.gz or self.gz_arm_ready):

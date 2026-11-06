@@ -430,3 +430,17 @@ def test_robustez_color_ropa():
     out_dual = follower.step([person_red, person_blue], robot, timestamp=0.0, dt=0.1)
     assert out_dual.state == FollowState.SIGUIENDO
     assert abs(out_dual.target_pos[0] - 2.0) < 0.1
+
+
+def test_vuelve_a_tomarla_si_la_prediccion_se_fue_lejos():
+    """Medido en Gazebo: la prediccion llego a 1.6 m de donde estaba y la daba por perdida teniendola a la vista."""
+    f = PersonFollowerLogic(search_timeout_s=12.0)
+    robot = (0.0, 0.0, 0.0)
+    f.step([{"x": 2.0, "y": 0.0}], robot, timestamp=0.0)
+    f.target_vel = (0.0, -1.5)
+    out = f.step([], robot, timestamp=0.5)
+    assert out.state != "perdida"
+    f.step([], robot, timestamp=1.0)
+    out = f.step([{"x": 2.0, "y": 1.2}], robot, timestamp=2.0)
+    assert out.state == "siguiendo"
+    assert out.target_pos is not None

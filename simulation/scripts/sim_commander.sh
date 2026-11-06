@@ -9,20 +9,25 @@ set +u; source /opt/ros/jazzy/setup.bash; source "$WS/install/setup.bash"; set -
 export SIM_MISSION_TAG=$$ ROS_DOMAIN_ID=${SIM_DOMAIN:-42} ATHOME_SIM=1 ATHOME_SIM_OBJECT_LABEL=${ATHOME_SIM_OBJECT_LABEL:-bottle}
 [ -f "$HOME/cyclonedds_local.xml" ] && export CYCLONEDDS_URI=file://$HOME/cyclonedds_local.xml
 LOG=${SIM_LOG_DIR:-/tmp}/sim_commander_$$; mkdir -p "$LOG"
-MAP=$WS/simulation/base_athome_sim/config/sim_semantic_map.yaml
+MAP=${ATHOME_SIM_SEMANTIC_MAP:-$WS/simulation/base_athome_sim/config/sim_semantic_map.yaml}
 export ATHOME_SIM_POSES=${ATHOME_SIM_POSES:-$WS/simulation/config/arm_poses_sim.yaml}
 RV=false; [ "${RVIZ:-0}" = "1" ] && RV=true
+W_ARG=(); [ -n "${ATHOME_SIM_WORLD:-}" ] && W_ARG=(world:="$ATHOME_SIM_WORLD")
 PIDS=()
 start() { setsid "$@" & PIDS+=($!); }
 cleanup() {
   trap - EXIT HUP INT TERM
   for ((i=${#PIDS[@]}-1; i>=0; i--)); do kill -TERM -- -"${PIDS[i]}" 2>/dev/null; sleep 2; done
-  for p in $(pgrep -u "$USER" -x move_group); do
+  # move_group y gz sim se despegan de su grupo: se reconocen por la marca de esta corrida
+  for p in $(pgrep -u "$USER" -x move_group) $(pgrep -u "$USER" -f '^gz sim') ; do
     tr "\0" "\n" < /proc/$p/environ 2>/dev/null | grep -qx "SIM_MISSION_TAG=$$" && kill -TERM "$p"
   done
   for _ in $(seq 30); do
     alive=0; for g in "${PIDS[@]}"; do pgrep -g "$g" >/dev/null 2>&1 && alive=1; done
     [ $alive = 0 ] && break; sleep 0.5
+  done
+  for p in $(pgrep -u "$USER" -f '^gz sim'); do        # gz sim a veces ignora TERM y queda consumiendo CPU
+    tr "\0" "\n" < /proc/$p/environ 2>/dev/null | grep -qx "SIM_MISSION_TAG=$$" && kill -KILL "$p"
   done
   [ $alive = 1 ] && echo "AVISO: quedan procesos propios de la simulacion"
   echo "logs: $LOG"
@@ -33,16 +38,16 @@ trap cleanup EXIT; trap 'exit 130' HUP INT TERM
 if [ "${GAZEBO:-0}" = 1 ]; then
   export GZ_PARTITION=sim_$$
   GUI=false; [ "${GZ_GUI:-0}" = 1 ] && GUI=true
-  start ros2 launch base_athome_sim sim.launch.py rviz:=$RV gazebo:=true gz_gui:=$GUI > "$LOG/sim.log" 2>&1
+  start ros2 launch base_athome_sim sim.launch.py rviz:=$RV gazebo:=true gz_gui:=$GUI "${W_ARG[@]}" > "$LOG/sim.log" 2>&1
   sleep 25
   # NAV2=1: navega con Nav2 de verdad, con los parametros del robot, sobre el mapa de este mundo
   if [ "${NAV2:-0}" = 1 ]; then
-    export ATHOME_SIM_MAP=$WS/simulation/config/casa_basura.yaml
+    export ATHOME_SIM_MAP=${ATHOME_SIM_MAP:-$WS/simulation/config/casa_basura.yaml}
     start ros2 launch base_athome_sim nav2_sim.launch.py > "$LOG/nav2.log" 2>&1
     sleep 15
   fi
 else
-  start ros2 launch base_athome_sim sim.launch.py rviz:=$RV > "$LOG/sim.log" 2>&1
+  start ros2 launch base_athome_sim sim.launch.py rviz:=$RV "${W_ARG[@]}" > "$LOG/sim.log" 2>&1
   sleep 8
 fi
 ARGS=(--ros-args -p semantic_map:="$MAP" -p waypoints:=/nonexistent)

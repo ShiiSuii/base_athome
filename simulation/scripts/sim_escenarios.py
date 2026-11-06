@@ -36,6 +36,7 @@ class Scenario:
     expected_state: str = "SUCCEEDED"
     max_cm: Optional[float] = None
     expected_failed_step: Optional[str] = None
+    command: str = COMMAND
 
 
 @dataclass
@@ -107,6 +108,13 @@ SCENARIOS: List[Scenario] = [
         env={"ATHOME_SIM_BAG": "0.5,2.5,0.30", "ATHOME_SIM_PERSON": DEFAULT_PERSON, "ATHOME_SIM_POINT_ERR_M": "1.0"},
         expected_state="FAILED",
         expected_failed_step="s3_find_pointed_bag",
+    ),
+    Scenario(
+        name="seguir",
+        env={"ATHOME_SIM_BAG": "-2.5,-2.5,0.30", "ATHOME_SIM_PERSON": "2.0,0.0", "ATHOME_SIM_PERSON_POINTS": "0",
+             "ATHOME_SIM_PERSON_WALK": "3.5,0.0;3.5,-1.5;2.5,-1.5"},
+        expected_state="SUCCEEDED",
+        command="follow me",
     ),
     Scenario(
         name="plan_b",
@@ -241,7 +249,7 @@ def run_scenario(scenario: Scenario, script_path: Path, timeout_s: float = 360.0
 
     t0 = time.time()
     proc = subprocess.Popen(
-        [str(script_path), COMMAND],
+        [str(script_path), scenario.command],
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,

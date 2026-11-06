@@ -3,7 +3,7 @@
 Valida:
   1. Compilacion determinista de comandos GPSR a objetos Plan de Base@Home.
   2. Rechazo explicito con error claro ante acciones sin skill en Base@Home (count, describe).
-  3. Rechazo en modo estricto de habilidades no implementadas en el hardware (find_person, follow_person,
+  3. Rechazo en modo estricto de habilidades no implementadas en el hardware (find_person,
      guide_person, deliver_object, answer_question).
   4. Aceptacion en modo lenient (allow_unavailable=True) para evaluar sintaxis y argumentos.
   5. Validacion contra mapa semantico de lugares.
@@ -112,13 +112,12 @@ def test_gpsr_rejects_missing_skills_count_and_describe():
 
 def test_gpsr_rejects_unavailable_skills_in_strict_mode():
     """Habilidades no implementadas en el robot actual (status=UNAVAILABLE) son rechazadas por defecto."""
-    # find_person y follow_person
+    # find_person; follow_person ya esta disponible
     cmd_follow = "go to the bed then meet Angel and follow them"
     res_follow = compile_gpsr(cmd_follow, registry=REG, allow_unavailable=False)
     assert res_follow.ok is False
-    assert set(res_follow.unavailable_skills) == {"find_person", "follow_person"}
+    assert set(res_follow.unavailable_skills) == {"find_person"}
     assert any("la skill 'find_person' no esta implementada" in e for e in res_follow.errors)
-    assert any("la skill 'follow_person' no esta implementada" in e for e in res_follow.errors)
 
     # deliver_object
     cmd_deliver = "bring me a bowl from the cabinet"
@@ -144,7 +143,7 @@ def test_gpsr_accepts_unavailable_skills_in_lenient_mode():
     assert res.errors == []
     assert res.plan is not None
     # Las skills unavailable se registran informativamente
-    assert set(res.unavailable_skills) == {"find_person", "follow_person"}
+    assert set(res.unavailable_skills) == {"find_person"}
 
     # Pero acciones sin skill (count/describe) siguen fallando aun en lenient
     cmd_count = "tell me how many people in the living room are wearing gray jackets"

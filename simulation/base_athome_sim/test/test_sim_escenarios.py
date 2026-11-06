@@ -16,7 +16,7 @@ def test_all_scenarios_defined_with_expected_parameters():
     names = [s.name for s in se.SCENARIOS]
     assert names == [
         "normal", "lejos", "mueve", "distractor", "alta",
-        "tilt3", "sin_gesto", "sin_persona", "apunta_mal", "plan_b", "plan_b_sin_manos",
+        "tilt3", "sin_gesto", "sin_persona", "apunta_mal", "seguir", "plan_b", "plan_b_sin_manos",
     ]
     m = se.SCENARIO_MAP
     assert m["normal"].env["ATHOME_SIM_BAG"] == "1.5,1.2,0.30"
@@ -133,7 +133,7 @@ def test_evaluate_expected_failure_checks_exact_failed_step():
 
 
 def test_select_scenarios_and_format_table():
-    assert len(se.select_scenarios([])) == 11
+    assert len(se.select_scenarios([])) == 12
     sub = se.select_scenarios(["normal", "sin_persona"])
     assert [s.name for s in sub] == ["normal", "sin_persona"]
     with pytest.raises(ValueError):

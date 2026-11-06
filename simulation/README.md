@@ -30,6 +30,18 @@ GAZEBO=1 NAV2=1 ATHOME_SIM_BAG=1.5,1.2,0.30 ATHOME_SIM_PERSON=2.6,0.3 ATHOME_SIM
 # Open the commander and send your own requests at http://127.0.0.1:8770
 GAZEBO=1 GZ_GUI=1 simulation/scripts/sim_commander.sh
 
+# Pick and Place world (HOME-94): view directly in Gazebo Harmonic
+gz sim simulation/base_athome_sim/worlds/casa_pick_place.sdf
+
+# Pick and Place world: launch with robot and bridges in Gazebo
+ros2 launch base_athome_sim sim.launch.py gazebo:=true world:=casa_pick_place.sdf
+
+# Pick and Place: commander with real Nav2 on the Pick and Place map
+GAZEBO=1 NAV2=1 GZ_GUI=1 ATHOME_SIM_WORLD=casa_pick_place.sdf \
+  ATHOME_SIM_MAP=$PWD/simulation/config/casa_pick_place.yaml \
+  ATHOME_SIM_SEMANTIC_MAP=$PWD/simulation/base_athome_sim/config/sim_pick_place_semantic_map.yaml \
+  simulation/scripts/sim_commander.sh "go to the table"
+
 # Lightweight simulator, no physics
 simulation/scripts/sim_commander.sh "go to the table"
 
@@ -44,6 +56,9 @@ Everything runs in `ROS_DOMAIN_ID=42`. `SIM_DOMAIN` changes it. Never use the ro
 
 | Variable | Meaning |
 |---|---|
+| `ATHOME_SIM_WORLD=world.sdf` | Gazebo world file (default: `casa_basura.sdf` or `casa_simple.sdf`) |
+| `ATHOME_SIM_MAP=map.yaml` | Occupancy map YAML for Nav2 in simulation |
+| `ATHOME_SIM_SEMANTIC_MAP=map.yaml` | Semantic map YAML with waypoints, furniture and objects |
 | `ATHOME_SIM_BAG=x,y,top` | Bag position and height, in metres |
 | `ATHOME_SIM_BAG2=x,y,top` | A second bag, as a distractor |
 | `ATHOME_SIM_PERSON=x,y` | Person position |

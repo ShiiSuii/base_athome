@@ -34,7 +34,14 @@ def _setup(context):
     if use_gz:
         shares = {os.path.dirname(get_package_share_directory(p)) for p in ("piper_description", "hoverboard_base")}
         shares.add(os.path.join(get_package_prefix("piper_description"), "share"))
-        world = os.path.join(sim_share, "worlds", "casa_basura.sdf" if os.environ.get("ATHOME_SIM_BAG") else "casa_simple.sdf")
+        world_arg = LaunchConfiguration("world").perform(context)
+        world_env = os.environ.get("ATHOME_SIM_WORLD")
+        if world_arg:
+            world = world_arg if os.path.isabs(world_arg) else os.path.join(sim_share, "worlds", world_arg)
+        elif world_env:
+            world = world_env if os.path.isabs(world_env) else os.path.join(sim_share, "worlds", world_env)
+        else:
+            world = os.path.join(sim_share, "worlds", "casa_basura.sdf" if os.environ.get("ATHOME_SIM_BAG") else "casa_simple.sdf")
         gz_urdf = os.path.join("/tmp", f"base_athome_gz_{os.getuid()}.urdf")
         with open(gz_urdf, "w", encoding="utf-8") as f:
             f.write(gz_model.gazebo_urdf(urdf))
@@ -54,6 +61,7 @@ def generate_launch_description():
     rviz_cfg = os.path.join(get_package_share_directory("base_athome_sim"), "rviz", "sim.rviz")
     return LaunchDescription([
         DeclareLaunchArgument("gazebo", default_value="false"),
+        DeclareLaunchArgument("world", default_value=""),
         DeclareLaunchArgument("gz_gui", default_value="true"),
         DeclareLaunchArgument("rviz", default_value="true"),
         DeclareLaunchArgument("auto_guest", default_value="false"),

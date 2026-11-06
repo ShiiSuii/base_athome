@@ -64,6 +64,10 @@ ARRIVAL_STOP_TIME_S: float = 2.00  # [CALIBRAR: segundos quieta para declarar 'l
 # Radio de compuerta espacial para asociar detecciones con el objetivo (metros)
 GATE_RADIUS_M: float = 1.50  # [CALIBRAR: radio máximo de asociación]
 
+# Volver a tomar a la persona tras perderla: tiempo sin verla y radio desde el último lugar conocido
+RELOCK_AFTER_S: float = 1.0  # [CALIBRAR]
+RELOCK_RADIUS_M: float = 3.0  # [CALIBRAR]
+
 
 # ==============================================================================
 # TIPOS Y ESTRUCTURAS DE DATOS
@@ -349,7 +353,21 @@ class PersonFollowerLogic:
                 best_score = score
                 best_candidate = c
 
-        return best_candidate
+        if best_candidate is not None:
+            return best_candidate
+        # Mientras no la ve, la prediccion sigue de largo y puede irse lejos: si ya paso un rato y hay alguien a la vista,
+        # volver a tomar a quien este mas cerca del ultimo lugar donde se la vio. Sin re-identificacion puede ser otra persona.
+        if self.last_seen_time is None or self._last_step_time is None:
+            return None
+        if self._last_step_time - self.last_seen_time < RELOCK_AFTER_S:
+            return None
+        pool = [c for c in candidates if not (self.target_color and self.strict_color
+                                              and not match_clothing_color(c.clothing_color, self.target_color))]
+        if not pool:
+            return None
+        ref = self.last_known_pos or self.target_pos
+        best = min(pool, key=lambda c: math.hypot(c.x - ref[0], c.y - ref[1]))
+        return best if math.hypot(best.x - ref[0], best.y - ref[1]) <= RELOCK_RADIUS_M else None
 
     def step(
         self,

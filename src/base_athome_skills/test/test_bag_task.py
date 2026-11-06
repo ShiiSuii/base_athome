@@ -161,3 +161,18 @@ def test_a_bag_the_lidar_can_see_does_not_stop_the_dock_by_itself():
     g = bt.FloorGrasp(reach_x=0.54, reach_y=0.09)
     assert bt.dock_stop_range_with_arm(g, 0.45) == pytest.approx(bt.dock_stop_range())
     assert bt.dock_stop_range_with_arm(g, 0.30) > bt.dock_stop_range()
+
+
+def test_follow_goal_only_changes_when_it_matters():
+    assert bt.follow_goal_changed(None, (1, 0, 0), 0.0)
+    assert not bt.follow_goal_changed((1, 0, 0), (1.1, 0, 0), 1.0)
+    assert bt.follow_goal_changed((1, 0, 0), (1.5, 0, 0), 1.0)
+    assert bt.follow_goal_changed((1, 0, 0), (1.1, 0, 0), 4.0)
+
+
+def test_follow_ends_only_when_the_person_stays_still_and_close():
+    done, since = bt.follow_finished(2.0, (1, 0), (0, 0, 0), None, now=10.0)
+    assert not done and since == 10.0
+    assert bt.follow_finished(9.0, (1, 0), (0, 0, 0), since, now=19.0)[0]
+    assert bt.follow_finished(9.0, (5, 0), (0, 0, 0), since, now=19.0) == (False, None)
+    assert bt.follow_finished(0.2, (1, 0), (0, 0, 0), since, now=19.0) == (False, None)

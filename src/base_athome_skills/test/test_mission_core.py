@@ -30,19 +30,19 @@ def plan(*steps, name="t"):
 # ------------------------------------------------------------------ registro / validacion
 def test_registry_marks_unimplemented_skills_unavailable():
     assert {"navigate_to", "navigate_sequence", "speak", "listen", "wait", "return_home"} <= set(REG.available())
-    for name in ("find_person", "follow_person", "guide_person", "deliver_object", "answer_question"):
+    for name in ("find_person", "guide_person", "deliver_object", "answer_question"):
         assert REG.get(name).status == "unavailable"
     for name in ("detect_object", "pick_object", "place_object", "arm_pose"):   # SIM_PASS (HOME-47)
         assert REG.get(name).status == "available"
 
 
 def test_validate_rejects_unavailable_unknown_and_bad_args():
-    p = plan({"skill": "follow_person", "args": {}},
+    p = plan({"skill": "answer_question", "args": {}},
              {"skill": "fly", "args": {}},
              {"skill": "navigate_to", "args": {}},
              {"skill": "speak", "args": {"text": "hi", "volume": 3}})
     errs = validate_plan(p, REG, PLACES)
-    assert any("follow_person" in e and "no esta implementada" in e for e in errs)
+    assert any("answer_question" in e and "no esta implementada" in e for e in errs)
     assert any("desconocida 'fly'" in e for e in errs)
     assert any("faltan argumentos ['place']" in e for e in errs)
     assert any("desconocidos ['volume']" in e for e in errs)
@@ -78,9 +78,9 @@ def test_gpsr_conversion_keeps_unimplemented_steps_and_validation_rejects_them()
                {"action": "find_object", "params": {"object": "bottle"}},
                {"action": "pick", "params": {"object": "bottle"}},
                {"action": "say", "params": {"text": "done"}},
-               {"action": "follow", "params": {"person": "me"}}]
+               {"action": "answer_question", "params": {}}]
     p = from_gpsr(actions)
-    assert [s.skill for s in p.steps] == ["navigate_to", "detect_object", "pick_object", "speak", "follow_person"]
+    assert [s.skill for s in p.steps] == ["navigate_to", "detect_object", "pick_object", "speak", "answer_question"]
     errs = validate_plan(p, REG, PLACES)
     assert len([e for e in errs if "no esta implementada" in e]) == 1
     with pytest.raises(PlanError):

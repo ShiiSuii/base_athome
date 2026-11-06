@@ -35,7 +35,7 @@ from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool, Float64, String
 from std_srvs.srv import Trigger
 
-from . import bag_task
+from . import bag_task, follow_logic
 from .executor import MissionExecutor, SkillContext
 from .places import home_place, load_places, resolve
 from .plan import PlanError, parse_plan, validate_plan
@@ -49,6 +49,7 @@ except ImportError:  # pragma: no cover
 
 NAV_SUCCEEDED, NAV_CANCELED, NAV_ABORTED = 4, 5, 6
 DOCK_TURN_RPS = 0.3
+FOLLOW_SEARCH_S = 12.0      # buscando a la persona antes de darla por perdida: la cabeza tarda en barrer
 DOCK_SPEED_MPS = 0.08      # tramo final hasta la bolsa
 TORSO_TOLERANCE_M = 0.02
 
@@ -118,11 +119,13 @@ class MissionExecutorNode(Node):
         self.create_subscription(LaserScan, "/scan", self._scan, qos_profile_sensor_data)
         self.create_subscription(String, "/torso/status", self._torso_status, 10)
         self.create_subscription(String, "/bag_finder/result", self._bag_result, 10)
+        self.seen_people = None        # ultimo mensaje de /bag_finder/people
+        self.create_subscription(String, "/bag_finder/people", lambda m: setattr(self, "seen_people", json.loads(m.data)), 5)
 
         self.registry = default_registry()
         handlers = dict(navigate_to=self.h_navigate_to, navigate_sequence=self.h_navigate_sequence,
                         return_home=self.h_return_home, speak=self.h_speak, listen=self.h_listen, wait=self.h_wait,
-                        detect_object=self.h_detect, pick_object=self.h_pick, receive_bag=self.h_receive_bag, give_object=self.h_give, place_object=self.h_place,
+                        detect_object=self.h_detect, pick_object=self.h_pick, follow_person=self.h_follow_person, receive_bag=self.h_receive_bag, give_object=self.h_give, place_object=self.h_place,
                         arm_pose=self.h_arm_pose, find_pointed_bag=self.h_find_pointed_bag, approach_person=self.h_approach_person,
                         approach_bag=self.h_approach_bag, dock_bag=self.h_dock_bag, remember_bag=self.h_remember_bag, set_torso=self.h_set_torso)
         self.executor_core = MissionExecutor(self.registry, handlers, mode=self.mode, on_update=self._publish)
@@ -357,6 +360,63 @@ class MissionExecutorNode(Node):
         elif not r.ok and r.message.startswith("no veo"):
             r.error = "not_found"
         return r
+
+    def h_follow_person(self, ctx: SkillContext) -> SkillResult:
+        """La cabeza y la deteccion las lleva bag_finder; aca se decide a donde ir y se le actualiza el objetivo a Nav2."""
+        if self.pub_bag_req.get_subscription_count() == 0:
+            return SkillResult.failure("finder_unavailable", "bag_finder no esta corriendo")
+        if self.nav is None or not self.nav.wait_for_server(timeout_sec=5.0):
+            return SkillResult.failure("nav_unavailable", "la accion navigate_to_pose no responde")
+        rid = uuid.uuid4().hex[:8]
+        self.seen_people = None
+        self.pub_bag_req.publish(String(data=json.dumps(dict(id=rid, mode="follow_person", timeout_s=ctx.remaining()))))
+        logic = follow_logic.PersonFollowerLogic(search_timeout_s=FOLLOW_SEARCH_S)
+        handle, sent, sent_t, still_since, last_state, seen_t = None, None, 0.0, None, None, None
+        try:
+            while ctx.remaining() > 0.0:
+                if ctx.cancel.is_set():
+                    return SkillResult.failure(ERR_CANCELED, "seguimiento cancelado")
+                msg = self.seen_people
+                if msg is None or msg.get("id") != rid or msg.get("t") == seen_t:   # solo con mediciones nuevas
+                    time.sleep(0.05)
+                    continue
+                seen_t = msg.get("t")
+                pose = self._pose_now()
+                out = logic.step(msg["people"], pose, timestamp=time.time())
+                state = str(getattr(out.state, "value", out.state))
+                if state != last_state:
+                    self.get_logger().info(f"seguir: {state}; {out.message}; personas {msg['people']}; robot {pose}")
+                    last_state = state
+                if out.state == follow_logic.FollowState.PERDIDA:
+                    return SkillResult.failure("person_lost", "perdi a la persona")
+                if out.nav_goal is not None and bag_task.follow_goal_changed(sent, out.nav_goal, time.time() - sent_t):
+                    handle = self._send_goal_nowait(out.nav_goal)
+                    sent, sent_t = out.nav_goal, time.time()
+                ended, still_since = bag_task.follow_finished(logic.stationary_duration, out.target_pos, pose, still_since)
+                if ended:
+                    return SkillResult.success(f"la persona se quedo quieta; estado {state}", person=list(out.target_pos))
+                time.sleep(0.1)
+            return SkillResult.failure("timeout", "se termino el tiempo de seguimiento")
+        finally:
+            self.pub_bag_req.publish(String(data=json.dumps(dict(id=rid, mode="stop_follow"))))
+            if handle is not None:
+                handle.cancel_goal_async()
+            self._stop_base()
+
+    def _send_goal_nowait(self, place):
+        """Manda un objetivo sin esperar el resultado. Espera solo a que lo acepten: Nav2 reemplaza el objetivo anterior."""
+        x, y, yaw = place
+        goal = NavigateToPose.Goal()
+        goal.pose = PoseStamped()
+        goal.pose.header.frame_id = "map"
+        goal.pose.header.stamp = self.get_clock().now().to_msg()
+        goal.pose.pose.position.x, goal.pose.pose.position.y = float(x), float(y)
+        goal.pose.pose.orientation.z, goal.pose.pose.orientation.w = math.sin(yaw / 2.0), math.cos(yaw / 2.0)
+        fut = self.nav.send_goal_async(goal)
+        end = time.time() + 2.0
+        while not fut.done() and time.time() < end:
+            time.sleep(0.01)
+        return fut.result() if fut.done() else None
 
     def h_receive_bag(self, ctx: SkillContext) -> SkillResult:
         r = self._with_manip(ctx, lambda m: m.receive_blocking(), "grasp_empty")

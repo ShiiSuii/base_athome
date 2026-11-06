@@ -54,6 +54,9 @@ class BagFinder(Node):
         self.create_subscription(CameraInfo, "/camera/camera/color/camera_info", self._info, qos_profile_sensor_data)
         self.create_subscription(String, "/bag_finder/request", self._request, 5)
         self.pub = self.create_publisher(String, "/bag_finder/result", 5)
+        self.pub_people = self.create_publisher(String, "/bag_finder/people", 5)
+        self.rgb_stamp = None
+        self.follow_stop = False
         self.pub_head = self.create_publisher(Vector3, "/pan_tilt/target_degrees", 5)
         self.head = (0.0, 0.0)                 # posicion MEDIDA, en grados
         self.cli_torque = self.create_client(SetBool, "/pan_tilt/set_torque")
@@ -79,6 +82,7 @@ class BagFinder(Node):
         self.sim_people = json.loads(m.data)["people"]
 
     def _rgb(self, m):
+        self.rgb_stamp = m.header.stamp
         img = np.frombuffer(m.data, np.uint8).reshape(m.height, m.width, -1)
         with self.lock:
             self.rgb = img[:, :, ::-1].copy() if m.encoding == "rgb8" else img.copy()
@@ -114,8 +118,16 @@ class BagFinder(Node):
     def _info(self, m):
         self.K = (m.k[0], m.k[4], m.k[2], m.k[5])
 
-    def _cam(self):
-        """Posicion y ejes de la camara en map, o None sin TF."""
+    def _cam(self, stamp=None):
+        """Posicion y ejes de la camara en map, o None sin TF. Con `stamp`, donde estaba al sacar esa imagen: la cabeza se
+        mueve mientras sigue a alguien, y con el TF de ahora una persona a 3 m aparecia a 5. Si no hay TF de ese instante
+        (relojes sin sincronizar), el ultimo."""
+        try:
+            if stamp is not None:
+                t = self.tf_buf.lookup_transform("map", FRAME, rclpy.time.Time.from_msg(stamp)).transform
+                return np.array([t.translation.x, t.translation.y, t.translation.z]), bv.quat_to_R(t.rotation)
+        except Exception:  # noqa: BLE001 - se sigue con el ultimo TF
+            pass
         try:
             t = self.tf_buf.lookup_transform("map", FRAME, rclpy.time.Time()).transform
         except Exception:  # noqa: BLE001 - sin TF no hay medicion
@@ -201,7 +213,11 @@ class BagFinder(Node):
         self._send_head(self.head[0] + dpan, self.head[1] + pitch_want - pitch_now)
 
     def _request(self, msg):
-        threading.Thread(target=self._serve, args=(json.loads(msg.data),), daemon=True).start()
+        req = json.loads(msg.data)
+        if req.get("mode") == "stop_follow":
+            self.follow_stop = True
+            return
+        threading.Thread(target=self._serve, args=(req,), daemon=True).start()
 
     def _serve(self, req):
         with self.serve_lock:      # un pedido por vez: dos hilos mandando la cabeza la harian oscilar
@@ -209,6 +225,9 @@ class BagFinder(Node):
 
     def _serve_one(self, req):
         mode = req.get("mode")
+        if mode == "follow_person":
+            self._follow(req)
+            return
         out = self._locate_person(req) if mode == "locate_person" else self._refine(req) if mode == "refine_bag" else self._find(req)
         self.pub.publish(String(data=json.dumps(out)))
 
@@ -256,6 +275,32 @@ class BagFinder(Node):
                     return belief, ""
             time.sleep(0.2)
         return None, why
+
+    def _follow(self, req):
+        """Mantiene la cabeza sobre la persona y publica donde estan las personas, hasta que lo paren."""
+        end = time.time() + float(req.get("timeout_s", 300.0))
+        self.follow_stop = False
+        self._ensure_torque()
+        last_seen, sweep = time.time(), 0
+        while time.time() < end and not self.follow_stop:
+            stamp = self.rgb_stamp
+            rgb, depth = self._frames()
+            cam = self._cam(stamp)
+            found = []
+            people = self._poses(rgb, cam) if rgb is not None else []
+            if not people and time.time() - last_seen > LOST_PERSON_S:      # barrer: se pudo ir de cuadro al doblar
+                sweep = (sweep + 1) % len(SEARCH_PANS)
+                self._send_head(SEARCH_PANS[sweep], SEARCH_TILT)
+                last_seen = time.time()
+            if people and cam is not None and self.K is not None:
+                last_seen = time.time()
+                self._track(people[0], rgb.shape[1], rgb.shape[0])
+                for person in people:
+                    spot = bv.person_map_position(person, depth, cam[0], cam[1], self.K)
+                    if spot:
+                        found.append(dict(x=spot[0], y=spot[1]))
+            self.pub_people.publish(String(data=json.dumps(dict(id=req.get("id"), people=found, t=time.time()))))
+            time.sleep(0.25)
 
     def _refine(self, req):
         """Ya cerca: vuelve a medir la bolsa que se cree en `near`. De cerca la profundidad tiene menos error."""

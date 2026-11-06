@@ -32,12 +32,12 @@ from .person_attributes import (
 )
 
 __all__ = [
+    "DoorbellDetector",
+    "DoorbellResult",
     "FaceRecognizer",
+    "PersonAttributes",
+    "PersonAttributesExtractor",
     "RoboCupSpeaker",
     "check_and_fix_cyclonedds",
     "extract_person_attributes",
-    "PersonAttributes",
-    "PersonAttributesExtractor",
 ]
-__all__ = ["DoorbellDetector", "DoorbellResult", "FaceRecognizer", "RoboCupSpeaker", "check_and_fix_cyclonedds"]
-
