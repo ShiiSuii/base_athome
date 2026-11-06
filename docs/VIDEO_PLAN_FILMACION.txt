@@ -113,7 +113,7 @@ HORARIO       FASE                     ACTIVIDADES Y METAS
                                          - Ajuste de iluminacion y tripode de camara fija 16:9.
 
 09:15 - 10:15 Pre-flight Tecnico       - Encendido ordenado: Jetson Orin Nano, luego NUC.
-                                         - Verificacion de enlaces Ethernet (10.42.0.1 <-> 10.42.0.12).
+                                         - Verificacion de enlaces Ethernet (enlace cableado NUC <-> Jetson).
                                          - Ejecucion de calibrar_pantilt (T, V, M).
                                          - Verificacion de Nav2 y AMCL con mapa cargado.
                                          - Prueba de microfono RØDE con ASR Whisper (lectura de 3 frases).
