@@ -1,0 +1,653 @@
+INVESTIGACION TECNICA: HUMAN-ROBOT INTERACTION (HRI) CHALLENGE
+ROBOCUP@HOME OPL (OPEN PLATFORM LEAGUE) — TAREA HOME-81
+Base de trabajo: Base@Home (UruBots) / origin/development (commit a119f61)
+Archivo de entrega: docs/INVESTIGACION_HRI.txt
+Fecha: 2026-11-06
+Autor: Antigravity (dispatched worker para tarea task_9eecf737b9a3 / HOME-81)
+
+================================================================================
+1. RESUMEN EJECUTIVO
+================================================================================
+
+El Human-Robot Interaction Challenge (HRI Challenge, 1450 puntos maximos, tiempo limite 7 minutos)
+evalua la capacidad de un robot de servicio como anfitrion en una fiesta domestica. La mision abarca:
+recibir a dos invitados que llegan por separado, comprender sus nombres y bebidas favoritas,
+describir atributos visuales del primer invitado al segundo, guiarlos a la sala, detectar y ofrecer
+asientos libres en sillas/sillones, presentar a los invitados entre si manteniendo mirada adecuada,
+recibir una bolsa mediante entrega mano-a-mano (handover) del segundo invitado, y seguir al anfitrion
+(person following con re-identificacion sin perderlo) hasta la zona donde se deposita la bolsa.
+
+En Base@Home, nuestro punto de partida es el script `hri_receptionist_challenge.py` (2378 lineas) y
+los modulos en `src/base_athome_perception/base_athome_perception/` (`seat_occupancy.py`,
+`guest_dialog.py`, `guest_vocabulary.py`, `scene_analysis.py`). Actualmente el robot cuenta con:
+- Dialogo funcional con Whisper local + piper-tts, emparejado con memoria biometrica facial SFace.
+- Verificacion de asientos en mapa semantico con estimacion de postura sentada (`seat_occupancy.py`).
+- Movimientos suaves de cabeza pan-tilt Dynamixel durante interaccion estatica (`move_head_smooth`).
+
+Sin embargo, existen brechas criticas que nos dejan sin puntaje en habilidades clave del reglamento:
+1. Timbre de puerta: NO HAY detector (0 / 60 pts).
+2. Atributos visuales de personas (ropa, color, anteojos): NO HAY clasificador ni extractor (0 / 80 pts).
+3. Confirmacion de datos: Pregunta obligatoria "Is that correct?" resta 60 pts de bonus de no-preguntar.
+4. Entrega de bolsa (handover) y seguimiento del anfitrión: NO IMPLEMENTADO (0 / 300 pts combinados).
+5. Mirada en navegacion y presentacion: Mirada fija al frente en giros; no alterna mirada entre invitados.
+6. Asiento libre: Depende de un mapa semantico rigido; si el arbitro agrega sillas, no las detecta.
+
+A traves de la inspeccion de repositorios de referencia de equipos campeones y competidores directos
+(RoBorregos @Home `home2` @ 1a0caeb, MERLIN2-ARCH `sound_recognition` @ e05cb12, Tech United Eindhoven
+`tue_robocup` @ 5bbf7bb, y `malwaru/person_following_robot` @ d5a8ff7), esta investigacion documenta
+soluciones probadas, arquitecturas de software, modelos livianos compatibles con nuestra Jetson Orin / NUC,
+y un plan de integracion seguro para Base@Home priorizando pruebas en simulacion sin riesgo fisico.
+
+
+================================================================================
+2. MARCO NORMATIVO OFICIAL: HRI CHALLENGE (RULEBOOK 2026.2)
+================================================================================
+Fuente: Repositorio oficial https://github.com/RoboCupAtHome/RuleBook.git
+Commit SHA: ebdf34d223ddc3ae89ac3f16a23ad28024adfdf6
+Archivos de evaluacion:
+- tasks/HumanRobotInteractionChallenge.tex (lineas 1 a 140)
+- scoresheets/HumanRobotInteractionChallenge.tex (lineas 1 a 39)
+
+PUNTAJES POR ITEM (Maximo: 1450 puntos):
+--------------------------------------------------------------------------------
+Fase 1: Greeting (Recepcion en la puerta)
+- Item 1.1: Detect the doorbell sound as a signal that a guest has arrived
+  Puntaje: 2 x 30 = 60 pts.
+  Condicion: El robot espera en la posicion inicial y reacciona de inmediato al timbre o toque.
+- Item 1.2: Open the entrance door for a guest
+  Puntaje: 2 x 200 = 400 pts. (Opcional; por defecto la puerta esta abierta a solicitud del equipo).
+- Item 1.3: Look at the person talking, when receiving a guest
+  Puntaje: 2 x 50 = 100 pts.
+  Condicion: Seguimiento dinamico continuo mientras el invitado se desplaza suavemente a izquierda/derecha.
+- Item 1.4: Offer a free seat to the new guest
+  Puntaje: 2 x 100 = 200 pts.
+  Condicion: Indicar o senalar claramente un asiento desocupado en la sala.
+- Item 1.5: Look in the direction of navigation or at the navigation goal
+  Puntaje: 2 x 15 = 30 pts.
+  Condicion: Mantener la orientacion de la cabeza alineada con el vector de avance o la meta.
+- Item 1.6: Tell a visual attribute of the first guest to the second guest
+  Puntaje: 4 atributos x 20 pts = 80 pts max.
+  Penalidad: -20 pts por cada atributo incorrecto.
+- Item 1.7: Not asking non-essential questions to confirm or correct information
+  Puntaje: 4 datos (nombre/bebida de 2 invitados) x 15 pts = 60 pts max.
+  Condicion: Entender nombre y bebida sin preguntar "¿Es correcto?". Pedir repetir por sordera es valido.
+
+Fase 2: Introduction (Presentacion en la sala)
+- Item 1.8: Say name and favorite drink of each guest (during introduction)
+  Puntaje: 4 menciones x 30 pts = 120 pts max.
+  Condicion: Decir nombre y bebida favorita de cada invitado cruzadamente.
+- Item 1.9: While introducing guests, look to the correct guest while talking about the other guest
+  Puntaje: 2 invitados x 50 pts = 100 pts max.
+  Condicion: Mirar a quien se le habla mientras se describe al otro invitado.
+
+Fase 3: Guiding & Bag Handover (Entrega de bolsa y guiado)
+- Item 1.10: Receive the bag from the guest via handover
+  Puntaje: 50 pts max.
+  Penalidades: -25 pts por pedir ayuda; -50 pts si la bolsa se coloca sobre la estructura del robot.
+  Condicion: Brazo a menos de 10 cm de la mano, no iniciar movimiento peligroso hacia el humano.
+- Item 1.11: Following the host to the bag drop area
+  Puntaje: 200 pts max.
+  Penalidades: -50 pts si se cae la bolsa; -50 pts recuperacion natural (waving/calling);
+               -50 pts pedir esperar; -150 pts contacto fisico con el robot.
+- Item 1.12: Drop the bag in the correct area
+  Puntaje: 50 pts max. Depositar la bolsa en el piso en el area designada.
+
+PENALIDADES GENERALES:
+- Wrong guest information was memorized: 4 x -40 pts (-160 max).
+- Alternative HRI (teclado/pantalla para ingresar datos): 6 x -20 pts (-120 max).
+- Not acknowledging people (no atender a quien intenta interactuar): 2 x -200 pts (-400 max).
+================================================================================
+3. ANALISIS PROFUNDO DE LAS 6 HABILIDADES REQUERIDAS
+================================================================================
+
+--------------------------------------------------------------------------------
+3.1. DETECCION DEL TIMBRE CON MODELOS LIVIANOS
+--------------------------------------------------------------------------------
+Reglamento: Item 1.1 (60 pts). El robot espera en posicion inicial; el timbre suena para senalizar
+la llegada de cada invitado. Puede ser cualquier timbre tradicional o toque de puerta (knock).
+
+A. Enfoques en la literatura y otros equipos:
+1. Enfoque DSP de Energia y Umbral Adaptativo (RoBorregos @Home):
+   - Evidencia: RoBorregos/home2 (commit 1a0caeb563546328e64b758811dd3078db8fa81f)
+     Archivo: hri/packages/speech/scripts/doorbell_detection.py (lineas 30 a 100)
+     Archivo: hri/packages/speech/speech/doorbell_detection_utils.py (lineas 1 a 100)
+   - Mecanismo: [VERIFICADO] Detector basado en procesamiento de senales (DSP) sin redes neuronales.
+     Calcula la envolvente de energia sobre cuadros de audio de 24 ms (hop 12 ms, 16 kHz).
+     Mantiene un estimado del piso de ruido ambiente (ambient floor) mediante un filtro EMA (alpha=0.05).
+     Un evento se confirma cuando el pico excede el piso por confirm_margin_db >= 12 dB y dura entre
+     120 ms y 4000 ms. Incorpora auto-enrollment: la primera deteccion confiable genera una huella
+     espectral (64 bins entre 150 y 6000 Hz) que permite reidentificar timbres identicos con menor volumen
+     (similitud coseno >= 0.85).
+   - Gating fundamental: El nodo solo publica cuando esta armado (/hri/doorbell/armed = True) mientras
+     el robot espera en la puerta, y se silencia mientras el robot habla (/saying = True).
+   - Ventajas: 0% de uso de GPU/VRAM, latencia < 25 ms, no sufre por sobreajuste a timbres sinteticos,
+     detecta golpes de puerta (knocks) con identica eficacia.
+
+2. Enfoque Basado en Aprendizaje Profundo: YAMNet (MERLIN2-ARCH):
+   - Evidencia: MERLIN2-ARCH/sound_recognition (commit e05cb1282c553ec6622bda0ce7252869639c3124)
+     Archivo: sound_recognition/sound_recognition/sound_recognition_node.py (lineas 19-26, 71-108)
+   - Mecanismo: [VERIFICADO] Utiliza YAMNet (Yet Another Mobile Network, Google AudioSet, 3.7 MB).
+     Recibe audio mono a 16 kHz en ventanas de 0.975 s y clasifica entre 521 eventos acusticos.
+     Filtra las clases objetivo: "Doorbell", "Bell", "Ding-dong", "Knock", "Tubular bells".
+   - Ventajas: Discriminacion semantica acustica real (distingue timbre de un aplauso o caida de objeto).
+   - Desventajas: Requiere TensorFlow o TFLite/ONNX; puede fallar si el timbre de la competencia tiene una
+     tonalidad no representada en AudioSet, o presentar latencia de ventana (hasta 1 s).
+
+B. Estado en Base@Home:
+- Evidencia interna: src/base_athome_perception/scripts/hri_receptionist_challenge.py:1565
+  En el estado STATE_INIT, el robot pasa directamente a STATE_NAV_TO_DOOR sin esperar senal acustica.
+  No existe ningun clasificador o detector de timbre en todo el repositorio (`grep -rn "doorbell" src/` = 0).
+- Estado: [VERIFICADO] NO HAY (0 / 60 pts).
+
+C. Evaluacion comparativa y recomendacion para Base@Home:
+- El enfoque DSP adaptativo de RoBorregos es superior para el reglamento de RoboCup@Home, porque la
+  organizacion explicitly aclara: "The doorbell sound will not be provided beforehand and may be any
+  traditional doorbell sound. As an alternative, the guest can knock on the door". Un modelo de clasificacion
+  estricto puede ignorar un golpe en la puerta o un timbre electronico bitonal agudo.
+- Recomendacion: Implementar `doorbell_detector.py` en `base_athome_perception` usando la logica DSP de
+  umbral adaptativo (12 dB sobre ruido base) y activarlo unicamente en el estado STATE_WAIT_DOOR.
+
+
+--------------------------------------------------------------------------------
+3.2. DESCRIPCION DE ATRIBUTOS VISUALES DE UNA PERSONA (ROPA, COLOR, ANTEOJOS)
+--------------------------------------------------------------------------------
+Reglamento: Item 1.6 (80 pts max, 4 atributos x 20 pts, -20 pts por error). Describir atributos
+visuales del primer invitado al segundo invitado durante su bienvenida.
+
+A. Enfoques en la literatura y otros equipos:
+1. Enfoque VLM Liviano On-device (RoBorregos @Home):
+   - Evidencia: RoBorregos/home2 (commit 1a0caeb563546328e64b758811dd3078db8fa81f)
+     Archivo: task_manager/subtask_managers/vision_tasks.py (lineas 845 a 895)
+     Archivo: task_manager/scripts/misc/receptionist_task_manager.py (lineas 245 a 270)
+     Archivo: docs/ai/hric_vision_architecture.md (lineas 21, 56)
+   - Mecanismo: [VERIFICADO] Utiliza Moondream2 (modelo de vision-lenguaje de 2B parametros corriendo
+     en un contenedor local independiente con gRPC o TensorRT). En el estado SAVE_FACE del primer invitado,
+     recorta el bounding box de la persona con YOLOv8n y lanza 4 consultas asincronicas seleccionadas de
+     una lista de 7 preguntas formateadas:
+     * Prenda y color: "describe the type of clothes and color the person in the front is wearing (dress, pants and shirt, etc.). Format: The person is wearing [description]."
+     * Anteojos: "does the person in the front have glasses? (if not, respond only '0', if yes, describe the glasses)."
+     * Vello facial: "does the person in the front have facial hair (if not, respond only '0', if yes, describe the facial hair)."
+     * Grupo de edad: "describe the age group the person in the front belongs to (teenager, young adult, middle-aged, elderly)."
+     * Joyeria/accesorios: "is the person in the front wearing jewelry? (if not, respond '0')."
+     * Cabello: "describe the hair style and color... Format: The person has [description] hair."
+     * Complexion: "what is the build of the person... (thin, average, athletic, robust)."
+   - Ventajas: Genera descripciones de lenguaje natural impecables y de alta precision semantica.
+   - Desventajas: Requiere 3.5 a 4.5 GB de VRAM en GPU (muy pesado si la Jetson ya corre Whisper, YOLO y SFace).
+
+2. Enfoque Heuristico Basado en YOLO-Pose + Histograma de Color / HSV (Tradicional RoboCup):
+   - Evidencia: Equipos CATIE Robotics / RoboBreizh (TDP RoboCup 2024) y Pumas UNAM.
+   - Mecanismo: [INFERIDO de practicas estandar y literatura de TDPs]
+     * Torso y Color de Ropa: A partir de los keypoints de pose corporal (hombros: kp 5 y 6; caderas: kp 11 y 12),
+       se extrae el rectangulo delimitado por el torso. Se aplica un recorte central (evitando brazos y fondo),
+       se convierte a espacio de color HSV, se descartan pixeles de piel (rango HSV facial conocido) y se calcula
+       el color dominante mediante histograma en 8 cubos de tono (rojo, verde, azul, amarillo, naranja, violeta,
+       negro, blanco/gris).
+     * Anteojos y Accesorios: Sobre el recorte facial alineado (provisto por YuNet/SSD de SFace), se analiza la
+       region orbital y puente de la nariz mediante un clasificador binario ligero MobileNet-V3 o conteo de bordes Canny/Sobel
+       en la zona del marco de los anteojos.
+     * Tipo de prenda: Relacion de aspecto y extension de keypoints de caderas a rodillas/tobillos (pantalones vs falda/short).
+   - Ventajas: Latencia minima (< 5 ms en CPU), 0 MB de VRAM adicional, determinista y seguro contra alucinaciones.
+
+B. Estado en Base@Home:
+- Evidencia interna:
+  * src/base_athome_perception/base_athome_perception/face_recognizer.py:63
+    El objeto `PersonProfile` contiene `attributes: Dict[str, Any]`, pero solo almacena metadatos
+    operativos: 'role', 'favorite_drink', 'seat', 'persistent', 'synthetic'.
+  * src/base_athome_perception/scripts/hri_receptionist_challenge.py:1995-2010
+    En STATE_INTRODUCE_GUESTS, el texto de introduccion para el segundo invitado dice:
+    `intro_text = f"Charlie, {first_guest['name']}, this is our new guest, {self.current_name}..."`
+    NO incluye ningun atributo visual del primer invitado.
+- Estado: [VERIFICADO] NO HAY (0 / 80 pts).
+
+C. Evaluacion comparativa y recomendacion para Base@Home:
+- Dado que nuestra Jetson Orin Nano cuenta con 8 GB de memoria compartida unificada y ya aloja
+  Whisper (ASR), Piper (TTS), YuNet/SFace y YOLOv8-pose, cargar un VLM completo de 2B parametros
+  conlleva riesgo severo de OOM (Out Of Memory).
+- Recomendacion: Implementar un extractor de atributos liviano en `person_attributes.py` utilizando
+  los keypoints de hombros y caderas de `yolov8n-pose.pt` (ya cargado en memoria en `self.pose_detector`)
+  para obtener:
+  1) Color de prenda superior (torso HSV con 8 colores discretos).
+  2) Color de prenda inferior (piernas HSV).
+  3) Presencia de anteojos (analisis de textura/gradiente en puente nasal sobre imagen YuNet).
+  4) Estimacion de altura relativa (posicion del keypoint de la cabeza proyectado con depth).
+
+
+--------------------------------------------------------------------------------
+3.3. ENTENDER NOMBRE Y BEBIDA SIN PREGUNTAS DE CONFIRMACION CON WHISPER
+--------------------------------------------------------------------------------
+Reglamento: Item 1.7 (60 pts max, 4 datos x 15 pts). El robot debe entender el nombre y bebida de
+ambos invitados sin realizar preguntas no esenciales de confirmacion ("Is your name James?", "Did you say tea?").
+Penalidad: -40 pts por cada dato memorizado incorrectamente (-160 max).
+Aclaracion explicita del RuleBook: "asking a guest to repeat an answer because the robot could not hear is not considered a non-essential question".
+
+A. Enfoques en la literatura y otros equipos:
+1. Enfoque Tech United Eindhoven (tue_robocup):
+   - Evidencia: tue-robotics/tue_robocup (commit 5bbf7bb13b635e798fc01d03e4a09b7cd6f421a9)
+     Archivo: challenge_receptionist/src/challenge_receptionist/learn_guest.py (lineas 81 a 153)
+   - Mecanismo: [VERIFICADO] Utiliza ASR restringido por gramatica (PicoVoice Rhino/Porcupine).
+     Nunca formula una pregunta de confirmacion. Si no entiende tras 3 intentos, anuncia con seguridad:
+     "I could not hear you I am going to call you {name}" (usa default_name) y
+     "I heard your favorite drink is {drink}" (usa default_drink).
+     Al hacer afirmaciones en lugar de preguntas ("Is that correct?"), asegura los puntos del Item 1.7.
+
+2. Enfoque RoBorregos @Home con Whisper:
+   - Evidencia: RoBorregos/home2 (commit 1a0caeb563546328e64b758811dd3078db8fa81f)
+     Archivo: task_manager/scripts/hric_task_manager.py (lineas 303 a 315)
+     Archivo: hri/microservices/stt/transcriber_faster_whisper.py (lineas 76 a 100)
+   - Mecanismo: [VERIFICADO] Utiliza Faster-Whisper configurado con:
+     * `initial_prompt`: Sesga el decodificador de Whisper ("The question 'What is your favorite drink?' was asked").
+     * `hotwords`: Inyecta la lista oficial de bebidas y nombres (`hotwords=HOT_DRINKS`) en el tokenizer.
+     * Extraccion directa con LLM/regex: Parsea la entidad sin formular pregunta de verificacion.
+     * Si no se extrae nada con confianza suficiente, reintenta (retries=5) repitiendo la pregunta original
+       (lo cual esta permitido por reglamento).
+
+B. Estado en Base@Home:
+- Evidencia interna:
+  * src/base_athome_perception/base_athome_perception/guest_vocabulary.py:84
+    `GuestVocabulary` contiene `phonetic_key`, `match_name` y `match_drink`, y `whisper_prompt` (linea 185)
+    que ya publica en `/voice/initial_prompt`.
+  * src/base_athome_perception/base_athome_perception/guest_dialog.py:36
+    `extract_name_and_drink` extrae eficientemente nombres y bebidas cruzando con las listas oficiales.
+  * src/base_athome_perception/scripts/hri_receptionist_challenge.py:1711
+    Cuando se reconocen nombre y bebida, el nodo transiciona forzosamente a `STATE_ASK_CONFIRM`:
+    `self.say("Let me check. Your name is X, and your favorite drink is Y. Is that correct? ...")`
+    Esta transicion fue introducida en el commit `a8550a3` para evitar la penalidad de -40 pts por dato erroneo,
+    pero penaliza automaticamente los 60 pts de bonificacion del Item 1.7.
+  * En cambio, en la linea 1810 (`STATE_CONFIRM_DETAILS`), el robot ya dice:
+    `"Thank you, {self.current_name}! I noted that your favorite drink is {self.current_drink}."`
+    Esta frase es una AFIRMACION, no una pregunta, por lo que NO penaliza segun el reglamento.
+- Estado: [VERIFICADO] Conflicto identificado en ROADMAP.md seccion 5.
+
+C. Evaluacion comparativa y recomendacion para Base@Home:
+- Recomendacion de alto impacto y bajo riesgo:
+  1. Si `match_name` y `match_drink` obtienen coincidencias con distancia fonetica alta (similitud >= 0.8),
+     saltar `STATE_ASK_CONFIRM` y pasar directamente a `STATE_CONFIRM_DETAILS` (ganando +60 pts).
+  2. Si la similitud es baja o no se reconocio alguna palabra, NO preguntar "¿Es correcto?", sino pedir
+     que repita: "I could not hear you clearly. After the beep, please repeat your name and favorite drink."
+     (reglamento permite expresamente repeticiones por falta de audicion sin penalizar).
+
+
+--------------------------------------------------------------------------------
+3.4. RECEPCION DE BOLSA EN MANO (HANDOVER) Y SEGUIMIENTO DEL ANFITRION CON RE-ID
+--------------------------------------------------------------------------------
+Reglamento:
+- Item 1.10 (50 pts max): Recibir la bolsa del segundo invitado mano-a-mano.
+  El manipulador debe situarse a menos de 10 cm de la mano de la persona. El humano completa la entrega.
+  El robot no debe extenderse agresivamente contra el humano.
+- Item 1.11 (200 pts max): Seguir al anfitrion hasta el area de deposito sin perderlo.
+  Penalidades: -50 pts caida de bolsa; -50 pts rediscovery natural; -150 pts contacto fisico.
+- Item 1.12 (50 pts max): Soltar la bolsa en el piso en el area designada.
+
+A. Enfoques en la literatura y otros equipos:
+1. Recepcion de Bolsa (Handover Seguro):
+   - Evidencia: RoBorregos/home2 (commit 1a0caeb563546328e64b758811dd3078db8fa81f)
+     Archivo: vision/packages/vision_general/scripts/task_nodes/hric_commands.py (lineas 200 a 260)
+     Archivo: docs/ai/hric_vision_architecture.md (lineas 57, 82)
+   - Mecanismo: [VERIFICADO] Deteccion de muñeca humana mediante pose corporal:
+     * Corre `yolo11m-pose` extrayendo los keypoints de muñecas (kp 9 y 10).
+     * Proyecta los pixeles 2D a coordenadas 3D en el frame de la camara usando la imagen de profundidad.
+     * Selecciona la muñeca mas cercana al robot (con desempate por altura si ambas estan a distancia similar).
+     * El brazo ejecuta una trayectoria hacia la pose de observacion/espera (`GoToHand`) situando la pinza
+       a ~10 cm frente a la mano humana con los dedos abiertos.
+     * Emite un aviso sonoro/verbal: "Please place the bag in my gripper. I will close it in 3 seconds."
+     * Cierra la pinza controlando la corriente o esfuerzo (torque limit) para no apretar excesivamente.
+
+2. Seguimiento de Persona (Person Following) con Re-Identificacion (Re-ID):
+   - Evidencia A: RoBorregos/home2 (commit 1a0caeb563546328e64b758811dd3078db8fa81f)
+     Archivo: vision/packages/vision_general/scripts/models/tracker.py (lineas 45 a 88)
+     Archivo: vision/packages/vision_general/scripts/tracker_node.py (lineas 85 a 98)
+     Archivo: navigation/packages/nav_main/bt/follow_dynamic_point.xml (lineas 1 a 23)
+     Archivo: task_manager/scripts/test/test_follow_person.py (lineas 9 a 20)
+   - Evidencia B: malwaru/person_following_robot (commit d5a8ff7ebd6c261449868678241bf6072c2253db)
+     Archivo: scripts/person_tracker.py (lineas 26 a 80)
+   - Mecanismo: [VERIFICADO] Arquitectura en 3 niveles:
+     * Nivel 1 (Tracking visual cuadro a cuadro): YOLOv8n + ByteTrack (`persist=True`). Mantiene el ID del track
+       a 30 FPS sin costo computacional elevado mientras la persona este en el campo de vision.
+     * Nivel 2 (Re-Identificacion tras oclusion): Si el ID se pierde (la persona pasa detras de otra o un mueble),
+       se activa el extractor de caracteristicas ReID (red SWIN u OSNet-IBN). Se compara el embedding visual
+       con los guardados del anfitrion (similitud coseno >= 0.60). Si coincide, se reanuda el seguimiento sin
+       pedir asistencia al operador.
+     * Nivel 3 (Navegacion dinamica con Nav2):
+       El objetivo 3D de la persona en el mapa se suaviza con `person_goal_smoother.py` y se publica en `/goal_update`.
+       El Behavior Tree de Nav2 (`follow_dynamic_point.xml`) utiliza el nodo `GoalUpdater` para replanificar
+       en tiempo real hacia la meta movil, y el nodo `TruncatePath distance="0.4"` recorta los ultimos 40 cm
+       del camino para que la base se mantenga a una distancia social segura (0.8 - 1.2 m) sin colisionar con la persona.
+
+B. Estado en Base@Home:
+- Evidencia interna:
+  * src/base_athome_skills/base_athome_skills/mission/skills.py:150
+    `SkillSpec("follow_person", ..., status=UNAVAILABLE)`: No implementado en el stack de misiones.
+  * src/base_athome_perception/scripts/hri_receptionist_challenge.py:2126
+    Al completar el segundo invitado, el robot pasa a `STATE_CHALLENGE_COMPLETE` y finaliza.
+    No existen los estados para recibir bolsa, solicitar guia al anfitrion, seguirlo ni soltarla.
+  * src/base_athome_perception/base_athome_perception/arm_manipulation.py:222, 481
+    Existen `gripper(mm)` y `place_blocking()`, disenadas para manipular basura en el suelo, pero no hay
+    pose ensenada ni rutina de handover aereo (mano a mano).
+- Estado: [VERIFICADO] NO HAY (0 / 300 pts combinados).
+
+C. Evaluacion comparativa y recomendacion para Base@Home:
+- Handover: Nuestro brazo Piper tiene 6 DOF y pinza controlable en milimetros. Ensenar una pose `pre_handover`
+  a 70 cm del piso (altura promedio de mano relajada con bolsa) y detectar la muñeca con `yolov8n-pose.pt`
+  (ya en memoria) requiere poco esfuerzo.
+- Follow: Usar el Behavior Tree de Nav2 con `GoalUpdater` y `TruncatePath` es nativo en Nav2 Jazzy y no
+  requiere modificar el planificador protegido de la base, actuando como un cliente estandar de Nav2.
+
+
+--------------------------------------------------------------------------------
+3.5. MIRADA MIENTRAS NAVEGA Y MIENTRAS HABLA
+--------------------------------------------------------------------------------
+Reglamento:
+- Item 1.3: Look at the person talking, when receiving a guest (100 pts max).
+- Item 1.5: Look in the direction of navigation or at the navigation goal (30 pts max).
+- Item 1.9: While introducing guests, look to the correct guest while talking about the other guest (100 pts max).
+
+A. Enfoques en la literatura y otros equipos:
+1. Mirada activa en navegacion (Gaze Heading Coordination):
+   - Evidencia: tue-robotics/tue_robocup (commit 5bbf7bb13b635e798fc01d03e4a09b7cd6f421a9)
+     Archivo: challenge_receptionist/src/challenge_receptionist/receptionist.py (linea 65)
+   - Mecanismo: [VERIFICADO] Durante la navegacion, la cabeza pan-tilt no se queda fija al frente (0, 0).
+     Se orienta de forma continua hacia la orientacion de velocidad angular de la base (anticipando el giro)
+     o hacia el punto de destino (look_at_designator). En robots con pan-tilt, esto se logra suscribiendose a
+     `/cmd_vel` o calculando el angulo relativo entre la pose actual y el siguiente waypoint del camino de Nav2.
+
+2. Mirada cruzada durante la presentacion de invitados:
+   - Evidencia: RoBorregos/home2 (commit 1a0caeb563546328e64b758811dd3078db8fa81f)
+     Archivo: task_manager/scripts/hric_task_manager.py (lineas 472 a 514)
+   - Mecanismo: [VERIFICADO] Protocolo estricto de dos tiempos para la presentacion:
+     * Tiempo 1: El robot orienta la cabeza hacia el Invitado 2 (`follow_by_name(guest_2.name)`).
+       Dice: "Thanks for taking a seat {guest_2}. Allow me to introduce you to {guest_1}, their favorite drink is {guest_1_drink}."
+     * Tiempo 2: El robot gira la cabeza hacia el Invitado 1 (`follow_by_name(guest_1.name)`).
+       Dice: "Hello {guest_1}. This is {guest_2} and their favorite drink is {guest_2_drink}."
+     * De esta manera se cumple con precision matematica el Item 1.9: mirar a quien se le habla mientras se describe al otro.
+
+B. Estado en Base@Home:
+- Evidencia interna:
+  * src/base_athome_perception/scripts/hri_receptionist_challenge.py:1234
+    En `navigate_to_waypoint`, se fija la cabeza con `self.move_head_to(0.0, -5.0)` de forma estatica.
+    Durante todo el bucle de navegacion `while not self.navigator.isTaskComplete()` (linea 1260), la cabeza
+    permanece inmóvil, ignorando los giros de la base (0 / 30 pts en Item 1.5).
+  * src/base_athome_perception/scripts/hri_receptionist_challenge.py:1465-1475
+    El seguimiento reactivo de rostro (`scene.face_tracking_step`) funciona adecuadamente durante el saludo en la puerta.
+  * src/base_athome_perception/scripts/hri_receptionist_challenge.py:1995-2010
+    En `STATE_INTRODUCE_GUESTS`, emite un solo discurso general sin orientar la cabeza hacia cada persona.
+- Estado: [VERIFICADO] Mirada en recepcion: HECHO (100 pts). Mirada en navegacion: PARCIAL (0 / 30 pts). Mirada en introduccion: NO HECHO (0 / 100 pts).
+
+C. Evaluacion comparativa y recomendacion para Base@Home:
+- Recomendacion:
+  1. En `navigate_to_waypoint`: En el bucle de espera de Nav2, leer la velocidad angular comandada en `/cmd_vel`
+     u obtener el vector relativo a la meta y ajustar suavemente `target_pan_deg = clip(wz * gain, -40, 40)`.
+  2. En `STATE_INTRODUCE_GUESTS`: Dividir la presentacion en dos bloques, orientando el pan-tilt hacia las coordenadas
+     angulares del Invitado 2 al hablarle sobre el Invitado 1, y viceversa (+100 pts).
+
+
+--------------------------------------------------------------------------------
+3.6. OFRECER ASIENTO LIBRE
+--------------------------------------------------------------------------------
+Reglamento: Item 1.4 (200 pts max, 2 x 100 pts por invitado). Ofrecer un asiento libre verificado
+(silla, sillon o sofa) indicandolo verbal y gestualmente. El arbitro puede agregar o mover sillas.
+
+A. Enfoques en la literatura y otros equipos:
+1. Enfoque por Mapa Semantico y Geometria de Volumentes (TU Eindhoven):
+   - Evidencia: tue-robotics/tue_robocup (commit 5bbf7bb13b635e798fc01d03e4a09b7cd6f421a9)
+     Archivo: challenge_receptionist/src/challenge_receptionist/find_empty_seat.py (lineas 50 a 100)
+   - Mecanismo: [VERIFICADO] Mantiene una base de datos de entidades del entorno (ED world model).
+     Cada asiento tiene un volumen delimitado ("on-top-of volume"). El robot inspecciona con la camara RGB-D
+     si existen puntos de nube o entidades dentro de dicho volumen (`CheckVolumeEmpty`). Si el volumen esta
+     vacio, senala el asiento.
+
+2. Enfoque Hibrido Vision 3D + Deteccion Dinamica de Sillas (RoBorregos @Home):
+   - Evidencia: RoBorregos/home2 (commit 1a0caeb563546328e64b758811dd3078db8fa81f)
+     Archivo: vision/packages/vision_general/scripts/task_nodes/hric_commands.py (lineas 275 a 310)
+     Archivo: docs/ai/hric_vision_architecture.md (linea 58)
+   - Mecanismo: [VERIFICADO] Realiza un barrido de 9 angulos con la camara. Detecta simultaneamente:
+     * Personas (YOLO clase 0).
+     * Sillas (YOLO clase 56 `chair`).
+     * Sofas (YOLO clase 57 `couch`).
+     Cruza la posicion 3D de cada silla detectada en el mapa con las personas sentadas. Si aparece una silla
+     nueva introducida por los arbitros que no estaba en el mapa previo, el detector la registra y calcula
+     si esta libre.
+
+B. Estado en Base@Home:
+- Evidencia interna:
+  * src/base_athome_perception/base_athome_perception/seat_occupancy.py:75-132
+    `seat_contains`, `seat_occupancy`, `choose_free_seat` y `image_fallback_occupied`.
+  * src/base_athome_perception/scripts/hri_receptionist_challenge.py:1399
+    `scan_seats()` barre los asientos definidos en `self.seats` (cargados de `semantic_map.yaml`),
+    mide profundidad de bboxes de personas con `PersonPoseDetector` (postura "sitting") y ubica la ocupacion.
+  * src/base_athome_perception/scripts/hri_receptionist_challenge.py:2015-2070
+    `STATE_DETECT_AND_OFFER_SEAT` elige el asiento libre, mueve la cabeza al angulo del asiento,
+    dice la frase correspondiente y ejecuta el gesto de senalamiento con el brazo (`pose_gesture`, `point_couch` o `point_chair`).
+- Estado: [VERIFICADO] simulacion (SIM_PASS con 122 tests pasando).
+  Brecha: Si el arbitro anade una silla no registrada en `semantic_map.yaml`, el robot no la reconoce.
+
+C. Evaluacion comparativa y recomendacion para Base@Home:
+- Nuestra implementacion actual de `seat_occupancy.py` es sumamente solida y completa para asientos
+  predefinidos en el mapa semantico.
+- Recomendacion: Mantener el algoritmo actual como via principal, y agregar una verificacion secundaria
+  de clases YOLO 56 (`chair`) y 57 (`couch`) durante el barrido visual para descubrir sillas imprevistas.
+================================================================================
+4. TABLA COMPARATIVA DE SOLUCIONES Y EVIDENCIA TECNICA
+================================================================================
+
+A continuacion se presenta la matriz de soluciones adoptadas por los equipos de referencia.
+Cada fila contiene la fuente verificada en codigo real con su commit SHA, archivo y lineas.
+
++--------------------------+-----------------------+------------------------------------------+-------------+
+| Habilidad                | Equipo / Repositorio  | Archivo y Lineas de Evidencia            | Estado      |
++--------------------------+-----------------------+------------------------------------------+-------------+
+| 1. Deteccion de timbre   | RoBorregos @Home      | hri/packages/speech/scripts/             | VERIFICADO  |
+|    (DSP adaptativo)      | home2 @ 1a0caeb       | doorbell_detection.py#L30-L100           |             |
+|                          |                       | hri/packages/speech/speech/              |             |
+|                          |                       | doorbell_detection_utils.py#L1-L100      |             |
++--------------------------+-----------------------+------------------------------------------+-------------+
+| 1. Deteccion de timbre   | Team CHARMIE          | src/charmie_sound_classification/        | VERIFICADO  |
+|    (MediaPipe / TFLite)  | charmie_ws @ 461577d  | sound_classification.py#L15-L95          |             |
++--------------------------+-----------------------+------------------------------------------+-------------+
+| 1. Deteccion de timbre   | MERLIN2-ARCH          | sound_recognition/sound_recognition/     | VERIFICADO  |
+|    (YAMNet AudioSet)     | sound_recognition     | sound_recognition_node.py#L19-L26,L71-108|             |
+|                          | @ e05cb12             |                                          |             |
++--------------------------+-----------------------+------------------------------------------+-------------+
+| 2. Atributos visuales    | RoBorregos @Home      | task_manager/subtask_managers/           | VERIFICADO  |
+|    (Moondream2 VLM)      | home2 @ 1a0caeb       | vision_tasks.py#L845-L895                |             |
+|                          |                       | docs/ai/hric_vision_architecture.md#L56  |             |
++--------------------------+-----------------------+------------------------------------------+-------------+
+| 2. Atributos visuales    | CATIE Robotics /      | TDP RoboCup 2024 / Paper:                | INFERIDO    |
+|    (YOLO-pose + HSV)     | RoboBreizh            | "CUHK-PEDES attribute extraction"        |             |
++--------------------------+-----------------------+------------------------------------------+-------------+
+| 3. Whisper sin preguntas | RoBorregos @Home      | task_manager/scripts/                    | VERIFICADO  |
+|    (hotwords + prompt)   | home2 @ 1a0caeb       | hric_task_manager.py#L303-L315           |             |
+|                          |                       | hri/microservices/stt/                   |             |
+|                          |                       | transcriber_faster_whisper.py#L76-L100   |             |
++--------------------------+-----------------------+------------------------------------------+-------------+
+| 3. ASR sin preguntas     | Tech United Eindhoven | challenge_receptionist/src/              | VERIFICADO  |
+|    (Gramatica cerrada)   | tue_robocup @ 5bbf7bb | challenge_receptionist/                  |             |
+|                          |                       | learn_guest.py#L81-L153                  |             |
++--------------------------+-----------------------+------------------------------------------+-------------+
+| 4. Handover de bolsa     | RoBorregos @Home      | vision/packages/vision_general/scripts/  | VERIFICADO  |
+|    (Muñeca 3D YOLO-pose) | home2 @ 1a0caeb       | task_nodes/hric_commands.py#L207-L260    |             |
++--------------------------+-----------------------+------------------------------------------+-------------+
+| 4. Follow person         | RoBorregos @Home      | vision/packages/vision_general/scripts/  | VERIFICADO  |
+|    (ByteTrack + ReID +   | home2 @ 1a0caeb       | models/tracker.py#L45-L88                |             |
+|     Nav2 BT Dinamico)    |                       | tracker_node.py#L85-L98                  |             |
+|                          |                       | navigation/packages/nav_main/bt/         |             |
+|                          |                       | follow_dynamic_point.xml#L1-L23          |             |
++--------------------------+-----------------------+------------------------------------------+-------------+
+| 4. Follow person         | malwaru / ROS 2       | scripts/person_tracker.py#L26-L80        | VERIFICADO  |
+|    (ByteTrack + D435)    | person_following_robot| launch/follow_person.launch.py           |             |
+|                          | @ d5a8ff7             |                                          |             |
++--------------------------+-----------------------+------------------------------------------+-------------+
+| 5. Mirada en navegacion  | Tech United Eindhoven | challenge_receptionist/src/              | VERIFICADO  |
+|    (Heading orientacion) | tue_robocup @ 5bbf7bb | challenge_receptionist/                  |             |
+|                          |                       | receptionist.py#L65                      |             |
++--------------------------+-----------------------+------------------------------------------+-------------+
+| 5. Mirada cruzada        | RoBorregos @Home      | task_manager/scripts/                    | VERIFICADO  |
+|    en introduccion       | home2 @ 1a0caeb       | hric_task_manager.py#L471-L514           |             |
++--------------------------+-----------------------+------------------------------------------+-------------+
+| 6. Asiento libre         | Tech United Eindhoven | challenge_receptionist/src/              | VERIFICADO  |
+|    (Volumen 3D ED)       | tue_robocup @ 5bbf7bb | challenge_receptionist/                  |             |
+|                          |                       | find_empty_seat.py#L50-L100              |             |
++--------------------------+-----------------------+------------------------------------------+-------------+
+| 6. Asiento libre         | RoBorregos @Home      | vision/packages/vision_general/scripts/  | VERIFICADO  |
+|    (YOLO 3D sillas/sofas)| home2 @ 1a0caeb       | task_nodes/hric_commands.py#L275-L310    |             |
++--------------------------+-----------------------+------------------------------------------+-------------+
+
+
+================================================================================
+5. ESTADO ACTUAL DE BASE@HOME: FORTALEZAS Y BRECHAS COMPROBADAS
+================================================================================
+
+A. Funciones internas verificadas en Base@Home (comprobadas con grep en src/):
+- `HriReceptionistChallengeNode`: src/base_athome_perception/scripts/hri_receptionist_challenge.py:127
+- `move_head_smooth`: src/base_athome_perception/scripts/hri_receptionist_challenge.py:1132
+- `move_head_to`: src/base_athome_perception/scripts/hri_receptionist_challenge.py:1140
+- `navigate_to_waypoint`: src/base_athome_perception/scripts/hri_receptionist_challenge.py:1226
+- `scan_seats`: src/base_athome_perception/scripts/hri_receptionist_challenge.py:1399
+- `choose_free_seat`: src/base_athome_perception/base_athome_perception/seat_occupancy.py:111
+- `seat_occupancy`: src/base_athome_perception/base_athome_perception/seat_occupancy.py:84
+- `face_tracking_step`: src/base_athome_perception/base_athome_perception/scene_analysis.py:195
+- `extract_name_and_drink`: src/base_athome_perception/base_athome_perception/guest_dialog.py:36
+- `phonetic_key`, `match_name`, `match_drink`, `whisper_prompt`:
+  src/base_athome_perception/base_athome_perception/guest_vocabulary.py:67, 107, 149, 185
+- `start_listening`: src/base_athome_perception/scripts/hri_receptionist_challenge.py:975
+- `gripper`, `place_blocking`: src/base_athome_perception/base_athome_perception/arm_manipulation.py:222, 481
+- `follow_person`: src/base_athome_skills/base_athome_skills/mission/skills.py:150 (status=UNAVAILABLE)
+
+B. Fortalezas Existentes:
+1. Dialogo y ASR: Whisper local en la Jetson, sesgado via `/voice/initial_prompt` con `whisper_prompt()`
+   de `guest_vocabulary.py`. Fonetica implementada con `phonetic_key` y matching de nombres/bebidas oficiales.
+2. Memoria Biometrica: Sistema YuNet + SFace con persistencia y aislamiento de sesion en `FaceRecognizer`.
+3. Verificacion de Asientos: `seat_occupancy.py` calcula ocupacion proyectando keypoints de postura en 3D
+   sobre los poligonos del mapa semantico (`semantic_map.yaml`), con fallback por conteo visual si no hay profundidad.
+4. Senalamiento Gestual: El brazo ejecuta `move_arm_to_named_pose("point_couch" / "point_chair")` mientras habla.
+
+C. Brechas Criticas Frente al RuleBook:
+1. Timbre: No existe escucha ni reaccion a timbre o knock. Se pierde el Item 1.1 (60 pts).
+2. Atributos de personas: No se extrae color ni prendas. El discurso de introduccion no menciona ningun
+   atributo visual del Invitado 1 al Invitado 2. Se pierde el Item 1.6 (80 pts).
+3. Pregunta de confirmacion: En `hri_receptionist_challenge.py:1711`, la transicion a `STATE_ASK_CONFIRM`
+   pregunta obligatoriamente "Is that correct?", perdiendo el Item 1.7 (60 pts).
+4. Entrega de bolsa (Handover): Ausente. No hay pose ni logica de recepcion aerea. Se pierde Item 1.10 (50 pts).
+5. Seguimiento del anfitrion: Ausente. En `skills.py` figura como `status=UNAVAILABLE`. Se pierde Item 1.11 (200 pts)
+   y el deposito de bolsa Item 1.12 (50 pts).
+6. Mirada durante navegacion: La cabeza se mantiene en (0, -5) inmóvil. Se pierde Item 1.5 (30 pts).
+7. Mirada cruzada al presentar: El robot no orienta la cabeza hacia quien le habla al describir al otro.
+   Se pierde Item 1.9 (100 pts).
+
+
+================================================================================
+6. HOJA DE RUTA Y RECOMENDACIONES CONCRETAS PARA BASE@HOME
+================================================================================
+
+--------------------------------------------------------------------------------
+TOP 3 RECOMENDACIONES PRINCIPALES (MAXIMO PUNTAJE, MINIMO RIESGO)
+--------------------------------------------------------------------------------
+
+1. RECOMENDACION 1: ELIMINAR LA PREGUNTA DE CONFIRMACION NO ESENCIAL Y OPTIMIZAR EL RECONOCIMIENTO (+60 pts)
+   - Accion: En `src/base_athome_perception/scripts/hri_receptionist_challenge.py`, modificar la transicion
+     en la linea 1711. Cuando `extract_name_and_drink` obtenga nombre y bebida con alta coincidencia en
+     `GuestVocabulary` (score fonetico >= 0.80), pasar DIRECTAMENTE a `STATE_CONFIRM_DETAILS` (linea 1810),
+     la cual emite una AFIRMACION formal ("Thank you, {name}! I noted that your favorite drink is {drink}"),
+     que el reglamento permite explicitamente sin penalidad.
+     Si la coincidencia es dudosa o vacia, NO preguntar "¿Es correcto?", sino formular una repeticion
+     por falta de audicion ("I could not hear you clearly. Please repeat your name and drink after the beep").
+   - Beneficio: Recupera 60 puntos limpios del Item 1.7 sin arriesgar la penalidad de -40 por dato erroneo.
+   - Archivo a cambiar: `src/base_athome_perception/scripts/hri_receptionist_challenge.py` (lineas 1709-1725).
+   - Validacion en simulation: Probar con `ATHOME_SIM=1` simulando entradas de texto; verificar que la
+     maquina de estados nunca pase por `STATE_ASK_CONFIRM` y llegue a `STATE_MEMORIZE_FACE`.
+   - Riesgo: Nulo para el hardware (solo logica de estados y dialogo).
+
+2. RECOMENDACION 2: PROTOCOLO DE MIRADA CRUZADA Y DESCRIPCION DE ATRIBUTOS (+180 pts)
+   - Accion:
+     a) Implementar un extractor de atributos liviano en `base_athome_perception/person_attributes.py`
+        que extraiga del torso (keypoints de hombros y caderas de `yolov8n-pose.pt` ya cargado) el color
+        dominante en espacio HSV (8 bins) y la presencia de lentes mediante gradiente en el puente nasal.
+     b) En `STATE_INTRODUCE_GUESTS` (linea 1995 de `hri_receptionist_challenge.py`), estructurar la
+        presentacion en dos partes con movimiento suave de cabeza (`move_head_smooth`):
+        * Paso 1: Mover cabeza al Invitado 2 (angulo conocido del asiento o cara detectada).
+          Hablar al Invitado 2: "Charlie, {guest_2}, this is {guest_1}. Their favorite drink is {guest_1_drink},
+          and they are wearing a {guest_1_shirt_color} shirt." (Gana Item 1.6 de atributos y mitad de Item 1.9).
+        * Paso 2: Mover cabeza al Invitado 1.
+          Hablar al Invitado 1: "{guest_1}, this is {guest_2}, whose favorite drink is {guest_2_drink}."
+          (Gana Item 1.8 y completa Item 1.9 de mirada).
+   - Beneficio: Suma 80 pts (atributos) + 100 pts (mirada cruzada) = +180 puntos.
+   - Archivos a cambiar:
+     * Crear `src/base_athome_perception/base_athome_perception/person_attributes.py`.
+     * Modificar `src/base_athome_perception/scripts/hri_receptionist_challenge.py` (lineas 1995-2015).
+   - Validacion en simulation: Correr tests unitarios de extraccion HSV sobre imagenes de prueba en dominio 77
+     y verificar la secuencia de comandos pan-tilt en `test_receptionist_dialog.py`.
+   - Riesgo: Muy bajo. Los movimientos de cabeza son dentro de los limites seguros de Dynamixel (-65 a +65 pan).
+
+3. RECOMENDACION 3: DETECTOR DE TIMBRE DSP LIVIANO ADAPTATIVO (+60 pts)
+   - Accion: Portar el detector DSP de energia y margen adaptativo (12 dB sobre ruido de fondo) de
+     `RoBorregos/home2` (`doorbell_detection_utils.py`) a `base_athome_perception/doorbell_detector.py`.
+     En `hri_receptionist_challenge.py`, en el estado `STATE_WAIT_DOOR`, armar la escucha del timbre
+     y reaccionar de inmediato transicionando a `STATE_GREET_AND_PROMPT` con saludo cordial.
+   - Beneficio: Suma 60 puntos del Item 1.1 sin consumo de GPU ni latencia de red neuronal.
+   - Archivos a cambiar:
+     * Crear `src/base_athome_perception/base_athome_perception/doorbell_detector.py`.
+     * Modificar `src/base_athome_perception/scripts/hri_receptionist_challenge.py` (lineas 1585-1650).
+   - Validacion en simulation: Inyectar archivos de audio (.wav) con timbres y golpes de puerta,
+     comprobando que el detector emita el evento en < 150 ms sin falsos positivos en silencio.
+   - Riesgo: Nulo para el hardware.
+
+
+--------------------------------------------------------------------------------
+PLAN DE IMPLEMENTACION PARA HABILIDADES RESTANTES (FASE 2)
+--------------------------------------------------------------------------------
+
+4. Mirada durante Navegacion (Item 1.5, +30 pts):
+   - Modificar `navigate_to_waypoint` (linea 1260) en `hri_receptionist_challenge.py`:
+     Durante el bucle `while not self.navigator.isTaskComplete()`, leer el topico `/cmd_vel`
+     (o la orientación angular hacia el proximo punto de la ruta global de Nav2) y calcular:
+     `pan_target = np.clip(cmd_vel.angular.z * 25.0, -40.0, 40.0)`.
+     Enviar `self.move_head_to(pan_target, -5.0)` a 10 Hz. La cabeza gira dinamicamente anticipando
+     las curvas de la base, cumpliendo el requisito estricto del RuleBook.
+   - Riesgo: Bajo. No modifica la navegacion protegida; solo lee `/cmd_vel` de forma pasiva y comanda el pan-tilt.
+
+5. Handover de Bolsa (Item 1.10, +50 pts):
+   - Ensenar una pose nominal de recepcion `pre_handover` para el brazo Piper en `arm_poses_and_limits.yaml`
+     (codo flexionado, pinza a 70 cm del piso orientada hacia el frente con apertura de 80 mm).
+   - En `hri_receptionist_challenge.py`, anadir el estado `STATE_RECEIVE_BAG` tras sentar al segundo invitado:
+     * El robot dice: "I can take your bag. Please place it in my gripper. I will close it in three seconds."
+     * El brazo va a `pre_handover`. Se espera 3 segundos y la pinza cierra suavemente a 5 mm.
+     * Si `/arm/status` reporta esfuerzo/corriente > 0.3 o apertura > 2 mm, la bolsa fue recibida con exito.
+   - Riesgo: Medio. Requiere sesion supervisada (LAB_SUPERVISADO) para ensenar la pose del brazo y verificar
+     que no colisione con el torso ni con el humano.
+
+6. Seguimiento del Anfitrion (Item 1.11, +200 pts) y Deposito de Bolsa (Item 1.12, +50 pts):
+   - Integrar un cliente de Nav2 que utilice el Behavior Tree `follow_dynamic_point.xml` con `GoalUpdater`
+     y `TruncatePath distance="0.4"` (identico al probado por RoBorregos).
+   - El detector visual utiliza `yolov8n` + ByteTrack para publicar la coordenada 3D del anfitrion en `/goal_update`.
+   - Cuando el anfitrion dice "You can drop the bag here" (o tras llegar a la sala de destino), el robot
+     ejecuta `place_blocking()` (ya existente en `arm_manipulation.py:481`) depositando la bolsa en el piso.
+   - Riesgo: Alto. Mueve la base en un entorno dinamico con personas alrededor. Debe probarse exhaustivamente
+     en simulacion (`simulation/`) antes de cualquier ensayo en hardware real.
+
+
+================================================================================
+7. QUE NO SE PUDO VERIFICAR FISICAMENTE (POR CONFIRMAR)
+================================================================================
+
+De acuerdo con las reglas de AGENTS.md y las restricciones de seguridad operativa:
+1. Conexion USB e inestabilidad electrica del Dynamixel U2D2:
+   En STATUS.md (2026-11-05) se registraron 118 desconexiones del U2D2 por caida de tension en el puerto.
+   Se cambio el cable pero falta la prueba con torque continuo y movimiento (`M`).
+   Estado: [POR CONFIRMAR EN ROBOT REAL CON USUARIO PRESENTE].
+2. Resistencia y agarre de bolsa deformable en pinza Piper:
+   En simulacion, el nudo de la bolsa se modela como un cuerpo rigido; en la realidad una bolsa de plastico
+   o tela fina puede deslizarse si no se ejerce suficiente fuerza de apriete o si el coeficiente de friccion
+   de los dedos de goma es insuficiente.
+   Estado: [POR CONFIRMAR EN LAB_SUPERVISADO].
+3. Rango acustico y relacion senal/ruido (SNR) del microfono real de la cabeza frente al timbre:
+   El detector DSP requiere calibrar el margen de umbral (confirm_margin_db = 12 dB) con el ruido de
+   fondo de los ventiladores de la NUC y Jetson encendidas.
+   Estado: [POR CONFIRMAR CON MEDICION ACUSTICA REAL].
+4. Ancho de paso y navegacion Nav2 detras de personas en pasillos angostos:
+   El comportamiento de `TruncatePath` a 40 cm y la reactividad del TEB/DWB local planner frente a las piernas
+   humanas solo ha sido verificado en simuladores de otros equipos; falta validar que el footprint de 44 cm
+   de Base@Home no genere oscilaciones en esquinas.
+   Estado: [POR CONFIRMAR EN SIMULACION LOCAL CON ROS_DOMAIN_ID=77].
+
+================================================================================
+FIN DEL DOCUMENTO DE INVESTIGACION TECNICA (docs/INVESTIGACION_HRI.txt)
+================================================================================
