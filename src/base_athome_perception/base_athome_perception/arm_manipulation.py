@@ -54,7 +54,7 @@ try:  # HOME-45: ejecucion con resultado verificado por el controlador (real o s
 except ImportError:  # pragma: no cover
     FollowJointTrajectory = None
 
-from base_athome_perception import pose_store
+from base_athome_perception import bag_vision, pose_store
 from base_athome_perception import wrist_geometry as wg
 from base_athome_perception.moveit_bridge import MoveItBridge, decimate, pose_from, quat_from_matrix
 from base_athome_perception.piper_kinematics import PiperKinematicsSolver
@@ -69,7 +69,6 @@ if os.environ.get("ATHOME_SIM") == "1":  # en simulacion no pisar la calibracion
         os.makedirs(os.path.dirname(_SIM_CONFIG), exist_ok=True)
         shutil.copy(CONFIG, _SIM_CONFIG)
     CONFIG = _SIM_CONFIG
-BAG_MEMORY_TOLERANCE_M = 0.25      # detecciones de la muneca mas lejos que esto de la posicion guardada se descartan
 FLOOR_POSE = "pre_grasp_floor"     # se ensena con ensenar_pregrasp; si no hay, la calculada
 FLOOR_PREGRASP_DEG = [-15.4, 161.1, -112.4, 83.9, 78.0, -50.9]
 SHOULDER_IN_BASE = np.array([0.005, 0.175, 1.065])  # arm_base_link en base_link (URDF) con el elevador ARRIBA
@@ -412,29 +411,27 @@ class Manipulacion(Node):
         self.bag_expected = None if expected_xyz is None else [float(v) for v in expected_xyz]
         return True, ""
 
-    def _bag_point(self, box):
-        """Punto a agarrar en base_link: rayo de la camara por la parte alta de la bolsa, cortado con plane_z."""
+    def _bag_candidates(self, dets, size):
+        """Mide cada deteccion con bag_vision y deja solo la que corresponde a la bolsa. (dets, punto base_link o None)."""
         try:
-            cam = self.tf_buf.lookup_transform("base_link", "arm_camera_optical_frame", rclpy.time.Time())
+            cam = self.tf_buf.lookup_transform("base_footprint", "arm_camera_optical_frame", rclpy.time.Time())
             ground = self.tf_buf.lookup_transform("base_footprint", "base_link", rclpy.time.Time())
         except Exception as e:  # noqa: BLE001 - sin TF no hay medicion: no se agarra a ciegas
             self.get_logger().warn(f"Sin TF de la camara de muneca: {e}", throttle_duration_sec=5.0)
-            return None
+            return [], None
         t, q = cam.transform.translation, cam.transform.rotation
-        x, y, z, w = q.x, q.y, q.z, q.w
-        R = np.array([[1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
-                      [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
-                      [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)]])
-        x1, y1, x2, y2 = box
-        u, v = (x1 + x2) / 2.0, y1 + self.bag_detector.grasp_box_fraction * (y2 - y1)
-        point = wg.ray_plane_point([t.x, t.y, t.z], R, u, v, self.calib, self.plane_z - ground.transform.translation.z)
-        if point is not None and self.bag_expected is not None:
-            off = math.hypot(point[0] - self.bag_expected[0], point[1] - self.bag_expected[1])
-            if off > BAG_MEMORY_TOLERANCE_M:     # p. ej. la garra o el chasis: la bolsa no se mueve sola
-                self.get_logger().warn(f"Bolsa vista a {off * 100:.0f} cm de la memoria: la descarto",
-                                       throttle_duration_sec=3.0)
-                return None
-        return point
+        R = bag_vision.quat_to_R(q)
+        K = (self.calib.focal_px, self.calib.focal_px, self.calib.cx_px, self.calib.cy_px)
+        offset = ground.transform.translation
+        expected = None if self.bag_expected is None else (self.bag_expected[0] + offset.x, self.bag_expected[1] + offset.y)
+        measures = [bag_vision.wrist_measure(d[0], (t.x, t.y, t.z), R, K, self.plane_z, size) for d in dets]
+        best, why = bag_vision.choose_nearest(measures, expected)
+        if best is None:
+            if dets:
+                self.get_logger().warn(f"Bolsa de la muneca descartada: {why}", throttle_duration_sec=3.0)
+            return [], None
+        xy = measures[best].xy
+        return [dets[best]], np.array([xy[0] - offset.x, xy[1] - offset.y, self.plane_z - offset.z])
 
     def pick_blocking(self, label: str = "", plane_z=None, retreat: bool = True, memory_xyz=None):
         """Agarre completo con confirmacion por el ancho MEDIDO de la pinza. (ok, mensaje, datos).
@@ -448,7 +445,7 @@ class Manipulacion(Node):
             if not ok:
                 return False, why, {}
         try:
-            ok, msg, data = self.detect_blocking(label, timeout_s=8.0 if plane_z is not None else 5.0)
+            ok, msg, data = self.detect_blocking(label, timeout_s=3.0 if memory_xyz is not None else 8.0 if plane_z is not None else 5.0)
             if not ok and memory_xyz is None:
                 return False, msg, data
             if not ok:     # de cerca puede dejar de verla: la base no se movio, sigue donde la medi
@@ -495,6 +492,9 @@ class Manipulacion(Node):
                 continue
             try:
                 dets = (self.bag_detector if self.bag_vision else self.detector).detect(frame)
+                bag_point = None
+                if self.bag_vision:
+                    dets, bag_point = self._bag_candidates(dets, (frame.shape[1], frame.shape[0]))
             except Exception as e:
                 self.get_logger().warn(f"Detector: {e}", throttle_duration_sec=10.0)
                 time.sleep(0.5)
@@ -508,12 +508,12 @@ class Manipulacion(Node):
                 z = wg.size_distance(width, self.calib)
                 with self.lock:
                     q_det = list(self.joints_deg)
-                if self.plane_z is not None:
-                    obj = self._bag_point(box)
-                    if obj is None:
+                if self.bag_vision:
+                    if bag_point is None:      # el tracker sostiene la caja vieja, pero sin medicion no hay objetivo
                         self.detection = None
                         time.sleep(0.05)
                         continue
+                    obj = bag_point
                 else:
                     obj = self._object_point(box, z, q_det)
                 self.detection = (box, z)

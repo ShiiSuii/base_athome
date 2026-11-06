@@ -43,8 +43,11 @@ GRASP_GAP_M = 0.12                  # el objeto, por delante de la pinza en la p
 STROKE_M = _XACRO.get("torso_switch_stroke", 0.60)     # carrera entre sensores
 STROKE_MARGIN_M = 0.02              # no llegar a tocar el sensor en uso normal
 DOCK_DISTANCE_M = 0.40              # tramo final en linea recta y lento: Nav2 no se acerca mas (robot_radius 0.44)
-MIN_POINT_ANGLE_DEG = 35.0          # brazo separado del cuerpo: si no, esta colgando y no es un gesto
+MIN_POINT_ANGLE_DEG = 25.0          # brazo separado del cuerpo: si no, esta colgando y no es un gesto.
+                                    # Una persona con el hombro a 1.4 m apunta asi a una bolsa desde 0.65 m; con 35 ya no
+                                    # leia el gesto hacia una bolsa a menos de 1 m (simulacion, escenario "lejos")
 MAX_POINT_RANGE_M = 6.0
+BAG_RENAV_M = 0.03                  # mas corrida que esto, la base se vuelve a parar
 MAX_BAG_FROM_RAY_M = 1.0            # bolsa aceptada alrededor del punto senalado
 PLACE_TORSO_M = -0.45               # altura para soltar la bolsa en el piso
 PERSON_NEAR_M = 2.2                 # mas cerca de esto ya se ve bien el gesto: no hace falta moverse
@@ -102,17 +105,6 @@ def pointed_floor_point(shoulder: Point3, wrist: Point3, floor_z: float = 0.0,
     if math.hypot(x - float(wrist[0]), y - float(wrist[1])) > max_range_m:
         return None
     return x, y
-
-
-def choose_bag(target_xy: Sequence[float], bags: Sequence[Point3],
-               max_distance_m: float = MAX_BAG_FROM_RAY_M) -> Optional[Point3]:
-    """La bolsa mas cercana al punto senalado, si hay una razonablemente cerca."""
-    best, best_d = None, float(max_distance_m)
-    for b in bags:
-        d = math.hypot(float(b[0]) - float(target_xy[0]), float(b[1]) - float(target_xy[1]))
-        if d <= best_d:
-            best, best_d = b, d
-    return best
 
 
 def stand_pose(bag_xy: Sequence[float], from_xy: Sequence[float], extra_back_m: float = 0.0,

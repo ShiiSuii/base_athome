@@ -132,8 +132,6 @@ class BagDetector:
     """Bolsas con YOLO-World en la CPU de la NUC (~125 ms). Pesos: models/yolov8s-worldv2.pt, no versionados."""
 
     source = "YOLO-World bolsas"
-    grasp_box_fraction = 0.15     # plane_z es la parte alta de la bolsa: el rayo pasa cerca del borde de arriba
-
     def __init__(self, models_dir: str, conf: float = 0.15, ignore_own_robot: bool = False):
         self.weights = os.path.join(models_dir, "yolov8s-worldv2.pt")
         self.conf = conf
@@ -154,6 +152,12 @@ class BagDetector:
             finally:
                 os.chdir(cwd)
 
+    def detect_all(self, frame) -> List[Tuple[Box, float, str]]:
+        """Todo lo que ve, distractores incluidos: para el debug."""
+        self.load()
+        r = self.model.predict(frame, imgsz=640, conf=0.15, verbose=False, device="cpu")[0]
+        return [(tuple(float(v) for v in b.xyxy[0].tolist()), float(b.conf), r.names[int(b.cls)]) for b in r.boxes]
+
     def detect(self, frame) -> List[Tuple[Box, float, str]]:
         self.load()
         r = self.model.predict(frame, imgsz=640, conf=self.conf, verbose=False, device="cpu")[0]
@@ -168,9 +172,8 @@ class SimColorDetector:
     """Detector para la simulacion (ATHOME_SIM=1): segmenta el objeto magenta que dibuja sim_robot.
     Misma interfaz que WristDetector.detect -> [(caja, confianza, etiqueta)]."""
 
-    grasp_box_fraction = 0.5      # el objeto simulado esta centrado en plane_z
-
-    def __init__(self, *_, **__):
+    def __init__(self, *_, ignore_own_robot: bool = False, **__):
+        self.ignore_own_robot = ignore_own_robot
         self.source = "sim-color"
         self.misses = 0
 
@@ -190,14 +193,19 @@ class SimColorDetector:
             if area >= 40:
                 dets.append(((float(x), float(y), float(x + w), float(y + h)), 0.9,
                              os.environ.get("ATHOME_SIM_OBJECT_LABEL", "pringles can")))
+        if self.ignore_own_robot:
+            dets = [d for d in dets if not is_own_robot_box(d[0], frame.shape[0])]
         return dets
 
+    def detect_all(self, frame):
+        return self.detect(frame)
 
-def make_bag_detector(models_dir: str):
-    """Detector de bolsas real, o el de la simulacion."""
+
+def make_bag_detector(models_dir: str, wrist: bool = True):
+    """Detector de bolsas, real o de la simulacion. En la muneca descarta al propio robot y exige mas confianza."""
     if os.environ.get("ATHOME_SIM") == "1":
-        return SimColorDetector()
-    return BagDetector(models_dir, conf=WRIST_BAG_MIN_CONF, ignore_own_robot=True)
+        return SimColorDetector(ignore_own_robot=wrist)
+    return BagDetector(models_dir, conf=WRIST_BAG_MIN_CONF, ignore_own_robot=True) if wrist else BagDetector(models_dir)
 
 
 def make_detector(models_dir: str):

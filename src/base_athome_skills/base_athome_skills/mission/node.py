@@ -23,6 +23,7 @@ from typing import Optional
 import numpy as np
 
 import rclpy
+from tf2_ros import Buffer, TransformListener
 from rclpy.action import ActionClient
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
@@ -100,6 +101,8 @@ class MissionExecutorNode(Node):
         # Bolsa senalada: pedido al detector, elevador y tramo final (bag_task.py)
         self.bag_target = None                # (x, y, z) en map, medido por la cabeza
         self.bag_memory = None                # (x, y, z) en base_link, ya junto a la bolsa: la base no se mueve mas
+        self.tf_buf = Buffer()
+        self.tf_listener = TransformListener(self.tf_buf, self)
         self.robot_pose = None                # (x, y, yaw) en map, de AMCL
         self.odom_xy = None
         self.front_range = None
@@ -358,6 +361,16 @@ class MissionExecutorNode(Node):
         return self._with_manip(ctx, lambda m: m.place_blocking(), "place_failed")
 
     # ------------------------------------------------------------------ bolsa senalada
+    def _pose_now(self):
+        """(x, y, yaw) en map en este instante, por TF. AMCL solo publica cuando la base avanzo lo suficiente: su ultimo
+        mensaje puede estar atrasado decimetros, y ese atraso se volvia error de agarre al convertir la bolsa a la base."""
+        try:
+            t = self.tf_buf.lookup_transform("map", "base_footprint", rclpy.time.Time()).transform
+        except Exception:  # noqa: BLE001 - sin TF queda lo ultimo de AMCL
+            return self.robot_pose
+        q = t.rotation
+        return t.translation.x, t.translation.y, math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+
     def _amcl(self, msg):
         p = msg.pose.pose
         self.robot_pose = (p.position.x, p.position.y, 2.0 * math.atan2(p.orientation.z, p.orientation.w))
@@ -388,12 +401,12 @@ class MissionExecutorNode(Node):
         except ValueError:
             pass
 
-    def _ask_finder(self, ctx: SkillContext, mode: str, timeout: float):
+    def _ask_finder(self, ctx: SkillContext, mode: str, timeout: float, **extra):
         """Pedido a bag_finder. Devuelve (respuesta, None) o (None, SkillResult de error)."""
         if self.pub_bag_req.get_subscription_count() == 0:
             return None, SkillResult.failure("finder_unavailable", "bag_finder no esta corriendo")
         rid = uuid.uuid4().hex[:8]
-        self.pub_bag_req.publish(String(data=json.dumps(dict(id=rid, mode=mode, timeout_s=timeout))))
+        self.pub_bag_req.publish(String(data=json.dumps(dict(id=rid, mode=mode, timeout_s=timeout, **extra))))
         end = time.time() + timeout + 3.0
         while time.time() < end:
             if ctx.cancel.is_set():
@@ -418,7 +431,7 @@ class MissionExecutorNode(Node):
             return err
         if self.robot_pose is None:
             return SkillResult.failure("no_person", "no se la pose del robot")
-        pose = bag_task.person_stand_pose(res["person"], self.robot_pose)
+        pose = bag_task.person_stand_pose(res["person"], self._pose_now())
         if pose is None:
             return SkillResult.success("la persona ya esta cerca", person=res["person"])
         return self._navigate(ctx, "hacia la persona", pose)
@@ -436,7 +449,7 @@ class MissionExecutorNode(Node):
         """Ya junto a la bolsa y con el elevador arriba: guarda donde esta. Sin medicion de la muneca, queda la de la cabeza."""
         if self.bag_target is None or self.robot_pose is None:
             return SkillResult.failure("no_bag_target", "no hay bolsa ubicada")
-        head = list(bag_task.object_in_base(self.bag_target, self.robot_pose))
+        head = list(bag_task.object_in_base(self.bag_target, self._pose_now()))
         head[2] -= bag_task.GROUND_TO_BASE_LINK_M
         z = self.bag_target[2]
         res = self._with_manip(ctx, lambda m: m.locate_bag_blocking(z, head), "bag_not_found")
@@ -474,8 +487,21 @@ class MissionExecutorNode(Node):
         grasp, why = self._floor_grasp()
         if grasp is None:
             return SkillResult.failure("pose_too_close", why)
-        pose = bag_task.stand_pose(self.bag_target, self.robot_pose, extra_back_m=bag_task.DOCK_DISTANCE_M, grasp=grasp)
-        return self._navigate(ctx, "lejos de la bolsa", pose)
+        pose = bag_task.stand_pose(self.bag_target, self._pose_now(), extra_back_m=bag_task.DOCK_DISTANCE_M, grasp=grasp)
+        res = self._navigate(ctx, "lejos de la bolsa", pose)
+        if not res.ok:
+            return res
+        # Ya cerca, la cabeza mide mejor. Sin esta medicion sigue con la de lejos: la muneca es la siguiente oportunidad.
+        again, err = self._ask_finder(ctx, "refine_bag", min(8.0, ctx.remaining()), near=list(self.bag_target[:2]))
+        if err is not None:
+            return SkillResult.success(f"{res.message}; no pude volver a medirla: {err.message}")
+        moved = math.hypot(again["bag"][0] - self.bag_target[0], again["bag"][1] - self.bag_target[1])
+        self.bag_target = tuple(float(v) for v in again["bag"])
+        if moved < bag_task.BAG_RENAV_M:
+            return SkillResult.success(f"{res.message}; medida de nuevo, corrijo {moved * 100:.0f} cm", bag=list(self.bag_target))
+        pose = bag_task.stand_pose(self.bag_target, self._pose_now(), extra_back_m=bag_task.DOCK_DISTANCE_M, grasp=grasp)
+        res = self._navigate(ctx, "lejos de la bolsa, corregido", pose)
+        return SkillResult.success(f"{res.message}; corregi {moved * 100:.0f} cm", bag=list(self.bag_target)) if res.ok else res
 
     def h_dock_bag(self, ctx: SkillContext) -> SkillResult:
         if self.odom_xy is None:

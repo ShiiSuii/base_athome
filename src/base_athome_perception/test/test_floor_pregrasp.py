@@ -6,7 +6,6 @@ import threading
 import time
 from pathlib import Path
 
-import numpy as np
 import pytest
 
 from base_athome_perception import wrist_geometry as wg
@@ -16,31 +15,6 @@ from base_athome_skills.mission import bag_task as bt
 
 CAL = wg.WristCalib()
 os.environ.setdefault("ROS_DOMAIN_ID", "77")
-
-
-def _cam_down(x, y, z):
-    """Camara mirando al piso: optico z = -z mundo, x = -y mundo, y = -x mundo."""
-    return [x, y, z], np.array([[0, -1, 0], [-1, 0, 0], [0, 0, -1]], float)
-
-
-def test_center_pixel_hits_the_point_below_the_camera():
-    p, R = _cam_down(0.6, 0.1, 0.8)
-    out = wg.ray_plane_point(p, R, CAL.cx_px, CAL.cy_px, CAL, 0.3)
-    assert out == pytest.approx([0.6, 0.1, 0.3])
-
-
-def test_ray_does_not_need_the_box_size_and_grows_with_distance():
-    p, R = _cam_down(0.6, 0.1, 0.8)
-    near = wg.ray_plane_point(p, R, CAL.cx_px + 100, CAL.cy_px, CAL, 0.6)
-    far = wg.ray_plane_point(p, R, CAL.cx_px + 100, CAL.cy_px, CAL, 0.2)
-    assert abs(far[1] - 0.1) == pytest.approx(3 * abs(near[1] - 0.1), abs=1e-6)
-
-
-def test_plane_behind_the_camera_or_parallel_ray_gives_nothing():
-    p, R = _cam_down(0.6, 0.1, 0.8)
-    assert wg.ray_plane_point(p, R, CAL.cx_px, CAL.cy_px, CAL, 0.9) is None
-    horizontal = np.array([[0, 0, 1], [-1, 0, 0], [0, -1, 0]], float)
-    assert wg.ray_plane_point(p, horizontal, CAL.cx_px, CAL.cy_px, CAL, 0.3) is None
 
 
 def test_bag_classes_keep_distractors_out_of_the_results():

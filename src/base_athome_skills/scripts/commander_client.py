@@ -39,9 +39,11 @@ def run(text, timeout_s=300.0):
             continue
         now = [(s["id"], s["state"]) for s in m.get("steps", []) if s["state"] != "PENDING"]
         if now != last:
+            for step, state in now:
+                if last is None or (step, state) not in last:
+                    done = next(x for x in m["steps"] if x["id"] == step)
+                    print(f"  [{time.time() - t0:5.1f}s] {step}: {state} {done.get('message', '')}")
             last = now
-            if now:
-                print(f"  [{time.time() - t0:5.1f}s] {now[-1][0]}: {now[-1][1]}")
         if m.get("state") in FINAL:
             print(f"  FIN: {m['state']} {m.get('message', '')}")
             return m["state"] == "SUCCEEDED"

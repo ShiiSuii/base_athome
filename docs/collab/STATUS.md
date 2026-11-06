@@ -26,6 +26,20 @@ recupera por commit (§8). Editado por el integrador (Claude).
   (incluye la `home` re-enseñada `[73.87, 169.72, -138.02, 26.69, -15.7, -117.17]`).
 - Reparación tras el reinicio de la NUC: commit vacío `c98344d` rehecho como `f16f457`; respaldo `~/git_backup_20261103_165442`; `core.fsync=committed`.
 
+## 2a. Percepción de la bolsa unificada y simulación de lazo cerrado (2026-11-05)
+
+- **Módulo único:** `base_athome_perception/bag_vision.py`, usado por `bag_finder`, `calibrar_bolsa` y `arm_manipulation`. Antes eran tres copias que divergían: el debug mostraba números que la misión no usaría.
+- **Los 1557 cm:** se descartan los rayos de muñeca a menos de 20° bajo el horizonte, los de más de 1.6 m y las bolsas cortadas por el borde, siempre con motivo. Que esa sea la causa exacta es hipótesis compatible: falta medir ángulo y altura con TF en el robot.
+- **Cabeza:** mide con los puntos de profundidad de la caja (sin piso ni fondo), no con la cara frontal. Una bolsa cortada solo se acepta en la primera medición; `refine_bag` la vuelve a medir de cerca y exige verla entera.
+- **Asociación:** la muñeca confirma la bolsa de la cabeza, con compuerta de 35 cm; varias sin referencia no se adivinan.
+- **Bug real:** la conversión de la bolsa a la base usaba el último `/amcl_pose`, atrasado; daba 7-9 cm de error de agarre. Ahora usa TF (`_pose_now`).
+- **Gesto:** `MIN_POINT_ANGLE_DEG` de 35 a 25: con 35 no leía una bolsa a menos de 1 m de la persona. Sin validar con personas reales.
+- **Simulación:** `sim_scene.py` dibuja RGB y profundidad con z-buffer; `bag_finder` real corre contra esa imagen. Con `ATHOME_SIM=1` no usa YOLO: el detector es por color y la pose viene de keypoints simulados.
+- **Escenarios (simulación, distancia TCP-objeto al cerrar):** normal 1.6 cm; persona lejos 5.6 cm (OK con poco margen; el límite simulado es 6 cm y sin resolver: la cabeza quedó 5 cm corrida); persona moviéndose 2.0 cm; bolsa distractora 1.9 cm; cámara de muñeca desalineada 3° 3.4 cm; gesto a 1.4 m de la bolsa: rechazo correcto. En la tanda previa, con el código anterior a los últimos cambios: sin gesto y sin persona fallan con su motivo; bolsa de 45 cm 1.8 cm.
+- **Pruebas:** `pytest` de perception, skills y sim: 297 passed, dominio 77. YOLO real: `yolo_people` y `detect_all` corrieron sobre una imagen de muestra y `bag_finder` real arrancó en dominio 77.
+- **No probado:** nada en el robot real ni con bolsas reales. La simulación no demuestra seguridad física ni que la pinza sujete una bolsa deformable. Con la muñeca, la bolsa suele quedar cortada de cerca y se agarra con lo medido por la cabeza.
+- **Rollback:** revertir el commit de este bloque.
+
 ## 2b. Validar "take out the trash" en el robot real (nunca corrió; supervisar con E-stop a mano)
 
 1. Energizar. Comprobar `ros2 topic echo --once /arm/status`: `feedback_ok: true` (con energía apagada da false). `calibrar_pantilt`: `T`, `V`, `M`, sin caídas.

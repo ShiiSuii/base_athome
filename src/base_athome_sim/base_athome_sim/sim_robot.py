@@ -38,7 +38,7 @@ from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data
 from sensor_msgs.msg import CameraInfo, Image, JointState, LaserScan
 from std_msgs.msg import Bool, Float32, Float64, String
 from std_srvs.srv import SetBool, Trigger
-from base_athome_skills.mission import bag_task
+from base_athome_sim import sim_scene
 from tf2_ros import Buffer, StaticTransformBroadcaster, TransformBroadcaster, TransformListener
 from trajectory_msgs.msg import JointTrajectory
 from visualization_msgs.msg import Marker, MarkerArray
@@ -100,15 +100,24 @@ class SimRobot(Node):
         if os.environ.get("ATHOME_SIM_OBJECT_XYZ"):  # pruebas de alcance: "x,y,z" en base_footprint
             self.obj = [float(v) for v in os.environ["ATHOME_SIM_OBJECT_XYZ"].split(",")]
         self.obj_attached = False
+        self.gripper_was_closed = True
         # Bolsa fija en el mapa (ATHOME_SIM_BAG="x,y,z", z = la manija): sin esto el objeto sigue al robot
         self.bag_map = [float(v) for v in os.environ["ATHOME_SIM_BAG"].split(",")] if os.environ.get("ATHOME_SIM_BAG") else None
-        person = os.environ.get("ATHOME_SIM_PERSON", "0.5,1.8")
-        self.person_xy = [float(v) for v in person.split(",")]
+        self.person_xy = [float(v) for v in os.environ.get("ATHOME_SIM_PERSON", "0.5,1.8").split(",")]
+        self.person_pointing = False
+        self.person_points = os.environ.get("ATHOME_SIM_PERSON_POINTS", "1") == "1"   # 0: nunca hace el gesto
+        self.point_err = float(os.environ.get("ATHOME_SIM_POINT_ERR_M", "0.15"))     # la gente no apunta con precision
+        self.person_sway = float(os.environ.get("ATHOME_SIM_PERSON_SWAY_M", "0.0"))
+        self.bag2 = [float(v) for v in os.environ["ATHOME_SIM_BAG2"].split(",")] if os.environ.get("ATHOME_SIM_BAG2") else None
+        self.wrist_tilt_err = math.radians(float(os.environ.get("ATHOME_SIM_WRIST_TILT_ERR_DEG", "0")))   # montaje real distinto del modelo
+        self.head_pix_err = float(os.environ.get("ATHOME_SIM_DEPTH_NOISE_MM", "5"))
+        self.wrist_ghost = os.environ.get("ATHOME_SIM_WRIST_GHOST", "1") == "1"       # falso positivo sobre la garra
+        self.rng = np.random.default_rng(0)
         self.torso_pos, self.torso_goal = 0.0, 0.0
         self.bag_delivered = False
         self.pub_torso_js = self.create_publisher(JointState, "/torso/joint_states", 10)
         self.pub_torso_st = self.create_publisher(String, "/torso/status", 10)
-        self.pub_bag_res = self.create_publisher(String, "/bag_finder/result", 10)
+        self.pub_people = self.create_publisher(String, "/sim/people", 5)
         self.guest_present = False
         self.guest_idx = 0
         self.guest_d = float(gp("guest_distance_m"))
@@ -164,7 +173,7 @@ class SimRobot(Node):
         sub(PoseStamped, "/goal_pose", self._goal_pose)  # "2D Goal Pose" de RViz, como bt_navigator
         sub(Twist, "/cmd_vel", lambda m: setattr(self, "cmd_vel", (m.linear.x, m.angular.z, time.time())))
         sub(Float64, "/torso/goal", self._torso_goal)
-        sub(String, "/bag_finder/request", self._bag_request)
+        sub(String, "/hri/say_something", self._heard_robot)
         srv = lambda t, n, f: self.create_service(t, n, f, callback_group=self.cb)
         srv(SetBool, "/arm/set_enable", self._srv_enable)
         srv(SetBool, "/pan_tilt/set_torque", self._srv_torque)
@@ -194,7 +203,8 @@ class SimRobot(Node):
         if self.gz:
             self._setup_gazebo()
         else:
-            self.create_timer(1.0 / float(gp("camera_rate_hz")), self._cameras)
+            self.create_timer(1.0 / (min(float(gp("camera_rate_hz")), 5.0) if self.bag_map is not None else float(gp("camera_rate_hz"))),
+                              self._cameras)       # dibujar la escena es caro: no dejar sin tiempo a la base y al elevador
             self.create_timer(0.1, self._scan)
         self.create_timer(0.5, self._slow)
         self.create_timer(0.05, self._fast)
@@ -590,35 +600,35 @@ class SimRobot(Node):
             self.torso_goal = max(-0.59, min(0.0, float(msg.data)))
             self.get_logger().info(f"Elevador (sim) hacia {self.torso_goal:+.2f} m")
 
-    def _pointing_arm(self):
-        """Hombro y muneca de la persona simulada, apuntando a la bolsa."""
-        px, py = self.person_xy
-        shoulder = [px, py, 1.40]
-        dx, dy, dz = self.bag_map[0] - px, self.bag_map[1] - py, 0.0 - 1.40
-        n = math.sqrt(dx * dx + dy * dy + dz * dz)
-        return shoulder, [px + 0.6 * dx / n, py + 0.6 * dy / n, 1.40 + 0.6 * dz / n]
+    def _heard_robot(self, msg):
+        """La persona simulada obedece: senala cuando el robot se lo pide."""
+        if "point" in msg.data.lower() and self.person_points:
+            self.person_pointing = True
 
-    def _bag_request(self, msg):
-        """Mismo contrato que scripts/bag_finder.py, con los mismos calculos, y las posiciones del mundo simulado."""
-        req = json.loads(msg.data)
-        if req.get("mode") == "locate_person":
-            # como el real: la cabeza se centra en la persona
-            bearing = math.atan2(self.person_xy[1] - self.base.y, self.person_xy[0] - self.base.x) - self.base.yaw
-            self.pt.target = (max(-65.0, min(65.0, math.degrees(math.atan2(math.sin(bearing), math.cos(bearing))))), 0.0)
-            out = dict(id=req.get("id"), ok=True, person=list(self.person_xy))
-            threading.Timer(1.0, lambda: self.pub_bag_res.publish(String(data=json.dumps(out)))).start()
-            return
-        out = dict(id=req.get("id"), ok=False, error="not_pointing", message="nadie esta senalando")
-        if self.bag_map is not None and not self.obj_attached and not self.bag_delivered:
-            shoulder, wrist = self._pointing_arm()
-            target = bag_task.pointed_floor_point(shoulder, wrist)
-            bag = bag_task.choose_bag(target, [self.bag_map]) if target else None
-            if bag is None:
-                out.update(error="bag_not_found", message="no veo una bolsa donde senala")
+    def _person(self):
+        """La persona ahora: mira al robot y, si corresponde, apunta a la bolsa con el error de una persona real."""
+        if self.bag_map is None:
+            return None
+        xy = list(self.person_xy)
+        if self.person_sway:
+            xy[1] += self.person_sway * math.sin(2.0 * math.pi * time.time() / 6.0)
+        target = None
+        if self.person_pointing and not self.obj_attached and not self.bag_delivered:
+            target = (self.bag_map[0] + self.point_err, self.bag_map[1] - self.point_err)
+        return sim_scene.make_person(xy, (self.base.x, self.base.y), target)
+
+    def _world_faces(self, person):
+        faces = sim_scene.person_faces(person) if person else []
+        if self.bag_map is not None:
+            if self.obj_attached:
+                c, s = math.cos(self.base.yaw), math.sin(self.base.yaw)
+                xy = (self.base.x + c * self.obj[0] - s * self.obj[1], self.base.y + s * self.obj[0] + c * self.obj[1])
+                faces += sim_scene.bag_faces(xy, self.obj[2], center_z=self.obj[2] - 0.15)
             else:
-                out = dict(id=req.get("id"), ok=True, bag=list(bag), pointed=list(target))
-                self.get_logger().info(f"Bolsa senalada (sim): {bag}")
-        threading.Timer(1.5, lambda: self.pub_bag_res.publish(String(data=json.dumps(out)))).start()
+                faces += sim_scene.bag_faces(self.bag_map[:2], self.bag_map[2])
+        if self.bag2 is not None:
+            faces += sim_scene.bag_faces(self.bag2[:2], self.bag2[2])
+        return faces
 
     def _publish_scene(self, stamp):
         """Persona, gesto y punto de basura, para verlos en RViz."""
@@ -634,18 +644,19 @@ class SimRobot(Node):
             m.scale.x = m.scale.y = m.scale.z = 0.01   # RViz marca como error una escala 0, aun al borrar
             marks.append(m)
             return m
-        px, py = self.person_xy
+        px, py = self._person()["xy"]
         body = mark(1, Marker.CYLINDER)
         body.pose.position.x, body.pose.position.y, body.pose.position.z = px, py, 0.8
         body.scale.x, body.scale.y, body.scale.z = 0.35, 0.35, 1.6
         body.color.r, body.color.g, body.color.b, body.color.a = 0.2, 0.5, 0.9, 0.35
-        if not self.obj_attached and not self.bag_delivered:
-            shoulder, _ = self._pointing_arm()
+        person = self._person()
+        if self.person_pointing and not self.obj_attached and not self.bag_delivered:
+            shoulder = person["keypoints"][6]
             ray = mark(2, Marker.LINE_STRIP)
             ray.scale.x = 0.03
             ray.color.r, ray.color.g, ray.color.a = 1.0, 0.9, 1.0
             ray.points = [Point(x=shoulder[0], y=shoulder[1], z=shoulder[2]),
-                          Point(x=self.bag_map[0], y=self.bag_map[1], z=0.0)]
+                          Point(x=self.bag_map[0] + self.point_err, y=self.bag_map[1] - self.point_err, z=0.0)]
         else:
             gone = mark(2, Marker.LINE_STRIP)
             gone.action = Marker.DELETE
@@ -683,6 +694,11 @@ class SimRobot(Node):
             dia_mm = 1000.0 * float(self.get_parameter("object_diameter_m").value)
             # Objeto entre los dedos (TCP a < 6 cm): la pinza no puede cerrar por debajo de su diametro
             self.arm.grip_block_mm = dia_mm if (d < 0.06 or self.obj_attached) else None
+            closing = self.arm.gripper_mm <= dia_mm + 2.0
+            if closing and not self.gripper_was_closed and self.bag_map is not None:     # la verdad, para medir el error
+                self.get_logger().info(f"Pinza cerrada: TCP {np.round(tcp[1], 3).tolist()}, objeto "
+                                       f"{np.round(self.obj, 3).tolist()}, a {d * 100:.1f} cm")
+            self.gripper_was_closed = closing
             if not self.obj_attached and self.arm.gripper_mm <= dia_mm + 2.0 and d < 0.06:
                 self.obj_attached = True
                 self.get_logger().info("Objeto AGARRADO (sim)")
@@ -743,9 +759,18 @@ class SimRobot(Node):
         stamp = self.get_clock().now().to_msg()
         # --- RealSense de la cabeza (640x480, fx ~615) ---
         W, H, f = 640, 480, 615.0
-        rgb = np.full((H, W, 3), (70, 75, 80), np.uint8)
-        rgb[int(H * 0.62):] = (60, 90, 120)  # piso
-        depth = np.full((H, W), 3000, np.uint16)
+        person = self._person()
+        head = self._lookup("camera_color_optical_frame", "map") if self.bag_map is not None else None
+        if head is not None:     # la escena sale de la geometria: la percepcion real corre en lazo cerrado
+            self.pub_people.publish(String(data=json.dumps(dict(people=[person] if person else []))))
+            rgb, depth = sim_scene.render(head[0], head[1], (f, f, W / 2, H / 2), W, H, self._world_faces(person))
+            if self.head_pix_err:
+                noise = self.rng.normal(0.0, self.head_pix_err, depth.shape)
+                depth = np.where(depth > 0, np.clip(depth + noise, 1, 65535), 0).astype(np.uint16)
+        else:
+            rgb = np.full((H, W, 3), (70, 75, 80), np.uint8)
+            rgb[int(H * 0.62):] = (60, 90, 120)  # piso
+            depth = np.full((H, W), 3000, np.uint16)
         self._overlay_guest(rgb, depth)
         self.pub_rgb.publish(to_image(rgb, "bgr8", stamp, "camera_color_optical_frame"))
         self.pub_depth.publish(to_image(depth, "16UC1", stamp, "camera_color_optical_frame"))
@@ -759,7 +784,19 @@ class SimRobot(Node):
         # --- Camara de muneca: lata magenta proyectada con la pose real del brazo (TF) ---
         wimg = np.full((480, 640, 3), (150, 160, 165), np.uint8)
         cam = self._lookup("arm_camera_optical_frame", "base_footprint")
-        if cam is not None and not self.obj_attached:
+        wmap = self._lookup("arm_camera_optical_frame", "map") if self.bag_map is not None else None
+        if wmap is not None:
+            Rcw, tcw = wmap
+            if self.wrist_tilt_err:   # el montaje real no es el del modelo: la imagen sale de una camara corrida
+                a = self.wrist_tilt_err
+                Rcw = np.array([[1, 0, 0], [0, math.cos(a), -math.sin(a)], [0, math.sin(a), math.cos(a)]]) @ Rcw
+            K = (self.wfx, self.wfx, self.wcx, self.wcy)
+            wimg, _ = sim_scene.render(Rcw, tcw, K, 640, 480, self._world_faces(person))
+            for poly in (((0, 480), (0, 395), (105, 362), (120, 480)), ((640, 480), (640, 395), (535, 362), (520, 480))):
+                cv2.fillConvexPoly(wimg, np.array(poly, np.int32), (25, 25, 25))     # dedos de la garra, como en el robot real
+            if self.wrist_ghost:      # falso positivo real: una caja sobre la garra (imagen del robot, 2026-11-05)
+                cv2.rectangle(wimg, (30, 400), (90, 470), sim_scene.BAG_BGR, -1)
+        elif cam is not None and not self.obj_attached:
             pc = cam[0] @ np.array(self.obj) + cam[1]
             if pc[2] > 0.05:
                 u, v = self.wcx + self.wfx * pc[0] / pc[2], self.wcy + self.wfx * pc[1] / pc[2]

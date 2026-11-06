@@ -88,17 +88,6 @@ def lateral_offsets(cx: float, cy: float, z_est: float, calib: WristCalib) -> Tu
     return float(left), float(up)
 
 
-def ray_plane_point(cam_pos: Sequence[float], cam_rot: np.ndarray, u: float, v: float, calib: WristCalib,
-                    plane_z: float) -> Optional[np.ndarray]:
-    """Donde corta el rayo del pixel (u, v) al plano horizontal z = plane_z. Marco optico: x derecha, y abajo, z adelante.
-    No usa el tamano de la caja: sirve para objetos sin diametro conocido, como una bolsa. None si no lo corta adelante."""
-    ray = np.asarray(cam_rot, dtype=float) @ np.array([(u - calib.cx_px) / calib.focal_px, (v - calib.cy_px) / calib.focal_px, 1.0])
-    if abs(ray[2]) < 1e-3:
-        return None
-    s = (float(plane_z) - float(cam_pos[2])) / ray[2]
-    return None if s <= 0.0 else np.asarray(cam_pos, dtype=float) + s * ray
-
-
 def object_center(tcp: Sequence[float], R_tool: np.ndarray, advance_m: float, left_m: float, up_m: float,
                   calib: WristCalib) -> np.ndarray:
     """Centro del objeto en el mismo marco que `tcp`/`R_tool` (columnas = ejes de la herramienta).

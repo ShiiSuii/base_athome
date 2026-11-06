@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Debug visual de la bolsa (alias `calibrar_bolsa`). SOLO LECTURA: no mueve nada.
 
-Ventana con las dos camaras. Verde: bolsa. Rojo: descartada (propio robot o poca confianza). Gris: otras clases.
-Amarillo: brazo que senala.
+Ventana con las dos camaras. Verde: bolsa. Rojo: descartada, con su motivo. Gris: otras clases. Amarillo: brazo que senala.
+Mide con base_athome_perception.bag_vision, lo mismo que la mision: lo que muestra es lo que la mision creeria.
 Coordenadas en metros desde el piso, bajo el centro del robot: x adelante, y a su izquierda. Comparalas con una cinta.
 Teclas sobre la ventana: Q salir, S guardar imagen en /tmp, + y - cambiar la confianza minima.
 """
-import importlib.util
+import json
 import math
 import os
 import re
@@ -19,38 +19,23 @@ import time
 import cv2
 import numpy as np
 import rclpy
-import torch
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import CameraInfo, Image, JointState
+from std_msgs.msg import String
 from tf2_ros import Buffer, TransformListener
 
+from base_athome_perception import bag_vision as bv
 from base_athome_perception import pose_store
 from base_athome_perception import wrist_geometry as wg
-from base_athome_perception.wrist_detector import BAG_NAMES, WRIST_BAG_MIN_CONF, BagDetector, is_own_robot_box
+from base_athome_perception.wrist_detector import BAG_NAMES, WRIST_BAG_MIN_CONF, is_own_robot_box, make_bag_detector
 from base_athome_skills.mission import bag_task
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG = os.path.join(HERE, "..", "config", "arm_poses_and_limits.yaml")
 BASE = "base_footprint"
-
-
-def _load_finder_helpers():
-    spec = importlib.util.spec_from_file_location("bag_finder", os.path.join(HERE, "bag_finder.py"))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod.deproject, mod.depth_at
-
-
-deproject, depth_at = _load_finder_helpers()
-
-
-def quat_to_R(q):
-    x, y, z, w = q.x, q.y, q.z, q.w
-    return np.array([[1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
-                     [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
-                     [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)]])
+SIM = os.environ.get("ATHOME_SIM") == "1"
 
 
 def _bgr(msg):
@@ -71,13 +56,17 @@ class Checker(Node):
         self.create_subscription(Image, "/arm_camera/image_raw", lambda m: setattr(self, "wrist_img", _bgr(m)), qos)
         self.create_subscription(JointState, "/torso/joint_states", self._torso, 10)
         self.calib = wg.WristCalib.from_dict(pose_store.load_pose_config(CONFIG).get("wrist_camera_calibration"))
-        self.bags = BagDetector(os.path.join(HERE, "..", "models"))
-        if not self.bags.available():
-            raise SystemExit(f"Faltan los pesos del detector: {self.bags.weights}")
-        self.bags.load()
+        self.bags = make_bag_detector(os.path.join(HERE, "..", "models"), wrist=False)
         self.views, self.min_conf = {}, 0.15
-        from ultralytics import YOLO
-        self.pose_model = YOLO(os.path.join(HERE, "..", "models", "yolov8n-pose.pt"))
+        self.pose_model, self.sim_people = None, []
+        if SIM:
+            self.create_subscription(String, "/sim/people", lambda m: setattr(self, "sim_people", json.loads(m.data)["people"]), 5)
+        else:
+            if not self.bags.available():
+                raise SystemExit(f"Faltan los pesos del detector: {self.bags.weights}")
+            self.bags.load()
+            from ultralytics import YOLO
+            self.pose_model = YOLO(os.path.join(HERE, "..", "models", "yolov8n-pose.pt"))
 
     def _depth(self, m):
         self.depth = np.frombuffer(m.data, np.uint16).reshape(m.height, m.width).copy()
@@ -89,93 +78,80 @@ class Checker(Node):
         if "torso_lift_joint" in m.name:
             self.torso = m.position[list(m.name).index("torso_lift_joint")]
 
-    def _tf(self, frame):
+    def _tf(self, frame, base=BASE):
         try:
-            t = self.tf_buf.lookup_transform(BASE, frame, rclpy.time.Time()).transform
+            t = self.tf_buf.lookup_transform(base, frame, rclpy.time.Time()).transform
         except Exception:  # noqa: BLE001
             return None
-        return np.array([t.translation.x, t.translation.y, t.translation.z]), quat_to_R(t.rotation)
+        return np.array([t.translation.x, t.translation.y, t.translation.z]), bv.quat_to_R(t.rotation)
 
-    def _best(self, img, name):
-        """Dibuja todo lo que ve el detector y devuelve la bolsa de mayor confianza."""
-        r = self.bags.model.predict(img, imgsz=640, conf=self.min_conf, verbose=False, device="cpu")[0]
-        view, best = img.copy(), None
-        for box in r.boxes:
-            b, c, label = box.xyxy[0].tolist(), float(box.conf), r.names[int(box.cls)]
-            bag = label in BAG_NAMES
-            ignored = bag and name == "muneca" and (is_own_robot_box(b, img.shape[0]) or c < WRIST_BAG_MIN_CONF)
-            if ignored:                # lo mismo que descarta la mision: propio robot o confianza baja
-                bag, label = False, f"IGNORADA {label}"
-            color = (0, 0, 255) if ignored else (0, 255, 0) if bag else (150, 150, 150)
-            cv2.rectangle(view, (int(b[0]), int(b[1])), (int(b[2]), int(b[3])), color, 3 if bag else 1)
-            cv2.putText(view, f"{label} {c:.2f}", (int(b[0]) + 2, max(16, int(b[1]) - 5)), 0, 0.55, color, 2 if bag else 1)
-            if bag and (best is None or c > best[1]):
-                best = (b, c, label)
+    def _draw(self, view, box, color, text, thick=1):
+        cv2.rectangle(view, (int(box[0]), int(box[1])), (int(box[2]), int(box[3])), color, thick)
+        cv2.putText(view, text, (int(box[0]) + 2, max(16, int(box[1]) - 5)), 0, 0.55, color, thick)
+
+    def _bags(self, img, name, measure):
+        """Mide cada bolsa detectada y dibuja todo. Devuelve [(medicion, confianza)] de las que no se descartan."""
+        view, out = img.copy(), []
+        for b, c, label in self.bags.detect_all(img):
+            if c < self.min_conf:
+                continue
+            if label not in BAG_NAMES:
+                self._draw(view, b, (150, 150, 150), f"{label} {c:.2f}")
+                continue
+            if name == "muneca" and is_own_robot_box(b, img.shape[0]):
+                self._draw(view, b, (0, 0, 255), f"descartada: propio robot {c:.2f}", 2)
+            elif name == "muneca" and c < WRIST_BAG_MIN_CONF:
+                self._draw(view, b, (0, 0, 255), f"descartada: confianza {c:.2f}", 2)
+            else:
+                m = measure(b)
+                if m.ok:
+                    self._draw(view, b, (0, 255, 0), f"{label} {c:.2f}", 3)
+                    out.append((m, c))
+                else:
+                    self._draw(view, b, (0, 0, 255), f"descartada: {m.reason}", 2)
         self.views[name] = view
-        return best
+        return out
 
     def pointing(self):
         """Dibuja el gesto sobre la vista de la cabeza. Devuelve el punto del piso senalado o un texto."""
-        if self.head_img is None or self.depth is None or self.K is None or self.pose_model is None:
+        if self.head_img is None or self.depth is None or self.K is None:
             return None, "sin imagen"
         cam = self._tf("camera_color_optical_frame")
         if cam is None:
             return None, "sin TF"
-        r = self.pose_model.predict(self.head_img, conf=0.45, verbose=False, device="cpu")[0]
-        if r.keypoints is None or r.keypoints.conf is None or len(r.keypoints.xy) == 0:
-            return None, "no ve personas"
+        if SIM:
+            world = self._tf("camera_color_optical_frame", "map")
+            people = bv.project_people(self.sim_people, world[0], world[1], self.K, 640, 480) if world else []
+        else:
+            people = bv.yolo_people(self.pose_model.predict(self.head_img, conf=0.45, verbose=False, device="cpu")[0])
         view = self.views.get("cabeza")
-        for kp, conf in zip(r.keypoints.xy.cpu().numpy(), r.keypoints.conf.cpu().numpy()):
-            for sh, wr, hip in ((5, 9, 11), (6, 10, 12)):
-                if min(conf[sh], conf[wr], conf[hip]) < 0.4:
-                    continue
-                pts = []
-                for i in (sh, wr, hip):
-                    z = depth_at(self.depth, kp[i][0], kp[i][1])
-                    pts.append(None if z is None else cam[0] + cam[1] @ deproject(kp[i][0], kp[i][1], z, *self.K))
-                if view is not None:
+        for _, kp, conf in people:
+            for sh, wr in ((5, 9), (6, 10)):
+                if view is not None and min(conf[sh], conf[wr]) >= bv.MIN_KP_CONF:
                     cv2.line(view, tuple(int(v) for v in kp[sh]), tuple(int(v) for v in kp[wr]), (0, 220, 255), 3)
-                if any(p is None for p in pts):
-                    continue
-                if bag_task.is_pointing(pts[0], pts[1], pts[2]):
-                    target = bag_task.pointed_floor_point(pts[0], pts[1])
-                    if target:
-                        return target, ""
-                    return None, "brazo separado, pero no apunta al piso"
-        return None, "ve persona, sin gesto de senalar"
+        return bv.pointed_target(people, self.depth, cam[0], cam[1], self.K)
 
     def head(self):
-        """(x, y, z superior) desde la cabeza, o un texto si no se puede."""
+        """Medicion de la bolsa desde la cabeza con su confianza, o un texto si no se puede."""
         if self.head_img is None or self.depth is None or self.K is None:
             return None, "sin imagen o profundidad de la RealSense"
         cam = self._tf("camera_color_optical_frame")
         if cam is None:
             return None, "sin TF de la camara de la cabeza"
-        best = self._best(self.head_img, "cabeza")
-        if best is None:
-            return None, "no ve una bolsa"
-        b = best[0]
-        cu, cv_ = (b[0] + b[2]) / 2, (b[1] + b[3]) / 2
-        z = depth_at(self.depth, cu, cv_)
-        if z is None:
-            return None, "ve una bolsa, sin profundidad valida"
-        center = cam[0] + cam[1] @ deproject(cu, cv_, z, *self.K)
-        top = cam[0] + cam[1] @ deproject(cu, b[1], z, *self.K)
-        return (center[0], center[1], top[2], best[1]), ""
+        found = self._bags(self.head_img, "cabeza", lambda b: bv.head_measure(b, self.depth, cam[0], cam[1], self.K))
+        return max(found, key=lambda f: f[1]) if found else None, "no ve una bolsa valida"
 
-    def wrist(self, plane_z):
-        """(x, y) con la camara de muneca cortando el rayo en plane_z, o un texto."""
+    def wrist(self, top_z, expected=None):
+        """Medicion de la bolsa desde la muneca, la mas cercana a la de la cabeza si la hay; o un texto."""
         if self.wrist_img is None:
             return None, "sin imagen de la camara de muneca"
         cam = self._tf("arm_camera_optical_frame")
         if cam is None:
             return None, "sin TF de la camara de muneca (falta joint_state_publisher?)"
-        best = self._best(self.wrist_img, "muneca")
-        if best is None:
-            return None, "no ve una bolsa"
-        b = best[0]
-        p = wg.ray_plane_point(cam[0], cam[1], (b[0] + b[2]) / 2, b[1] + 0.15 * (b[3] - b[1]), self.calib, plane_z)
-        return (None, "el rayo no corta esa altura") if p is None else ((p[0], p[1], best[1]), "")
+        K = (self.calib.focal_px, self.calib.focal_px, self.calib.cx_px, self.calib.cy_px)
+        found = self._bags(self.wrist_img, "muneca", lambda b: bv.wrist_measure(b, cam[0], cam[1], K, top_z, (self.wrist_img.shape[1], self.wrist_img.shape[0])))
+        best, why = bv.choose_nearest([f[0] for f in found], expected)
+        return (found[best], "") if best is not None else (None, why)
 
 
 def _screen_is_portrait():
@@ -202,7 +178,9 @@ GREEN, RED, WHITE, YELLOW = (80, 255, 80), (80, 80, 255), (240, 240, 240), (0, 2
 
 def main():
     signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))     # cerrar de verdad con TERM
-    torch.set_num_threads(2)      # no quitarle CPU a Nav2 ni a los controladores
+    if not SIM:
+        import torch
+        torch.set_num_threads(2)      # no quitarle CPU a Nav2 ni a los controladores
     rclpy.init()
     node = Checker()
     ex = MultiThreadedExecutor(num_threads=3)
@@ -218,19 +196,19 @@ def main():
             started = time.time()
             h, why_h = node.head()
             target, why_p = node.pointing()
-            z = h[2] if h else default_z
-            w, why_w = node.wrist(z)
+            z = h[0].top_z if h else default_z
+            w, why_w = node.wrist(z, h[0].xy if h else None)
             torso = "sin medir" if node.torso is None else f"{node.torso:+.2f} m"
             l_head = [(f"CABEZA  conf min {node.min_conf:.2f}  elevador {torso}", WHITE)]
-            l_head.append((f"BOLSA x {h[0]:.2f} y {h[1]:+.2f} alto {h[2]:.2f} ({h[3]:.2f})", GREEN) if h else (f"bolsa: {why_h}", RED))
+            l_head.append((f"BOLSA x {h[0].xy[0]:.2f} y {h[0].xy[1]:+.2f} alto {h[0].top_z:.2f} ({h[1]:.2f})", GREEN) if h else (f"bolsa: {why_h}", RED))
             l_head.append((f"SENALA al piso en x {target[0]:.2f} y {target[1]:+.2f}", YELLOW) if target else (f"gesto: {why_p}", WHITE))
             if target and h:
-                d = math.hypot(target[0] - h[0], target[1] - h[1])
+                d = math.hypot(target[0] - h[0].xy[0], target[1] - h[0].xy[1])
                 l_head.append((f"del gesto a la bolsa: {d * 100:.0f} cm ({'la acepta' if d <= bag_task.MAX_BAG_FROM_RAY_M else 'muy lejos'})", GREEN if d <= bag_task.MAX_BAG_FROM_RAY_M else RED))
             l_wrist = [(f"MUNECA  usando alto {z:.2f}" + ("" if h else " (por defecto)"), WHITE)]
-            l_wrist.append((f"BOLSA x {w[0]:.2f} y {w[1]:+.2f} ({w[2]:.2f})", GREEN) if w else (f"bolsa: {why_w}", RED))
-            if h and w:
-                d = math.hypot(h[0] - w[0], h[1] - w[1]) * 100
+            l_wrist.append((f"BOLSA x {w[0].xy[0]:.2f} y {w[0].xy[1]:+.2f} ({w[1]:.2f})", GREEN) if w else (f"bolsa: {why_w}", RED))
+            if h and w:     # solo con las dos mediciones validas: comparar basura con basura confunde
+                d = math.hypot(h[0].xy[0] - w[0].xy[0], h[0].xy[1] - w[0].xy[1]) * 100
                 l_wrist.append((f"diferencia entre camaras: {d:.0f} cm", GREEN if d <= 5 else RED))
             panels = [_panel(node.views.get("cabeza", node.head_img), l_head), _panel(node.views.get("muneca", node.wrist_img), l_wrist)]
             canvas = np.vstack(panels) if PORTRAIT else np.hstack(panels)
@@ -245,7 +223,7 @@ def main():
             if key in (ord("+"), ord("=")):
                 node.min_conf = min(0.9, node.min_conf + 0.05)
             if key == ord("-"):
-                node.min_conf = max(0.05, node.min_conf - 0.05)
+                node.min_conf = max(0.15, node.min_conf - 0.05)
     except KeyboardInterrupt:
         pass
     finally:

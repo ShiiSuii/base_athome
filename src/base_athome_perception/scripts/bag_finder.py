@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Ve a una persona senalando y ubica la bolsa con la RealSense de la cabeza. Mueve solo la cabeza.
 
-  sub /bag_finder/request  String JSON {id, timeout_s}
+  sub /bag_finder/request  String JSON {id, timeout_s, mode: locate_person | refine_bag (con near:[x,y]) | la bolsa senalada}
   pub /bag_finder/result   String JSON {id, ok, bag:[x,y,z], pointed:[x,y]} o {id, ok:false, error, message}
-z es la parte superior de la bolsa (donde esta la manija). Marco map. Los calculos estan en base_athome_skills.mission.bag_task.
-Detector de bolsas: YOLO-World (wrist_detector.BagDetector). La camara de muneca usa el mismo para el agarre.
+z es la parte superior de la bolsa (donde esta la manija). Marco map. Las mediciones estan en base_athome_perception.bag_vision.
+Detector de bolsas: YOLO-World (wrist_detector.BagDetector), el mismo de la muneca. Con ATHOME_SIM=1 corre todo este codigo
+contra la imagen dibujada por la simulacion, sin modelos: la persona llega con sus keypoints por /sim/people.
 """
 import json
 import math
@@ -14,7 +15,7 @@ import time
 
 import numpy as np
 import rclpy
-from geometry_msgs.msg import PointStamped, Vector3
+from geometry_msgs.msg import Vector3
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
@@ -23,32 +24,20 @@ from std_msgs.msg import String
 from std_srvs.srv import SetBool
 from tf2_ros import Buffer, TransformListener
 
+from base_athome_perception import bag_vision as bv
 from base_athome_perception import scene_analysis as scene
-from base_athome_perception.wrist_detector import BagDetector
+from base_athome_perception.wrist_detector import make_bag_detector
 from base_athome_skills.mission import bag_task
 
 MODELS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "models")
-L_SHOULDER, R_SHOULDER, L_WRIST, R_WRIST, L_HIP, R_HIP = 5, 6, 9, 10, 11, 12
-MIN_KP_CONF = 0.4
+SIM = os.environ.get("ATHOME_SIM") == "1"
 FRAME = "camera_color_optical_frame"
 SEARCH_PANS = (0.0, 30.0, -30.0, 60.0, -60.0)
 SEARCH_TILT = 0.0
 SEARCH_VIEW_S = 1.5
-
-
-def deproject(u, v, depth_m, fx, fy, cx, cy):
-    return np.array([(u - cx) * depth_m / fx, (v - cy) * depth_m / fy, depth_m])
-
-
-def depth_at(depth, u, v, radius=4):
-    """Mediana de la profundidad valida alrededor del pixel, en metros (None si no hay)."""
-    h, w = depth.shape[:2]
-    u, v = int(round(u)), int(round(v))
-    if not (0 <= u < w and 0 <= v < h):
-        return None
-    patch = depth[max(0, v - radius):v + radius + 1, max(0, u - radius):u + radius + 1]
-    valid = patch[patch > 0]
-    return float(np.median(valid)) / 1000.0 if valid.size else None
+LOST_PERSON_S = 1.5
+BAG_VIEWS = 3                 # mediciones coherentes de la bolsa antes de creerla
+BAG_MAX_SPREAD_M = 0.10
 
 
 class BagFinder(Node):
@@ -67,16 +56,25 @@ class BagFinder(Node):
         self.head = (0.0, 0.0)                 # posicion MEDIDA, en grados
         self.cli_torque = self.create_client(SetBool, "/pan_tilt/set_torque")
         self.create_subscription(JointState, "/pan_tilt/joint_states", self._head_state, 10)
-        from ultralytics import YOLO
-        self.pose_model = YOLO(os.path.join(MODELS, "yolov8n-pose.pt"))
-        self.bags = BagDetector(MODELS)
-        if not self.bags.available():
-            raise SystemExit(f"Faltan los pesos del detector de bolsas: {self.bags.weights}")
-        self.bags.load()
-        blank = np.zeros((480, 640, 3), np.uint8)
-        self.pose_model.predict(blank, verbose=False, device="cpu")
-        self.bags.detect(blank)
-        self.get_logger().info("bag_finder listo; detector de bolsas: YOLO-World")
+        self.head_speed, self._head_prev = 0.0, None     # grados por segundo, medidos
+        self.sim_people = []
+        self.pose_model = None
+        self.bags = make_bag_detector(MODELS, wrist=False)
+        if SIM:
+            self.create_subscription(String, "/sim/people", self._sim_people, 5)
+        else:
+            from ultralytics import YOLO
+            self.pose_model = YOLO(os.path.join(MODELS, "yolov8n-pose.pt"))
+            if not self.bags.available():
+                raise SystemExit(f"Faltan los pesos del detector de bolsas: {self.bags.weights}")
+            self.bags.load()
+            blank = np.zeros((480, 640, 3), np.uint8)
+            self.pose_model.predict(blank, verbose=False, device="cpu")
+            self.bags.detect(blank)
+        self.get_logger().info("bag_finder listo" + (" (simulacion)" if SIM else "; detector de bolsas: YOLO-World"))
+
+    def _sim_people(self, m):
+        self.sim_people = json.loads(m.data)["people"]
 
     def _rgb(self, m):
         img = np.frombuffer(m.data, np.uint8).reshape(m.height, m.width, -1)
@@ -91,6 +89,17 @@ class BagFinder(Node):
         d = dict(zip(m.name, m.position))
         if "pan_joint" in d and "tilt_joint" in d:
             self.head = (math.degrees(d["pan_joint"]), math.degrees(d["tilt_joint"]))
+            now = time.time()
+            if self._head_prev is None:
+                self._head_prev = (now, self.head)
+            elif now - self._head_prev[0] >= 0.2:
+                t0, h0 = self._head_prev
+                self.head_speed = math.hypot(self.head[0] - h0[0], self.head[1] - h0[1]) / (now - t0)
+                self._head_prev = (now, self.head)
+
+    def _head_still(self):
+        """Con la cabeza en movimiento la imagen y el TF no son del mismo instante: esa medicion se descarta."""
+        return self.head_speed <= bv.HEAD_STILL_DPS
 
     def _ensure_torque(self):
         """Sin torque el nodo ignora los comandos de la cabeza."""
@@ -103,48 +112,31 @@ class BagFinder(Node):
     def _info(self, m):
         self.K = (m.k[0], m.k[4], m.k[2], m.k[5])
 
-    def _to_map(self, xyz):
-        p = PointStamped()
-        p.header.frame_id = FRAME
-        p.point.x, p.point.y, p.point.z = float(xyz[0]), float(xyz[1]), float(xyz[2])
+    def _cam(self):
+        """Posicion y ejes de la camara en map, o None sin TF."""
         try:
-            out = self.tf_buf.transform(p, "map", timeout=rclpy.duration.Duration(seconds=0.3))
+            t = self.tf_buf.lookup_transform("map", FRAME, rclpy.time.Time()).transform
         except Exception:  # noqa: BLE001 - sin TF no hay medicion
             return None
-        return [out.point.x, out.point.y, out.point.z]
+        return np.array([t.translation.x, t.translation.y, t.translation.z]), bv.quat_to_R(t.rotation)
 
     def _frames(self):
         with self.lock:
             return (None, None) if self.rgb is None or self.depth is None else (self.rgb.copy(), self.depth.copy())
 
-    def _kp_map(self, kp, conf, i, depth):
-        if conf[i] < MIN_KP_CONF or self.K is None:
-            return None
-        z = depth_at(depth, kp[i][0], kp[i][1])
-        return None if z is None else self._to_map(deproject(kp[i][0], kp[i][1], z, *self.K))
-
-    def _poses(self, rgb):
-        res = self.pose_model.predict(rgb, conf=0.45, verbose=False, device="cpu")[0]
-        if res.keypoints is None or res.keypoints.conf is None or res.boxes is None:
-            return []
-        out = [(box, kp, conf) for box, kp, conf in zip(res.boxes.xyxy.cpu().numpy(), res.keypoints.xy.cpu().numpy(),
-                                                        res.keypoints.conf.cpu().numpy())]
-        return sorted(out, key=lambda p: -(p[0][2] - p[0][0]) * (p[0][3] - p[0][1]))     # la mas cercana primero
-
-    @staticmethod
-    def _torso_pixel(person):
-        """Centro del torso: al centrarlo entran los brazos y las caderas que hacen falta para leer el gesto."""
-        box, kp, conf = person
-        pts = [kp[i] for i in (L_SHOULDER, R_SHOULDER, L_HIP, R_HIP) if conf[i] >= MIN_KP_CONF]
-        if pts:
-            return float(np.mean([p[0] for p in pts])), float(np.mean([p[1] for p in pts]))
-        return float((box[0] + box[2]) / 2), float((box[1] + box[3]) / 2)
+    def _poses(self, rgb, cam=None):
+        if SIM:
+            cam = cam or self._cam()
+            if cam is None or self.K is None:
+                return []
+            return bv.project_people(self.sim_people, cam[0], cam[1], self.K, rgb.shape[1], rgb.shape[0])
+        return bv.yolo_people(self.pose_model.predict(rgb, conf=0.45, verbose=False, device="cpu")[0])
 
     def _track(self, person, img_w, img_h):
         """Un paso de seguimiento: lleva el torso de la persona al centro de la imagen."""
         if self.K is None:
             return
-        u, v = self._torso_pixel(person)
+        u, v = bv.torso_pixel(person)
         dpan, dtilt = scene.face_tracking_step(u, v, img_w, img_h, self.K[0], self.K[1], gain=0.6, deadband_deg=3.0, max_step_deg=8.0)
         if dpan or dtilt:
             self._send_head(self.head[0] + dpan, self.head[1] + dtilt)
@@ -168,17 +160,6 @@ class BagFinder(Node):
                 break
         return None
 
-    def _pointed_by(self, people, depth):
-        """Punto del piso que senala alguna de las personas, o None."""
-        for _, kp, conf in people:
-            for sh, wr, hip in ((L_SHOULDER, L_WRIST, L_HIP), (R_SHOULDER, R_WRIST, R_HIP)):
-                s, w, h = self._kp_map(kp, conf, sh, depth), self._kp_map(kp, conf, wr, depth), self._kp_map(kp, conf, hip, depth)
-                if s and w and h and bag_task.is_pointing(s, w, h):
-                    target = bag_task.pointed_floor_point(s, w)
-                    if target:
-                        return target
-        return None
-
     def _locate_person(self, req):
         """Encuentra a la persona, la centra y devuelve donde esta en el mapa."""
         end = time.time() + float(req.get("timeout_s", 30.0))
@@ -189,14 +170,14 @@ class BagFinder(Node):
         spots = []
         while time.time() < end and len(spots) < 5:
             rgb, depth = self._frames()
-            people = self._poses(rgb) if rgb is not None else []
+            cam = self._cam()
+            people = self._poses(rgb, cam) if rgb is not None else []
             if people:
                 self._track(people[0], rgb.shape[1], rgb.shape[0])
-                u, v = self._torso_pixel(people[0])
-                z = depth_at(depth, u, v) if self.K is not None else None
-                spot = self._to_map(deproject(u, v, z, *self.K)) if z else None
-                if spot:
-                    spots.append(spot)
+                if cam is not None and self.K is not None and self._head_still():
+                    spot = bv.person_map_position(people[0], depth, cam[0], cam[1], self.K)
+                    if spot:
+                        spots.append(spot)
             time.sleep(0.15)
         if not spots:
             return dict(fail, message="veo a alguien, sin distancia valida")
@@ -204,26 +185,12 @@ class BagFinder(Node):
         self.get_logger().info(f"Persona en ({person[0]:.2f}, {person[1]:.2f})")
         return dict(id=req.get("id"), ok=True, person=person)
 
-    def _bags(self, rgb, depth):
-        """Bolsas de la imagen: [x, y, z superior] en map."""
-        out = []
-        for b, _, _ in self.bags.detect(rgb):
-            cu, cv = (b[0] + b[2]) / 2, (b[1] + b[3]) / 2
-            z = depth_at(depth, cu, cv)
-            if z is None or self.K is None:
-                continue
-            center = self._to_map(deproject(cu, cv, z, *self.K))
-            top = self._to_map(deproject(cu, b[1], z, *self.K))
-            if center and top:
-                out.append([center[0], center[1], max(0.05, top[2])])
-        return out
-
     def _look_at(self, xy):
         """Lleva la cabeza a mirar el punto del piso, usando la pose actual de la cabeza."""
-        here = self._to_map([0.0, 0.0, 0.0])
-        ahead = self._to_map([0.0, 0.0, 1.0])
-        if not here or not ahead:
+        cam = self._cam()
+        if cam is None:
             return
+        here, ahead = cam[0], cam[0] + cam[1][:, 2]
         now_bearing = math.atan2(ahead[1] - here[1], ahead[0] - here[0])
         want = math.atan2(xy[1] - here[1], xy[0] - here[0])
         dpan = math.degrees(math.atan2(math.sin(want - now_bearing), math.cos(want - now_bearing)))
@@ -235,44 +202,86 @@ class BagFinder(Node):
         threading.Thread(target=self._serve, args=(json.loads(msg.data),), daemon=True).start()
 
     def _serve(self, req):
-        out = self._locate_person(req) if req.get("mode") == "locate_person" else self._find(req)
+        mode = req.get("mode")
+        out = self._locate_person(req) if mode == "locate_person" else self._refine(req) if mode == "refine_bag" else self._find(req)
         self.pub.publish(String(data=json.dumps(out)))
+
+    def _wait_gesture(self, end):
+        """Sigue a la persona hasta ver tres veces el gesto. (punto del piso, motivo si no)."""
+        hits, why = [], "no vi a nadie"
+        last_seen = time.time()
+        while time.time() < end and len(hits) < 3:        # tres vistas coherentes: un gesto, no un brazo de paso
+            rgb, depth = self._frames()
+            cam = self._cam()
+            people = self._poses(rgb, cam) if rgb is not None else []
+            if people:
+                last_seen = time.time()
+                self._track(people[0], rgb.shape[1], rgb.shape[0])
+            elif time.time() - last_seen > LOST_PERSON_S:    # p. ej. un reintento: la cabeza sigue mirando al piso
+                self._search_person(end)
+                last_seen = time.time()
+                continue
+            if cam is not None and self.K is not None and rgb is not None and self._head_still():
+                target, reason = bv.pointed_target(people, depth, cam[0], cam[1], self.K)
+                if target:
+                    hits.append(target)
+                else:
+                    why = reason
+            time.sleep(0.15)
+        if len(hits) < 3:
+            return None, why
+        return (float(np.median([h[0] for h in hits])), float(np.median([h[1] for h in hits]))), ""
+
+    def _find_bag(self, target, end, gate_m=bag_task.MAX_BAG_FROM_RAY_M, allow_clipped=True):
+        """Junta mediciones de la bolsa cerca del punto dado. (creencia o None, motivo si no)."""
+        belief, why = bv.BagBelief(), "no ve una bolsa"
+        while time.time() < end:
+            rgb, depth = self._frames()
+            cam = self._cam()
+            if rgb is not None and cam is not None and self.K is not None and self._head_still():
+                measures = [bv.head_measure(d[0], depth, cam[0], cam[1], self.K, allow_clipped) for d in self.bags.detect(rgb)]
+                best, why = bv.choose_nearest(measures, target, gate_m=gate_m)
+                if best is not None:
+                    belief.update(measures[best])
+                if belief.count >= BAG_VIEWS and belief.spread() <= BAG_MAX_SPREAD_M:
+                    return belief, ""
+            time.sleep(0.2)
+        return None, why
+
+    def _refine(self, req):
+        """Ya cerca: vuelve a medir la bolsa que se cree en `near`. De cerca la profundidad tiene menos error."""
+        end = time.time() + float(req.get("timeout_s", 8.0))
+        near = [float(v) for v in req["near"]]
+        self._ensure_torque()
+        self._look_at(near)
+        time.sleep(1.2)
+        belief, why = self._find_bag(near, end, gate_m=bv.BELIEF_GATE_M, allow_clipped=False)
+        if belief is None:
+            return dict(id=req.get("id"), ok=False, error="bag_not_found", message=why)
+        return dict(id=req.get("id"), ok=True, bag=[belief.xy[0], belief.xy[1], belief.top_z])
 
     def _find(self, req):
         """Sigue a la persona mientras espera el gesto, y despues mira donde senala y busca la bolsa."""
         end = time.time() + float(req.get("timeout_s", 30.0))
-        out = dict(id=req.get("id"), ok=False, error="not_pointing", message="no vi a nadie senalando")
         self._ensure_torque()
-        hits = []
-        while time.time() < end and len(hits) < 3:        # tres vistas coherentes: un gesto, no un brazo de paso
-            rgb, depth = self._frames()
-            people = self._poses(rgb) if rgb is not None else []
-            if people:
-                self._track(people[0], rgb.shape[1], rgb.shape[0])
-                target = self._pointed_by(people, depth)
-                if target:
-                    hits.append(target)
-            time.sleep(0.15)
-        if len(hits) == 3:
-            target = (float(np.median([h[0] for h in hits])), float(np.median([h[1] for h in hits])))
-            self.get_logger().info(f"Senala al piso en ({target[0]:.2f}, {target[1]:.2f})")
-            self._look_at(target)
-            time.sleep(1.5)
-            out = dict(id=req.get("id"), ok=False, error="bag_not_found", message="no veo una bolsa donde senala")
-            while time.time() < end:
-                rgb, depth = self._frames()
-                bag = bag_task.choose_bag(target, self._bags(rgb, depth)) if rgb is not None else None
-                if bag:
-                    self.get_logger().info(f"Bolsa en {np.round(bag, 2).tolist()}")
-                    out = dict(id=req.get("id"), ok=True, bag=[float(v) for v in bag], pointed=list(target))
-                    break
-                time.sleep(0.2)
-        return out
+        target, why = self._wait_gesture(end)
+        if target is None:
+            return dict(id=req.get("id"), ok=False, error="not_pointing", message=f"no vi a nadie senalando: {why}")
+        self.get_logger().info(f"Senala al piso en ({target[0]:.2f}, {target[1]:.2f})")
+        self._look_at(target)
+        time.sleep(1.5)
+        belief, why = self._find_bag(target, end)
+        if belief is None:
+            return dict(id=req.get("id"), ok=False, error="bag_not_found", message=f"no encuentro la bolsa senalada: {why}")
+        bag = [belief.xy[0], belief.xy[1], belief.top_z]
+        self.get_logger().info(f"Bolsa en {np.round(bag, 2).tolist()} (senalaba {np.round(target, 2).tolist()})")
+        return dict(id=req.get("id"), ok=True, bag=bag, pointed=list(target))
 
 
 def main():
-    import torch
-    torch.set_num_threads(2)      # no quitarle CPU a Nav2 ni a los controladores
+    if not SIM:
+        import torch
+        torch.set_num_threads(2)      # no quitarle CPU a Nav2 ni a los controladores
     rclpy.init()
     node = BagFinder()
     ex = MultiThreadedExecutor(num_threads=3)

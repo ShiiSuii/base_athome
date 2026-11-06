@@ -11,6 +11,8 @@ def test_pointing_needs_the_arm_away_from_the_body():
     assert not bt.is_pointing(shoulder, (0.02, 0, 0.9), hip)      # brazo colgando
     assert bt.is_pointing(shoulder, (0.45, 0, 1.1), hip)          # hacia adelante y abajo
     assert not bt.is_pointing(shoulder, (0.01, 0, 1.39), hip)     # sin brazo medible
+    assert not bt.is_pointing(shoulder, (0.15, 0, 0.85), hip)     # colgando, algo separado del cuerpo
+    assert bt.is_pointing(shoulder, (0.33, 0, 0.9), hip)          # bolsa a menos de 1 m de la persona
 
 
 def test_ray_hits_the_floor_where_it_points():
@@ -22,13 +24,6 @@ def test_ray_upward_horizontal_or_too_far_gives_nothing():
     assert bt.pointed_floor_point((0, 0, 1.4), (0.3, 0, 1.6)) is None
     assert bt.pointed_floor_point((0, 0, 1.4), (0.3, 0, 1.4)) is None
     assert bt.pointed_floor_point((0, 0, 1.4), (0.6, 0, 1.399)) is None   # casi horizontal: demasiado lejos
-
-
-def test_choose_the_bag_nearest_to_the_ray_and_reject_far_ones():
-    bags = [(2.0, 0.0, 0.3), (1.0, 0.1, 0.3)]
-    assert bt.choose_bag((1.1, 0.0), bags) == bags[1]
-    assert bt.choose_bag((5.0, 5.0), bags) is None
-    assert bt.choose_bag((1.0, 0.0), []) is None
 
 
 @pytest.mark.parametrize("start", [(0, 0), (-2, 1), (3, -3), (0.5, 4)])

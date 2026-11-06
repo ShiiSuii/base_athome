@@ -135,6 +135,12 @@ Escala: **P0** desbloquea seguridad/progreso · **P1** valor demostrable · **P2
 | HOME-67 | El lidar está a 38 cm: Nav2 no ve patas bajas, cajas ni bolsas. Evaluar la RealSense como fuente de obstáculos bajos. Es cambio de navegación: requiere decisión del usuario | Humano + Claude | propuesta |
 | HOME-65 | Ideas de papers para AIM 2027 e IROS 2027: `docs/PAPERS_IDEAS.txt` (Antigravity, revisado). Falta elegir y confirmar novedad | Humano + Claude | documento listo 2026-11-05 |
 | HOME-66 | AnyDesk estable y reconexión: diagnóstico y script revisable `scripts/anydesk_estable.sh` en rama de Antigravity; lo aplica el usuario con sudo. Contraseña desatendida la define el usuario | Antigravity + humano | despachada 2026-11-05 |
+| HOME-68 | Profundizar papers para AIM e IROS 2027: `docs/PAPERS_REVISION.txt` (Antigravity, pendiente de entrega y de verificar referencias) | Antigravity | Pendiente |
+| HOME-69 | Investigación profunda de otros equipos sobre la bolsa: percepción (A) y agarre y tarea (B). Base para confirmar el agarre por esfuerzo, pose de observación, plan B y correcciones por voz | Antigravity, luego Claude | En curso |
+| HOME-70 | Borrador del TDP | Antigravity | En curso |
+| HOME-71 | Web: analizar https://urubots.uy y preparar los datos para su programador, incluida la lista de papers | Antigravity | En curso |
+| HOME-72 | Plan de filmación del video de cualificación | Antigravity | En curso |
+| HOME-73 | Revisión adversaria del código de la bolsa | Antigravity | En curso |
 | HOME-55 | Receptionist en el robot: barrido de 2 filas (~16 s), seguimiento leve del rostro, revisión del pan-tilt al arrancar | humano + Claude | persona sentada detectada; revisión ✔ |
 
 ### P2 — Manipulación y competencia
