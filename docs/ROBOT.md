@@ -433,7 +433,7 @@ Todo esto es `UNIT_PASS`/`SIM_PASS`; ninguna prueba con actuadores reales está 
 
 ## 12. Limitaciones y riesgos conocidos
 
-- Seguridad de host (2026-11-03): URL de `origin` sin credenciales; NUC sin sudo sin contraseña; Jetson aún con `90-ubuntu-nopasswd` (`NOPASSWD: ALL`) más `91-ubuntu-jetson-head` (solo `systemctl/journalctl jetson-head`) a la espera de confirmar la contraseña de `ubuntu`; auto-aprobador de Orca eliminado.
+- Seguridad de host: los permisos de `sudo` de la Jetson están pendientes de revisión; el detalle no se documenta en este repo público.
 - Orbbec sin profundidad < 30 cm → estrategia de pose de observación a 35–45 cm, aproximación final abierta y confirmación por feedback de la pinza. Para profundidad registrada migrar a `OrbbecSDK_ROS2` (`v2-main`, verificar DC1).
 - Pringles (~75 mm) en el límite de apertura de la pinza (~70 mm).
 - Hokuyo de 5 m: limitado para lugares grandes (Restaurant).
