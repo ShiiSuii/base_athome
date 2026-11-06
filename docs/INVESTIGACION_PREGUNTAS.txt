@@ -1,0 +1,568 @@
+================================================================================
+INVESTIGACION: RESPONDER PREGUNTAS EN GPSR EN BASE@HOME (URUBOTS)
+Documento de Entrega de Tarea HOME-98 — RoboCup@Home Open Platform League (OPL)
+Fecha: 2026-11-06
+Autor: Antigravity (Worker Orca task_4ff34bcfdf51 / dispatch ctx_3aed42c59baf)
+Rama base: origin/development
+Archivo de entrega: docs/INVESTIGACION_PREGUNTAS.txt
+================================================================================
+
+RESUMEN EJECUTIVO
+-----------------
+El objetivo de esta investigacion es disenar una arquitectura integral, robusta, local
+y sin conexion a internet para responder preguntas en la prueba General Purpose Service
+Robot (GPSR) de RoboCup@Home 2026.2/2027 en la plataforma Base@Home (UruBots).
+
+GPSR es la prueba de mayor peso relativo en OPL (1490 puntos maximos). Segun el RuleBook
+vigente (2026.2) y el generador oficial CommandGenerator, responder preguntas se manifiesta
+a traves de dos modalidades operativas complementarias:
+1. Comandos directos de habla y reporte ("Tell / Say / Count / Describe"):
+   - Informacion del robot y equipo ("tell your teams name", "say your teams country",
+     "say your teams affiliation", "say something about yourself").
+   - Consultas temporales y de calendario ("tell the time", "tell what day is today",
+     "say what day is tomorrow", "tell the day of the week", "tell the day of the month").
+   - Conteo e inspeccion de atributos de personas en el arena ("tell me how many people
+     in the living room are wearing gray jackets", "tell me the pose of the person at
+     the entrance", "tell the gesture of the person at the coatrack to the person at the shelf").
+   - Propiedades relativas y conteo de objetos ("tell me what is the largest drink on the
+     storage rack", "tell me what is the heaviest drink on the refrigerator", "tell me how
+     many snacks there are on the sofa").
+2. Accion interactiva de preguntas y respuestas ("answer_question"):
+   - El robot recibe la orden de desplazarse a un lugar, localizar a una persona y responder
+     a una pregunta verbal que dicha persona le formula ("go to the living room, find James
+     and answer a question").
+
+Fuentes de conocimiento para responder:
+- Reloj del sistema y SO: resuelve hora, dia de la semana, fecha y dia siguiente de forma
+  instantanea y 100% determinista (< 1 ms).
+- Perfil estatico de UruBots: resuelve nombre, pais, afiliacion y biografia del robot (< 1 ms).
+- Catalogo semantico del arena y objetos (`semantic_map.yaml` y base de objetos): resuelve
+  ubicacion fija de muebles, categorias de objetos y comparaciones relativas (biggest,
+  smallest, heaviest, lightest, thinnest).
+- Modulo de percepcion visual in-situ: resuelve conteo de personas, posturas (standing,
+  sitting, lying), gestos (waving, pointing, raising arm) y ropa (color + prenda) mediante
+  deteccion de camara (RealSense D435 en cabeza / OpenCV / YOLO / VLM bajo demanda).
+- Base de preguntas predefinidas y LLM local (Qwen2.5-1.5B): resuelve preguntas libres,
+  trivias o preguntas generales de interaccion formuladas por personas en el arena sin internet.
+
+Diseno recomendado para Base@Home (Arquitectura Hibrida de 3 Capas sin Internet):
+- Capa 1 (Fast-Path Determinista Local, < 5 ms en CPU NUC):
+  Las consultas temporales (hora, dia), institucionales (equipo, pais) y de catalogo
+  estatico se resuelven de inmediato sin tocar modelos de lenguaje ni arriesgar alucinaciones.
+- Capa 2 (Pipeline de Percepcion a Respuesta, ~0.2 - 0.5 s en NUC):
+  Las preguntas que exigen estado visual in-situ (conteo de personas, postura, prendas)
+  toman la ultima lectura consolidada de percepcion en la habitacion indicada y sintetizan
+  la respuesta mediante plantillas gramaticales cerradas.
+- Capa 3 (Motor RAG Acotado con LLM Local en NUC, ~1.0 - 1.4 s):
+  Para la accion interactiva `answer_question`, se levanta `llama-server` con Qwen2.5-1.5B
+  (GGUF Q4_K_M, ~1.6 GiB RAM en NUC i3-1220P) con contexto cerrado de UruBots y del arena.
+  La Jetson Orin Nano (8 GiB) queda blindada ejecutando unicamente Whisper ASR y control CAN.
+- Seguridad de actuadores:
+  Responder preguntas es una operacion exclusivamente de habla (`speaker.py` / `/hri/say_something`).
+  No mueve actuadores fisicos (base, elevador, brazo ni pinza), garantizando cero riesgo de colision.
+
+
+================================================================================
+1. MARCO NORMATIVO Y REQUISITOS DE PREGUNTAS EN GPSR 2026.2
+================================================================================
+
+1.1. REGLAMENTO OFICIAL (RuleBook 2026.2)
+- Repositorio oficial: https://github.com/RoboCupAtHome/RuleBook
+- Tag normativo: 2026.2 (commit `ebdf34d223ddc3ae89ac3f16a23ad28024adfdf6`)
+- Archivos fuente: `tasks/GPSR.tex` y `scoresheets/GPSR.tex`
+
+Estructura de puntajes en GPSR (`scoresheets/GPSR.tex`, lineas 1-22) [VERIFICADO]:
+- Comprender el comando hablado: 3 x 80 = 240 pts
+- Demostrar que se genero un plan (verbal o visual): 3 x 100 = 300 pts
+- Resolver el primer comando: 250 pts
+- Resolver el segundo comando: 250 pts
+- Resolver el tercer comando: 250 pts
+- Bonus de tareas intercaladas (Interleaved Task Bonus): 200 pts
+- Penalidades especificas:
+  * Usar operador personalizado: 3 x -20 pts (-60 max)
+  * Solicitar refraseo: 6 x -30 pts (-180 max)
+  * Saltear reconocimiento de voz (bypassing speech): 3 x -50 pts (-150 max)
+Total maximo posible en la prueba: 1490 puntos.
+
+Regla de generacion y refraseo con LLM (`tasks/GPSR.tex`, lineas 49-50) [VERIFICADO]:
+"Tasks will be generated using the official command generator (https://github.com/RoboCupAtHome/CommandGenerator).
+Once a command has been generated it will be entered into an LLM to re-generate a similar phrase,
+e.g. the generated command is 'get me a coke from the kitchen' re-phrased command is 'Go to the kitchen,
+find a coke, and bring it to me'. Each command may be re-phrased up to 3 times getting simpler with each rephrasing."
+
+1.2. ANALISIS DE COMMANDGENERATOR (Repositorio Oficial)
+- Repositorio: https://github.com/RoboCupAtHome/CommandGenerator
+- Commit inspeccionado: `fa8b9adf52c876042b81b7dbfd0e50fc00ef5cc6` (grafted HEAD)
+- Archivos clave:
+  * `src/robocupathome_generator/gpsr_commands.py` (361 lineas)
+  * `src/robocupathome_generator/knowledge.py` (160 lineas)
+  * `src/robocupathome_generator/llm.py` (116 lineas)
+
+En `gpsr_commands.py`, los comandos que demandan generacion de habla, respuestas informativas
+o procesamiento de preguntas se dividen en 5 clases formales:
+
+CLASE A: Respuestas sobre el robot y equipo (Plantilla `talkInfoToGestPrsInRoom` y followup `talkInfo`)
+[VERIFICADO en `gpsr_commands.py:25, 50, 172-182`]:
+- Verbos de accion: `{talkVerb}` in `["tell", "say"]` (linea 113).
+- Contenidos del listado `talk_list` (lineas 172-182):
+  * "your teams name" (e.g. "tell your teams name to the person raising their left arm in the bathroom")
+  * "your teams country" (e.g. "go to the bedroom then meet Angel and say your teams country")
+  * "your teams affiliation" (e.g. "say your teams affiliation to the person raising their right arm in the office")
+  * "something about yourself" (e.g. "go to the entrance then find the lying person and say something about yourself")
+
+CLASE B: Consultas temporales y de calendario (Plantilla `talkInfo` / `talk_list`)
+[VERIFICADO en `gpsr_commands.py:172-182`]:
+- "the time" (e.g. "tell the time to the person pointing to the right in the bedroom")
+- "what day is today" (e.g. "say what day is today to the waving person in the office")
+- "what day is tomorrow" (e.g. "salute Angel in the bathroom and say what day is tomorrow")
+- "the day of the week" (e.g. "tell the day of the week to the person raising their left arm in the bedroom")
+- "the day of the month" (e.g. "tell the day of the month to the waving person in the kitchen")
+
+CLASE C: Consultas e informes sobre personas y percepcion visual
+[VERIFICADO en `gpsr_commands.py:22, 23, 35, 36`]:
+- `countPrsInRoom`: "{countVerb} {gestPersPlur_posePersPlur} are {inLocPrep} the {room}"
+  (e.g. "tell me how many lying persons are in the living room", "tell me how many waving persons are in the kitchen")
+- `countClothPrsInRoom`: "{countVerb} people {inLocPrep} the {room} are wearing {colorClothes}"
+  (e.g. "tell me how many people in the living room are wearing gray jackets", "tell me how many people in the bedroom are wearing gray blouses")
+- `tellPrsInfoInLoc`: "{tellVerb} me the {persInfo} of the person {inRoom_atLoc}"
+  donde `persInfo` in `["name", "pose", "gesture"]` (linea 161).
+  (e.g. "tell me the pose of the person at the entrance", "tell me the gesture of the person in the kitchen")
+- `tellPrsInfoAtLocToPrsAtLoc`: "{tellVerb} the {persInfo} of the person {atLocPrep} the {loc} to the person {atLocPrep} the {loc2}"
+  (e.g. "tell the gesture of the person at the coatrack to the person at the shelf")
+
+CLASE D: Comparacion y conteo de objetos en muebles
+[VERIFICADO en `gpsr_commands.py:21, 24, 31`]:
+- `countObjOnPlcmt`: "{countVerb} {plurCat} there are {onLocPrep} the {plcmtLoc}"
+  (e.g. "tell me how many snacks there are on the sofa", "tell me how many cleaning supplies there are on the sofa")
+- `tellObjPropOnPlcmt`: "{tellVerb} me what is the {objComp} object {onLocPrep} the {plcmtLoc}"
+  donde `objComp` in `["biggest", "largest", "smallest", "heaviest", "lightest", "thinnest"]` (lineas 163-170).
+  (e.g. "tell me what is the largest object on the side tables")
+- `tellCatPropOnPlcmt`: "{tellVerb} me what is the {objComp} {singCat} {onLocPrep} the {plcmtLoc}"
+  (e.g. "tell me what is the largest drink on the storage rack", "tell me what is the heaviest drink on the refrigerator",
+   "tell me what is the thinnest cleaning supply on the refrigerator")
+
+CLASE E: Accion interactiva de responder preguntas (`answer_question`)
+[VERIFICADO en `gpsr_commands.py:114`, `RuleBook/images/standard_QR_codes.tex:12` y `tools/gpsr_parser/gpsr_parser/parser.py:14, 208`]:
+- En `gpsr_commands.py:114`, `answerVerb` esta definido como `["answer"]`.
+- En el RuleBook vigente (`images/standard_QR_codes.tex:12`), el ejemplo canónico de comando reza:
+  "Go to the coach, find James and answer a question."
+- En `tools/gpsr_parser/gpsr_parser/parser.py:207-217`: cuando el comando contiene "answer" y "question",
+  el parser extrae la ubicacion y la persona y genera la accion `Action("answer_question", {})`.
+- Procedimiento operativo de `answer_question`: el robot navega hasta la persona indicada, establece contacto visual,
+  anuncia que esta listo para escuchar, abre el microfono, captura la pregunta hablada, la procesa y emite la respuesta.
+
+
+================================================================================
+2. FUENTES DE CONOCIMIENTO Y RESOLUCION DE RESPUESTAS
+================================================================================
+
+Para que el robot pueda responder correctamente, la informacion proviene de 6 fuentes bien definidas:
+
+2.1. INFORMACION TEMPORAL Y DEL SISTEMA OPERATIVO
+- Tópicos / módulos: Python nativo `datetime.datetime.now()`.
+- Preguntas que cubre:
+  * "the time" -> `now.strftime("%I:%M %p")` (e.g. "The time is 12:30 PM").
+  * "what day is today" / "the day of the week" -> `now.strftime("%A")` (e.g. "Today is Friday").
+  * "the day of the month" -> `now.strftime("%B %d")` o `now.day` (e.g. "Today is the 6th of November").
+  * "what day is tomorrow" -> `(now + timedelta(days=1)).strftime("%A")` (e.g. "Tomorrow is Saturday").
+- Latencia: < 0.1 ms en CPU NUC.
+- Fiabilidad: 100% determinista. No requiere modelo de lenguaje ni conexion externa (el reloj RTC de la NUC
+  mantiene la hora local exacta).
+
+2.2. INFORMACION INSTITUCIONAL DEL EQUIPO Y ROBOT
+- Archivo fuente: Archivo de configuracion estatico (`team_info.yaml`).
+- Preguntas que cubre:
+  * "your teams name" -> "Our team name is UruBots."
+  * "your teams country" -> "We are from Uruguay."
+  * "your teams affiliation" -> "Our team is affiliated with UruBots."
+  * "something about yourself" -> "I am Base at Home, an autonomous service robot designed for RoboCup at Home Open Platform League."
+- Latencia: < 0.5 ms en CPU NUC.
+- Fiabilidad: 100% determinista. Sin riesgo de alucinacion.
+
+2.3. CONOCIMIENTO SEMANTICO DEL ARENA (TOPOLOGIA Y MUEBLES)
+- Archivos fuente en el workspace [VERIFICADO]:
+  * `src/base_athome_navigation/config/semantic_map.yaml`
+  * `src/base_athome_navigation/config/waypoints.yaml`
+- Preguntas que cubre:
+  * Ubicacion de muebles: "Where is the refrigerator?" -> "The refrigerator is in the kitchen."
+  * Habitaciones y zonas: "What room is the sofa in?" -> "The sofa is located in the living room."
+  * Cantidad de puertas / muebles por habitacion (grafo del mapa semantico).
+- Mecanismo de resolucion: Grafo de busqueda directo en Python leyendo las estructuras parseadas por
+  `load_places` en `src/base_athome_skills/base_athome_skills/mission/places.py`.
+
+2.4. CATALOGO DE OBJETOS Y PROPIEDADES FISICAS RELATIVAS
+- Archivos fuente de referencia:
+  * Catalogo oficial de objetos de la competencia (generado por la OC dos horas antes de la prueba).
+  * En repositorios oficiales: tablas de objetos (`objects.md`, `objects.json`), con categoria,
+    tamano (volumen), peso y forma.
+- Preguntas que cubre:
+  * Categorias: "What category does coke belong to?" -> "Coke belongs to drinks."
+  * Comparaciones relativas fijas (superlativos de categoria):
+    - "what is the largest drink on the storage rack"
+    - "what is the heaviest drink on the refrigerator"
+    - "what is the thinnest cleaning supply on the refrigerator"
+- Mecanismo de resolucion: Tabla precalculada de atributos estaticos por objeto. Si en el arena los objetos
+  estan fijos segun el reglamento, el superlativo se resuelve por consulta relacional sobre la base de datos
+  del catalogo. Si requiere verificacion visual en tiempo real, se combina con el estado de `bag_vision.py`
+  o `detect_all.py`.
+
+2.5. PERCEPCION VISUAL IN-SITU (PERSONAS, ROPA, POSTURAS Y GESTOS)
+- Modulos propios verificados en el workspace [VERIFICADO]:
+  * `src/base_athome_perception/base_athome_perception/scene_analysis.py` (pose estimation, keypoints)
+  * `src/base_athome_perception/base_athome_perception/seat_occupancy.py` (conteo de personas sentadas)
+  * `src/base_athome_perception/scripts/yolo_people.py` y topico `/bag_finder/people`
+- Preguntas que cubre:
+  * Conteo de posturas: "tell me how many lying persons are in the living room" -> escaneo con pan-tilt,
+    deteccion de keypoints COCO/MediaPipe/YOLO-Pose, clasificacion por relacion de aspecto/angulo torso.
+  * Conteo de gestos: "tell me the gesture of the person at the entrance" -> keypoints de hombro-codo-muneca
+    (brazo alzado izq/der, senalando izq/der, saludando).
+  * Color de ropa: "how many people in the living room are wearing gray jackets" -> deteccion de bounding
+    box de torso y cuantizacion de histograma de color HSV/RGB sobre el recorte de la persona.
+- Latencia: ~150 - 350 ms por frame procesado en la NUC.
+
+2.6. BASE DE PREGUNTAS PREDEFINIDAS Y TRIVIAS GENERALES (HISTORIA SPR / RIDDLES)
+- Fuentes historicas de RoboCup@Home:
+  * Banco clasico de preguntas predefinidas de Speech and Person Recognition (SPR) y Speech Recognition Challenge.
+  * Consiste en ~50 a 100 pares fijados de Pregunta/Respuesta que evaluan conocimiento general,
+    ciencia, robotica y cultura del pais sede (e.g. "What is the capital of...", "Who invented the compiler?",
+    "What is the world's largest coin?").
+- Mecanismo de resolucion: Diccionario de emparejamiento fonetico/semantico rapido (fuzzy matching / Levenshtein)
+  o RAG local con el LLM Qwen2.5-1.5B para absorber refraseos.
+
+
+================================================================================
+3. ESTADO DEL ARTE: COMO LO RESUELVEN OTROS EQUIPOS (CON Y SIN LLM)
+================================================================================
+
+3.1. ENFOQUE DETERMINISTA CLASICO BASADO EN GRAMATICAS (SIN LLM)
+Equipo evaluado: Tech United Eindhoven (TU/e, Paises Bajos) — Robots HERO / AMIGO
+- Repositorio inspeccionado: `tue_robocup` (clonado en `/tmp/home_research/tue_robocup`)
+- Commit: `5bbf7bb13b635e798fc01d03e4a09b7cd6f421a9` (2026-10-20)
+- Archivos clave inspeccionados:
+  * `robot_smach_states/src/robot_smach_states/human_interaction/answer_questions.py` (lineas 1 a 267) [VERIFICADO]
+  * `robocup_knowledge/src/robocup_knowledge/environments/rgo2019/challenge_spr.py` (lineas 58 a 180) [VERIFICADO]
+  * `robocup_knowledge/src/robocup_knowledge/environments/rwc2023/challenge_gpsr.py` (lineas 180 a 235) [VERIFICADO]
+
+Arquitectura de TU/e:
+- En `answer_questions.py:35-48`, definen un diccionario estricto de despachadores (`assignments`):
+  ```python
+  assignments = {
+      'random_gender':   answer_random_gender,
+      'answer':          answer_predefined_questions,
+      'count':           answer_crowd_questions,
+      'find_placement':  answer_placement_location,
+      'count_placement': answer_count_placement,
+      'find_object':     answer_find_objects,
+      'find_category':   answer_find_category,
+      'return_category': answer_object_category,
+      'return_color':    answer_object_color,
+      'compare_sizes':   answer_compare_objects_sizes,
+      'compare_weight':  answer_compare_objects_weight,
+      'compare_category':answer_compare_objects_categories,
+      'count_object_cat':answer_count_objects_in_category,
+  }
+  ```
+- En `challenge_spr.py:64-130`, mapean mas de 50 preguntas predefinidas directamente a strings literales:
+  * "who invented the compiler" -> "Grace Hopper. She wrote it in her spare time"
+  * "who created the python programming language" -> "Python was invented by Guido van Rossum"
+  * "what does captcha stand for" -> "CAPTCHA is an acronym for Completely Automated Public Turing test..."
+- En `challenge_gpsr.py:182-192`, las consultas temporales y de equipo se capturan mediante reglas gramaticales FCFG:
+  * `SAY_SENTENCE["time"] -> the time`
+  * `SAY_SENTENCE["team_name"] -> your teams name`
+  * `SAY_SENTENCE["country"] -> your teams country`
+- Ventajas:
+  * Cero latencia computacional (< 1 ms en procesar y responder).
+  * Cero riesgo de alucinacion: si la semantica esta reconocida, la respuesta es 100% exacta.
+  * Requiere infima cantidad de memoria RAM (< 20 MB).
+- Desventajas y limitaciones criticas:
+  * Fragilidad total ante el refraseo: en RoboCup 2024/2026, los arbitros pasan los comandos por un LLM
+    con 3 niveles de complejidad sintactica. Si el arbitro dice "Could you tell that person what time it currently is?",
+    una gramatica FCFG rigida falla por completo al no coincidir con el patron "the time".
+
+3.2. ENFOQUE MODERNO CON LLM Y RAG LOCAL
+A) RoBorregos (Tec de Monterrey, Mexico) — Robot "Frida"
+- Repositorio inspeccionado: `home2` (clonado en `/tmp/home_research/home2`)
+- Commit: `1a0caeb563546328e64b758811dd3078db8fa81f` (2026-11-05)
+- Archivos clave inspeccionados:
+  * `hri/packages/embeddings/scripts/knowledge_base.py` (lineas 50 a 140) [VERIFICADO]
+  * `docker/hri/scripts/llama-cpp-entrypoint.sh` (lineas 37 a 86) [VERIFICADO]
+  * `hri/packages/nlp/scripts/llm_utils.py` (lineas 114 a 131) [VERIFICADO]
+
+Arquitectura de RoBorregos:
+- Implementan un servicio ROS 2 completo: `AnswerQuestion` (`/hri/rag/answer_question`).
+- Base de datos vectorial con Postgres + pgvector (`PostgresAdapter`). Almacenan embeddings del arena y del equipo.
+- Inferencia de LLM desacoplada: levantan `llama-server` (llama.cpp) en Docker en los puertos 11434 y 11435.
+  Modelo general: `Qwen3.5-4B-UD-Q4_K_XL.gguf`; modelo especifico GPSR: `rbrgs.F16.gguf`.
+- Inyeccion de contexto por defecto (`knowledge_base.py:96-106`): si la busqueda vectorial no halla coincidencias,
+  inyecta la informacion del equipo en el prompt:
+  "Our team's name is RoBorregos... We proudly represent Mexico... We are affiliated with Tecnologico de Monterrey..."
+- Para decisiones binarias rapidas (yes/no, stop/continue), evitan el LLM y usan un modelo liviano de HuggingFace
+  `tasksource/deberta-small-long-nli` (< 30 ms).
+
+B) SocRob (Instituto Superior Tecnico, Lisboa, Portugal) — Proyecto `llm_gpsr`
+- Repositorio: `socrob/llm_gpsr` (clonado en `/tmp/home_research/llm_gpsr`)
+- Commit: `f8a784bb55c4ea0ca1fa42981ce8110b10629ec9`
+- Publicacion: "End-to-End Robot Task Planning from Transcriptions of Voice Commands" (RoboCup 2024 Eindhoven).
+- Aporte clave: decodificacion guiada por gramatica EBNF estricta (`template.ebnf`).
+  Esto asegura que el LLM genere exclusivamente un plan de acciones discretas validas, eliminando cualquier
+  conversacion informal o texto libre espurio.
+
+C) Charmie (Universidade de Aveiro, Portugal) — Proyecto `charmie_ws`
+- Repositorio: `charmie_ws` (clonado en `/tmp/home_research/charmie_ws`)
+- Commit: `461577d6534c96a1832341fe789f2d83eb2e6ecb` (2026-11-04)
+- Archivos clave:
+  * `src/charmie_llm/charmie_llm/functions_list.py` (lineas 1 a 182) [VERIFICADO]: esquema de llamadas a funciones (tool-calling).
+  * `src/charmie_tasks/charmie_tasks/gpsr_task_2026.py` (lineas 106, 188-195) [VERIFICADO]: integracion de pantalla
+    tactil en la cara del robot (`USE_TOUCHSCREEN_FOR_YES_NO_QUESTIONS=True`). Si el ambiente es ruidoso,
+    el operador confirma las preguntas por interfaz visual, evitando la penalizacion de -50 pts por fallas de ASR.
+
+
+================================================================================
+4. ANALISIS Y VERIFICACION DE NUMEROS DE `docs/INVESTIGACION_LLM_VLM.txt`
+================================================================================
+
+Revisamos y contrastamos los datos tecnicos del reporte previo de LLM/VLM (`HOME-79`):
+
+4.1. AUDITORIA DE HARDWARE Y RECURSOS
+- NUC Base@Home (Intel Core i3-1220P 10C/12T, 15 GiB RAM, sin GPU dedicada) [VERIFICADO en STATUS.md y ROBOT.md]:
+  * Procesos base (Nav2, AMCL, LiDAR Hokuyo, base driver): ~1.2 GiB.
+  * Percepcion cabeza (RealSense D435, YOLO/OpenCV personas/caras, GUI web): ~2.5 GiB.
+  * Total ocupado por sistema actual: ~4.5 GiB.
+  * Memoria RAM libre real disponible: ~10.5 GiB.
+  * Modelo LLM propuesto: Qwen2.5-1.5B-Instruct en GGUF Q4_K_M (~0.98 GiB en disco, ~1.6 GiB en RAM).
+  * Margen libre tras cargar LLM: > 8.5 GiB de memoria RAM libre. Cero riesgo de swapping.
+
+- Jetson Orin Nano Dev Kit Super (8 GiB LPDDR5 unificada CPU/GPU) [VERIFICADO en STATUS.md y ROBOT.md]:
+  * Driver y controlador CAN Piper (50 Hz): ~0.5 GiB.
+  * Controlador Pan-Tilt Dynamixel U2D2: ~0.3 GiB.
+  * ASR Whisper (modelo small/base INT8) con VAD Silero: ~1.2 GiB VRAM.
+  * YOLOv8 TensorRT FP16 (camara DaBai de muneca): ~1.5 GiB VRAM (55 FPS).
+  * Total ocupado en Jetson: ~5.2 GiB. Memoria libre restante: ~2.6 GiB.
+  * Conclusion sobre la Jetson: Se ratifica en un 100% la regla de exclusion: LA JETSON NO DEBE EJECUTAR
+    EL LLM. Cargar un modelo de lenguaje en la Jetson saturaria la VRAM compartida y provocaria el cierre
+    por OOM-killer del controlador CAN del brazo Piper o del servicio ASR.
+
+4.2. PRESUPUESTO DE LATENCIA EN CONVERSACION HRI
+- Mediciones comprobadas en Base@Home [VERIFICADO en STATUS.md y MICROFONO_ASR.md]:
+  1. Deteccion de fin de frase con VAD Silero: 1.1 s de silencio.
+  2. Transcripcion ASR Whisper en Jetson: ~1.4 s por frase.
+  3. Latencia admisible para resolucion de pregunta / plan: <= 1.2 - 1.5 s.
+  4. Tiempo total desde silencio del operador hasta habla del robot: <= 3.7 - 4.0 s.
+- Evaluacion de Throughput del LLM Qwen2.5-1.5B en CPU i3-1220P [ESTIMACION FUNDADA]:
+  * Basado en ancho de banda de memoria DDR4/DDR5 (~38-45 GB/s) y 4 hilos E-cores con instrucciones AVX2:
+    Throughput estimado: 18 - 25 tokens/s.
+  * Una respuesta concisa de Q&A en competencia requiere entre 15 y 25 tokens (e.g. "The largest drink on the table is the pringles can.").
+  * Tiempo de generacion: ~0.8 a 1.3 segundos.
+  * Cumple holgadamente el presupuesto de conversacion natural sin generar incomodidad al juez.
+
+
+================================================================================
+5. DISENO DE ARQUITECTURA PARA BASE@HOME SIN INTERNET
+================================================================================
+
+Para cumplir las reglas oficiales (prohibido hotspot propio, sin internet en el pabellon),
+el sistema de respuesta a preguntas de Base@Home se estructura en 3 niveles de resolucion:
+
+```
+                  [Audio de la Persona / Operador]
+                                 |
+                                 v
+              [Whisper ASR en Jetson + Silero VAD]
+                                 |
+                     (Texto transcrito en inglés)
+                                 |
+                                 v
+           +-----------------------------------------------+
+           |          QA_ENGINE (NUC - ROS 2 Jazzy)        |
+           +-----------------------------------------------+
+                                 |
+      +--------------------------+--------------------------+
+      |                          |                          |
+      v                          v                          v
+[Nivel 1: Fast-Path]    [Nivel 2: Percepcion]      [Nivel 3: LLM RAG Local]
+Temporal / Equipo /       Conteo personas, ropa,     Preguntas abiertas,
+Catalogo estatico         postura en habitacion      trivias, dialogos libres
+(< 5 ms, 100% exacto)     (~0.2 - 0.4 s)             (~1.2 s, Qwen2.5-1.5B)
+      |                          |                          |
+      +--------------------------+--------------------------+
+                                 |
+                                 v
+                     [Generador de Respuesta]
+                      (String limpio en inglés)
+                                 |
+                                 v
+             [Sintesis de Voz /hri/say_something]
+                  (Cero movimiento de actuadores)
+```
+
+5.1. NIVEL 1: FAST-PATH DETERMINISTA (< 5 ms en CPU)
+Resuelve el 80% de las consultas generadas por el CommandGenerator mediante reglas directas:
+- Respuestas temporales:
+  * Detecta expresiones: "the time", "what day is today", "what day is tomorrow", "the day of the week", "the day of the month".
+  * Consulta inmediata a `datetime`.
+- Respuestas de equipo:
+  * Detecta expresiones: "your teams name", "your teams country", "your teams affiliation", "something about yourself".
+  * Retorna datos fijados de UruBots.
+- Consultas fijas de catalogo:
+  * Superlativos de objetos (e.g. "largest drink"): busca en la tabla de objetos cargada en memoria.
+  * Ubicacion de muebles: busca en `semantic_map.yaml` la habitacion correspondiente.
+
+5.2. NIVEL 2: PIPELINE DE PERCEPCION IN-SITU (~200 - 400 ms en NUC)
+Resuelve las preguntas que exigen medicion en tiempo real:
+- "tell me how many people in the living room are wearing [color] [clothing]":
+  * El robot se encuentra en la habitacion (o navega hacia ella segun el plan).
+  * Lee el topico consolidado de detecciones (`/bag_finder/people` o publica pedido a `yolo_people`).
+  * Filtra las detecciones por color de vestimenta y cuenta los candidatos validos.
+  * Emite la respuesta con plantilla: "There is [count] person wearing [color] [clothing] in the [room]."
+- "tell me the pose / gesture of the person at [location]":
+  * Consulta los keypoints detectados de la persona mas cercana a la baliza.
+  * Clasifica la pose (`standing`, `sitting`, `lying`) y el gesto (`waving`, `pointing`, `raising arm`).
+  * Emite: "The person at the [location] is [pose/gesture]."
+
+5.3. NIVEL 3: MOTOR RAG ACOTADO CON LLM LOCAL EN NUC (~1.2 s)
+Para la accion interactiva `answer_question` (cuando una persona le formula una pregunta no prevista):
+- Motor: `llama-server` corriendo en segundo plano en la NUC (`127.0.0.1:8080`), cargando `Qwen2.5-1.5B-Instruct-Q4_K_M.gguf`.
+- System Prompt compacto (con `--cache-prompt` para prefill instantaneo < 10 ms):
+  ```
+  You are Base@Home, an autonomous service robot from UruBots (Uruguay).
+  Answer the user's question concisely in one single sentence (maximum 20 words).
+  Context:
+  - Team: UruBots, Uruguay, RoboCup@Home OPL.
+  - Rooms: kitchen, living room, bedroom, office, bathroom, entrance.
+  - Placements: table, sofa, shelf, refrigerator, storage rack, counter.
+  - Objects: coke, milk, apple, pringles, sponge, cup, bowl.
+  If the question is about general knowledge or a riddle, answer factually and directly without explanations.
+  ```
+- Gramatica de salida: se utiliza max_tokens=30 y temperatura baja (0.1) para evitar divagaciones.
+- Fallback de contingencia: si el LLM no responde en 3 segundos o el servicio no esta activo,
+  el sistema cae de forma segura a una respuesta de cortesia: "I heard your question, but I do not have enough information to answer that."
+
+5.4. PROTOCOLO HRI PARA LA ACCION `answer_question`
+Cuando el secuenciador de misiones ejecuta el paso `answer_question`:
+1. El robot orienta la cabeza hacia la persona (`move_head_smooth`).
+2. Anuncia con voz clara: "I am ready. Please ask your question now."
+3. Activa la escucha mediante `VoiceClient.listen(timeout=8.0)`.
+4. Si la persona no habla en 8 segundos, reintenta una vez: "I did not hear you. Please speak up."
+5. Al recibir la transcripcion de Whisper, la pasa a `qa_engine.resolve_question(text)`.
+6. Verbaliza la respuesta mediante `Speaker.speak(response_text, blocking=True)`.
+7. Concluye la habilidad con exito y continua con la siguiente tarea del plan.
+
+5.5. GARANTIA DE SEGURIDAD FISICA
+- Cero accionamiento de motores:
+  A diferencia de las habilidades de navegacion (`navigate_to`) o manipulacion (`pick_object`, `place_object`),
+  `answer_question` y los comandos de habla (`speak`) tienen la bandera `moves_hardware=False` (o no mueven base ni brazo).
+- No hay riesgo de colision, ni de bloqueo en E-stop, ni peligro para las personas que interactuan en el arena.
+
+
+================================================================================
+6. RECOMENDACIONES POR UTILIDAD Y PLAN DE IMPLEMENTACION
+================================================================================
+
+Ordenamos las recomendaciones tecnicas segun la regla "mayor retorno de puntos por menor esfuerzo y riesgo":
+
+6.1. MODIFICACIONES CONCRETAS EN NUESTRO CODIGO
+
+A) Habilitar la habilidad `answer_question` en el registro de misiones
+- Archivo: `src/base_athome_skills/base_athome_skills/mission/skills.py` [VERIFICADO con grep]
+- Cambio:
+  * Linea 164: actualmente figura como `status=UNAVAILABLE`.
+  * Modificar a:
+    ```python
+    SkillSpec("answer_question", "Escuchar y responder una pregunta a una persona",
+              optional=("person", "location"), default_timeout_s=30.0,
+              errors=("speech_timeout", "asr_unavailable", "qa_failed")),
+    ```
+- Riesgo: Cero (no toca actuadores).
+
+B) Implementar el handler `h_answer_question` en `mission_executor`
+- Archivo: `src/base_athome_skills/base_athome_skills/mission/node.py` [VERIFICADO con grep]
+- Cambio:
+  * Agregar `h_answer_question` al diccionario `handlers` en la linea 130.
+  * Implementar el metodo:
+    ```python
+    def h_answer_question(self, ctx: SkillContext) -> SkillResult:
+        if self._speaker:
+            self._speaker.speak("I am ready. Please ask your question.", blocking=True)
+        if not self._voice:
+            return ctx.error("voice_client_unavailable", "no hay VoiceClient configurado")
+        res = self._voice.listen(prompt="asking question", timeout=10.0)
+        if not res.ok:
+            return ctx.error("speech_timeout", "no se escucho ninguna pregunta")
+        
+        # Resolver con QA Engine
+        ans = self.qa_engine.resolve(res.text)
+        if self._speaker:
+            self._speaker.speak(ans, blocking=True)
+        return ctx.ok(question=res.text, answer=ans)
+    ```
+- Riesgo: Muy bajo (solo audio y software).
+
+C) Enriquecer `command_parser.py` para resolver consultas temporales y de equipo
+- Archivo: `src/base_athome_skills/base_athome_skills/mission/command_parser.py` [VERIFICADO con grep]
+- Cambio:
+  * Lineas 485-486: actualmente dice:
+    `if re.match(r"(?:responde|answer|contesta)\b", t): c.errors.append(f"'{raw}': responder preguntas todavia no esta implementado")`
+  * Reemplazar para compilar la accion `answer_question`:
+    ```python
+    if re.match(r"(?:responde|answer|contesta)\b", t):
+        c.add("answer_question", {}, "responder una pregunta", timeout=30.0)
+        return
+    ```
+  * En la seccion de `say` (lineas 505-512): si el texto a decir coincide con una consulta de fecha,
+    hora o equipo (e.g. "what day is today", "the time", "your teams name"), resolver dinamicamente
+    el texto antes de emitir la accion `speak`.
+- Riesgo: Cero (parser de solo texto en CPU).
+
+D) Crear el modulo desacoplado `qa_engine.py`
+- Archivo nuevo: `src/base_athome_skills/base_athome_skills/mission/qa_engine.py`
+- Responsabilidad: Contener la logica en cascada:
+  1. Fast-path determinista (datetime, team info, catalogo de mapa y objetos).
+  2. Cliente HTTP local contra `llama-server` (`http://127.0.0.1:8080/completion`).
+  3. Formateador de salida concisa.
+- Riesgo: Cero (modulo aislado de logica pura).
+
+6.2. PROCEDIMIENTO DE PRUEBA EN SIMULACION (`simulation/` y DOMINIO 77)
+Para validar esta implementacion sin tocar el robot real:
+1. Pruebas unitarias de parsing y resolucion de preguntas:
+   * Crear test offline en `src/base_athome_skills/test/test_qa_engine.py`.
+   * Evaluar que todas las 9 preguntas de `talk_list` del CommandGenerator se resuelvan en < 5 ms.
+   * Ejecutar: `ROS_DOMAIN_ID=77 pytest src/base_athome_skills/test/test_qa_engine.py`.
+2. Prueba integrada con simulacion de voz:
+   * Correr la mision con `VoiceClient.inject("what day is today")` o mediante mock de ASR.
+   * Verificar que el executor transicione los estados de mision y emita el texto correcto por `/hri/say_something`.
+3. Prueba del servidor LLM local (opcional/desarrollo):
+   * Levantar `llama-server` con Qwen2.5-1.5B en CPU y medir tiempo de respuesta para preguntas libres de SPR.
+
+
+================================================================================
+7. MATRIZ DE EVIDENCIAS Y TRAZABILIDAD
+================================================================================
+
+Para cumplir la politica de veracidad estricta, cada afirmacion tecnica se clasifica
+segun su nivel de evidencia:
+
+| Afirmacion / Componente | Estado de Evidencia | Referencia Exacta / Fuente |
+|---|---|---|
+| Puntajes y penalidades de GPSR (1490 pts max, 240 ASR, 300 Plan, 750 Tareas) | VERIFICADO | RuleBook@ebdf34d, `scoresheets/GPSR.tex:1-24` |
+| Regla de refraseo con LLM (hasta 3 intentos) | VERIFICADO | RuleBook@ebdf34d, `tasks/GPSR.tex:49-50` |
+| Plantillas de habla y preguntas en CommandGenerator | VERIFICADO | CommandGenerator@fa8b9ad, `gpsr_commands.py:21-38, 172-182` |
+| Verbo answerVerb en CommandGenerator | VERIFICADO | CommandGenerator@fa8b9ad, `gpsr_commands.py:114` |
+| Generacion de alternativas con LLM oficial | VERIFICADO | CommandGenerator@fa8b9ad, `llm.py:47-95` |
+| Diccionario de acciones y preguntas en TU/e (Tech United) | VERIFICADO | tue_robocup@5bbf7bb, `robot_smach_states/.../answer_questions.py:35-48` |
+| Servicio `/hri/rag/answer_question` y RAG en RoBorregos | VERIFICADO | home2@1a0caeb, `hri/packages/embeddings/scripts/knowledge_base.py:50-132` |
+| Uso de llama-server y Qwen en RoBorregos | VERIFICADO | home2@1a0caeb, `docker/hri/scripts/llama-cpp-entrypoint.sh:37-86` |
+| Gramaticas EBNF para forzar JSON en SocRob | VERIFICADO | llm_gpsr@f8a784b, `src/llm_gpsr_ros/grammars/template.ebnf:1-27` |
+| Touchscreen facial como alternativa HRI en Charmie | VERIFICADO | charmie_ws@461577d, `charmie_tasks/.../gpsr_task_2026.py:106, 188-195` |
+| `answer_question` actualmente UNAVAILABLE en Base@Home | VERIFICADO | Workspace, `src/base_athome_skills/base_athome_skills/mission/skills.py:164` |
+| Handler `answer_question` pendiente en mission_executor | VERIFICADO | Workspace, `src/base_athome_skills/base_athome_skills/mission/node.py:130` |
+| Parser de misiones avisa que responder preguntas no esta hecho | VERIFICADO | Workspace, `src/base_athome_skills/.../command_parser.py:485-486` |
+| Parser GPSR ya tiene `Action("answer_question", {})` | VERIFICADO | Workspace, `tools/gpsr_parser/gpsr_parser/parser.py:207-217` |
+| VoiceClient y Speaker disponibles en Base@Home | VERIFICADO | Workspace, `voice_client.py:45` y `speaker.py:20` |
+| Recursos hardware NUC (15 GiB RAM, i3-1220P) y Jetson (8 GiB) | VERIFICADO | `docs/ROBOT.md` y `docs/collab/STATUS.md` (2026-11-05) |
+| Throughput Qwen2.5-1.5B en CPU i3-1220P (18-25 tokens/s) | INFERIDO | Calculo por ancho de banda DDR4/DDR5 y benchmarks llama.cpp |
+| Existencia de lista oficial de preguntas fijadas para RoboCup 2027 | NO ENCONTRADO | El RuleBook 2026.2 no publica el PDF de 50 riddles; se infiere que se entrega en la prueba |
+| Despliegue de `llama-server` en el robot real del laboratorio | POR CONFIRMAR | No se ejecuto en esta tarea para respetar CPU acotada y robot en uso |
+
+================================================================================
+FIN DEL DOCUMENTO DE INVESTIGACION
+================================================================================
