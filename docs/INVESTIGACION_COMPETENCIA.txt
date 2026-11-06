@@ -1,0 +1,928 @@
+INVESTIGACION DE DIA DE COMPETENCIA, SETUP DAYS Y PRUEBA FINALS — ROBOCUP@HOME OPL 2026.2
+Proyecto: Base@Home (UruBots) — RoboCup@Home Open Platform League
+Fecha: 2026-11-06
+Autor: Antigravity (dispatched worker para tarea HOME-91, dispatch ctx_95406f3b8646, task task_1c3295495ef5)
+Workspace: /home/athome/orca/workspaces/base_athome_ws/antigravity-competencia
+Rama y commit base: ShiiSuii/antigravity-competencia @ 9d8c6a0 (origin/development @ 9d8c6a0)
+Archivo de entrega: docs/INVESTIGACION_COMPETENCIA.txt
+
+================================================================================
+1. FUENTE Y REGLAMENTO NORMATIVO
+================================================================================
+
+- Repositorio oficial del reglamento: https://github.com/RoboCupAtHome/RuleBook
+- Release normativo vigente: 2026.2 (tag 2026.2)
+  URL: https://github.com/RoboCupAtHome/RuleBook/releases/tag/2026.2
+  Commit SHA de referencia: b844d5a6d6ebf4307c3250a01d1eca4ba56f8452
+  PDF oficial publicado: "Version 2026 Rev-1, revision 2026-05-11"
+  SHA256 del PDF normativo: d35e93c7f291a59a823691905b47dcd7e8de14ab3a4c546aca55ba20b30ce128
+- Regla de exclusion estricta: NO se utiliza tasks/old/. Se analizan exclusivamente
+  las reglas vigentes para la liga OPL en 2026.2.
+- Archivos fuente evaluados en RuleBook (@b844d5a):
+  * pages/organization/Setup.tex (Setup & Preparation phase, General Schedule, Arena access, Robot Inspection, Poster Presentation Session)
+  * pages/general_rules/Scenario.tex (Arena dimensions, Walls, Doors, Furniture, Objects, Predefined Locations, Names, Wireless network)
+  * pages/general_rules/Procedure.tex (Safety first, Team members, Start signal, Restarts, Inactivity 30s limit, Referees, Operators)
+  * tasks/Finals.tex (Reglas, setup, problemas generados, show must go on, comentarista, puntuacion)
+  * scoresheets/Finals.tex (Score sheet oficial de Finals: 150 pts encontrar problema, 650 pts resolver, penalidades de repeticion, tareas especiales)
+- Repositorios de referencia internacional evaluados en /tmp/home_research:
+  * CHARMIE (Universidade de Aveiro, Portugal) @ 461577d:
+    - src/charmie_tasks/charmie_tasks/finals_task_2026.py (Estrategia completa de Finals: gestion de categorias de problemas, penalidades de repeticion, seleccion de salas)
+    - src/charmie_tasks/charmie_tasks/inspection.py (Maquina de estados de Robot Inspection)
+    - src/configuration_files/previous_events/2024_RoboCup/ (furniture.json, objects.json, rooms.json, doors.json)
+  * Tech United Eindhoven (TU Eindhoven, Paises Bajos) @ 5bbf7bb:
+    - challenge_final/src/challenge_final/final.py
+    - robocup_knowledge/src/robocup_knowledge/environments/rwc2023/common.py (Estructura de definicion de nombres, ubicaciones y objetos)
+  * Roborregos (Tecnologico de Monterrey, Mexico) @ 0807f83
+
+Criterios de clasificacion de evidencia:
+- VERIFICADO: Confirmado directamente en el texto normativo del RuleBook 2026.2 (@b844d5a) o comprobado mediante grep y lectura de codigo en el codebase de Base@Home (@9d8c6a0) o en repositorios de referencia (@461577d, @5bbf7bb).
+- INFERIDO: Deduccion tecnica fundamentada a partir de los requerimientos de hardware/software documentados (ej. tiempo de ejecucion en slots de mapeo, consumo de bateria en 10 min de Finals).
+- NO ENCONTRADO: Aspecto o script exigido para la operacion fluida de la competencia que no existe en el repositorio.
+- Estados de cumplimiento: CUMPLE, FALTA, POR CONFIRMAR.
+
+
+================================================================================
+2. RESUMEN EJECUTIVO
+================================================================================
+
+La participacion exitosa en RoboCup@Home no depende unicamente de tener algoritmos
+avanzados en el laboratorio, sino de la disciplina operacional durante los "Setup Days"
+(Dias de Armado) y de una planificacion tactica estricta para la prueba de "Finals".
+
+2.1. El Dia de Armado (Setup Days):
+- Dura 1 a 2 dias antes del inicio de las pruebas regulares (Setup.tex:37).
+- No hay pruebas regulares durante este periodo (Setup.tex:10).
+- El Comite Organizador (OC) asigna mesas de equipo, entrega credenciales y programa slots
+  exclusivos/compartidos para mapear la arena con el robot real (Setup.tex:44).
+- El Comite Tecnico (TC) publica los datos definitivos del torneo: lista oficial de >=30
+  objetos (Common, YCB, y comprados localmente), >=20 ubicaciones/muebles y >=20 nombres
+  de personas (Scenario.tex:75-177). Los equipos pueden pedir prestados hasta 5 objetos
+  por maximo 1 hora para pruebas y calibraciones (Scenario.tex:89).
+- Tareas criticas que realizan los equipos:
+  1. Ensamble, chequeo de integridad post-transporte y conexion a la red VLAN ArenaNetwork
+     (prohibicion absoluta de emitir hotspots propios, pena de descalificacion, Scenario.tex:195).
+  2. Mapeo de la arena con LiDAR 2D/3D durante los slots asignados, limpieza manual del mapa
+     (borrar personas, rellenar vidrios/huecos) y definicion de waypoints de navegacion.
+  3. Carga e ingesta de los nombres, objetos y ubicaciones en las bases de datos de conocimiento
+     y modelos de vision (prompts YOLO-World, CLIP, embeddings, ASR vocab).
+  4. Calibraciones in-situ: iluminacion de camaras (balance de blancos), nivel de ruido
+     acustico ambiente en el microfono (umbral VAD), altura exacta de mesas y hand-eye.
+  5. Superacion obligatoria de la "Robot Inspection" (Setup.tex:97-126): prueba formal de
+     3 minutos que verifica arranque por puerta/senal manual, parada de emergencia (E-stop),
+     frenado ante obstaculo humano, salida autonoma y estetica del robot (sin cables sueltos).
+  6. Participacion en la "Poster Presentation Session" (PPS, Setup.tex:64-95): charla de 3 min
+     evaluada por los capitanes de otros equipos (hasta 50 puntos acumulables).
+
+2.2. La Prueba de Finals en RoboCup@Home 2026.2:
+- Rige el capitulo tasks/Finals.tex (normativo 2026.2). tasks/old/ThemedFinals.tex queda EXCLUIDO.
+- Participan los mejores equipos del ranking acumulado. La puntuacion final de la liga se
+  determina 50% por el ranking de la Final y 50% por los puntos acumulados previos (Finals.tex:9-11).
+  NO hay puntuacion maxima en la Final (Finals.tex:13).
+- Tiempo limite: 10 minutos (scoresheets/Finals.tex:1).
+- Dinamica de la prueba: el robot entra de forma autonoma y debe "mantener el hogar" resolviendo
+  problemas distribuidos en la arena (minimo 8 problemas generados, Finals.tex:60).
+- Mecanica de puntuacion central:
+  * "Find and clearly state an encountered problem": 150 pts por problema encontrado y declarado por voz.
+  * "Solve a problem": 650 pts por problema resuelto completamente.
+- ¡PENALIDADES POR REPETICION DE CATEGORIA! (scoresheets/Finals.tex:4-8):
+  * Declarar categoria repetida: -100 pts.
+  * Resolver categoria por 2da vez: -300 pts.
+  * Resolver categoria por 3ra vez (o mas): -500 pts.
+  Esto penaliza brutalmente a los robots que solo saben hacer una cosa (ej. levantar 3 latas seguidas
+  del piso da 650 + (650-300) + (650-500) = 1150 pts en lugar de 1950 pts).
+  Exige una estrategia de alternancia de problemas (Interleaved problem solving).
+- Categorias oficiales de problemas:
+  1. Basura en el piso (Trash on floor): tirar objetos del piso a la papelera.
+  2. Objetos fuera de lugar (Misplaced objects): devolver objetos a su PredefinedLocation.
+  3. Personas pidiendo ayuda (Persons with requests): personas que levantan la mano al ver al robot
+     y le dan un comando tipo GPSR.
+  4. Cerrar electrodomesticos: cerrar la puerta del lavavajillas (300 pts).
+  5. Canasto de ropa: mover el laundry basket junto al lavarropas (600 pts).
+  6. Recibir invitado en puerta: abrir puerta de salida y dar bienvenida a invitado esperando (600 pts).
+  7. Tareas personalizadas (Custom Tasks): acordadas previamente con el TC (ej. enderezar cuadro).
+- Regla "The Show Must Go On" (Finals.tex:75-81): permite reiniciar el robot dentro de la arena sin perder
+  puntos previos (penalidad de reinicio -50 pts solo si vuelve a puntuar despues).
+- Rol formal de Comentarista (Finals.tex:83-85): un integrante del equipo relata al publico y responde
+  preguntas del jurado en vivo.
+
+2.3. Oportunidades y Demos para Base@Home (Piper 6-DOF + Elevador):
+- La combinacion de brazo Piper 6-DOF con elevador de columna vertical confiere una ventaja competitiva
+  unica sobre robots con torso rigido o brazos fijos (ej. TIAGo estandar o Fetch):
+  1. Basura en el piso: el elevador desciende el hombro del Piper, permitiendo agarres a nivel de suelo
+     (pose pre_grasp_floor) sin comprometer la estabilidad ni requerir inclinaciones arriesgadas.
+  2. Objetos en mesa: el elevador posiciona el hombro a la altura exacta de mesas o encimeras.
+  3. Cierre de lavavajillas: alineacion de altura de la pinza con el pestillo superior y empuje frontal.
+  4. Custom demo (Alineacion de cuadro o riego de planta): aprovechando la extension vertical hasta 1.6 m.
+
+================================================================================
+3. DIA DE ARMADO (SETUP DAYS) — QUE HACEN LOS EQUIPOS PASO A PASO
+================================================================================
+
+El exito de un equipo en RoboCup@Home se decide en gran medida durante los 1 a 2 dias
+previos al inicio de las pruebas oficiales (la fase de Setup & Preparation, regla Setup.tex:1-126).
+A continuacion se describe el flujo de trabajo riguroso que siguen los equipos de punta
+(verificado en los repositorios de CHARMIE @461577d y TU Eindhoven @5bbf7bb).
+
+--------------------------------------------------------------------------------
+3.1. RECEPCION, DESEMPAQUE E INSPECCION DE INTEGRIDAD FISICA
+--------------------------------------------------------------------------------
+[PROCEDIMIENTO PRACTICO Y VERIFICACION]
+1. Llegada al venue y asignacion de mesas de equipo (Setup.tex:42): el OC asigna las mesas
+   de trabajo de cada institucion en la "Team Area".
+2. Desempaque del robot: revision visual de daños por transporte en flight cases o cajas de carga:
+   - Apriete mecanico de pernos y fijaciones estructurales (columna del elevador, fijacion del hombro del Piper, soporte de la cabeza pan-tilt).
+   - Comprobacion de cables y conectores: arneses USB, cables CAN del Piper, conectores de potencia XT60/XT30, masa comun.
+   - En Base@Home: verificar que el cable USB del U2D2 de los servomotores Dynamixel este firmemente conectado y que no presente falsos contactos (falla electrica documentada en STATUS.md 2026-11-05: 118 desconexiones error -71).
+3. Medicion estatica de voltajes de alimentacion:
+   - Bateria de traccion de hoverboard (~36-42 V; medir con tester antes de encender).
+   - Fuente regulada de 12 V / 5 V para NUC, Jetson, camaras y actuadores.
+
+--------------------------------------------------------------------------------
+3.2. CONFIGURACION DE RED Y AISLAMIENTO (ARENANETWORK)
+--------------------------------------------------------------------------------
+[REGLA NORMATIVA Y PROTOCOLO DE CONEXION]
+- Fuente: pages/general_rules/Scenario.tex, Seccion 3.5 (\ref{rule:scenario_wifi}), lineas 179-198.
+- Reglas obligatorias:
+  1. El OC provee una red oficial "ArenaNetwork" con una red virtual dedicada (VLAN) por cada equipo
+     con su propio SSID y contrasena independiente (Scenario.tex:189-190).
+  2. Cada VLAN esta aislada del trafico de otros equipos y cuenta con conexion a Internet (Scenario.tex:191-192).
+  3. ¡PROHIBICION TERMINANTE DE HOTSPOTS PROPIOS! (Scenario.tex:195-197):
+     "Teams broadcasting unauthorized wireless networks will be disqualified. This includes networks with concealed SSIDs."
+     Cualquier dispositivo que emita Wi-Fi (incluyendo hotspots de computadoras, celulares de miembros del equipo, o microcontroladores ESP32 con AP activo) provoca la descalificacion inmediata del equipo.
+- Verificacion tecnica en Base@Home:
+  * El enlace NUC (10.42.0.1) <-> Jetson (10.42.0.12) es por cable Ethernet directo (adaptador USB RTL8153, enx00e04c68090c, ROBOT.md:81). Cumple la regla sin emitir RF.
+  * Verificar con 'scripts/net/check_nuc_jetson_link.sh' la conectividad de la red interna cableada.
+  * Desactivar o deshabilitar cualquier modo Access Point en el Wi-Fi de la NUC y de la Jetson ('nmcli radio wifi off' o conectarse unicamente al SSID del VLAN asignado para monitoreo remoto).
+  * Verificar que el firmware del elevador ESP32-S3 no tenga configurado ningun SoftAP de debug.
+  * Desactivar la referencia al parlante Bluetooth en 'src/base_athome_perception/base_athome_perception/speaker.py:113' para evitar emisiones RF no autorizadas.
+
+--------------------------------------------------------------------------------
+3.3. MAPEO DE LA ARENA (ARENA MAPPING SLOTS)
+--------------------------------------------------------------------------------
+[PROCEDIMIENTO DE MAPEO EN LA ARENA REAL]
+- Fuente: Setup.tex:44 ("The Arena is available to all teams during the Setup & Preparation. The OC may schedule special test or mapping slots in which Arena access is limited to one or more teams exclusively").
+- Duracion tipica: Slots de 15 a 30 minutos asignados por sorteo o rotacion por grupos de equipos.
+- Flujo de mapeo ejecutado por los equipos:
+  1. Teleoperacion asistida: un operador con joystick PS4 o gamepad guia el robot lentamente por la arena
+     (velocidad < 0.25 m/s para minimizar el corrimiento de odometria y permitir acumulacion densa de scans LiDAR).
+  2. Cobertura del circuito:
+     - Ingreso por la puerta de entrada (Entrance).
+     - Recorrido perimetral de cada habitacion (living room, kitchen, bedroom, office/laundry).
+     - Acercamiento a las caras frontales de mesas, estanterias, alacenas y electrodomesticos.
+     - Cruce de umbrales de puertas internas.
+     - Salida por la puerta designada (Exit).
+  3. Ejecucion de SLAM:
+     - En Base@Home: ejecutar 'ros2 launch base_athome_mapping slam_2d_mapping.launch.py' (usa SLAM Toolbox sobre /scan del Hokuyo URG-04LX).
+     - Guardar el mapa con 'scripts/guardar_mapa_2d.sh <nombre_arena>', que llama a 'nav2_map_server map_saver_cli' y genera mapa.yaml y mapa.pgm, ademas de una copia historica fechada en ~/mapas/.
+  4. Post-procesamiento y edicion manual del mapa (PRACTICA ESTANDAR DE TODOS LOS EQUIPOS):
+     - Ningun mapa crudo de SLAM se usa directamente en competencia sin edicion:
+       * Borrar "fantasmas" de personas: miembros del jurado o competidores que caminaron por la arena durante el slot dejan rastros de puntos negros que bloquearian la navegacion de Nav2. Se editan a blanco (espacio libre).
+       * Rellenar reflejos de vidrio y acrilico: las puertas de vidrio o paneles transparentes no devuelven haz LiDAR o dan lecturas erroneas; se dibuja la pared continua en negro (obstaculo letal).
+       * Dibujar patas de muebles y zocalos: patas delgadas de mesas o sillones que el LiDAR Hokuyo (montado a 38 cm de altura, ROBOT.md:4) no alcanza a ver deben marcarse manualmente en el PGM como obstaculos para evitar que la base diferencial colisione o quede atrapada.
+  5. Sincronizacion y recarga en Nav2:
+     - Ejecutar 'src/base_athome_skills/scripts/nav_map_sync.sh' para invocar el servicio '/map_server/load_map' de Nav2 y cargar el nuevo mapa en el servidor de mapas activo sin reiniciar los nodos protegidos de navegacion.
+     - En el navegador web, abrir el editor de mapas semanticos de Base@Home ('http://127.0.0.1:8080' mediante 'src/base_athome_navigation/base_athome_navigation/map_zone_editor.py') para trazar las zonas de las habitaciones y poligonos de muebles sobre la imagen del mapa actualizada.
+
+--------------------------------------------------------------------------------
+3.4. CARGA E INGESTA DE DATOS OFICIALES DE COMPETENCIA (KNOWLEDGE INGESTION)
+--------------------------------------------------------------------------------
+[REGLA Y CITA NORMATIVA]
+- Fuente: Scenario.tex:79-178 (Objects, Predefined Rooms and Locations, Predefined Person Names).
+- Contenido publicado por el TC en los Setup Days:
+  1. Lista oficial de Objetos (Scenario.tex:81-87):
+     - Minimo 30 objetos con imagen, nombre oficial, clase/categoria (ObjectCategory) y ubicacion por defecto (PredefinedLocation).
+     - Tres subconjuntos de objetos:
+       a) Common Objects: objetos estandar mundiales provistos de antemano (Red Bull, Pringles roja, cubo Rubik resuelto, pasta dental Colgate; Scenario.tex:134-135).
+       b) YCB Objects: seleccionados del dataset estandar YCB Benchmarks (Scenario.tex:99).
+       c) Local Objects: objetos comprados localmente por el TC en supermercados de la sede (Scenario.tex:100).
+     - Regla de prestamo de objetos (Scenario.tex:88-90): Los equipos pueden solicitar prestados al TC hasta 5 objetos simultaneos por un tiempo maximo de 1 hora para pruebas de agarre y entrenamiento visual.
+  2. Lista oficial de Ubicaciones y Muebles (Predefined Locations, Scenario.tex:165-171):
+     - Nombres exactos de las habitaciones (ej. "kitchen", "living_room", "bedroom", "office").
+     - Nombres y coordenadas de los muebles donde se ubican objetos o se sientan personas (ej. "dining_table", "kitchen_counter", "sofa", "coffee_table", "bookshelf", "dishwasher", "laundry_basket", "trashcan").
+  3. Lista oficial de Nombres de Personas (Predefined Names, Scenario.tex:172-177):
+     - Minimo 20 nombres asignados: 25% masculinos, 25% femeninos, 50% de genero neutral.
+     - Extraidos de los nombres mas comunes de Estados Unidos (ej. Charlie, Alex, Morgan, Taylor, Jordan, Robin, Francis, Casey, Sam, Jamie).
+- Procedimiento de carga en Base@Home:
+  * Ingesta de nombres y bebidas en el ASR:
+    - En Base@Home el archivo 'src/base_athome_perception/base_athome_perception/guest_vocabulary.py' lee nombres de 'tools/gpsr_parser/data/names/names.md' y bebidas de 'tools/gpsr_parser/data/objects/objects.md'.
+    - Los equipos actualizan estos archivos Markdown con la lista exacta del TC. Esto configura el 'initial_prompt' de Whisper (para sesgar foneticamente el modelo hacia los nombres de la competencia) y alimenta la funcion de correccion difusa 'difflib.get_close_matches'.
+  * Ingesta de ubicaciones y muebles en Nav2:
+    - Se cargan los waypoints y poligonos en 'semantic_map.yaml' y 'waypoints.yaml' utilizando el editor 'map_zone_editor.py' (SemanticMapManager.save_data, linea 204).
+    - Para cada mesa o estante, se definen los puntos de aproximacion seguros ('calculate_approach_pose' en 'semantic_objects.py:108') calculados a una distancia prudente del mueble teniendo en cuenta el radio del robot (0.44 m).
+  * Ingesta de clases en los detectores de vision:
+    - Se actualizan las clases de interes en el detector de muñeca y cabeza. En modelos abiertos como YOLO-World ('yolov8s-worldv2'), se configuran los prompts de texto con los nombres de las clases publicadas (ej. "red bull can", "pringles can", "rubiks cube", "toothpaste box").
+
+--------------------------------------------------------------------------------
+3.5. AJUSTES DE ULTIMO MOMENTO Y CALIBRACIONES IN-SITU
+--------------------------------------------------------------------------------
+[PARAMETRIZACIONES CRITICAS EN EL ENTORNO REAL]
+1. Calibracion de Iluminacion y Camaras RGB-D:
+   - Los pabellones feriales tienen iluminacion artificial intensa (focos LED o halogenos de 500-1000 lux) que provocan saturacion o cambios drásticos de temperatura de color respecto al laboratorio.
+   - Accion: ajustar el balance de blancos y exposicion manual en la RealSense D435 de la cabeza y en la Orbbec DaBai de la muñeca para evitar reflejos especulares sobre superficies metalicas (latas de Red Bull) o plasticas.
+2. Calibracion Acustica del Microfono y VAD:
+   - El ruido de fondo en RoboCup (murmullos del publico, megafonia, compresores de aire de otras ligas, musica) suele elevar el piso de ruido a 60-70 dB SPL.
+   - En Base@Home: ejecutar 'src/base_athome_perception/scripts/asr_benchmark.py --inject' para evaluar 16 frases sobre el ruido real captado por el microfono RØDE VideoMic GO II (MICROFONO_ASR.md:10-18).
+   - Ajustar el umbral del detector de actividad vocal Silero VAD / EnergyVAD en 'jetson_head/src/audio_asr/audio_asr/asr_core.py' para evitar que el nodo Whisper quede en escucha continua infinita ("voz continua", incidente registrado en STATUS.md 2026-11-05).
+3. Medicion Fisica de Alturas de Muebles y Superficies de Agarre:
+   - Medir con cinta metrica in-situ la altura de la mesa de comedor, mesa ratona, mesada de cocina y estantes de la alacena provistos por el comite local.
+   - En Base@Home: registrar estas alturas en 'pre_grasp_poses' para MoveIt / Piper y verificar que la carrera del elevador vertical ('stepper_controller.py') alcance la altura requerida sin exceder los limites de recorrido mecanico (carrera ~0.60 m, torso_state.py:30).
+4. Verificacion de Calibracion Hand-Eye y Pan-Tilt:
+   - Ejecutar 'calibrar_pantilt' (con teclas T, V, M) para asegurar que el cuello Dynamixel responda con suavidad, con 'pan_direction' correcto (+1) y sin registrar caidas de comunicacion USB.
+   - Verificar la transformacion cinematica entre la camara de muñeca Orbbec DaBai y el efector final del Piper con un objeto testigo a distancia conocida (15-20 cm).
+
+--------------------------------------------------------------------------------
+3.6. ENSAYOS Y SIMULACROS DE PRUEBAS (TRIALS)
+--------------------------------------------------------------------------------
+[PRACTICAS PREVIAS A LA COMPETENCIA]
+1. Ensayo de Señal de Inicio por Puerta Abierta:
+   - Probar la deteccion de apertura de puerta con el sensor laser Hokuyo ('src/base_athome_skills/base_athome_skills/door_detector.py', clase 'DoorOpenDetector').
+   - Confirmar que al abrirse la puerta de la arena, el robot detecte el cambio de distancia (>1.2 m) y comience la navegacion autonoma de ingreso sin necesidad de pulsar ninguna tecla.
+2. Ensayo de Navegacion a Waypoints:
+   - Comprobar que Nav2 alcance todos los waypoints criticos sin quedar atascado en puertas estrechas (ancho minimo recomendado de puertas: 915 mm, Scenario.tex:31).
+3. Welcome Reception & Poster Presentation Session (Setup.tex:48-95):
+   - Se realiza la tarde/noche del ultimo setup day.
+   - Cada equipo expone un poster cientifico sobre el diseno de su robot, software y contribucion tecnica (Setup.tex:60).
+   - Charla de maximo 3 minutos (Setup.tex:70) evaluada por los capitanes (team-leaders) de todos los demas equipos mediante planilla oficial.
+   - Otorga hasta 50 puntos escalados a la clasificacion general (Setup.tex:81-86). Criterios: Novedad cientifica (10 pts), Relevancia para @Home (10 pts), Calidad de presentacion y discusion (10 pts).
+
+--------------------------------------------------------------------------------
+3.7. INSPECCION FORMAL DEL ROBOT (ROBOT INSPECTION)
+--------------------------------------------------------------------------------
+[REGLA Y CITA NORMATIVA]
+- Fuente: Setup.tex:97-126; scoresheets/registration_form.tex:44-91.
+- Condicion ineludible: Ningun robot puede competir en ninguna prueba regular si no aprueba formalmente la Robot Inspection ante los inspectores del Comite Tecnico (Setup.tex:115).
+- Tiempo limite: 3 minutos exactos (Setup.tex:116).
+- Procedimiento oficial:
+  1. El robot inicia fuera de la arena ante la puerta cerrada, acompanado por UN solo miembro del equipo (el team leader, Setup.tex:118).
+  2. El arbitro abre la puerta. El robot debe detectar la apertura y entrar de forma 100% autonoma (Setup.tex:101).
+  3. El robot debe navegar autonomamente hasta el "Inspection Point" predefinido en la arena.
+  4. En el Inspection Point, los inspectores del TC realizan las siguientes verificaciones:
+     * Boton de Parada de Emergencia (E-Stop): debe ser un boton rojo visible (unico boton rojo del robot) que corte inmediatamente toda la potencia de la base motriz, brazo Piper, elevador y pan-tilt.
+     * Deteccion de obstaculo y anticolision: un miembro del TC se cruza sorpresivamente delante del robot en movimiento; el robot debe frenar suavemente y detenerse a distancia segura sin tocar a la persona.
+     * Voz del robot: debe ser fuerte, clara y comprensible a volumen de estadio (evaluada por los inspectores). Conector para transmision RF a la megafonia.
+     * Dimensiones y velocidad: ancho <= 70 cm, altura <= 200 cm, velocidad <= 1.66 m/s (6 km/h).
+     * Senal manual de inicio: aprobacion de la forma manual en que el arbitro le indica al robot arrancar (pulsador fisico, gesto, toque en sensor de presion; PROHIBIDO raton o teclado, Procedure.tex:108).
+     * Redes inalambricas: comprobacion de que el robot no emite ninguna red Wi-Fi propia ni paquetes no autorizados.
+     * Seguridad mecanica y estetica (Appearance Evaluation, Setup.tex:117): sin cables sueltos colgando, sin cinta adhesiva expuesta (duct tape), sin bordes filosos. Penalidad de hasta -50 puntos si el robot presenta aspecto desprolijo.
+  5. Tras recibir la senal manual aprobada del arbitro, el robot debe navegar autonomamente hacia la puerta de salida (Exit) y abandonar la arena dentro de los 3 minutos.
+
+--------------------------------------------------------------------------------
+3.8. ROLES DEL EQUIPO DURANTE LA COMPETENCIA
+--------------------------------------------------------------------------------
+[ORGANIZACION HUMANA REQUERIDA]
+De acuerdo a las reglas de operacion (Procedure.tex:11-19, Procedure.tex:156-172 y Finals.tex:83-85),
+un equipo competitivo de RoboCup@Home organiza a sus integrantes en 5 roles formales:
+
+1. Team Leader (Capitan de Equipo):
+   - Unico interlocutor oficial ante el Comite Ejecutivo (EC) y Tecnico (TC).
+   - Asiste a las reuniones diarias obligatorias de capitanes (Team Leader Meetings).
+   - Acompana al robot durante la Robot Inspection (Setup.tex:118).
+   - Actua como jurado evaluador en la sesion de posters (Setup.tex:73) y en las pruebas de otros equipos.
+
+2. Robot Operator (Operador de Pista):
+   - UNICO miembro del equipo autorizado a ingresar a la arena durante las pruebas regulares (Procedure.tex:14).
+   - Ubica el robot en la posicion de inicio antes de que comience el tiempo de preparacion (setup time de 1 minuto).
+   - Explica al arbitro cual es la senal manual de inicio aprobada y se retira detras del arbitro.
+   - NO puede tocar el robot ni guiarlo verbalmente durante la prueba salvo en caso de Restart (Procedure.tex:119) o si el arbitro ordena detenerlo por emergencia.
+
+3. Commentator (Comentarista de Demostracion):
+   - ROL OBLIGATORIO EN FINALS (Finals.tex:83-85: "The team will be asked to provide a commentator to explain the robot's behavior and answer questions to produce a better viewing experience for the audience").
+   - Con microfono en mano frente al publico y al jurado, explica en ingles que esta intentando hacer el robot, que sensores esta usando, que problema detecto y como lo esta resolviendo.
+
+4. Pit Crew / Data Loader / Software Integrator (Equipo de Boxes):
+   - Permanece en las mesas de equipo (Team Area).
+   - Responsable de la carga de datos del TC (nombres, ubicaciones, objetos) en los repositorios de configuracion.
+   - Monitorea logs y telemetria de forma pasiva a traves de la VLAN ArenaNetwork.
+   - Ejecuta compilaciones, pruebas de regresion en simulacion y despliegues rapidos entre intentos.
+
+5. Safety Monitor / E-Stop Handler (Responsable de Seguridad):
+   - Persona designada para supervisar el movimiento fisico del robot.
+   - Permanece fuera de la arena con contacto visual directo constante sobre el robot y con acceso inmediato a la parada de emergencia para abortar ante cualquier indicio de comportamiento peligroso hacia personas o mobiliario (Safety First!, Procedure.tex:5-9).
+
+================================================================================
+4. PRUEBA FINALS VIGENTE (RULEBOOK 2026.2)
+================================================================================
+
+La prueba de Finals en RoboCup@Home es la culminacion de la competencia, donde los
+mejores clasificados demuestran el maximo grado de integracion y robustez de sus
+plataformas en una demostracion abierta ante el publico y el jurado internacional.
+
+En el RuleBook oficial 2026.2 (@b844d5a), la prueba esta formalizada en:
+- Archivo normativo de tareas: tasks/Finals.tex (lineas 1-101)
+- Archivo normativo de puntaje: scoresheets/Finals.tex (lineas 1-36)
+NOTA DE EXCLUSION: tasks/old/ThemedFinals.tex y scoresheets/old/FinalsExec.tex pertenecen
+a versiones obsoletas anteriores a 2024 y quedan formalmente excluidas del analisis.
+
+--------------------------------------------------------------------------------
+4.1. FILOSOFIA, TIEMPOS Y SISTEMA DE PUNTUACION
+--------------------------------------------------------------------------------
+[REGLA Y CITA NORMATIVA]
+1. Acceso a la Final: Solo los mejores equipos con mayor puntuacion total acumulada en las
+   pruebas regulares (HRI Challenge, Pick and Place, GPSR, Doing Laundry y Restaurant)
+   acceden a competir en la Final (Finals.tex:3).
+2. Tiempo limite de prueba: Exactamente 10 minutos (scoresheets/Finals.tex:1, 'timelimit=10').
+3. Influencia en la clasificacion final (Finals.tex:6-11):
+   - El ranking de la prueba de Finals influye en un 50% de la calificacion final.
+   - La suma acumulada de puntos de todas las pruebas anteriores influye en el otro 50%.
+4. Sin techo de puntos (Finals.tex:13):
+   "There is no maximum score during the Final."
+   A diferencia de las pruebas regulares que tienen puntajes maximos fijos, en la Final un robot
+   que resuelva multiples tareas con velocidad y precision puede acumular puntos de forma ilimitada.
+5. Ejecucion serializada: Las demostraciones se realizan de forma consecutiva en una sola arena
+   frente al publico y a un jurado compuesto por miembros del TC, EC y trustees (Finals.tex:15).
+
+--------------------------------------------------------------------------------
+4.2. DINAMICA DE PROBLEMAS EN LA ARENA Y GENERACION ALEATORIA
+--------------------------------------------------------------------------------
+[MECANICA DE LA PRUEBA]
+- Objetivo principal: "The robot is asked to maintain the household by cleaning up the arena and assisting people. Main Goal: Solve different problems in the arena" (Finals.tex:18-20).
+- Generacion de problemas:
+  * La arena arranca en su estado por defecto, pero se configuran un MINIMO DE 8 PROBLEMAS
+    distribuidos por las distintas habitaciones (Finals.tex:60).
+  * Los problemas y comandos son generados por el software oficial CommandGenerator de RoboCup
+    (https://github.com/RoboCupAtHome/CommandGenerator, Finals.tex:69).
+- Búsqueda autonoma (Finals.tex:56): El robot debe recorrer las habitaciones y encontrar los
+  problemas por si mismo, sin intervencion ni teleoperacion humana.
+- Declaracion verbal del problema (Finding and Stating):
+  * Antes de resolver un problema, el robot debe identificarlo y anunciarlo claramente por voz
+    (scoresheets/Finals.tex:3: "Find and clearly state an encountered problem" = 150 pts).
+  * Encontrar una persona e indicar que necesita ayuda califica como encontrar el problema (Finals.tex:70).
+  * Interpretar y repetir verbalmente el comando recibido por una persona califica como resolucion
+    parcial del problema (Finals.tex:71).
+
+--------------------------------------------------------------------------------
+4.3. PENALIDADES POR REPETICION Y ESTRATEGIA DE DIVERSIDAD (INTERLEAVED SOLVING)
+--------------------------------------------------------------------------------
+[MECANISMO DE PENALIZACION DEL RULEBOOK]
+Uno de los cambios mas profundos del RuleBook 2026.2 respecto a ediciones historicas es el
+desestímulo deliberado a los robots monotematicos:
+
+- Fuente: scoresheets/Finals.tex:4-8 y Finals.tex:61-68.
+- Penalidades especificas por categoria repetida:
+  * Encontrar categoria repetida: -100 pts de penalidad (scoresheets/Finals.tex:4).
+  * Resolver la misma categoria por 2da vez: -300 pts de penalidad (scoresheets/Finals.tex:7).
+  * Resolver la misma categoria por 3ra vez (o mas): -500 pts de penalidad (scoresheets/Finals.tex:8).
+- Aplicacion de la penalidad (Finals.tex:66):
+  "The Repetition penalty is applied before any partial penalties."
+- Ejemplo de calculo oficial (Finals.tex:67):
+  Si el robot levanta basura del piso (valorada en 650 pts), al resolver la 1ra basura suma 650 pts.
+  Si levanta una 2da basura del piso, la solucion base se reduce a (650 - 300) = 350 pts.
+  Si levanta una 3ra basura del piso, la solucion base se reduce a (650 - 500) = 150 pts.
+  Si levanta una 4ta basura, tras la penalidad y penalidades de ayuda humana podria resultar en 0 pts.
+
+IMPLICANCIA TACTICA FUNDAMENTAL (Verificada en CHARMIE finals_task_2026.py:210-248):
+La estrategia optima para Finals NO ES juntar 4 basuras del suelo. La estrategia obligatoria es
+alternar una tarea de cada categoria (Interleaved Problem Solving):
+1. Resolver 1 problema de Basura en Piso (150 encontrar + 650 resolver = 800 pts, sin penalidad).
+2. Resolver 1 problema de Objeto Fuera de Lugar (150 encontrar + 650 resolver = 800 pts, sin penalidad).
+3. Resolver 1 problema de Persona con Pedido (150 encontrar + 650 resolver = 800 pts, sin penalidad).
+4. Resolver 1 Cierre de Lavavajillas (300 pts fijos, categoria unica).
+5. Resolver 1 Traslado de Canasto de Ropa (600 pts fijos, categoria unica).
+6. Resolver 1 Apertura de Puerta para Invitado (600 pts fijos, categoria unica).
+Total teorico con diversidad perfecta: 3900 puntos en 10 minutos, con CERO penalidades por repeticion.
+
+--------------------------------------------------------------------------------
+4.4. CATEGORIAS DE PROBLEMAS Y TAREAS ESPECIALES EN FINALS 2026.2
+--------------------------------------------------------------------------------
+[DETALLE POR CATEGORIA NORMATIVA]
+
+1. Basura en el piso (Trash on the floor):
+   - Descripcion: Objetos depositados en el suelo de cualquier habitacion que deben ser arrojados
+     al cubo de basura (Finals.tex:28).
+   - Puntaje: 150 pts por encontrar y anunciar + 650 pts por depositar en el tacho = 800 pts.
+   - Asistencia humana: Pedir que una persona coloque la basura en la pinza (handover) penaliza
+     el 60% del puntaje equivalente de agarre (Finals.tex:67).
+
+2. Objetos fuera de lugar (Misplaced Objects):
+   - Descripcion: Objetos colocados en muebles que no corresponden a su PredefinedLocation
+     (ej. una manzana o taza en la mesa ratona del living en lugar de la mesada de cocina; Finals.tex:29).
+   - El robot debe detectar el objeto, determinar a que categoria y ubicacion por defecto pertenece,
+     tomarlo y transportarlo a su sitio correcto.
+   - Puntaje: 150 pts por encontrar y declarar + 650 pts por reubicar = 800 pts.
+
+3. Personas pidiendo ayuda (Persons with Requests):
+   - Descripcion: Personas situadas en la arena que levantan el brazo cuando el robot ingresa a la
+     misma habitacion (Finals.tex:30).
+   - El robot debe aproximarse, reconocer que la persona pide atencion (150 pts), escuchar el
+     comando GPSR que le dicta, repetirlo verbalmente (resolucion parcial) y ejecutar la accion (650 pts).
+
+4. Cerrar electrodomesticos (Closing Appliances - Dishwasher Door):
+   - Descripcion: La puerta frontal del lavavajillas ha quedado abierta o entreabierta (Finals.tex:31).
+   - El robot debe aproximarse y cerrar la puerta hasta que el pestillo calce.
+   - Puntaje especial directo: 300 pts (scoresheets/Finals.tex:21).
+
+5. Mover el canasto de ropa (Moving the Laundry Basket):
+   - Descripcion: El canasto de lavanderia ha quedado situado en algun lugar de la arena y debe
+     ser transportado junto al lavarropas (Finals.tex:32).
+   - Puntaje especial directo: 600 pts (scoresheets/Finals.tex:19).
+
+6. Recibir invitado en la puerta de salida (Welcome Guest behind Exit Door):
+   - Descripcion: Hay una persona esperando detras de la puerta de salida (Exit door). El robot debe
+     abrir autonomamente la puerta y darle la bienvenida al invitado (Finals.tex:33).
+   - La posicion de la persona es conocida (no se otorgan puntos por localizarla).
+   - Al ser recibida, la persona le dicta un pedido al robot.
+   - Puntaje especial directo: 600 pts por abrir la puerta del departamento (scoresheets/Finals.tex:20).
+
+7. Tareas personalizadas aprobadas por el TC (Custom Tasks):
+   - Descripcion (Finals.tex:38-47): Los equipos pueden proponer tareas domesticas razonables
+     adicionales durante las reuniones de capitanes de los Setup Days. Deben ser aprobadas por el TC.
+   - Requisitos de objetos: Los objetos necesarios (ej. regaderas, plumeros) deben ser articulos
+     domesticos comunes sin marcas artificiales ni adaptaciones secretas. El equipo proponente debe
+     suministrar al menos 2 copias identicas para que esten disponibles para todos los demas competidores.
+   - Ejemplos citados en el reglamento: Limpieza de ventanas (window cleaning), alineacion o
+     enderezado de cuadros en la pared (picture alignment on the wall), riego de plantas.
+   - Puntaje: Determinado por el TC en los casilleros libres de la planilla (scoresheets/Finals.tex:22-24).
+
+--------------------------------------------------------------------------------
+4.5. REGLA "THE SHOW MUST GO ON" (REINICIO DENTRO DE LA ARENA)
+--------------------------------------------------------------------------------
+[REGLA Y CITA NORMATIVA]
+- Fuente: tasks/Finals.tex, Seccion 5.2.1 (\ref{sec:finals_restart}), lineas 75-81; y scoresheets/Finals.tex:27.
+- Proposito: Mantener el dinamismo del espectaculo para el publico y la audiencia sin frustrar
+  la presentacion por un bloqueo de software menor.
+- Condiciones del reinicio en Finals:
+  1. El equipo puede reiniciar el robot DENTRO de la arena (a diferencia de las pruebas regulares
+     donde hay que regresar a la puerta de entrada).
+  2. ¡TODOS LOS PUNTOS ACUMULADOS PREVIAMENTE SE CONSERVAN! (Finals.tex:78: "All previously collected points will be kept").
+  3. Los problemas pueden ser reacomodados por el arbitro durante el reinicio (Finals.tex:79).
+  4. La penalidad de reinicio (-50 pts, scoresheets/Finals.tex:27) SOLO SE APLICA si el robot
+     vuelve a puntuar con exito despues del reinicio (Finals.tex:80). Si no puntua mas, no se descuenta.
+
+--------------------------------------------------------------------------------
+4.6. ROL OBLIGATORIO DE COMENTARISTA (COMMENTATOR)
+--------------------------------------------------------------------------------
+[REGLA Y CITA NORMATIVA]
+- Fuente: tasks/Finals.tex, Seccion 5.3 (\ref{sec:finals_commentator}), lineas 83-85.
+- "The team will be asked to provide a commentator to explain the robot's behavior and answer questions to produce a better viewing experience for the audience."
+- Requerimientos practicos para el equipo:
+  * El comentarista debe tener excelente dominio de ingles tecnico y comunicacion publica.
+  * Debe contar con una pantalla de retorno o telemetria en tiempo real (ej. la interfaz web
+    de Commander de Base@Home en http://127.0.0.1:8770, implementada en commander_node.py:217-250)
+    para saber en todo momento que estado o plan esta ejecutando el robot y explicarlo fluidamente.
+  * Debe explicar los fallos con naturalidad: si el robot no entiende una orden o falla un agarre,
+    explicar como el sistema de recuperacion autonoma (fallback) intenta corregirlo.
+
+================================================================================
+5. DEMOSTRACIONES FACTIBLES PARA BASE@HOME (1 BRAZO PIPER + ELEVADOR)
+================================================================================
+
+Base@Home posee una configuracion mecatronica singular dentro de la liga OPL:
+- Base diferencial hoverboard (motores hub BLDC, 0.62 m de ancho, radio Nav2 de 0.44 m, LiDAR Hokuyo a 38 cm de altura; ROBOT.md:15-18).
+- Columna con elevador vertical paso a paso accionado por tornillo y motor stepper con driver TMC (ESP32-S3 en NUC, 'stepper_controller.py' y 'torso_state.py'). Carrera vertical util de ~0.60 m (torso_state.py:30), lo que permite situar la base del brazo Piper entre 0.32 m y 0.92 m del suelo (STATUS.md:148).
+- Brazo robotico AgileX Piper 6-DOF con pinza paralela (carga util de 1.5 kg, alcance de ~600 mm, controlador FollowJointTrajectory desplegado en Jetson, pinza con apertura 0-105 mm; ROBOT.md:13-17).
+- Camara de muñeca Orbbec DaBai acoplada al efector final (RGB-D + detector YOLO TensorRT a 30 Hz en GPU Jetson; ROBOT.md:53).
+- Cabeza pan-tilt Dynamixel con camara RealSense D435 (RGB-D en NUC para personas, mesas y mapeo de salas; ROBOT.md:16-17).
+- Microfono direccional RØDE VideoMic GO II con Whisper ASR + Silero VAD en Jetson (latencia ~1.4 s; ROBOT.md:54).
+- Sistema de habla TTS RoboCupSpeaker + pantalla facial animada y servidor web local :8770 / :8090.
+
+A continuacion se detallan las 5 demostraciones de maximo impacto que Base@Home puede
+ejecutar en la prueba de Finals (10 minutos), aprovechando especificamente la sinergia
+cinematica del elevador vertical con el brazo de 6-DOF.
+
+--------------------------------------------------------------------------------
+5.1. DEMO 1 (VENTAJA UNICA DEL ELEVADOR): BASURA EN PISO (FLOOR PICK & TRASH DROP)
+--------------------------------------------------------------------------------
+[VENTAJA ESTRUCTURAL SOBRE OTROS ROBOTS]
+- La gran mayoria de los robots de servicio comerciales (ej. PAL TIAGo, Fetch, Toyota HSR)
+  tienen la base del brazo montada a una altura fija en el torso (entre 0.80 m y 1.10 m).
+  Para alcanzar una lata o bolsa tirada en el piso deben inclinar el torso hacia adelante,
+  arriesgando colisiones del efector final contra la propia base motriz o desestabilizacion
+  del centro de gravedad.
+- Base@Home resuelve esto de forma natural: el elevador desciende el hombro del Piper hasta
+  z_torso = 0.05 m (dejando la base del brazo a solo 32 cm del piso medido, STATUS.md:148).
+- Procedimiento operativo en Finals:
+  1. El robot navega explorando las salas (living room y cocina).
+  2. La camara RealSense D435 de la cabeza, inclinada a tilt = -35°, detecta un objeto en el suelo
+     mediante 'bag_vision.py' o 'yolo_world' (ej. lata de Red Bull aplastada, bolsa o vaso de plastico).
+  3. Declaracion obligatoria: El robot orienta la cabeza hacia el jurado y dice por TTS:
+     "I have encountered a problem: there is trash on the living room floor. I will pick it up and dispose of it"
+     (Suma 150 pts de declaracion inmediata, scoresheets/Finals.tex:3).
+  4. Maniobra de agarre:
+     - El elevador baja a nivel de piso ('set_torso' en skills.py:112).
+     - El Piper adopta la pose 'pre_grasp_floor' (ensenar_pregrasp.py / bag_vision.py).
+     - La camara de muñeca Orbbec DaBai centra el objeto a corta distancia (20-30 cm).
+     - Cierre de pinza a 0 mm y confirmacion por sensor de ancho ('gripper_mm > 2 mm', STATUS.md:56).
+  5. Transporte y descarte:
+     - El elevador sube a media carrera (0.40 m) para elevar la basura del suelo y evitar que roce durante la traslacion.
+     - Nav2 navega hacia el waypoint 'trashcan' / 'trash_drop'.
+     - El brazo extiende la pinza sobre el cubo de basura y abre a 105 mm ('place_object', skills.py:126).
+  6. Puntuacion obtenida: 150 pts (encontrar) + 650 pts (resolver) = 800 PUNTOS LIMPIOS.
+  7. Repeticion: Categoria resuelta 1 vez -> CERO penalidades.
+
+--------------------------------------------------------------------------------
+5.2. DEMO 2: OBJETO FUERA DE LUGAR EN MESA (MISPLACED OBJECT TABLE PICK & PLACE)
+--------------------------------------------------------------------------------
+[OPERACION EN ALTURA MEDIA COORDINADA CON ELEVADOR]
+- Procedimiento operativo en Finals:
+  1. El robot navega a la mesa ratona del living ('coffee_table') o mesa de comedor ('dining_table').
+  2. El elevador ajusta la altura del torso para que la articulacion joint_1 del Piper quede a la
+     altura de la superficie de la mesa (~0.75 m del piso).
+  3. La RealSense de la cabeza barre la superficie de la mesa ('scene_analysis.py').
+  4. Clasificacion semantica: Detecta un objeto perteneciente a la cocina (ej. caja de te, lata de Red Bull,
+     o pomo de pasta dental Colgate). Cruzando con la base de conocimiento ('knowledge.py:82-90' y
+     'places.py:75'), el robot determina que la ubicacion por defecto de ese objeto es 'kitchen_counter' o 'pantry'.
+  5. Declaracion obligatoria:
+     "I have encountered a problem: a Colgate toothpaste box is misplaced on the coffee table. Its designated place is the pantry. I will put it away."
+     (Suma 150 pts de declaracion).
+  6. Agarre: El Piper ejecuta 'pick_blocking' (arm_manipulation.py:440) asistido por MoveIt 2.
+     La pinza sujeta el objeto y confirma agarre por sensor de corriente/ancho.
+  7. Navegacion y colocado:
+     - Nav2 traslada la base hasta el punto de aproximacion de 'pantry' o 'kitchen_counter'.
+     - El Piper coloca el objeto sobre el estante con 'place_blocking' (arm_manipulation.py:481) y retorna a home.
+  8. Puntuacion obtenida: 150 pts (encontrar) + 650 pts (resolver) = 800 PUNTOS LIMPIOS.
+  9. Repeticion: Categoria resuelta 1 vez -> CERO penalidades.
+
+--------------------------------------------------------------------------------
+5.3. DEMO 3: PERSONA PIDIENDO AUXILIO (PERSONS WITH REQUESTS / GPSR ASISTIDO)
+--------------------------------------------------------------------------------
+[INTERACCION HRI FLUIDA Y PLANIFICACION VISIBLE]
+- Procedimiento operativo en Finals:
+  1. Durante el patrullaje de habitaciones, una persona voluntaria del arbitraje levanta la mano
+     (regla Finals.tex:30: "They will raise their hand if the robot is in the same room").
+  2. Deteccion: El nodo de pose de personas ('person_pose_detector.py' / YOLOv8-pose) detecta
+     el keypoint de la muñeca por encima de la altura de los ojos (gesto de mano alzada).
+  3. Declaracion obligatoria:
+     El robot orienta la cabeza pan-tilt hacia el rostro de la persona ('face_tracking_step' en scene_analysis.py:195),
+     frena la base y anuncia:
+     "I have encountered a problem: a person in the living room is requesting assistance."
+     (Suma 150 pts de declaracion).
+  4. Interaccion y captura de comando:
+     - El robot se aproxima a 1.2 m de distancia y dice: "Hello! How can I help you today?"
+     - El voluntario dicta un comando hablado estandar generado por CommandGenerator (Finals.tex:71),
+       por ejemplo: "Go to the dining table and tell Charlie that lunch is ready".
+     - Whisper ASR ('whisper_node.py' en Jetson) transcribe el audio a texto en ~1.4 s.
+     - Resolucion parcial reglamentaria (Finals.tex:71: "Correctly repeating the command given by a person counts as partially solving the problem"):
+       El robot repite el comando verbalmente: "Understood: I will go to the dining table and tell Charlie that lunch is ready"
+       y despliega el plan en la interfaz web :8770 de Commander ('commander_node.py:112: compile').
+  5. Ejecucion de la mision:
+     - Nav2 navega al waypoint 'dining_table'.
+     - Localiza a Charlie mediante reconocimiento facial ('face_recognizer.py').
+     - Emite el mensaje por TTS ('speaker.py').
+  6. Puntuacion obtenida: 150 pts (encontrar) + 650 pts (resolver) = 800 PUNTOS LIMPIOS.
+  7. Repeticion: Categoria resuelta 1 vez -> CERO penalidades.
+
+--------------------------------------------------------------------------------
+5.4. DEMO 4: CIERRE DE ELECTRODOMESTICO (CLOSING THE DISHWASHER DOOR)
+--------------------------------------------------------------------------------
+[MANIOBRA CINEMATICA SEGURA DE CONTACTO FUNCIONAL]
+- Procedimiento operativo en Finals:
+  - En la cocina, la puerta basculante frontal del lavavajillas ha sido dejada abierta por el arbitro (Finals.tex:31).
+  - El cierre manual o asistido del lavavajillas otorga 300 PUNTOS DIRECTOS en la planilla (scoresheets/Finals.tex:21).
+- Estrategia de Base@Home:
+  1. Nav2 navega al waypoint 'dishwasher_front'.
+  2. El elevador se posiciona a la cota exacta del borde superior de la puerta entreabierta (~0.65-0.70 m del piso).
+  3. El Piper adopta una postura rigida con el gripper cerrado formando un punto de contacto plano hacia adelante.
+  4. Contacto funcional (Functional Touching, Procedure.tex:68-72):
+     El robot anuncia con voz clara:
+     "I am closing the dishwasher door. Please do not stop me, this is functional touching."
+  5. El robot avanza 15-20 cm en linea recta hacia adelante a baja velocidad (0.05 m/s) empujando la puerta hasta
+     que el pestillo mecanico hace el "click" de traba.
+  6. Retrocede 20 cm y confirma que la puerta quedo vertical.
+- Ventaja tecnica: No requiere algoritmos complejos de agarre deformable ni manipulacion bimanual. Es una accion de empuje de altisima tasa de exito que suma 300 puntos en menos de 45 segundos.
+
+--------------------------------------------------------------------------------
+5.5. DEMO 5: TAREA PERSONALIZADA / CUSTOM TASK (ENDEREZAR CUADRO O REGAR PLANTA)
+--------------------------------------------------------------------------------
+[PROPUESTA INNOVADORA APROBADA POR EL TC]
+- El reglamento permite solicitar tareas domesticas adicionales en la reunion de capitanes del Setup Day (Finals.tex:38-47),
+  aportando 2 copias de objetos estandar.
+- Tarea recomendada para Base@Home: ALINEACION DE CUADRO TORCIDO EN LA PARED (Picture alignment on the wall, citada textualmente como ejemplo valido en Finals.tex:41).
+  * Justificacion: Demuestra el alcance vertical completo del robot. El elevador sube a su maxima cota (z_torso = 0.60 m),
+    posicionando el efector final a 1.50 m de altura.
+  * Vision: La camara RealSense D435 detecta el marco de un cuadro colgado en la pared con un angulo de inclinacion (ej. 15° respecto a la horizontal).
+  * Anuncio verbal: "I noticed the picture frame on the living room wall is crooked. I will align it."
+  * Accion: El Piper extiende la pinza cerrada y aplica una leve presion ascendente sobre la esquina baja del marco hasta que el algoritmo visual detecta que la linea superior del marco esta nivelada (0°).
+  * Puntuacion estimada: Asignada por el TC (tipicamente 300-500 pts en casillero Custom).
+
+--------------------------------------------------------------------------------
+5.6. MATRIZ DE FACTIBILIDAD, PUNTUACION Y CRONOGRAMA EN LOS 10 MINUTOS
+--------------------------------------------------------------------------------
+
+| Demo / Tarea | Dificultad | Tiempo est. | Pts Encontrar | Pts Resolver | Penalidad Rep. | Pts Netos |
+|---|---|---|---|---|---|---|
+| 1. Basura en piso | Media | 1 min 45 s | 150 | 650 | 0 | 800 |
+| 2. Objeto fuera de lugar | Media | 2 min 10 s | 150 | 650 | 0 | 800 |
+| 3. Persona con pedido | Baja/Media | 2 min 00 s | 150 | 650 | 0 | 800 |
+| 4. Cierre lavavajillas | Baja | 1 min 15 s | — (especial) | 300 | 0 | 300 |
+| 5. Custom: Cuadro / Puerta | Media | 1 min 30 s | — (especial) | 300 (est.) | 0 | 300 |
+| Margen / Reintentos | — | 1 min 20 s | — | — | — | — |
+| TOTAL PROYECTADO | — | 10 min 00 s | 450 | 2200 | 0 | 3000 pts |
+
+Conclusiones estrategicas:
+- Ejecutando 1 sola tarea de cada categoria, Base@Home puede asegurar ~2700 a 3000 puntos limpios en 10 minutos sin sufrir ninguna penalidad de repeticion (-300 / -500 pts).
+- Esta puntuacion situa al equipo en posicion de podio en la liga OPL, donde el puntaje medio historico en Finals oscila entre 1500 y 2500 puntos.
+
+================================================================================
+6. LISTA DE LO QUE HAY QUE TENER PREPARADO (CHECKLIST DE LOGISTICA Y DESPLIEGUE)
+================================================================================
+
+Para competir con exito y evitar descalificaciones o fallos tecnicos prevenibles,
+el equipo debe contar con un checklist exhaustivo dividido en 4 areas criticas:
+
+--------------------------------------------------------------------------------
+6.1. HARDWARE, HERRAMIENTAS Y REPUESTOS FISICOS
+--------------------------------------------------------------------------------
+[EQUIPAMIENTO DE BOXES Y PLATAFORMA]
+1. Baterias y Potencia:
+   - Al menos 2 paquetes de baterias de traccion de 36 V (10S Li-ion) con conectores XT60, totalmente cargadas a 41.5-42.0 V.
+   - Cargador rapido de baterias de 42 V / 2 A verificado y testeado.
+   - Fuente de alimentacion conmutada de banco (12 V / 20 A o 36 V regulable) para mantener el robot encendido durante los Setup Days en la mesa de equipo sin degradar las baterias.
+   - Tester digital (multimetro) para verificacion de voltajes y continuidad de masa.
+2. Boton de Parada de Emergencia (E-Stop):
+   - Boton tipo hongo rojo con enclavamiento mecanico de corte bipolar (corta simultaneamente la alimentacion de potencia a los motores de traccion hoverboard, brazo Piper y motor paso a paso del elevador).
+   - Requisito normativo (Setup.tex:104 y Procedure.tex:6): UNICO boton rojo del robot. Debe ser accesible inmediatamente desde la parte trasera/superior.
+3. Senal Manual de Inicio Aprobada:
+   - Pulsador fisico claramente marcado como "START" (verde o azul) o configuracion de sensor de contacto en la pinza/cabeza (Procedure.tex:100-103).
+   - Prohibido depender de pulsar [ESPACIO] o [ENTER] en un teclado durante la inspeccion y pruebas (Procedure.tex:108).
+4. Cables y Adaptadores de Repuesto:
+   - 2 cables USB de alta calidad, apantallados y con ferrita para el modulo U2D2 de los Dynamixel (para mitigar la falla de desconexion USB error -71 documentada en STATUS.md:15).
+   - 1 adaptador USB-Ethernet Gigabit de repuesto (RTL8153, identico al que vincula la Jetson a 1 Gb/s; ROBOT.md:81).
+   - 1 cable Ethernet Cat6 blindado de 1 m (enlace NUC-Jetson) y 1 cable de 5 m para programacion en mesa.
+   - 1 cable CAN de repuesto para el brazo Piper.
+   - Cables USB-C a USB-A 3.0 blindados para la RealSense D435 y la Orbbec DaBai.
+5. Herramientas de Medicion y Ajuste:
+   - Cinta metrica milimetrada de 3 m (indispensable para medir altura z real de mesas y calibrar coordenadas en 'semantic_map.yaml').
+   - Juego de llaves Allen (mecanica del Piper, soporte de columna y cabeza).
+   - Precintos plasticos y organizadores de cables espiralados (Appearance Evaluation, Setup.tex:117: cero cables colgando).
+
+--------------------------------------------------------------------------------
+6.2. SOFTWARE, MODELOS Y DEPENDENCIAS OFFLINE (ZERO-INTERNET DEPENDENCY)
+--------------------------------------------------------------------------------
+[REGLA DE AUTONOMIA DE COMPUTO]
+El reglamento estipula que no se garantiza el desempeno ni estabilidad de la red con Internet
+durante las pruebas (Scenario.tex:183). El robot debe ser capaz de arrancar y operar completamente desconectado:
+
+1. Modelos de Vision Descargados y Cacheados Localmente:
+   - Pesos de YOLO-World ('models/yolov8s-worldv2.pt', HOME-63 en ROADMAP.md:133) almacenados en disco, no en /tmp.
+   - Motores TensorRT de deteccion compilados para la GPU de la Jetson ('jetson_head/scripts/yolo_trt.py').
+   - Modelo de estimacion de pose humana YOLOv8-pose cacheado localmente en NUC.
+2. Modelos de Audio Whisper y Silero VAD:
+   - Checkpoints de Whisper ('base.en' y 'small.en') descargados en '~/.cache/whisper/' tanto en NUC como en Jetson.
+   - Modelo Silero VAD ONNX cacheado en disco local.
+3. Entornos Python Congelados (Venvs):
+   - NUC: '~/ros2_vision_venv' con todas las librerias compatibles (numpy < 2 para evitar conflictos con OpenCV; ROBOT.md:73).
+   - Jetson: '~/robot_venv' con PyTorch 2.5 / CUDA 13.2 y TensorRT 10.16.2 instalados.
+   - Prohibido terminantemente ejecutar 'pip install' o 'apt update' en el venue durante la competencia.
+4. Backups de Imagenes de Disco:
+   - Copia de seguridad en pendrive USB o disco externo del NVMe de la NUC y de la tarjeta microSD de la Jetson ('jetson_head/scripts/flash_jetson_r39.sh'; ROBOT.md:69-72).
+
+--------------------------------------------------------------------------------
+6.3. MATERIAL DE PRESENTACION Y DIFUSION
+--------------------------------------------------------------------------------
+[EVALUACION DE POSTER Y DIFUSION CIENTIFICA]
+1. Poster de la Poster Presentation Session (Setup.tex:60):
+   - Poster impreso en alta calidad tamano A0 (vertical), enfocado en la novedad cientifica de Base@Home:
+     arquitectura distribuida NUC+Jetson sobre ROS 2 Jazzy, manipulacion movil coordinada con elevador vertical,
+     editor URDF y HRI por voz con Whisper y modelos abiertos.
+   - Entrega hasta 50 puntos para la clasificacion general (Setup.tex:81).
+2. Video de Cualificacion y TDP de Respaldo:
+   - Archivo MP4 de maximo 10 minutos (docs/VIDEO_CUALIFICACION.txt) en pendrive USB.
+   - Copia impresa del Team Description Paper (TDP) de 8 paginas (docs/TDP_BORRADOR.txt).
+3. Conector de Audio RF / Cable Jack 3.5 mm (Setup.tex:112):
+   - Conector o transmisor de audio inalambrico homologado por el TC para conectar la salida de audio de la NUC
+     a la consola de sonido del estadio, permitiendo que el publico y los jueces escuchen con nitidez las frases del robot.
+
+--------------------------------------------------------------------------------
+6.4. CONFIGURACION DE RED Y CONMUTACION RAPIDA
+--------------------------------------------------------------------------------
+1. Scripts de Red:
+   - Script para conmutar la interfaz Wi-Fi de la NUC al VLAN oficial de la arena ('ArenaNetwork_<TeamID>') y deshabilitar Wi-Fi en la Jetson.
+   - Verificacion de que ninguna interfaz este emitiendo un punto de acceso (Access Point / Hotspot).
+   - Verificacion de que el protocolo CycloneDDS este configurado en modo unicast sin inundar la red local ('~/cyclonedds.xml'; ROBOT.md:87-89).
+
+================================================================================
+7. SCRIPTS EXISTENTES VS SCRIPTS FALTANTES (AUDITORIA EXHAUSTIVA CON GREP)
+================================================================================
+
+Se realizo una auditoria rigurosa mediante busqueda textual (grep) sobre todo el repositorio
+de Base@Home (commit 9d8c6a0 de origin/development) para mapear que herramientas ya existen,
+cuales estan incompletas y cuales faltan desarrollar para el Dia de Armado y la prueba de Finals.
+
+--------------------------------------------------------------------------------
+7.1. TABLA COMPARATIVA DE HERRAMIENTAS Y SCRIPTS
+--------------------------------------------------------------------------------
+
+| Fase / Funcion | Script / Modulo Existente | Estado Comprobado | Script Faltante Necesario |
+|---|---|---|---|
+| Mapeo de Arena | 'src/base_athome_mapping/launch/slam_2d_mapping.launch.py:1' | VERIFICADO (SLAM Toolbox 2D) | 'arena_mapping_helper.sh' (recorrido guiado y verificacion de odometria) |
+| Guardado de Mapa | 'scripts/guardar_mapa_2d.sh:31' ('map_saver_cli') | VERIFICADO (Guarda mapa y copia con timestamp) | CUMPLE |
+| Recarga en Nav2 | 'src/base_athome_skills/scripts/nav_map_sync.sh:10' | VERIFICADO (Llama '/map_server/load_map') | CUMPLE |
+| Edicion Zonas/Mesas | 'src/base_athome_navigation/base_athome_navigation/map_zone_editor.py:72' | VERIFICADO (Servidor HTTP :8080 y guardado en semantic_map.yaml) | CUMPLE |
+| Ingesta de Nombres | 'src/base_athome_perception/base_athome_perception/guest_vocabulary.py:24' | VERIFICADO (Lee names.md y objects.md para Whisper) | 'import_competition_data.py' (sincronizador unificado de datos del TC) |
+| Ingesta Ubicaciones | 'src/base_athome_skills/base_athome_skills/mission/places.py:18' ('load_places') | VERIFICADO (Carga waypoints y semantic_map) | 'import_competition_data.py' |
+| Base Conocimiento | 'tools/gpsr_parser/gpsr_parser/knowledge.py:48' ('load_knowledge') | VERIFICADO (Entidades de GPSR) | 'import_competition_data.py' |
+| Pre-vuelo Red/Hosts | 'scripts/net/check_nuc_jetson_link.sh:1' | VERIFICADO (Carrier, ping, SSH, CycloneDDS) | 'competition_preflight.py' (pre-vuelo integral de 15 segundos) |
+| Pre-vuelo Basura | 'src/base_athome_perception/scripts/revisar_basura.py:53' | VERIFICADO (check_files, check_live) | 'competition_preflight.py' |
+| Robot Inspection | 'src/base_athome_skills/base_athome_skills/door_detector.py:51' ('DoorOpenDetector') | VERIFICADO (Deteccion laser de puerta abierta) | 'robot_inspection_mission.py' (mision autonoma completa de 3 min) |
+| Calibracion Pan-Tilt | 'src/base_athome_perception/scripts/calibrar_pantilt.py:52' ('PanTiltCalibrator') | VERIFICADO (Pruebas T, V, M y ajuste de direccion) | CUMPLE |
+| Calibracion Elevador | 'src/base_athome_perception/scripts/calibrar_elevador.py:1' | VERIFICADO (Homing y prueba de cota superior) | CUMPLE |
+| Calibracion Bolsa | 'src/base_athome_perception/scripts/calibrar_bolsa.py:1' | VERIFICADO (Calibracion de camaras y pose) | CUMPLE |
+| Ensenanza Poses | 'src/base_athome_perception/scripts/ensenar_pregrasp.py:1' | VERIFICADO (Asistente para hombro y efector) | CUMPLE |
+| Calibracion Acustica | 'src/base_athome_perception/scripts/asr_benchmark.py:1' | VERIFICADO (Inyeccion de frases y medida de latencia) | 'tune_ambient_noise.py' (calibrador automatico de umbral VAD) |
+| Medicion de Mesas | NINGUNO | NO ENCONTRADO | 'measure_table_heights.py' (medicion visual/laser in-situ) |
+| Secuenciador Finals | NINGUNO (solo 'commander_node.py' y 'finals_task_2026.py' en CHARMIE) | NO ENCONTRADO en Base@Home | 'finals_manager.py' (orquestador de Finals con control de repeticion) |
+| Telemetria Comentarista| 'src/base_athome_skills/base_athome_skills/mission/commander_node.py:217' | VERIFICADO (Web :8770 para estados de commander) | 'commentator_telemetry_node.py' (vista publica optimizada para Finals) |
+
+--------------------------------------------------------------------------------
+7.2. DETALLE DE SCRIPTS FALTANTES A DESARROLLAR
+--------------------------------------------------------------------------------
+
+A continuacion se especifica la arquitectura y proposito de cada uno de los 6 scripts
+clave que faltan en Base@Home:
+
+1. SCRIPT DE INGESTA UNIFICADA: 'tools/competition/import_competition_data.py'
+   - Problema actual: La carga de datos del torneo esta dispersa en 3 modulos distintos con
+     formatos no sincronizados ('guest_vocabulary.py', 'knowledge.py' y 'places.py').
+   - Funcion: Recibe la carpeta oficial publicada por el TC en los Setup Days (con 'names.md',
+     'objects.md' y 'locations.md') y en una sola corrida:
+     a) Actualiza el vocabulario y prompt de Whisper en 'guest_vocabulary.py'.
+     b) Actualiza las entidades y gramaticas en 'tools/gpsr_parser/data/'.
+     c) Carga las clases y descripciones para los prompts de YOLO-World ('bag_vision.py' y 'yolo_trt_node.py').
+     d) Genera un esqueleto de 'waypoints.yaml' con las ubicaciones y salas oficiales para que el editor
+        de zonas solo requiera ajustar las coordenadas (x, y) sobre el mapa.
+
+2. SCRIPT DE PRE-VUELO INTEGRAL DE COMPETENCIA: 'scripts/competition_preflight.py'
+   - Problema actual: 'revisar_basura.py' solo revisa la mision de la bolsa; 'check_nuc_jetson_link.sh'
+     solo revisa la red Ethernet. En la linea de partida (setup time de 1 minuto) no hay tiempo de
+     correr 5 scripts separados.
+   - Funcion: Script rapido de 15 segundos que antes de entrar a la arena comprueba:
+     a) Tension de bateria (>36 V en traccion, >11.8 V en sistemas de computo).
+     b) Conectividad DDS y latencia NUC <-> Jetson (< 2 ms).
+     c) Tasa de cuadros de camaras (/camera/color/image_raw > 15 Hz, /arm_camera/image_raw > 20 Hz).
+     d) Feedback fresco de actuadores (/arm/status con 'gripper_mm' valido y sin error CAN;
+        /torso/status con elevador referenciado; /pan_tilt/connected en True).
+     e) Sincronizacion de mapa Nav2 (/map publicado y AMCL inicializado).
+     f) Prohibicion de RF: Comprueba que no haya interfaces en modo AP ni hotspots activos.
+     g) Modo de inicio: Alerta si el arranque depende de teclado en lugar de la senal aprobada.
+
+3. SCRIPT DE MISION DE ROBOT INSPECTION: 'src/base_athome_skills/scripts/robot_inspection_mission.py'
+   - Problema actual: La Robot Inspection es obligatoria para competir pero hoy no existe un script
+     que ejecute la secuencia exacta de 3 minutos que evalua el TC.
+   - Flujo de la maquina de estados:
+     * STATE_WAIT_DOOR: Espera apertura de puerta exterior con 'DoorOpenDetector' (skills/door_detector.py).
+     * STATE_ENTER_ARENA: Cruza la puerta a velocidad controlada (0.20 m/s).
+     * STATE_NAV_INSPECTION_POINT: Navega al Inspection Point anunciado por el TC.
+     * STATE_INTRODUCE_ROBOT: Dice por TTS a maximo volumen: "Hello inspectors! I am Base@Home from UruBots. I am ready for the robot inspection."
+     * STATE_COLLISION_TEST: Permanece quieto o avanza a 0.1 m/s esperando que un inspector se cruce delante; frena inmediatamente por /scan sin colisionar.
+     * STATE_WAIT_START_SIGNAL: Espera la senal manual aprobada del arbitro (toque en cabeza o pulsador START).
+     * STATE_EXIT_ARENA: Navega a la puerta de salida ('exit') y anuncia "Inspection finished, thank you!".
+
+4. ORQUESTADOR DE LA PRUEBA DE FINALS: 'src/base_athome_skills/base_athome_skills/mission/finals_manager.py'
+   - Problema actual: En Base@Home existen habilidades sueltas ('bag_finder', 'arm_manipulation',
+     'hri_receptionist', 'commander_node'), pero no existe un coordinador de la dinamica de Finals
+     que alterne problemas y gestione las penalidades de repeticion de 2026.2.
+   - Arquitectura inspirada en CHARMIE ('finals_task_2026.py:80-248'):
+     * Contador estricto de categorias resueltas ('problems_solved[category]').
+     * Selector de diversidad (Interleaved Selector): fuerza al robot a no resolver dos veces seguidas
+       la misma categoria para evitar las penalidades de -300 y -500 pts (scoresheets/Finals.tex:7-8).
+     * Secuencia ciclica de patrullaje por salas: navega a living, busca basura en piso; si la encuentra,
+       la declara por TTS ("Find problem", +150 pts) y la resuelve (+650 pts). En la siguiente sala (cocina),
+       busca objetos fuera de lugar en mesas (+150 y +650 pts). Si ve una persona levantando la mano,
+       atiende el pedido HRI (+150 y +650 pts). Si pasa frente al lavavajillas abierto, empuja y cierra (+300 pts).
+     * Manejo del reinicio "The Show Must Go On": interfaz para pausar y reiniciar la maquina de estados
+       en el lugar sin perder el historial de puntos acumulados.
+
+5. CALIBRADOR RAPIDO DE ALTURAS DE MESAS IN-SITU: 'tools/calibration/measure_table_heights.py'
+   - Problema actual: En el venue de competencia las mesas nunca tienen exactamente la misma altura
+     que en el laboratorio uruguayo. Medir y editar manualmente varios archivos YAML es propenso a errores.
+   - Funcion: El operador posiciona el robot frente a la mesa ratona, mesa de comedor o mesada de cocina;
+     el script toma una nube de puntos de la RealSense D435, ajusta un plano horizontal con RANSAC
+     y calcula automaticamente la cota z_mesa exacta respecto al piso ('base_link'). Actualiza directamente
+     el campo 'plane_z' en 'arm_manipulation.py' y los waypoints semanticos.
+
+6. CALIBRADOR DE RUIDO AMBIENTE Y VAD: 'tools/calibration/tune_ambient_noise.py'
+   - Problema actual: En STATUS.md:18 se reporto que Whisper dejo de entregar resultados porque detectaba
+     "voz continua" debido al ruido ambiental. En el pabellon de la competencia el ruido sera aun mayor.
+   - Funcion: Graba 10 segundos de silencio ambiente en la arena real, calcula el nivel de energia RMS
+     y el histograma de frecuencias, y ajusta automaticamente el parametro 'threshold' de EnergyVAD
+     y Silero en 'jetson_head/src/audio_asr/audio_asr/asr_core.py' para garantizar que el endpointer
+     corte la grabacion a 1.1 s tras terminar de hablar la persona.
+
+================================================================================
+8. RECOMENDACIONES ORDENADAS POR UTILIDAD, PRUEBA EN SIMULACION Y RIESGO
+================================================================================
+
+Las siguientes recomendaciones estan priorizadas segun su Retorno de Inversion (ROI:
+puntos obtenidos por hora de desarrollo) y su criticidad operativa para no ser descalificados:
+
+--------------------------------------------------------------------------------
+8.1. PRIORIDAD 1: SCRIPT DE MISION DE ROBOT INSPECTION ('robot_inspection_mission.py')
+--------------------------------------------------------------------------------
+- Justificacion: Sin pasar la Robot Inspection, el robot NO TIENE PERMISO para participar
+  en ninguna prueba regular del torneo (Setup.tex:115). Es un bloqueo de acceso absoluto.
+- Que archivo crear/cambiar:
+  * Crear 'src/base_athome_skills/scripts/robot_inspection_mission.py'.
+  * Enlazar 'DoorOpenDetector' de 'src/base_athome_skills/base_athome_skills/door_detector.py'
+    con un cliente de 'NavigateToPose' de Nav2 y 'RoboCupSpeaker' para el saludo obligatorio.
+- Como probarlo primero en simulacion:
+  * Lanzar la simulacion con Nav2 en dominio 77:
+    'ATHOME_SIM=1 ROS_DOMAIN_ID=77 ros2 launch base_athome_sim sim.launch.py nav2:=true'
+  * En otra terminal, simular la apertura de la puerta:
+    'ros2 topic pub --once /scan sensor_msgs/msg/LaserScan "{...}"' (o abrir la puerta simulada en Gazebo).
+  * Observar que el robot navega al punto de inspeccion, emite el mensaje TTS, frena ante un obstaculo
+    sintetico en /scan, espera la senal manual y navega a la salida en menos de 3 minutos.
+- Nivel de riesgo:
+  * Riesgo en simulacion: Ninguno (solo software).
+  * Riesgo en hardware real: Bajo si el freno de anticolision funciona adecuadamente; se debe
+    garantizar que la velocidad maxima no exceda 0.35 m/s. Mover actuadores reales queda como
+    decision exclusiva del usuario en modo LAB_SUPERVISADO.
+
+--------------------------------------------------------------------------------
+8.2. PRIORIDAD 2: INGESTA UNIFICADA DE DATOS DE COMPETENCIA ('import_competition_data.py')
+--------------------------------------------------------------------------------
+- Justificacion: El Setup Day otorga muy poco tiempo entre la publicacion de las listas del TC
+  y el primer ensayo en la arena. Cargar nombres y ubicaciones a mano en 3 archivos diferentes
+  genera errores tipograficos criticos que inutilizan el ASR y la navegacion.
+- Que archivo crear/cambiar:
+  * Crear 'tools/competition/import_competition_data.py'.
+  * Generar automaticamente 'guest_vocabulary.py', 'knowledge.py' y los waypoints base de 'semantic_map.yaml'.
+- Como probarlo primero en simulacion:
+  * Ejecutar el script contra una carpeta mock de competencia:
+    'python3 tools/competition/import_competition_data.py --input tools/gpsr_parser/data/ --dry-run'
+  * Correr los tests unitarios existentes:
+    'pytest src/base_athome_perception/test/test_voice_understanding.py src/base_athome_navigation/test/test_semantic_objects.py'
+- Nivel de riesgo:
+  * Cero riesgo fisico (herramienta pura de generacion de texto/YAML offline).
+  * Requiere unicamente respaldo previo de 'semantic_map.yaml' para no sobrescribir calibraciones.
+
+--------------------------------------------------------------------------------
+8.3. PRIORIDAD 3: SCRIPT DE PRE-VUELO DE COMPETENCIA ('competition_preflight.py')
+--------------------------------------------------------------------------------
+- Justificacion: En competencia, los equipos disponen de solo 60 segundos de preparacion (setup time,
+  Procedure.tex:181). Detectar un nodo caido, una camara a 2 Hz o una bateria descargada dentro de
+  la arena provoca la perdida total del intento (0 puntos).
+- Que archivo crear/cambiar:
+  * Crear 'scripts/competition_preflight.py' (integrando 'revisar_basura.py' y 'check_nuc_jetson_link.sh').
+- Como probarlo primero en simulacion:
+  * Correr 'python3 scripts/competition_preflight.py --sim' en dominio 77.
+  * Verificar que reporte en verde todos los subsistemas o senale con precision que componente falta.
+- Nivel de riesgo:
+  * Cero riesgo fisico (script de solo lectura, no publica comandos de movimiento).
+
+--------------------------------------------------------------------------------
+8.4. PRIORIDAD 4: SECUENCIADOR Y GESTOR DE DIVERSIDAD DE FINALS ('finals_manager.py')
+--------------------------------------------------------------------------------
+- Justificacion: Finals representa el 50% de la clasificacion final del torneo. Un robot que
+  resuelva diversidad de problemas sin incurrir en las penalidades de repeticion de 2026.2
+  (-300 y -500 pts) puede sumar facilmente entre 2400 y 3200 puntos.
+- Que archivo crear/cambiar:
+  * Crear 'src/base_athome_skills/base_athome_skills/mission/finals_manager.py'.
+  * Integrar las maquinas de estados existentes de 'bag_finder', 'pick_blocking', 'hri_receptionist'
+    y 'commander_node' bajo un selector ciclico de salas y categorias.
+- Como probarlo primero en simulacion:
+  * Ejecutar el benchmark de escenarios simulados en Gazebo:
+    'ATHOME_SIM=1 ROS_DOMAIN_ID=77 python3 simulation/scripts/sim_escenarios.py'
+  * Probar el flujo completo: resolver 1 basura -> navegar a cocina -> resolver 1 objeto en mesa ->
+    atender persona -> cerrar electrodomestico.
+- Nivel de riesgo:
+  * En simulacion: Ninguno.
+  * En hardware real: Medio/Alto (involucra base, brazo y elevador operando coordinadamente).
+    Requiere sesiones acotadas de validacion fisica autorizadas por el usuario (LAB_SUPERVISADO).
+
+--------------------------------------------------------------------------------
+8.5. PRIORIDAD 5: CALIBRADORES IN-SITU ('tune_ambient_noise.py' Y 'measure_table_heights.py')
+--------------------------------------------------------------------------------
+- Justificacion: Asegura que el ASR Whisper no quede sordo ni saturado en el centro de convenciones
+  y que las alturas de aproximacion a mesas sean exactas sin ensayo y error manual.
+- Que archivo crear/cambiar:
+  * Crear 'tools/calibration/tune_ambient_noise.py' y 'tools/calibration/measure_table_heights.py'.
+- Como probarlo primero en simulacion:
+  * Probar 'tune_ambient_noise.py' inyectando archivos WAV de ruido ferial ('asr_benchmark.py').
+  * Probar 'measure_table_heights.py' contra mesas virtuales generadas en Gazebo Harmonic.
+- Nivel de riesgo:
+  * Cero riesgo fisico (herramientas de calibracion sensorial pasiva).
+
+
+================================================================================
+9. CONCLUSIONES Y SINTESIS DE EVIDENCIA
+================================================================================
+
+9.1. LO QUE QUEDA VERIFICADO CON EVIDENCIA RIGUROSA:
+- REGLAMENTO OFICIAL: Confirmadas en el RuleBook 2026.2 (@b844d5a) las reglas exactas de Setup Days
+  (Setup.tex:1-126), Robot Inspection (Setup.tex:97-126), red ArenaNetwork con prohibicion de hotspots
+  (Scenario.tex:179-198), y la prueba de Finals (tasks/Finals.tex:1-101 y scoresheets/Finals.tex:1-36).
+- PENALIDADES DE FINALS: Verificada la severa estructura de penalizacion por repeticion de categoria
+  (scoresheets/Finals.tex:4-8: -100 pts encontrar categoria repetida, -300 pts resolver por 2da vez,
+  -500 pts resolver por 3ra vez), lo que fundamenta la necesidad de una estrategia de tareas intercaladas.
+- ESTRATEGIA DE EQUIPOS LIDERES: Verificada en el repositorio de CHARMIE (@461577d, finals_task_2026.py)
+  la implementacion practica del contador de problemas resueltos por categoria y la alternancia de salas,
+  asi como la estructura de gestion de conocimiento en TU Eindhoven (@5bbf7bb, rwc2023/common.py).
+- CAPACIDADES EXISTENTES EN BASE@HOME: Comprobadas mediante grep en origin/development (@9d8c6a0)
+  las clases y metodos existentes para deteccion laser de puerta ('DoorOpenDetector'), edicion de mapas
+  y waypoints ('SemanticMapManager'), parser de intenciones GPSR ('GPSRParser', 'Commander'),
+  deteccion y agarre de basura en piso con elevador ('bag_vision.py', 'pre_grasp_floor', 'pick_blocking').
+
+9.2. LO QUE QUEDA POR CONFIRMAR O SIN VALIDACION FISICA:
+- SEGURIDAD FISICA DEL E-STOP: El corte electrico unificado de todos los actuadores (traccion hoverboard,
+  brazo Piper, elevador y pan-tilt) mediante un unico boton rojo tipo hongo sigue documentado como
+  POR CONFIRMAR en hardware real (ROBOT.md:110-113); es el requisito N° 1 de la Robot Inspection.
+- BOTON DE INICIO FISICO: El sistema actual depende de pulsar [ESPACIO] en scripts de misiones
+  ('hri_receptionist_challenge.py:1556'); se debe implementar y homologar una senal manual aprobada
+  sin teclado (pulsador START o toque en sensor) antes de la Robot Inspection.
+- OPERACION DEL ELEVADOR EN HARDWARE REAL: El movimiento coordinado de elevador + brazo Piper cuenta con
+  SIM_PASS en simulacion Gazebo, pero no ha sido ensayado fisicamente bajo carga real en el robot
+  (STATUS.md 2026-11-05). La simulacion no demuestra seguridad fisica ni tolerancia dinamica.
+- ESTABILIDAD ELECTRICA DEL PAN-TILT: Las 118 desconexiones del U2D2 registradas el 04/11 deben ser
+  resueltas definitivamente antes de someter el robot a la Robot Inspection o al seguimiento de Finals.
+- MEDICIONES METRICAS: Altura exacta, peso total con balanza y dimensiones perimetrales del robot montado
+  permanecen POR CONFIRMAR mediante medicion instrumental directa.

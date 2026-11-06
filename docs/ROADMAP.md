@@ -150,7 +150,7 @@ Escala: **P0** desbloquea seguridad/progreso · **P1** valor demostrable · **P2
 
 | # | Habilidad | Para qué | Estado | Prueba |
 |---|---|---|---|---|
-| 1 | Plan B: pedir la bolsa en mano si falla el agarre, y correcciones por voz ("estirá el brazo", "alejate") | Video y prueba real sin atascarse | No hecho | Simulación |
+| 1 | Plan B: pedir la bolsa en mano si falla el agarre, y correcciones por voz | Video y prueba real sin atascarse | Hecho en simulación | Robot real, supervisado |
 | 2 | Confirmar agarre por esfuerzo: publicar en `/arm/status` corriente y esfuerzo del Piper | Evitar falsos vacíos con bolsas finas | No hecho; cambia el nodo de la Jetson | Telemetría real, sin mover |
 | 3 | HRI: quitar la pregunta "Is that correct?" (penaliza), atributo visual del primer invitado, timbre | HRI Challenge: 4×15, 4×20, 2×30 | Parcial | Simulación + robot |
 | 4 | HRI: recibir bolsa y seguir al anfitrión (`follow_person`) | 50 + 200 + 50 puntos; también GPSR | No hecho | Simulación + robot |

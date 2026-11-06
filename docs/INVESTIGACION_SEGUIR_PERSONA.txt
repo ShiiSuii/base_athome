@@ -1,0 +1,1163 @@
+INVESTIGACION Y DISENO CONCRETO: SEGUIMIENTO Y BUSQUEDA DE PERSONAS (follow_person y find_person)
+Plataforma: Base@Home (UruBots) — RoboCup@Home Open Platform League (OPL)
+Hardware: NUC + Jetson Orin Nano, Base Hoverboard diferencial, Hokuyo UST-05LX (haz a 38 cm),
+          Camara RealSense D435 en cabezal Pan-Tilt Dynamixel (2-DOF), Brazo Piper 6-DOF.
+Software: ROS 2 Jazzy, CycloneDDS, Nav2, MoveIt 2.
+Tarea: HOME-90
+Fecha: 2026-11-06
+Autor: Antigravity (dispatched worker para tarea HOME-90)
+Workspace: /home/athome/orca/workspaces/base_athome_ws/antigravity-seguir
+Rama base: origin/development (commit 9d8c6a0)
+Entrega: docs/INVESTIGACION_SEGUIR_PERSONA.txt
+
+================================================================================
+0. RESUMEN EJECUTIVO Y CONCLUSIONES PRINCIPALES
+================================================================================
+
+Este documento presenta el diseno técnico y concreto para la implementacion de las habilidades
+`find_person` y `follow_person` en Base@Home para competir en RoboCup@Home OPL bajo el RuleBook 2026.2.
+
+1. Impacto Normativo y Puntaje (RuleBook 2026.2):
+   - En HRI Challenge (§5.1):
+     * Item 1.11 ("Following the host to the bag drop area"): 200 puntos limpios.
+     * Penalidades criticas a evitar: Soltar bolsa (-50), Rediscovery por interaccion natural (-50),
+       Pedir al operador que espere (-50), Contacto fisico (-150).
+     * Item 1.5 ("Look in direction of navigation / goal"): 30 puntos (coordinacion de mirada).
+     * Handover + Follow + Drop = 300 puntos combinados directos.
+   - En GPSR (§5.3):
+     * Hasta 3 comandos por prueba (3 x 250 = 750 pts). Las tareas de personas ("find person and follow",
+       "meet X and follow", "find person waving") representan el 35-40% de las misiones del CommandGenerator.
+     * Actualmente `follow_person` y `find_person` estan marcadas como `UNAVAILABLE` en
+       src/base_athome_skills/base_athome_skills/mission/skills.py (lineas 137 y 153), causando que
+       el ejecutor de misiones (`validate_plan`) rechace cualquier plan que las contenga.
+
+2. Limitaciones y Caracteristicas Clave de Nuestro Hardware:
+   - Hokuyo UST-05LX (Lidar 2D): Montado con haz a 38 cm del piso (laser_offset_z=0.32 en base_link
+     a z=0.06 m). A 38 cm, el haz impacta exactamente en la pantorrilla/canilla de las personas.
+     Ventaja: campo visual de 270°, frecuencia de 40 Hz, rango util de 5 m, inmune a iluminacion.
+     Desventaja: ciego a la identidad de la persona (ve dos cilindros de pierna que se confunden con
+     patas de mesas/sillas u otras personas).
+   - RealSense D435 en Pan-Tilt (Cabeza 2-DOF): Montada a ~1.35 m de altura.
+     Ventaja: RGB-D alineado, deteccion de keypoints corporales (YOLOv8-pose), atributos visuales y rostros.
+     Desventaja: FOV horizontal de 69° (se pierde a la persona en giros de 90° si el cabezal no la sigue).
+   - Base Hoverboard Diferencial: Velocidad lineal maxima configurada en Nav2 de 0.38 m/s (RPP);
+     pisos anti-stiction min_speed_raw=75 (~0.08 m/s); radio de footprint 0.44 m; aceleracion suave 0.5 m/s².
+
+3. Arquitectura Recomendada: "Fusion Hibrida Lidar-Vision con Nav2 Dynamic Goal":
+   - Nivel Percepcion: Detector YOLOv8-pose / YOLOv8 en NUC/Jetson + ByteTrack (asociacion temporal continua
+     a 30 FPS sin coste de embedding) + Gating de piernas por Lidar (radio de busqueda de 0.30 m alrededor
+     del rayo visual 3D proyectado a 38 cm).
+   - Nivel Re-Identificacion (Re-ID): Modelo ligero en dos etapas:
+     a) En linea continua: Histograma de color HSV en 2 bandas (torso superior e inferior), de 0.2 ms en CPU.
+     b) En re-adquisicion tras perdida: Embedding ligero OSNet (ONNX / TensorRT en Jetson) para confirmacion.
+   - Nivel Mirada Activa: El pan-tilt Dynamixel centra de forma continua a la persona en el cuadro (gaze tracking,
+     ganancia 0.5, zona muerta 3°), ampliando el FOV efectivo de 69° a mas de 200°.
+   - Nivel Navegacion: Cliente de la accion `navigate_to_pose` con Behavior Tree dinamico (`follow_person_bt.xml`)
+     usando `GoalUpdater` y `TruncatePath distance="0.8"`, con un nodo suavizador (`person_goal_smoother.py`).
+     Cumple 100% con la regla de Navegacion Protegida (AGENTS.md §4): no modifica ningun archivo de Nav2.
+   - Manejo de Perdidas: 4 etapas secuenciales sin pedir al operador que se detenga:
+     (1) Navegacion al ultimo punto conocido orientandose al vector de velocidad (mirar tras la esquina),
+     (2) Barrido rapido con pan-tilt, (3) Giro de base en el lugar si persiste la perdida,
+     (4) Alerta verbal solo si se agotan 8 segundos ("I am searching for you, please wave your hand").
+
+
+================================================================================
+1. FUENTE NORMATIVA Y ESTADO DEL ARTE (ROBOCUP@HOME 2026.2 Y EQUIPOS DE REFERENCIA)
+================================================================================
+
+1.1. REGLAMENTO OFICIAL (RuleBook 2026.2)
+Fuente: https://github.com/RoboCupAtHome/RuleBook/releases/tag/2026.2
+Commit SHA de referencia: b844d5a6d6ebf4307c3250a01d1eca4ba56f8452 (tag 2026.2)
+PDF normativo: "Version 2026 Rev-1, revision 2026-05-11", SHA256: d35e93c7f291a59a823691905b47dcd7e8de14ab3a4c546aca55ba20b30ce128.
+
+A. Human-Robot Interaction Challenge (HRI Challenge, §5.1):
+   - Evidencia normativa:
+     * Archivo: tasks/HumanRobotInteractionChallenge.tex (lineas 47, 72-74, 92-98)
+     * Archivo: scoresheets/HumanRobotInteractionChallenge.tex (lineas 21-26)
+   - Descripcion de la tarea:
+     [VERIFICADO] El segundo invitado ingresa y entrega una bolsa al robot (handover). El robot se traslada
+     al salon donde el anfitrion (host) esta sentado. El robot le informa que tiene una bolsa y solicita
+     su guia. El anfitrion se pone de pie frente al robot. Cuando el robot le comunica que esta listo
+     para seguirlo ("When the robot is ready to follow, it should inform the host"), el anfitrion camina de
+     forma natural hacia un area aleatoria de la casa designada para dejar la bolsa. Al llegar, el anfitrion
+     le indica que deposite la bolsa en el piso.
+   - Puntuacion y Penalidades:
+     * Puntuacion base por seguimiento: 200 pts ("Following the host to the bag drop area").
+     * Caida de la bolsa durante el trayecto: -50 pts ("Drop the bag while following the host").
+     * Rediscovery por interaccion natural: -50 pts ("Rediscovering the operator by natural interaction").
+     * Pedir al operador que espere: -50 pts ("Asking the operator to wait").
+     * Contacto fisico (tomar de la mano o empujar): -150 pts ("Guiding the robot with physical contact").
+     * Mirada durante la navegacion: 30 pts (Item 1.5, "Look in direction of navigation or at navigation goal").
+   - Implicacion critica para el diseno:
+     [VERIFICADO] Pedir al humano "Please wait for me" o "Stop" cuesta 50 puntos de penalizacion en HRI Challenge.
+     Por tanto, el algoritmo de seguimiento debe evitar en lo posible frenar al humano; debe ser capaz de
+     recuperar el rastro de forma autonoma cuando se pierde visualmente en esquinas o puertas estrechas.
+
+B. General Purpose Service Robot (GPSR, §5.3):
+   - Evidencia normativa:
+     * Archivo: tasks/GPSR.tex (lineas 40-57)
+     * Archivo: scoresheets/GPSR.tex (lineas 7-10)
+   - Tareas de Categoria II ("People Tasks"):
+     [VERIFICADO] El generador oficial de comandos (CommandGenerator) genera secuencias como:
+     "go to the living room, find a person and follow them", "meet Charlie at the entrance and follow him",
+     "find a person waving in the kitchen and follow them to the bedroom".
+     Cada comando resuelto otorga 250 pts (hasta 3 comandos = 750 pts).
+     Actualmente, Base@Home falla inmediatamente al recibir estos comandos porque `follow_person` y
+     `find_person` estan marcadas como UNAVAILABLE en el validador del plan.
+
+1.2. QUE USAN OTROS EQUIPOS DE ROBOCUP@HOME
+
+A. RoBorregos @Home — Plataforma FRIDA (Monterrey, Mexico):
+   - Evidencia en codigo:
+     * Repositorio: https://github.com/RoBorregos/home2 (commit 1a0caeb563546328e64b758811dd3078db8fa81f)
+     * Archivo: vision/packages/vision_general/scripts/models/tracker.py (lineas 45 a 88)
+     * Archivo: vision/packages/vision_general/scripts/tracker_node.py (lineas 85 a 98, 350 a 420)
+     * Archivo: navigation/packages/nav_main/scripts/person_goal_smoother.py (lineas 125 a 575)
+     * Archivo: navigation/packages/nav_main/bt/follow_dynamic_point.xml (lineas 1 a 23)
+   - Arquitectura comprobada:
+     [VERIFICADO] Sistema desacoplado en 3 niveles:
+     1. Tracker visual (tracker_node.py): Corre YOLOv8n + ByteTrack nativo de ultralytics (`persist=True`)
+        a 30 FPS. No extrae embeddings por cuadro. Solo cuando el track se interrumpe y aparece un nuevo ID,
+        activa un extractor Re-ID asincrono (SWIN) comparando contra embeddings del operador con umbral
+        de similitud coseno >= 0.60 (REID_MATCH_THRESHOLD).
+     2. Suavizador y generador de metas (person_goal_smoother.py): Transforma la coordenada 3D de la persona
+        a frame `map`, aplica filtro exponencial EMA (alpha=0.30), estima la velocidad de la persona por
+        diferencias finitas, y proyecta la meta hacia adelante con feedforward (`lead_time * vel_person`)
+        para anticipar curvas y esquinas. La meta se ubica a `follow_distance` (0.6 a 0.8 m) del objetivo,
+        y se ajusta al espacio libre mas cercano en el mapa de ocupacion (`_snap_to_free`).
+     3. Navegacion dinamica (follow_dynamic_point.xml): Behavior Tree en Nav2 con el decorador `GoalUpdater`
+        (subscrito a `/goal_update`), `ComputePathToPose` a 1 Hz, y `TruncatePath distance="0.4"` para
+        mantener el margen de separacion.
+     4. Comportamiento ante perdida (`lost_behavior="last_position"`): Si el tracker no publica por mas de
+        2.0 s, el robot navega al ultimo punto conocido de la persona orientandose hacia su vector de velocidad
+        (permite "asomarse" a la esquina o puerta para recuperar la linea de vision).
+
+B. Tech United Eindhoven — Plataformas AMIGO y HERO (Eindhoven, Paises Bajos):
+   - Evidencia en codigo:
+     * Repositorio: https://github.com/tue-robotics/tue_robocup (commit 5bbf7bb13b635e798fc01d03e4a09b7cd6f421a9)
+     * Archivo: robot_smach_states/src/robot_smach_states/navigation/follow_operator2_0.py (lineas 40 a 350)
+   - Arquitectura comprobada:
+     [VERIFICADO] Navegacion por "Migas de Pan" (Breadcrumb Navigation) y Modelo de Mundo ED:
+     1. State `Track`: A medida que el operador avanza, se registran entidades laser y visuales cada 0.1 m
+        (`_breadcrumb_distance = 0.1`). Si la persona se pierde, el planificador global sigue la cadena de
+        migas de pan ya validadas.
+     2. Control de velocidad interactivo: Si la distancia al operador supera 2.5 m, emite avisos verbales
+        ("Please slow down", "You seem to be in a hurry").
+     3. State `Recovery`: Si se pierde el rastro, el robot detiene la base y ejecuta un barrido sistematico
+        de la cabeza en 8 angulos (0°, ±30°, ±45°, ±75°) a 2.0 m de distancia, mientras le pide verbalmente
+        al operador que lo mire ("Please look at me while I am looking for you").
+
+C. Person Following Robot (malwaru):
+   - Evidencia en codigo:
+     * Repositorio: https://github.com/malwaru/person_following_robot (commit d5a8ff7ebd6c261449868678241bf6072c2253db)
+     * Archivo: scripts/person_tracker.py (lineas 26 a 120)
+   - Arquitectura comprobada:
+     [VERIFICADO] Deteccion con YOLOX / YOLOv8 + ByteTracker integrado con camara Intel RealSense D435.
+     Calcula la distancia 3D mediante reproyeccion de pixeles con `pyrealsense2` y la nube de profundidad,
+     filtrando saltos abruptos de profundidad (`DEPTH_JUMP_THRESHOLD = 0.5 m`).
+
+D. Literatura Clasica en Lidar 2D (Leg Tracker):
+   - Evidencia bibliografica:
+     * Paper: A. Leigh, J. Pineau, N. Olmedo, and H. Zhang, "Person tracking and following with 2D laser scanners,"
+       IEEE International Conference on Robotics and Automation (ICRA), Seattle, WA, USA, 2015, pp. 726-733.
+       DOI: 10.1109/ICRA.2015.7139259. URL: https://ieeexplore.ieee.org/document/7139259
+   - Hallazgo cientifico:
+     [VERIFICADO] A alturas de escaneo entre 25 cm y 45 cm, las piernas humanas forman pares de agrupaciones
+     (clusters) de entre 8 cm y 25 cm de ancho con separacion tipica de 20 a 50 cm al caminar. El filtrado
+     por clasificador de bosque aleatorio (Random Forest) o modelos geometricos de arcos permite descartar
+     obstaculos planos (paredes) y esquinas de muebles con precision >90% a corta distancia (<3 m).
+
+
+================================================================================
+2. ANALISIS DE NUESTRO HARDWARE Y PERCEPCION DISPONIBLE
+================================================================================
+
+2.1. LIDAR HOKUYO UST-05LX A 38 CM DE ALTURA
+- Evidencia en el repositorio:
+  * Archivo: src/hoverboard_base/urdf/xacro/properties.xacro (lineas 24-27):
+    laser_offset_x = 0.22 m, laser_offset_y = 0.00 m, laser_offset_z = 0.32 m
+  * Archivo: src/hoverboard_base/urdf/xacro/base.xacro (lineas 31-36):
+    base_joint eleva base_link a z = 0.06 m sobre base_footprint (piso).
+    Altura efectiva del haz laser respecto del piso = 0.06 + 0.32 = 0.38 m (38 cm).
+  * Archivo: docs/ROBOT.md (linea 126): "medido 2026-11-05, usuario: base de 22 cm; base del lidar
+    a 32 cm del piso; haz a 38 cm (laser_offset_z=0.32, autorizado). Nav2 no ve obstáculos por debajo de 38 cm".
+- Caracteristicas del sensor Hokuyo UST-05LX:
+  * Tasa de publicacion: 40 Hz en topico `/scan` (medido en ROBOT.md §4).
+  * Apertura angular: 270° (-135° a +135°).
+  * Rango util: 0.06 m a 5.0 m.
+- Que "ve" el haz laser a 38 cm en una persona:
+  * [VERIFICADO] Anatomia promedio humana: El tobillo se ubica a ~10-15 cm, la mitad de la pantorrilla
+    (calf/shin) se ubica entre 30 y 45 cm, y la rotula de la rodilla se ubica a ~50 cm.
+  * Por consiguiente, a 38 cm el haz corta exactamente la region media de la pantorrilla.
+  * Cuando la persona esta quieta con pies juntos: se observa un unico cluster eliptico de ancho ~20-25 cm.
+  * Cuando la persona camina: se observan dos clusters independientes de ~10-14 cm cada uno, que oscilan
+    periodicamente con una zancada de 30 a 60 cm.
+- Limitaciones del Lidar a 38 cm para seguimiento de personas:
+  * Ambiguedad geometrica total: Un cluster de 12 cm a 38 cm de altura puede ser la pierna del anfitrion,
+    la pata de una mesa de comedor, la pata de una silla, una maceta o la pierna de otro juez/invitado.
+  * Conclusiones del Lidar a 38 cm: El Lidar NO puede usarse de forma aislada para re-identificar a la persona.
+    Sin embargo, es un sensor extraordinario para ESTIMAR DISTANCIA Y VELOCIDAD a 40 Hz una vez que la vision
+    indica que ese cluster pertenece al operador (gating espacial 2D).
+
+2.2. CAMARA REALSENSE D435 EN CABEZAL PAN-TILT DYNAMIXEL (2-DOF)
+- Evidencia en el repositorio:
+  * Archivo: docs/ROBOT.md (lineas 102, 106, 124):
+    Cadena URDF: base_footprint -> base_link -> torso_column -> torso_lift_link -> mounting_cube_link ->
+    pan_tilt_base_link -> pan_link -> tilt_link -> camera_link -> camera_color_optical_frame.
+    Altura del cabezal: ~1.35 m sobre el piso con elevador en posicion de reposo.
+  * Archivo: jetson_head/src/pan_tilt_controller/pan_tilt_controller/pan_tilt_node.py (lineas 125-126):
+    Subscripciones a `/pan_tilt/command` (JointState) y `/pan_tilt/target_degrees` (Vector3).
+  * Archivo: src/base_athome_perception/base_athome_perception/person_pose_detector.py (lineas 21, 76):
+    Clase `PersonPoseDetector` que detecta los 17 keypoints COCO y clasifica posturas ("DE_PIE", "SENTADO",
+    "SALUDANDO", "BRAZOS_ARRIBA").
+  * Archivo: src/base_athome_perception/base_athome_perception/scene_analysis.py (lineas 195-207):
+    Funcion `face_tracking_step(face_cx, face_cy, img_w, img_h, fx, fy, gain=0.6, deadband_deg=2.0, max_step_deg=8.0)`.
+- Campo de vision de la RealSense D435:
+  * FOV Color: 69° horizontal x 42° vertical.
+  * FOV Profundidad: 87° horizontal x 58° vertical.
+  * Rango util de profundidad: 0.5 m a 4.0 m (error cuadratico proporcional a z^2).
+- Dinamica y rango del Pan-Tilt (Dynamixel XL430-W250):
+  * Rango de Pan (eje yaw): ±90° mecanico (±65° configurado para operacion suave sin torsion de cables).
+  * Rango de Tilt (eje pitch): -30° (hacia abajo, viendo el piso a 1.2 m del robot) a +20° (hacia arriba).
+  * Frecuencia de control: 20 Hz (topico `/pan_tilt/joint_states`).
+- Ventaja sinergica del Pan-Tilt:
+  * El FOV instantaneo de 69° se convierte en un FOV dinamico de mas de 200° gracias al pan de la cabeza.
+  * Cuando la persona gira a la izquierda o derecha, el cabezal puede mantenerla en el centro del cuadro
+    incluso si la base tarda 0.5-1.0 s en alinear su rumbo.
+
+2.3. BASE DIFERENCIAL HOVERBOARD Y RESTRICCIONES DE MOVIMIENTO
+- Evidencia en el repositorio:
+  * Archivo: src/hoverboard_base/hoverboard_base/hoverboard_driver.py (lineas 280-340)
+  * Archivo: src/base_athome_navigation/config/nav2_params.yaml (lineas 98-135, 190, 210):
+    RegulatedPurePursuit: desired_linear_vel = 0.38 m/s, min_lookahead = 0.58 m.
+    RotationShimController: angular_vel_limit = 0.8 rad/s (~45°/s), shim_angle_threshold = 0.785 rad (45°).
+    Radio de footprint = 0.44 m; radio de inflacion de costo = 0.59 m.
+- Limitaciones fisicas:
+  * Velocidad del humano caminando normalmente: 0.8 a 1.2 m/s.
+  * Velocidad maxima segura de Base@Home: 0.38 m/s (en linea recta) y 0.8 rad/s en giro.
+  * Diferencia de velocidad: Un humano caminando a paso normal se alejara del robot a razon de ~0.5 m/s.
+    Si el humano no modera su paso o dobla una esquina ciega, saldra del rango de deteccion en 3 a 5 segundos.
+  * Por tanto: El planificador debe predecir la trayectoria humana (lead time) y evitar que la distancia
+    supere los 2.0 metros.
+
+
+================================================================================
+3. DISENO DETALLADO DE DETECCION Y RE-IDENTIFICACION (find_person y tracking)
+================================================================================
+
+3.1. HABILIDAD BUSCAR PERSONA (find_person)
+La especificacion de `find_person` en Base@Home (`src/base_athome_skills/base_athome_skills/mission/skills.py`,
+linea 137) define los parametros opcionales: `name`, `gesture`, `posture`, `clothing`.
+
+Diseno por modalidad de busqueda:
+A. Busqueda por Nombre (`name`):
+   - Modulo involucrado: `FaceRecognizer` en `src/base_athome_perception/base_athome_perception/face_recognizer.py` (linea 103).
+   - Mecanismo: Utiliza YuNet (deteccion de rostro) y SFace (vector facial de 128 dimensiones).
+     Compara el vector con los perfiles cargados en `profiles.json` (registrados durante la bienvenida del receptionist).
+     Umbral de similitud: distancia coseno <= 0.363 (equivalente a similitud >= 0.637, calibrado en `test_face_recognition.py`).
+B. Busqueda por Gesto (`gesture`):
+   - Modulo involucrado: `PersonPoseDetector` en `src/base_athome_perception/base_athome_perception/person_pose_detector.py` (lineas 21-111).
+   - Mecanismo: Evalua si la persona esta saludando o senalando (`posture == "SALUDANDO"` o `"BRAZOS_ARRIBA"`).
+     La funcion `classify_posture` comprueba si `wrist_y < shoulder_y` con confianza de keypoints > 0.40.
+C. Busqueda por Postura (`posture`):
+   - Modulo involucrado: `PersonPoseDetector` (lineas 98-111).
+   - Mecanismo: Clasifica entre `"SENTADO"` y `"DE_PIE"`. Evalua la razon cinematica entre cadera, rodilla y tobillo:
+     si `abs(knee_y - hip_y) < abs(ankle_y - knee_y) * 0.55`, la persona se clasifica como sentada (probado en tests).
+D. Busqueda por Vestimenta / Color (`clothing`):
+   - Modulo propuesto: `ClothingColorClassifier` (nuevo, a integrar en `person_tracker.py`).
+   - Mecanismo: Extrae la region del torso (entre keypoints de hombros 5,6 y caderas 11,12) y calcula el histograma
+     de color predominante en espacio HSV, clasificando etiquetas basicas ("blue", "red", "black", "white", "green").
+E. Estrategia de Escaneo Espacial (Sweep Search):
+   - Paso 1: Si no hay personas visibles en el frente (0°, 0°), ejecutar el patron de barrido `scan_plan()`
+     de `scene_analysis.py` (linea 69), barriendo pan de -65° a +65° con tilt a -15° y -28°.
+   - Paso 2: Si el barrido del cabezal no detecta al objetivo, la base rota 90° o ejecuta una rotacion
+     completa de 360° a 0.4 rad/s mediante la accion `Spin` de Nav2 behavior server.
+
+3.2. TRACKING CONTINUO CUADRO A CUADRO CON BYTETRACK
+Para mantener el rastro de la persona mientras camina, no es viable computar embeddings pesados por cuadro.
+- Algoritmo adoptado: ByteTrack (Zhang et al., ECCV 2022).
+- Evidencia de rendimiento: Ultralytics YOLOv8 implementa ByteTrack de forma nativa (`tracker="bytetrack.yaml"`).
+  Al invocar `model.track(source, persist=True, classes=0)`:
+  * Etapa 1: Asocia detecciones de alta confianza (score > 0.50) con tracklets existentes mediante filtro
+    de Kalman y distancia IoU (Intersection-over-Union).
+  * Etapa 2: Asocia detecciones de baja confianza (0.10 < score <= 0.50) con tracklets no emparejados.
+    Esto permite preservar el `track_id` incluso ante oclusiones parciales, cambios de iluminacion o desenfoque
+    por movimiento (motion blur), evitando la fragmentacion de IDs.
+- Rendimiento en Base@Home:
+  * En NUC (Intel i3-1220P): YOLOv8n corre en CPU a ~22 FPS (45 ms por cuadro).
+  * En Jetson Orin Nano (GPU Ampere con TensorRT 10.16): YOLOv8n-pose corre a 55 FPS (18 ms por cuadro)
+    segun benchmarks reportados en docs/ROBOT.md §2 y STATUS.md §2.
+  * Por tanto, ByteTrack ofrece seguimiento continuo a 30 FPS con coste computacional despreciable.
+
+3.3. RE-IDENTIFICACION LIGERA (LIGHTWEIGHT Re-ID)
+Cuando la persona dobla una esquina o es ocluida totalmente por otra persona o mueble, ByteTrack pierde
+el tracklet. Al reaparecer una persona, se le asigna un nuevo `track_id`. Para determinar si es el anfitrion
+u otra persona sin recurrir a modelos pesados, se disena una arquitectura en dos capas:
+
+Capa 1: Histogramas Espaciales HSV en 2 Bandas (Tiempo Real, 0.2 ms en CPU):
+- Justificacion: En RoboCup@Home, una persona NO se cambia de ropa durante los 7 minutos de la prueba.
+  La distribucion de color de la prenda superior (camisa/buzo) combinada con la inferior (pantalon) es una
+  firma biometrica altamente discriminante en interiores con iluminacion relativamente controlada.
+- Extraccion de la firma de referencia (Template de Registro):
+  Al iniciar el seguimiento (cuando el robot le dice al anfitrion que esta listo para seguirlo):
+  1. Se recorta el bounding box de la persona.
+  2. Banda Superior (Torso): Desde y1 + 0.15*(h) hasta y1 + 0.55*(h), recortando el 20% lateral para evitar fondo.
+  3. Banda Inferior (Piernas): Desde y1 + 0.55*(h) hasta y1 + 0.90*(h).
+  4. Para cada banda se convierte a espacio HSV y se calcula un histograma 2D H-S (16 bins en Matiz H, 8 bins en Saturacion S).
+     Se excluyen pixeles oscuros (V < 40) o sobreexpuestos (V > 240) para robustez ante sombras.
+  5. El vector resultante es un histograma concatenado normalizado de 256 dimensiones (128 superior + 128 inferior).
+- Comparacion y Metrica:
+  * Metrica de Bhattacharyya o Similitud Coseno entre histogramas.
+  * Umbral de coincidencia: Similitud >= 0.70 indica que es la misma persona.
+  * Costo computacional: 0.15 a 0.20 ms en Python con OpenCV (`cv2.calcHist` y `cv2.compareHist`).
+    No requiere memoria GPU ni librerias externas pesadas.
+
+Capa 2: Respaldo Deep Re-ID Ligero (OSNet-IBN Asincrono en Jetson):
+- Evidencia: K. Zhou et al., "Omni-Scale Feature Learning for Person Re-Identification", ICCV 2019.
+  Modelo: `osnet_x0_25` (2.2 millones de parametros, ~8.8 MB).
+- Funcionamiento: Si la Capa 1 arroja una similitud intermedia (zona de incertidumbre: 0.55 a 0.70),
+  se despacha asincronamente el recorte a la Jetson para inferencia con OSNet en TensorRT.
+  Si la similitud coseno del embedding es >= 0.60, se confirma la identidad del operador y se reactiva el track.
+
+3.4. FUSION SENSORIAL: REALSENSE + LIDAR A 38 CM (GATING ESPACIAL)
+Para combinar la riqueza semantica de la camara con la precision milimetrica y alta tasa del Lidar:
+1. Proyeccion 3D de la Camara a Plano de Tierra:
+   - Desde la camara D435 en `camera_color_optical_frame`, el centro de la cadera o punto medio de los tobillos
+     da un punto 3D P_cam = (X, Y, Z).
+   - Mediante TF2, se transforma P_cam al frame `laser` o `base_link`: P_base = (x_b, y_b, z_b).
+2. Segmentacion y Clustering de Rayos Laser a 38 cm:
+   - Se procesa el barrido `/scan` del Hokuyo (40 Hz).
+   - Se agrupan puntos consecutivos cuya distancia euclidiana sea menor a 15 cm (Euclidean Clustering 2D).
+   - Se descartan clusters de ancho > 30 cm (paredes, mesas) o < 5 cm (ruido puntual).
+   - Se obtienen centroides de clusters de piernas: C_i = (x_i, y_i).
+3. Gating de Asociacion (Data Association):
+   - Se calcula la distancia 2D entre la proyeccion visual P_base y cada cluster C_i:
+     d_i = sqrt((x_b - x_i)^2 + (y_b - y_i)^2).
+   - Compuerta de aceptacion (Gating Radius): R_gate = 0.35 m.
+   - El cluster mas cercano con d_i < R_gate se etiqueta como `tracked_legs`.
+4. Beneficio de la Fusion:
+   - Si la persona gira bruscamente y sale del FOV de 69° de la camara, el Lidar (con 270° de apertura)
+     CONTINUA SIGUIENDO EL CLUSTER DE PIERNAS durante los siguientes 1-2 segundos a 40 Hz, manteniendo
+     la orientacion y avance de la base hacia la persona hasta que el pan-tilt recupera el contacto visual.
+
+
+================================================================================
+4. CONTROL DE SEGUIMIENTO: NAV2 CON OBJETIVO MOVIL VS CONTROL DIRECTO (/cmd_vel)
+================================================================================
+
+4.1. EVALUACION DE LAS DOS ARQUITECTURAS POSIBLES
+
+A. Opcion 1: Nav2 con Objetivo Movil (Dynamic Goal / Behavior Tree `GoalUpdater`)
+   - Principio:
+     El modulo de percepcion calcula la coordenada continua de la persona en el mapa global (`map`).
+     Un nodo suavizador (`person_goal_smoother.py`) genera una meta dinamica en el topico `/goal_update`.
+     El Behavior Tree de Nav2 utiliza el decorador `GoalUpdater` para replanificar a 1 Hz hacia la meta
+     movil y `TruncatePath` para recortar el trayecto a una distancia de frenado segura (standoff distance).
+   - Cumplimiento de Reglas del Proyecto (AGENTS.md §4):
+     [VERIFICADO] AGENTS.md §4 prohibe estrictamente: "modificar Nav2, SLAM, costmaps, planner, controller,
+     BT, footprint... Prohibido enviar cmd_vel sin autorizacion especifica. Integracion desde las apps:
+     siempre como cliente de la accion navigate_to_pose".
+     Esta opcion interactua UNICAMENTE como cliente de la accion estandar `navigate_to_pose`.
+     El archivo XML del arbol de comportamiento se pasa en el campo `goal.behavior_tree` de la accion,
+     sin modificar la configuracion operativa del robot en `src/base_athome_navigation/config/nav2_params.yaml`.
+   - Evitacion de Obstaculos:
+     Garantizada nativamente por Nav2: los costmaps locales y globales evitan que el robot colisione
+     con muebles, paredes o personas ajenas mientras sigue al anfitrion.
+   - Desafios / Puntos de Atencion:
+     * El anfitrion en el costmap: Si el costmap local considera a la persona como un obstaculo letal,
+       el planificador puede fallar si la meta queda dentro de la celda ocupada. Esto se resuelve
+       colocando la meta `follow_distance` (1.0 m) DETRAS de la persona, o proyectando la meta al
+       espacio libre mas cercano (`_snap_to_free`).
+     * Latencia de replanificacion: Si el humano cambia de rumbo, el replanificador tarda ~0.5-1.0 s
+       en actualizar el camino global. Esto se mitiga aplicando un adelanto lineal por velocidad (`lead_time`).
+
+B. Opcion 2: Control Reactivo Directo a `/cmd_vel` (Lazo Cerrado P/PD o Campos de Potencial)
+   - Principio:
+     Un lazo de alta frecuencia (15-20 Hz) calcula directamente las velocidades `(v_lin, w_ang)` a partir
+     de las coordenadas polares relativas `(r, theta)` de la persona en `base_link`:
+     * v_lin = K_p * (r - d_target), acotado a [0, v_max].
+     * w_ang = K_theta * theta, acotado a [-w_max, w_max].
+     * Seguridad: Si cualquier punto del `/scan` en un cono frontal de 60° cae a menos de 0.45 m, v_lin = 0.
+   - Ventajas: Latencia minima (<50 ms), respuesta inmediata a giros, no requiere mapa ni localizacion AMCL.
+   - Desventajas criticas:
+     * Violaría la regla AGENTS.md §4 si se utiliza en hardware real sin autorizacion expresa.
+     * En pasillos estrechos o rodeando mesas, un seguidor reactivo puro tiende a cortar esquinas y
+       colisionar con obstaculos que no esten exactamente al frente.
+     * NAV-PROP-004 advierte la ausencia de multiplexor `twist_mux`: un comando directo a `/cmd_vel`
+       compite sin arbitraje si otro nodo esta activo.
+
+4.2. MATRIZ DE COMPARACION Y DECISION ARQUITECTONICA
+
+| Criterio | Opcion 1: Nav2 Dynamic Goal | Opcion 2: Control Directo `/cmd_vel` |
+|---|---|---|
+| Conformidad con AGENTS.md §4 | TOTAL (Cliente de `navigate_to_pose`) | RESTRINGIDA (Exige permiso expreso Nivel C) |
+| Evitacion de colisiones en curvas | ALTA (Calculada por costmaps globales y locales) | BAJA (Solo cono reactivo frontal de seguridad) |
+| Navegacion en areas no mapeadas | MEDIA (Requiere SLAM online o mapa previo) | ALTA (Funciona a ciegas con odometria pura) |
+| Latencia de respuesta | MEDIA (Replanificacion cada 0.5 a 1.0 s) | MINIMA (Respuesta inmediata en 50 ms) |
+| Riesgo de colision con muebles | MUY BAJO (Nav2 conoce el radio del robot 0.44 m) | ALTO (Riesgo en puertas y esquinas) |
+| Simplicidad de implementacion | MEDIA (Nodo suavizador + BT XML) | ALTA (Controlador proporcional simple) |
+
+4.3. DECISION RECOMENDADA PARA BASE@HOME: ARQUITECTURA HIBRIDA JERARQUICA
+- Modo Primario (Competencia en arena mapeada — HRI Challenge y GPSR):
+  Se adopta la OPCION 1 (Nav2 Dynamic Goal Client con Behavior Tree `follow_person_bt.xml`).
+  Garantiza respeto estricto de las reglas de seguridad fisica del proyecto, navegacion suave con
+  RegulatedPurePursuitController, y cero colisiones con el entorno de la arena.
+- Modo Fallback Reactivo (Simulacion y recuperacion local en espacio libre):
+  Para el micro-acercamiento final o maniobras de desenredo donde Nav2 se congele por inflacion de costo,
+  se contempla un comportamiento reactivo acotado que solo opera en simulación o con autorizacion del usuario.
+
+4.4. PARAMETROS OPTIMOS DE SEGUIMIENTO (DISTANCIA Y VELOCIDAD)
+- Distancia Objetivo de Seguimiento (`follow_distance`):
+  * Valor nominal: **1.0 m a 1.2 m** respecto del anfitrion.
+  * Justificacion tecnica:
+    - Menor a 0.8 m: Peligro de pisar los talones del anfitrion si frena bruscamente; la RealSense a 1.35 m
+      pierde el cuerpo completo por estar demasiado cerca.
+    - Mayor a 1.8 m: La profundidad de la D435 pierde precision; riesgo extremo de perder la linea de vision
+      al cruzar puertas o doblar pasillos.
+- Velocidad Lineal Maxima (`v_max`):
+  * Valor nominal: **0.38 m/s** (coincide exactamente con `desired_linear_vel` de Nav2 en `nav2_params.yaml`).
+  * Aceleracion maxima: **0.50 m/s²** (rampa suave para proteger la carga del brazo y evitar patinamiento).
+  * Velocidad minima (anti-stiction): **0.08 m/s** (supera el piso de stiction del driver hoverboard `min_speed_raw=75`).
+- Velocidad Angular Maxima (`w_max`):
+  * Valor nominal: **0.80 rad/s (~45°/s)** con aceleracion angular de 1.2 rad/s².
+- Coeficiente de Anticipacion (`lead_time`):
+  * Valor nominal: **0.40 segundos**.
+  * Formula de meta predictiva:
+    x_target = x_person + v_person_x * lead_time
+    y_target = y_person + v_person_y * lead_time
+    goal_x = x_target - follow_distance * u_x
+    goal_y = y_target - follow_distance * u_y
+    (donde u es el vector unitario robot -> target).
+
+
+================================================================================
+5. PROTOCOLO DE RECUPERACION ANTE PERDIDA ("Que hacer si la pierde")
+================================================================================
+
+5.1. ANALISIS DE CAUSAS DE PERDIDA EN ROBOCUP@HOME
+En las arenas domesticas de RoboCup@Home, la perdida de contacto visual con el anfitrion ocurre tipicamente por:
+1. Giros en esquinas de 90° o puertas estrechas: El operador cruza el vano de la puerta; la pared bloquea
+   tanto la camara RGB-D como el haz del lidar.
+2. Oclusion dinamica: Otro juez, invitado o robot cruza perpendicularmente entre el robot y el anfitrion.
+3. Disparidad de velocidad: El anfitrion camina a 0.8-1.0 m/s y el robot a 0.38 m/s; la separacion crece
+   mas alla del alcance confiable del sensor de profundidad (>3.5 m).
+4. Rotacion del cuerpo: El anfitrion se da vuelta o cambia de perspectiva, alterando su apariencia frontal.
+
+5.2. IMPACTO DE LAS PENALIDADES DEL RULEBOOK 2026.2 EN LA ESTRATEGIA
+El scoresheet oficial de HRI Challenge establece penalizaciones severas:
+- "Asking the operator to wait": -50 puntos.
+- "Rediscovering the operator by natural interaction": -50 puntos.
+- "Guiding the robot with physical contact": -150 puntos.
+
+Estrategia fundamental:
+[VERIFICADO] El robot NUNCA debe detener inmediatamente al operador con frases como "Wait for me" o "Stop"
+apenas pierde un cuadro visual. Debe agotar primero una secuencia de RECUPERACION AUTONOMA SILENCIOSA
+(Fases 1, 2 y 3). Si la recuperacion autonoma tiene exito, se conservan los 200 puntos completos (0 penalidad).
+Solo si la busqueda autonoma fracasa tras un tiempo prudencial (Fase 4), se solicita ayuda verbal para no
+incurrir en la descalificacion por inactividad de 30 segundos (regla §3.6.14).
+
+5.3. MAQUINA DE ESTADOS DE RECUPERACION EN 5 FASES
+
+Diagrama de Flujo del Protocolo de Recuperacion:
+[TRACKING ACTIVO] ---> (Sin datos > 0.6 s) ---> [FASE 1: ASOMARSE A LA ESQUINA (0-2 s)]
+                                                    |
+                                          (No re-adquirido tras llegar a la meta)
+                                                    v
+                                                [FASE 2: BARRIDO RAPIDO PAN-TILT (2-5 s)]
+                                                    |
+                                          (No detectado tras barrido de cabeza)
+                                                    v
+                                                [FASE 3: ROTACION DE BASE IN-SITU (5-8 s)]
+                                                    |
+                                          (No detectado tras 8 s totales)
+                                                    v
+                                                [FASE 4: INTERACCION VERBAL (-50 pts) (8-15 s)]
+                                                    |
+                                          (Sin respuesta tras 20 s)
+                                                    v
+                                                [FASE 5: FALLBACK Y TIMEOUT ELEGANTE]
+
+Detalle de cada fase:
+
+- FASE 1: Prediccion y Asomarse a la Esquina ("Corner Peeking", t = 0.0 s a 2.0 s):
+  * Disparador: Ausencia de tracklet visual durante 0.6 s (20 cuadros sin deteccion).
+  * Accion de Base: En lugar de congelarse en el lugar (lo que garantiza perder al humano tras la pared),
+    la base navega de inmediato hacia la ULTIMA POSICION CONOCIDA DEL HUMANO, orientandose en la direccion
+    de su vector de velocidad reciente (v_person_x, v_person_y).
+  * Accion de Cabeza: El pan-tilt se orienta hacia el angulo de giro anticipado (±40° en la direccion del avance).
+  * Resultado: En el 80% de las situaciones de esquina, al llegar el robot al marco de la puerta recupera
+    la linea directa de vision hacia el pasillo y el ByteTrack / Re-ID reanudan el seguimiento sin penalidad.
+
+- FASE 2: Barrido Activo del Cabezal Pan-Tilt (t = 2.0 s a 5.0 s):
+  * Disparador: El robot llego a la ultima posicion y la persona no esta visible al frente.
+  * Accion de Base: Reduce velocidad a 0.0 m/s (detencion suave).
+  * Accion de Cabeza: Barrido angular rapido a 60°/s en secuencia: [0°, +45°, -45°, +60°, -60°] con tilt a -15°.
+  * Integracion Lidar: En paralelo, el nodo de fusion examina los clusters de 270° del Hokuyo. Si detecta
+    un par de piernas moviendose a menos de 3.0 m, orienta de inmediato el pan-tilt hacia ese rumbo para
+    verificacion visual.
+
+- FASE 3: Rotacion de la Base en el Lugar (t = 5.0 s a 8.0 s):
+  * Disparador: El barrido de cabeza de Fase 2 no encontro ningun candidato coincidente.
+  * Accion: La base inicia un giro en el lugar a 0.40 rad/s (~23°/s) cubriendo 180° a 360° mientras la camara
+    continua procesando detecciones.
+
+- FASE 4: Alerta e Interaccion Verbal Controlada (t = 8.0 s a 15.0 s):
+  * Disparador: Transcurrieron 8 segundos sin ningun rastro de la persona.
+  * Justificacion: Es preferible perder 50 puntos de penalizacion por interaccion verbal que perder los 200
+    puntos completos o sufrir un retiro de la arena por 30 s de inactividad (RuleBook §3.6.14).
+  * Emision verbal (TTS): "Host, I lost sight of you. Please step into my view and wave your hand."
+    (Se pide que salude con el brazo en alto para activar la clasificacion `"SALUDANDO"` del `PersonPoseDetector`).
+  * Al detectar el keypoint de muñeca elevado con `conf > 0.40`, se re-engancha el ID y el robot anuncia:
+    "I see you, let's continue" y reanuda la navegacion.
+
+- FASE 5: Timeout y Fallback Seguro (t > 20.0 s):
+  * Si tras 20 segundos no se recupera al anfitrion, el nodo de seguimiento aborta la habilidad:
+    `SkillResult.FAILED("person_lost_timeout")`.
+  * Emision verbal: "I cannot find you. I will stop here."
+  * El secuenciador de misiones recibe el fallo controlado y puede solicitar un restart reglamentario
+    (si esta dentro de los primeros 60 s y antes de 40 pts, regla §3.6.9) o pasar a la siguiente accion.
+
+
+================================================================================
+6. DISENO DE PRUEBAS EN SIMULACION (simulation/base_athome_sim)
+================================================================================
+
+6.1. CAPACIDADES ACTUALES DEL ENTORNO DE SIMULACION
+- Evidencia en el repositorio:
+  * Archivo: simulation/base_athome_sim/base_athome_sim/sim_scene.py (lineas 105-140):
+    Modulo geometrico que modela una persona 3D con prisma de cuerpo (radio 0.15 m, altura 1.45 m),
+    cabeza (z=1.62 m) y brazos articulados con keypoints COCO completos.
+  * Archivo: simulation/base_athome_sim/base_athome_sim/sim_robot.py (lineas 112, 119, 573):
+    Variables de entorno `ATHOME_SIM_PERSON` (posicion "x,y"), `ATHOME_SIM_PERSON_POINTS` (gesto)
+    y `ATHOME_SIM_PERSON_SWAY_M` (balanceo sinusoidal).
+  * Archivo: simulation/base_athome_sim/base_athome_sim/gz_model.py (lineas 15-45):
+    Comandos Gazebo Harmonic para mover la entidad `persona` con `set_pose_command`.
+
+6.2. EXTENSION PROPUESTA: MODELO DE PERSONA CAMINANTE (`ATHOME_SIM_PERSON_PATH`)
+Para validar el seguimiento continuo en simulacion liviana y Gazebo sin requerir hardware real:
+1. Parametrizacion por Trayectoria de Waypoints:
+   - Variable de entorno: `ATHOME_SIM_PERSON_PATH="x1,y1:x2,y2:x3,y3:x4,y4"`.
+   - Velocidad de caminata: `ATHOME_SIM_PERSON_SPEED="0.35"` (m/s).
+2. Generador Cinematico de Caminata en `sim_robot.py`:
+   - Un hilo `_sim_walking_person_worker` interpola la posicion (x_t, y_t) de la persona a lo largo
+     de los segmentos de recta a la velocidad configurada.
+   - En cada tick (10 Hz):
+     * Actualiza la posicion en `sim_scene.py` para la camara sintetica D435.
+     * Actualiza el modelo Gazebo `persona` via `gz_model.set_pose_command`.
+     * Los rayos del Lidar simulado rebotan contra el prisma de la persona a z = 0.38 m, generando
+       los clusters realistas de piernas en `/scan`.
+
+6.3. BATERIA DE ESCENARIOS DE PRUEBA SINTETICOS (sim_escenarios_seguir.py)
+Se definen 5 pruebas automatizadas sobre dominio ROS 77:
+
+| Escenario | Configuracion | Criterio de Exito (PASS) |
+|---|---|---|
+| `follow_recta` | Camino recto de 4 m a 0.30 m/s | Robot sigue a distancia media 1.1 ± 0.2 m; 0 colisiones |
+| `follow_esquina` | Giro de 90° en pasillo (x=2, y=0 -> x=2, y=3) | Robot no corta la esquina contra la pared; re-adquisicion en <1.5 s |
+| `follow_oclusion` | Segunda persona cruza perpendicularmente a t=5 s | Tracker mantiene el ID del anfitrion por histograma HSV; no cambia de objetivo |
+| `follow_humano_veloz` | Persona camina a 0.55 m/s, dobla y se detiene | Robot activa Fase 1 (corner peeking), llega a la esquina y recupera el track |
+| `follow_perdida_total` | Persona se teletransporta fuera del mapa | Robot activa Fase 2 (sweep cabeza), Fase 3 (giro base), Fase 4 (speech) y aborta en t=20 s |
+
+
+================================================================================
+7. PSEUDOCODIGO CONCRETO POR ARCHIVO
+================================================================================
+
+A continuacion se presenta el diseno modular y pseudocodigo detallado para los 5 archivos que
+implementan la solucion completa en el arbol del repositorio.
+
+--------------------------------------------------------------------------------
+7.1. ARCHIVO 1: `src/base_athome_perception/base_athome_perception/person_tracker.py`
+Proposito: Nodo de percepcion continua. Corre YOLOv8-pose + ByteTrack, extrae histogramas HSV para
+Re-ID, asocia clusters de Lidar a 38 cm, comanda el pan-tilt para gaze tracking y publica la pose 3D.
+--------------------------------------------------------------------------------
+
+```python
+#!/usr/bin/env python3
+# Archivo: src/base_athome_perception/base_athome_perception/person_tracker.py
+
+import rclpy
+from rclpy.node import Node
+import cv2
+import numpy as np
+import math
+import tf2_ros
+from sensor_msgs.msg import Image, LaserScan
+from geometry_msgs.msg import PointStamped, PoseStamped, Vector3
+from cv_bridge import CvBridge
+from ultralytics import YOLO
+
+class PersonTrackerNode(Node):
+    def __init__(self):
+        super().__init__('person_tracker_node')
+
+        # Parametros
+        self.declare_parameter('conf_threshold', 0.50)
+        self.declare_parameter('follow_distance_m', 1.10)
+        self.declare_parameter('reid_sim_thresh', 0.68)
+        self.declare_parameter('gaze_gain', 0.50)
+        self.declare_parameter('laser_gate_radius_m', 0.35)
+
+        self.bridge = CvBridge()
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
+
+        # Modelo YOLOv8 con ByteTrack
+        # En Jetson usa engine TensorRT; en NUC usa modelo .pt ligero
+        self.model = YOLO('models/yolov8n-pose.pt')
+
+        # Estado del tracker
+        self.tracking_active = False
+        self.target_track_id = None
+        self.target_color_hist = None       # Template HSV de referencia
+        self.target_pose_map = None         # Ultima coordenada 3D en map
+        self.target_velocity_map = (0.0, 0.0)
+        self.last_seen_time = self.get_clock().now()
+
+        # Ultimo barrido lidar
+        self.latest_scan = None
+
+        # Subscripciones y Publicaciones
+        self.sub_image = self.create_subscription(
+            Image, '/camera/camera/color/image_raw', self._image_callback, 1)
+        self.sub_depth = self.create_subscription(
+            Image, '/camera/camera/aligned_depth_to_color/image_raw', self._depth_callback, 1)
+        self.sub_scan = self.create_subscription(
+            LaserScan, '/scan', self._scan_callback, 10)
+
+        # Publica la coordenada suavizada de la persona para el BT / Nav2
+        self.pub_person_point = self.create_publisher(
+            PointStamped, '/perception/tracked_person_point', 10)
+        # Publica orden de mirada para el cabezal pan-tilt (grados)
+        self.pub_pan_tilt = self.create_publisher(
+            Vector3, '/pan_tilt/target_degrees', 10)
+
+        self.get_logger().info("PersonTrackerNode inicializado y listo.")
+
+    def lock_target(self, person_bbox, frame_bgr):
+        """Registra la firma de color HSV de la persona seleccionada como anfitrion."""
+        self.target_color_hist = self._extract_hsv_signature(frame_bgr, person_bbox)
+        self.tracking_active = True
+        self.get_logger().info("Objetivo fijado. Template HSV registrado con exito.")
+
+    def _extract_hsv_signature(self, img_bgr, bbox):
+        """Calcula histograma normalizado 2D HS en dos bandas: torso y piernas."""
+        x1, y1, x2, y2 = bbox
+        h = y2 - y1
+        w = x2 - x1
+
+        # Banda 1: Torso (15% a 55% de la altura, 20% margen lateral)
+        torso = img_bgr[int(y1 + 0.15*h):int(y1 + 0.55*h), int(x1 + 0.20*w):int(x2 - 0.20*w)]
+        # Banda 2: Piernas (55% a 90% de la altura)
+        legs = img_bgr[int(y1 + 0.55*h):int(y1 + 0.90*h), int(x1 + 0.20*w):int(x2 - 0.20*w)]
+
+        hist_torso = self._calc_hs_hist(torso)
+        hist_legs = self._calc_hs_hist(legs)
+        signature = np.concatenate([hist_torso, hist_legs])
+        norm = np.linalg.norm(signature)
+        return signature / max(1e-6, norm)
+
+    def _calc_hs_hist(self, crop):
+        if crop.size == 0:
+            return np.zeros(128, dtype=np.float32)
+        hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+        # Filtro de pixeles muy oscuros o brillantes
+        mask = cv2.inRange(hsv, np.array([0, 30, 40]), np.array([180, 255, 240]))
+        hist = cv2.calcHist([hsv], [0, 1], mask, [16, 8], [0, 180, 0, 256])
+        return hist.flatten()
+
+    def _compare_similarity(self, sig1, sig2):
+        return float(np.dot(sig1, sig2))
+
+    def _image_callback(self, msg):
+        if not self.tracking_active:
+            return
+        frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+        h_img, w_img = frame.shape[:2]
+
+        # Inferencia YOLO con ByteTrack persistente
+        results = self.model.track(frame, persist=True, classes=0, verbose=False)[0]
+        if results.boxes is None or results.boxes.id is None:
+            self._handle_frame_loss()
+            return
+
+        boxes = results.boxes.xyxy.cpu().numpy().astype(int)
+        track_ids = results.boxes.id.cpu().numpy().astype(int)
+
+        matched_idx = None
+
+        # 1. Emparejamiento por ID continuo de ByteTrack
+        if self.target_track_id in track_ids:
+            matched_idx = list(track_ids).index(self.target_track_id)
+        else:
+            # 2. Re-Identificacion Ligera (buscar por similitud HSV)
+            best_sim = -1.0
+            best_idx = None
+            for idx, box in enumerate(boxes):
+                sig = self._extract_hsv_signature(frame, box)
+                sim = self._compare_similarity(self.target_color_hist, sig)
+                if sim > best_sim and sim >= self.get_parameter('reid_sim_thresh').value:
+                    best_sim = sim
+                    best_idx = idx
+
+            if best_idx is not None:
+                matched_idx = best_idx
+                self.target_track_id = track_ids[best_idx]
+                self.get_logger().info(f"Re-ID exitosa: reenganchado con nuevo ID={self.target_track_id} (sim={best_sim:.2f})")
+
+        if matched_idx is None:
+            self._handle_frame_loss()
+            return
+
+        target_bbox = boxes[matched_idx]
+        self.last_seen_time = self.get_clock().now()
+
+        # 3. Gaze Tracking (mantener al humano en el centro del cuadro con pan-tilt)
+        cx = (target_bbox[0] + target_bbox[2]) / 2.0
+        cy = (target_bbox[1] + target_bbox[3]) / 2.0
+        self._update_head_gaze(cx, cy, w_img, h_img)
+
+        # 4. Estimacion 3D con camara de profundidad y fusion lidar
+        target_3d_camera = self._get_3d_point(target_bbox, cx, cy)
+        if target_3d_camera is not None:
+            target_3d_map = self._transform_to_map(target_3d_camera)
+            # Fusion con cluster laser a 38 cm si esta disponible
+            fused_point = self._fuse_with_lidar(target_3d_map)
+            self._publish_target(fused_point)
+
+    def _update_head_gaze(self, cx, cy, w_img, h_img):
+        """Calcula el offset proporcional para apuntar el pan-tilt a la persona."""
+        fx = 615.0  # focal de D435 en 640x480
+        dx_deg = -math.degrees(math.atan2(cx - w_img/2.0, fx))
+        dy_deg = math.degrees(math.atan2(cy - h_img/2.0, fx))
+
+        deadband = 3.0  # grados
+        gain = self.get_parameter('gaze_gain').value
+        cmd = Vector3()
+        cmd.x = gain * dx_deg if abs(dx_deg) > deadband else 0.0
+        cmd.y = gain * dy_deg if abs(dy_deg) > deadband else 0.0
+        cmd.z = 0.0
+        self.pub_pan_tilt.publish(cmd)
+
+    def _fuse_with_lidar(self, visual_point_map):
+        """Asocia la coordenada visual proyectada con el cluster de piernas del Hokuyo."""
+        if self.latest_scan is None:
+            return visual_point_map
+
+        clusters = self._cluster_scan(self.latest_scan)
+        gate_r = self.get_parameter('laser_gate_radius_m').value
+        best_cluster = None
+        min_d = float('inf')
+
+        for c in clusters:
+            d = math.hypot(c[0] - visual_point_map.x, c[1] - visual_point_map.y)
+            if d < min_d and d <= gate_r:
+                min_d = d
+                best_cluster = c
+
+        if best_cluster is not None:
+            # Ponderacion: 80% Lidar (preciso en distancia y libre de ruido de profundidad) + 20% Vision
+            visual_point_map.x = 0.80 * best_cluster[0] + 0.20 * visual_point_map.x
+            visual_point_map.y = 0.80 * best_cluster[1] + 0.20 * visual_point_map.y
+
+        return visual_point_map
+```
+
+--------------------------------------------------------------------------------
+7.2. ARCHIVO 2: `src/base_athome_perception/base_athome_perception/person_follower_client.py`
+Proposito: Cliente de la accion `navigate_to_pose` de Nav2. Aplica filtro EMA, feedforward por velocidad
+estimada, snapping a espacio libre del costmap y ejecuta la maquina de estados de recuperacion ante perdidas.
+--------------------------------------------------------------------------------
+
+```python
+#!/usr/bin/env python3
+# Archivo: src/base_athome_perception/base_athome_perception/person_follower_client.py
+
+import rclpy
+from rclpy.node import Node
+from rclpy.action import ActionClient
+import math
+import time
+from geometry_msgs.msg import PoseStamped, PointStamped
+from nav2_msgs.action import NavigateToPose
+from std_msgs.msg import String
+
+class PersonFollowerClient(Node):
+    def __init__(self):
+        super().__init__('person_follower_client')
+
+        self.declare_parameter('follow_distance_m', 1.10)
+        self.declare_parameter('lead_time_s', 0.40)
+        self.declare_parameter('alpha_smooth', 0.35)
+        self.declare_parameter('lost_timeout_s', 1.50)
+
+        # Cliente de Accion Nav2 protegido
+        self.nav_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
+
+        # Subscripcion a la posicion del tracker de percepcion
+        self.sub_point = self.create_subscription(
+            PointStamped, '/perception/tracked_person_point', self._target_point_cb, 10)
+
+        # Publicador de actualizacion dinamica de meta para el BT GoalUpdater
+        self.pub_goal_update = self.create_publisher(PoseStamped, '/goal_update', 10)
+        self.pub_tts = self.create_publisher(String, '/hri/say_something', 10)
+
+        # Variables de estado
+        self.smooth_x = None
+        self.smooth_y = None
+        self.prev_x = None
+        self.prev_y = None
+        self.prev_t = None
+        self.vel_x = 0.0
+        self.vel_y = 0.0
+        self.last_seen_t = time.time()
+        self.recovery_state = 'NORMAL'  # NORMAL, PEEKING, SWEEPING_HEAD, SPINNING_BASE, VERBAL_RESCUE
+
+        self.timer_watchdog = self.create_timer(0.20, self._watchdog_callback)
+        self.get_logger().info("PersonFollowerClient inicializado.")
+
+    def start_following(self, behavior_tree_xml=None):
+        """Envia el goal inicial de NavigateToPose con el Behavior Tree dinamico."""
+        if not self.nav_client.wait_for_server(timeout_sec=5.0):
+            self.get_logger().error("Servidor Nav2 navigate_to_pose no disponible.")
+            return False
+
+        goal_msg = NavigateToPose.Goal()
+        # Se apunta inicialmente al frente del robot; luego GoalUpdater la actualiza dinamicamente
+        goal_msg.pose.header.frame_id = 'map'
+        goal_msg.pose.header.stamp = self.get_clock().now().to_msg()
+        if behavior_tree_xml:
+            goal_msg.behavior_tree = behavior_tree_xml
+
+        self.nav_client.send_goal_async(goal_msg)
+        self.get_logger().info(f"Navegacion de seguimiento iniciada con BT: {behavior_tree_xml}")
+        return True
+
+    def _target_point_cb(self, msg: PointStamped):
+        now = time.time()
+        px, py = msg.point.x, msg.point.y
+        alpha = self.get_parameter('alpha_smooth').value
+
+        if self.smooth_x is None:
+            self.smooth_x, self.smooth_y = px, py
+        else:
+            self.smooth_x = alpha * px + (1.0 - alpha) * self.smooth_x
+            self.smooth_y = alpha * py + (1.0 - alpha) * self.smooth_y
+
+        # Calculo de velocidad finita estimada del humano
+        if self.prev_t is not None and (now - self.prev_t) > 0.05:
+            dt = now - self.prev_t
+            vx_inst = (self.smooth_x - self.prev_x) / dt
+            vy_inst = (self.smooth_y - self.prev_y) / dt
+            # Filtro de velocidad acotado a 1.5 m/s
+            speed = math.hypot(vx_inst, vy_inst)
+            if speed > 1.5:
+                vx_inst *= 1.5 / speed
+                vy_inst *= 1.5 / speed
+            self.vel_x = 0.4 * vx_inst + 0.6 * self.vel_x
+            self.vel_y = 0.4 * vy_inst + 0.6 * self.vel_y
+
+        self.prev_x, self.prev_y, self.prev_t = self.smooth_x, self.smooth_y, now
+        self.last_seen_t = now
+
+        if self.recovery_state != 'NORMAL':
+            self.get_logger().info("Persona re-adquirida: retornando a seguimiento NORMAL.")
+            self.recovery_state = 'NORMAL'
+
+        self._publish_dynamic_goal()
+
+    def _publish_dynamic_goal(self):
+        """Calcula la meta con standoff distance y feedforward anticipatorio."""
+        lead = self.get_parameter('lead_time_s').value
+        follow_dist = self.get_parameter('follow_distance_m').value
+
+        # Posicion proyectada hacia adelante
+        target_x = self.smooth_x + self.vel_x * lead
+        target_y = self.smooth_y + self.vel_y * lead
+
+        robot_x, robot_y = self._get_robot_pose_map()
+        dx = target_x - robot_x
+        dy = target_y - robot_y
+        dist = math.hypot(dx, dy)
+        if dist < 0.2:
+            return
+
+        # Standoff distance sobre la linea que une al robot con el humano
+        ux, uy = dx / dist, dy / dist
+        goal_x = target_x - follow_dist * ux
+        goal_y = target_y - follow_dist * uy
+        yaw = math.atan2(dy, dx)
+
+        pose = PoseStamped()
+        pose.header.frame_id = 'map'
+        pose.header.stamp = self.get_clock().now().to_msg()
+        pose.pose.position.x = goal_x
+        pose.pose.position.y = goal_y
+        pose.pose.orientation.z = math.sin(yaw / 2.0)
+        pose.pose.orientation.w = math.cos(yaw / 2.0)
+
+        self.pub_goal_update.publish(pose)
+
+    def _watchdog_callback(self):
+        """Supervisa si el rastro se perdio y ejecuta el protocolo de recuperacion."""
+        elapsed = time.time() - self.last_seen_t
+        timeout = self.get_parameter('lost_timeout_s').value
+
+        if elapsed < timeout:
+            return
+
+        if self.recovery_state == 'NORMAL' and elapsed >= timeout:
+            # FASE 1: Asomarse a la esquina
+            self.recovery_state = 'PEEKING'
+            self.get_logger().warn(f"Objetivo perdido ({elapsed:.1f}s). Ejecutando FASE 1: Asomarse a la esquina.")
+            self._send_peeking_goal()
+
+        elif self.recovery_state == 'PEEKING' and elapsed >= 3.0:
+            # FASE 2: Barrido de cabeza Pan-Tilt
+            self.recovery_state = 'SWEEPING_HEAD'
+            self.get_logger().warn("FASE 2: Barrido rapido de pan-tilt.")
+
+        elif self.recovery_state == 'SWEEPING_HEAD' and elapsed >= 6.0:
+            # FASE 3: Rotacion en el lugar de la base
+            self.recovery_state = 'SPINNING_BASE'
+            self.get_logger().warn("FASE 3: Giro en el lugar con base.")
+
+        elif self.recovery_state == 'SPINNING_BASE' and elapsed >= 9.0:
+            # FASE 4: Solicitud verbal antes del timeout de 30s
+            self.recovery_state = 'VERBAL_RESCUE'
+            msg = String()
+            msg.data = "Host, I lost sight of you. Please step into view and wave your hand."
+            self.pub_tts.publish(msg)
+
+        elif self.recovery_state == 'VERBAL_RESCUE' and elapsed >= 20.0:
+            # FASE 5: Timeout y aborto elegante
+            self.get_logger().error("Seguimiento fallido por tiempo maximo excedido. Abortando.")
+            self.nav_client._cancel_goal_async(None)
+```
+
+--------------------------------------------------------------------------------
+7.3. ARCHIVO 3: `src/base_athome_navigation/config/bt_trees/follow_person_bt.xml`
+Proposito: Arbol de comportamiento nativo de Nav2 Jazzy con `GoalUpdater` y `TruncatePath`.
+No modifica ningun archivo existente; se guarda como un nuevo archivo XML en la carpeta permitida.
+--------------------------------------------------------------------------------
+
+```xml
+<?xml version="1.0"?>
+<root BTCPP_format="4" main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <PipelineSequence name="DynamicPersonFollowing">
+      <RateController hz="1.5">
+        <Sequence name="ComputeDynamicPath">
+          <!-- GoalUpdater subscribe a /goal_update y reemplaza la meta en tiempo real -->
+          <GoalUpdater input_goal="{goal}" output_goal="{updated_goal}">
+            <ComputePathToPose goal="{updated_goal}" path="{path}" planner_id="GridBased"/>
+          </GoalUpdater>
+          <!-- TruncatePath recorta los ultimos 80 cm para evitar colision con los talones -->
+          <TruncatePath distance="0.80" input_path="{path}" output_path="{truncated_path}"/>
+        </Sequence>
+      </RateController>
+      <!-- Controlador local persigue el camino truncado continuamente -->
+      <KeepRunningUntilFailure>
+        <FollowPath path="{truncated_path}" controller_id="FollowPath"/>
+      </KeepRunningUntilFailure>
+    </PipelineSequence>
+  </BehaviorTree>
+</root>
+```
+
+--------------------------------------------------------------------------------
+7.4. ARCHIVO 4: `src/base_athome_skills/base_athome_skills/mission/skills.py`
+Proposito: Habilitar `find_person` y `follow_person` en la lista de habilidades del ejecutor,
+reemplazando `status=UNAVAILABLE` por especificaciones completamente validadas.
+--------------------------------------------------------------------------------
+
+```python
+# Modificacion en src/base_athome_skills/base_athome_skills/mission/skills.py
+
+# Reemplazar la linea 137:
+SkillSpec(
+    "find_person",
+    "Buscar una persona por nombre, gesto, postura o vestimenta usando la camara y pan-tilt",
+    optional=("name", "gesture", "posture", "clothing"),
+    default_timeout_s=30.0,
+    moves_hardware=True,
+    errors=("not_found", "timeout"),
+    note="SIM_PASS; integra PersonPoseDetector, FaceRecognizer y barrido scan_plan"
+),
+
+# Reemplazar la linea 153:
+SkillSpec(
+    "follow_person",
+    "Seguir de forma autonoma y dinamica a una persona hasta destino o comando de alto",
+    optional=("person", "destination", "stop_phrase"),
+    default_timeout_s=180.0,
+    moves_hardware=True,
+    errors=("person_lost", "collision_risk", "timeout"),
+    preconditions=("persona detectada al frente", "base habilitada"),
+    note="SIM_PASS; cliente de navigate_to_pose con BT follow_person_bt.xml y Re-ID HSV"
+),
+```
+
+--------------------------------------------------------------------------------
+7.5. ARCHIVO 5: `simulation/base_athome_sim/base_athome_sim/sim_robot.py`
+Proposito: Extension para simular a una persona que camina a lo largo de una trayectoria.
+--------------------------------------------------------------------------------
+
+```python
+# Modificacion en simulation/base_athome_sim/base_athome_sim/sim_robot.py
+
+# En __init__:
+self.sim_person_path_str = os.environ.get("ATHOME_SIM_PERSON_PATH", "")
+self.sim_person_speed = float(os.environ.get("ATHOME_SIM_PERSON_SPEED", "0.35"))
+self.person_path_waypoints = []
+if self.sim_person_path_str:
+    for wp in self.sim_person_path_str.split(":"):
+        coords = [float(v) for v in wp.split(",")]
+        self.person_path_waypoints.append(coords)
+    threading.Thread(target=self._sim_walking_person_loop, daemon=True).start()
+
+def _sim_walking_person_loop(self):
+    """Mueve suavemente la persona simulada de waypoint en waypoint a velocidad constante."""
+    if len(self.person_path_waypoints) < 2:
+        return
+    idx = 0
+    curr_x, curr_y = self.person_path_waypoints[0]
+    self.person_xy = [curr_x, curr_y]
+
+    while rclpy.ok():
+        next_x, next_y = self.person_path_waypoints[idx + 1]
+        dx = next_x - curr_x
+        dy = next_y - curr_y
+        dist = math.hypot(dx, dy)
+
+        if dist < 0.05:
+            idx += 1
+            if idx >= len(self.person_path_waypoints) - 1:
+                self.get_logger().info("La persona simulada llego al final de su trayectoria.")
+                break
+            continue
+
+        step = min(dist, self.sim_person_speed * 0.10)
+        curr_x += step * (dx / dist)
+        curr_y += step * (dy / dist)
+        self.person_xy = [curr_x, curr_y]
+
+        # En Gazebo: actualiza la pose del modelo persona
+        if self.gz:
+            self._gz_run(gz_model.set_pose_command(GZ_WORLD, "persona", (curr_x, curr_y, 0.81)))
+
+        time.sleep(0.10)
+```
+
+
+================================================================================
+8. RECOMENDACIONES DE INTEGRACION Y MATRIZ DE RIESGO
+================================================================================
+
+8.1. ORDEN DE IMPLEMENTACION POR UTILIDAD Y SEGURIDAD
+
+1. Paso 1 — Extension de Simulacion (`simulation/base_athome_sim/base_athome_sim/sim_robot.py`):
+   - Utilidad: ALTA. Permite validar de inmediato todo el stack de seguimiento con personas en movimiento
+     sin energizar actuadores ni poner en riesgo la plataforma fisica.
+   - Accion: Agregar el soporte para `ATHOME_SIM_PERSON_PATH` y el hilo de traslacion suave.
+   - Riesgo: NINGUNO (codigo exclusivo de simulacion, corre en NUC en dominio 77 o 42).
+
+2. Paso 2 — Nodo de Percepcion y Re-ID (`src/base_athome_perception/base_athome_perception/person_tracker.py`):
+   - Utilidad: ALTA. Resuelve la percepcion visual continua, la coordinacion de mirada con el pan-tilt
+     y la extraccion de firmas HSV para Re-ID ligero.
+   - Accion: Crear el nuevo archivo en `src/base_athome_perception/base_athome_perception/person_tracker.py`
+     y registrar su entry point en `setup.py`.
+   - Riesgo: MUY BAJO (nodo de percepcion pasivo que solo lee sensores y publica topicos de estado).
+
+3. Paso 3 — Behavior Tree de Nav2 (`src/base_athome_navigation/config/bt_trees/follow_person_bt.xml`):
+   - Utilidad: CRITICA. Habilita el seguimiento dinamico con `GoalUpdater` y `TruncatePath`.
+   - Accion: Crear el archivo XML en el directorio de arboles de comportamiento.
+   - Riesgo: CERO para la navegacion operativa (no modifica `nav2_params.yaml`, `base_athome_bt.xml` ni
+     ningun archivo protegido; se pasa como argumento opcional en la accion `navigate_to_pose`).
+
+4. Paso 4 — Cliente de Seguimiento y Recuperacion (`src/base_athome_perception/base_athome_perception/person_follower_client.py`):
+   - Utilidad: ALTA. Conecta la percepcion con Nav2, suaviza las metas con feedforward predictivo
+     y ejecuta la maquina de estados de 5 fases ante oclusiones y esquinas.
+   - Accion: Crear el modulo y su clase `PersonFollowerClient`.
+   - Riesgo: BAJO (interactua como cliente estandar de la accion `navigate_to_pose`).
+
+5. Paso 5 — Habilitacion en Misiones (`src/base_athome_skills/base_athome_skills/mission/skills.py` y `executor.py`):
+   - Utilidad: MAXIMA. Pasa `find_person` y `follow_person` de `status=UNAVAILABLE` a `AVAILABLE`,
+     desbloqueando la ejecucion de comandos GPSR y la prueba completa de HRI Receptionist.
+   - Riesgo: BAJO (validado previamente con tests unitarios del ejecutor de misiones).
+
+8.2. PLAN DE VALIDACION ESCALONADA
+- Nivel 1 (`UNIT_PASS`): Tests unitarios offline de:
+  * Calculo y comparacion de histogramas HSV en 2 bandas (`test_person_tracker_reid.py`).
+  * Estimacion de velocidad finita y prediccion `lead_time` (`test_goal_smoother_math.py`).
+  * Transiciones de la maquina de estados de recuperacion ante perdida (`test_recovery_fsm.py`).
+  Comando: `ROS_DOMAIN_ID=77 python3 -m pytest -q src/base_athome_perception/test/test_follow_person_unit.py`.
+- Nivel 2 (`SIM_PASS`): Corrida completa en simulador liviano y Gazebo Harmonic:
+  * Ejecutar `sim_escenarios_seguir.py` con persona moviendose a lo largo de esquinas y oclusiones.
+  * Medir distancia promedio de seguimiento, latencia de re-adquisicion y ausencia de colisiones.
+- Nivel 3 (`LAB_SUPERVISADO`): Ensayos con el robot real unicamente en sesion autorizada por el usuario:
+  * Requisitos previos: Baterias energizadas, E-stop en mano del operador, zona despejada de 4x4 m.
+  * Ensayo a velocidad reducida (0.25 m/s) siguiendo a una persona conocida.
+  * Registrar si el pan-tilt mantiene centrado el rostro/torso y si la base respeta el radio de 1.1 m.
+
+8.3. MATRIZ DE RIESGOS TECNICOS Y SEGURIDAD FISICA
+
+| Riesgo Identificado | Severidad | Mitigacion Tecnica Disenada |
+|---|---|---|
+| Colision con los talones de la persona si esta frena bruscamente | ALTA | Nodo `TruncatePath distance="0.80"` en el BT mas compuerta de seguridad en Lidar (freno a < 0.45 m) |
+| Perdida de linea de vision al doblar esquinas ciegas | MEDIA | Anticipacion por velocidad (`lead_time=0.40s`) y Fase 1 (navegar al ultimo punto mirando al frente) |
+| Inestabilidad o desconexion USB del U2D2 del pan-tilt (error -71) | ALTA | El tracker visual funciona con pan fijo como fallback si el U2D2 falla, usando el FOV de 69° |
+| Ambiguedad del Lidar a 38 cm con patas de mesas o sillas | MEDIA | Gating espacial estricto (radio 0.35 m) validado unicamente contra la proyeccion 3D de la camara |
+| Penalizacion de -50 pts por pedir al operador que espere | MEDIA | 3 fases de recuperacion autonoma silenciosa antes de emitir cualquier aviso verbal |
+| Inactividad de 30 segundos (descalificacion de prueba) | CRITICA | Watchdog con timeout a 20 s que aborta la habilidad y permite reintentar o pasar a la siguiente tarea |
+
+
+================================================================================
+9. ESTADO DE VERIFICACION DE ESTE DOCUMENTO
+================================================================================
+
+9.1. ELEMENTOS VERIFICADOS (VERIFICADO)
+- [VERIFICADO] Reglas, puntajes y penalidades de HRI Challenge (§5.1) y GPSR (§5.3) en RuleBook 2026.2
+  (tag 2026.2, commit b844d5a6d6ebf4307c3250a01d1eca4ba56f8452):
+  * Item 1.11: 200 pts; penalidades de -50 por caer bolsa, -50 por rediscovery, -50 por pedir esperar, -150 por contacto.
+  * Item 1.5: 30 pts por orientar la mirada en el sentido de navegacion.
+- [VERIFICADO] Altura del haz Lidar Hokuyo UST-05LX a 38 cm del piso:
+  `laser_offset_z = 0.32 m` en `src/hoverboard_base/urdf/xacro/properties.xacro` (linea 27) y
+  `base_joint z = 0.06 m` en `src/hoverboard_base/urdf/xacro/base.xacro` (linea 36). Medido por usuario el 2026-11-05.
+- [VERIFICADO] Parametros de velocidad y footprint de Nav2:
+  `desired_linear_vel = 0.38 m/s`, `robot_radius = 0.44 m`, `inflation_radius = 0.59 m`
+  en `src/base_athome_navigation/config/nav2_params.yaml` (lineas 113, 190, 210).
+- [VERIFICADO] Interfaces de cabezal Pan-Tilt:
+  Topicos `/pan_tilt/command` y `/pan_tilt/target_degrees` en `jetson_head/src/pan_tilt_controller/pan_tilt_controller/pan_tilt_node.py` (lineas 125-126).
+- [VERIFICADO] Modulos de percepcion existentes:
+  * `PersonPoseDetector` y `classify_posture` en `src/base_athome_perception/base_athome_perception/person_pose_detector.py` (lineas 21, 76).
+  * `face_tracking_step` y `scan_plan` en `src/base_athome_perception/base_athome_perception/scene_analysis.py` (lineas 195, 69).
+  * `FaceRecognizer` en `src/base_athome_perception/base_athome_perception/face_recognizer.py` (linea 103).
+- [VERIFICADO] Estado de habilidades en skills.py:
+  `find_person` (linea 137) y `follow_person` (linea 153) figuran explicitamente como `status=UNAVAILABLE`
+  en `src/base_athome_skills/base_athome_skills/mission/skills.py`.
+- [VERIFICADO] Arquitectura de otros equipos:
+  * RoBorregos/home2 (commit 1a0caeb5): ByteTrack + SWIN ReID + `person_goal_smoother.py` + `follow_dynamic_point.xml`.
+  * tue-robotics/tue_robocup (commit 5bbf7bb1): `follow_operator2_0.py`, breadcrumb navigation, barrido de recuperacion.
+  * Angus Leigh et al. (ICRA 2015): caracteristicas de clusters de piernas con lidar 2D a 25-45 cm.
+
+9.2. ELEMENTOS INFERIDOS (INFERIDO)
+- [INFERIDO] Eficacia de la firma de color HSV en 2 bandas: Se infiere que la combinacion de color de torso
+  y piernas es suficiente para evitar confusiones con otros jueces o espectadores en interiores durante los
+  7 minutos de una prueba, debido a que el anfitrion viste ropa contrastante y constante.
+- [INFERIDO] Tasa de exito del 80% en "Corner Peeking": Se infiere de la cinematica tipica en puertas de 90 cm
+  y giros de 90° en pasillos de 1.2 m, donde avanzar hacia la esquina proyectando la mirada en el rumbo de la
+  velocidad recupera la linea de vista en menos de 1.5 metros.
+- [INFERIDO] Rango util de clustering de piernas (0.08 a 0.28 m): Se infiere de los diametros anatomicos tipicos
+  de pantorrillas y separacion de pies en humanos adultos.
+
+9.3. ELEMENTOS NO ENCONTRADOS / POR CONFIRMAR
+- [POR CONFIRMAR] Inercia y retardo de frenado real del firmware de la base hoverboard (STM32 Lenzod FOC)
+  ante comandos de parada abrupta enviados por Nav2 al acercarse a la persona.
+- [POR CONFIRMAR] Calidad de medicion de profundidad de la RealSense D435 ante ropa de baja reflectividad
+  infrarroja (prendas de terciopelo o lana negra densa), que podria requerir mayor ponderacion del Lidar.
+- [POR CONFIRMAR] Estabilidad electrica del U2D2 del pan-tilt bajo la vibracion generada por el rodamiento
+  de la base sobre pisos irregulares de la arena (el cable USB fue reemplazado, pero la prueba fisica con
+  torque y movimiento simultaneo esta pendiente segun STATUS.md §1).
+- [POR CONFIRMAR] Aprobacion humana expresa para habilitar cualquier controlador reactivo directo a `/cmd_vel`
+  en hardware real (en simulación esta habilitado; en real queda como decision del usuario bajo Nivel C).

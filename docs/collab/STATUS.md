@@ -105,6 +105,13 @@ Antes de empezar: E-stop a mano, zona despejada y otra persona atenta. Bolsa liv
 - **Riesgos del reglamento a confirmar (`INVESTIGACION_REGLAS_GENERALES.txt`):** E-stop común a todos los actuadores, arranque por teclado, lidar ciego bajo 38 cm, parlante Bluetooth, sin protocolo de ayuda humana.
 - **Sin probar:** nada de esto en el robot real.
 
+## 2g. Revisión adversaria y regresión final (2026-11-06)
+
+- **Corregido (revisión de Antigravity, `REVISION_BOLSA` en su rama):** agarre de respaldo sin que otro detector pise el objetivo; tramo final que no da "listo" con la bolsa corrida a un costado y frena antes de que choque el brazo; bolsas negras medidas por el rayo al piso si no hay profundidad; un pedido por vez en `bag_finder`; gesto que salta se descarta.
+- **Regresión en Gazebo + Nav2, una corrida por escenario:** normal 3.0 cm; persona lejos 1.6; moviéndose 1.6; distractora 2.0; bolsa de 45 cm 2.6, tras corregir que frenaba por la bolsa misma; muñeca desalineada 2.4; los 3 casos de falla, en el paso esperado; plan B 1.2; plan B sin manos falla al recibir. `lejos` falló una vez por el gesto antes de ensanchar la tolerancia: **inestable, no resuelto del todo**.
+- **Nuevo:** arranque del receptionist por puerta o voz, sin teclado (HOME-88): "start", "go" o "ready" pueden dispararlo por una charla cercana, probar con cuidado. GPSR a plan (HOME-89): de 30 comandos, 26 compilan y 1 con skills ya disponibles. `follow_logic.py` sin conectar (HOME-92). `revisar_competencia.py`, solo lectura (HOME-93), probado solo con tests.
+- **Sin probar:** nada de esto en el robot real.
+
 ## 3. Cómo retomar la teleoperación con el Quest (pendiente: prueba completa en el brazo real)
 
 1. Quest por USB a la **Jetson**, depuración USB autorizada (`adb devices` → `device`).
