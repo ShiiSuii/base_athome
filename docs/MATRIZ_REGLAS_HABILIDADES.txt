@@ -1,0 +1,553 @@
+MATRIZ DE REGLAS A HABILIDADES — BASE@HOME (URUBOTS)
+Documento de correspondencia entre el RuleBook oficial de RoboCup@Home y las habilidades de Base@Home.
+Fecha de generacion: 2026-11-05
+Autor: Antigravity (dispatched worker para tarea HOME-78)
+Workspace: /home/athome/orca/workspaces/base_athome_ws/antigravity-matriz
+Rama base: origin/development
+
+================================================================================
+1. FUENTE Y REGLAMENTO NORMATIVO
+================================================================================
+
+- Repositorio oficial: https://github.com/RoboCupAtHome/RuleBook
+- Release normativo vigente: 2026.2 (tag 2026.2)
+  URL: https://github.com/RoboCupAtHome/RuleBook/releases/tag/2026.2
+  Commit SHA de referencia: b844d5a6d6ebf4307c3250a01d1eca4ba56f8452
+  PDF oficial publicado: "Version 2026 Rev-1, revision 2026-05-11"
+  SHA256 del PDF normativo: d35e93c7f291a59a823691905b47dcd7e8de14ab3a4c546aca55ba20b30ce128
+- Archivos fuente evaluados en RuleBook:
+  * HRI Challenge:
+    - scoresheets/HumanRobotInteractionChallenge.tex
+    - tasks/HumanRobotInteractionChallenge.tex
+  * Pick and Place Challenge:
+    - scoresheets/PickAndPlaceChallenge.tex
+    - tasks/PickAndPlaceChallenge.tex
+  * General Purpose Service Robot (GPSR):
+    - scoresheets/GPSR.tex
+    - tasks/GPSR.tex
+  * Doing Laundry Challenge:
+    - scoresheets/DoingLaundry.tex
+    - tasks/DoingLaundry.tex
+- Regla de exclusion: NO se utiliza tasks/old/. "Take Out the Garbage" ya no es
+  prueba oficial en 2026.2. Las 4 pruebas regulares de la liga OPL son: HRI Challenge,
+  Pick and Place, GPSR y Doing Laundry (mas Restaurant y Final).
+
+Criterios de clasificacion de estado (segun docs/collab/STATUS.md y docs/ROADMAP.md):
+- hardware: verificado en NUC o Jetson con periférico/hardware real (NUC_VERIFIED / JETSON_VERIFIED).
+- simulacion: validado en simulador o MoveIt (SIM_PASS), sin prueba fisica concluyente en robot real.
+- solo codigo: codigo escrito o testeado offline (UNIT_PASS / CODIGO), sin integracion completa con hardware.
+- no hecho: no existe implementacion en el repositorio (marcado como NO HAY).
+- esfuerzo estimado: bajo, medio o alto (marcado explicitamente como [estimacion]).
+
+
+================================================================================
+2. MATRIZ DETALLADA POR PRUEBA
+================================================================================
+
+--------------------------------------------------------------------------------
+2.1. HUMAN-ROBOT INTERACTION CHALLENGE (HRI Challenge, max. 1450 pts)
+Fuente: scoresheets/HumanRobotInteractionChallenge.tex y tasks/HumanRobotInteractionChallenge.tex
+--------------------------------------------------------------------------------
+
+ITEM 1.1: Detect the doorbell sound as a signal that a guest has arrived
+- Puntos: 60 pts max (2 x 30 pts por invitado)
+- Habilidad que requiere: Deteccion acustica de eventos / clasificacion de audio (timbre o toque de puerta).
+- Skill o nodo nuestro que lo cubre: NO HAY
+  (En audio_asr/whisper_node.py solo hay ASR continuo de voz; no hay clasificador de sonido ambiente tipo YAMNet).
+- Funcion / metodo verificado: NINGUNO
+- Estado: no hecho
+- Esfuerzo estimado: bajo [estimacion] (integrar nodo detector de audio liviano con modelo preentrenado o VAD acustico).
+
+ITEM 1.2: Open the entrance door for a guest
+- Puntos: 400 pts max (2 x 200 pts por invitado)
+- Habilidad que requiere: Manipulacion movil para apertura de puerta (deteccion 3D de picaporte, aproximacion de base, agarre y accionamiento de palanca, empuje/traccion coordinada con base).
+- Skill o nodo nuestro que lo cubre: NO HAY
+  (Nota: DoorOpenDetector en src/base_athome_skills/base_athome_skills/door_detector.py solo detecta si la puerta ya esta abierta mediante /scan del Hokuyo, no acciona fisicamente la puerta).
+- Funcion / metodo verificado: NINGUNO
+- Estado: no hecho
+- Esfuerzo estimado: alto [estimacion] (manipulacion de alta complejidad kinematica y dinamica con un brazo de 1.5 kg y base diferencial).
+
+ITEM 1.3: Look at the person talking, when receiving a guest
+- Puntos: 100 pts max (2 x 50 pts por invitado)
+- Habilidad que requiere: Control reactivo de mirada y seguimiento activo de rostro con pan-tilt Dynamixel durante la conversacion.
+- Skill o nodo nuestro que lo cubre:
+  * Archivo: src/base_athome_perception/base_athome_perception/scene_analysis.py
+    Funcion comprobada con grep: face_tracking_step (linea 195)
+  * Archivo: src/base_athome_perception/scripts/hri_receptionist_challenge.py
+    Metodos comprobados con grep:
+    - move_head_to (linea 1140)
+    - move_head_smooth (linea 1132)
+  * Archivo: jetson_head/src/pan_tilt_controller/pan_tilt_controller/pan_tilt_node.py
+    Clase: PanTiltNode (topico /pan_tilt/target_degrees)
+- Estado: simulacion (SIM_PASS con nodo falso; en hardware real bloqueado por inestabilidad electrica/USB del U2D2 reportada en STATUS.md 2026-11-05).
+- Esfuerzo estimado: bajo [estimacion] (el codigo de seguimiento visual ya esta escrito e integrado, requiere estabilizar conexion fisica del U2D2).
+
+ITEM 1.4: Offer a free seat to the new guest
+- Puntos: 200 pts max (2 x 100 pts por invitado)
+- Habilidad que requiere: Percepcion y analisis semantico de ocupacion de asientos en la sala (contar personas sentadas vs libres en sofas/sillas del mapa semantico) y oferta verbal/visual.
+- Skill o nodo nuestro que lo cubre:
+  * Archivo: src/base_athome_perception/base_athome_perception/seat_occupancy.py
+    Funciones comprobadas con grep:
+    - choose_free_seat (linea 111)
+    - seat_occupancy (linea 76)
+  * Archivo: src/base_athome_perception/scripts/hri_receptionist_challenge.py
+    Metodo comprobado con grep: scan_seats (linea 1399), ejecutado en estado STATE_DETECT_AND_OFFER_SEAT (linea 2017)
+- Estado: simulacion (SIM_PASS con 122 tests de percepcion pasando; pendiente validacion con personas fisicas en la sala real).
+- Esfuerzo estimado: bajo [estimacion] (algoritmo ya desarrollado y validado en tests unitarios y simulador).
+
+ITEM 1.5: Look in the direction of navigation or at the navigation goal
+- Puntos: 30 pts max (2 x 15 pts por invitado)
+- Habilidad que requiere: Coordinacion ojo-base durante navegacion (centrar o apuntar la cabeza pan-tilt en el sentido del movimiento o hacia el waypoint de destino).
+- Skill o nodo nuestro que lo cubre:
+  * Archivo: src/base_athome_perception/scripts/hri_receptionist_challenge.py
+    Metodo comprobado con grep: move_head_to(0.0, 0.0) en STATE_NAV_TO_DOOR (linea 1578)
+- Estado: solo codigo (orienta al frente estaticamente antes de navegar; falta seguimiento dinamico del vector de orientacion/meta durante la trayectoria).
+- Esfuerzo estimado: bajo [estimacion] (publicar angulo relativo de la meta de navegacion al pan-tilt durante el ciclo de seguimiento de Nav2).
+
+ITEM 1.6: Tell a visual attribute of the first guest to the second guest
+- Puntos: 80 pts max (4 atributos x 20 pts; penalidad de -20 pts por atributo incorrecto)
+- Habilidad que requiere: Extraccion de atributos visuales de personas (color de ropa, tipo de prenda, anteojos, genero/edad aparente) y reporte verbal estructurado.
+- Skill o nodo nuestro que lo cubre: NO HAY
+  (En face_recognizer.py el campo 'attributes' solo almacena metadatos como 'role', 'favorite_drink' o 'seat'; no hay clasificador de color/ropa sobre el bbox de la persona).
+- Funcion / metodo verificado: NINGUNO
+- Estado: no hecho
+- Esfuerzo estimado: medio [estimacion] (analisis de color dominante o clasificador CNN/YOLO ligero sobre la region del torso de la persona detectada).
+
+ITEM 1.7: Not asking non-essential questions to confirm or correct information
+- Puntos: 60 pts max (4 datos x 15 pts: nombre y bebida de 2 invitados)
+- Habilidad que requiere: Comprension directa sin preguntas no esenciales de confirmacion en el dialogo ASR/HRI.
+- Skill o nodo nuestro que lo cubre:
+  * Archivo: src/base_athome_perception/scripts/hri_receptionist_challenge.py
+    Logica de estados comprobada con grep:
+    - STATE_CONFIRM_DETAILS (linea 1888): realiza una afirmacion directa ("Thank you, {name}! I noted that your favorite drink is {drink}") sin formular pregunta.
+    - STATE_ASK_CONFIRM (linea 1856): estado de confirmacion explicita ("Is that correct?") que actualmente previene la penalidad de -40 por dato erroneo pero pierde este bonus.
+- Estado: solo codigo (la afirmacion directa existe en STATE_CONFIRM_DETAILS; requiere flag para omitir STATE_ASK_CONFIRM cuando la confianza del ASR sea alta).
+- Esfuerzo estimado: bajo [estimacion] (conmutar transicion directa a STATE_CONFIRM_DETAILS).
+
+ITEM 1.8: Say name and favorite drink of each guest (during introduction)
+- Puntos: 120 pts max (4 datos x 30 pts: nombre y bebida de cada invitado)
+- Habilidad que requiere: Generacion de dialogo y sintesis de voz (TTS) para presentacion cruzada de invitados basada en perfiles almacenados.
+- Skill o nodo nuestro que lo cubre:
+  * Archivo: src/base_athome_perception/scripts/hri_receptionist_challenge.py
+    Metodos comprobados con grep:
+    - say (linea 892)
+    - STATE_INTRODUCE_GUESTS (linea 1999)
+  * Archivo: src/base_athome_perception/base_athome_perception/speaker.py
+    Clase: RoboCupSpeaker (linea 17)
+- Estado: solo codigo (implementado para el invitado nuevo y nombre del primero; falta completar el formato cruzado que mencione explicitamente la bebida del primer invitado al segundo).
+- Esfuerzo estimado: bajo [estimacion] (modificacion menor de plantilla de texto en STATE_INTRODUCE_GUESTS).
+
+ITEM 1.9: While introducing guests, look to the correct guest while talking about the other guest
+- Puntos: 100 pts max (2 x 50 pts por invitado)
+- Habilidad que requiere: Control coordinado de mirada hacia la persona a la que se le habla mientras se describe a la otra.
+- Skill o nodo nuestro que lo cubre: NO HAY
+  (En STATE_INTRODUCE_GUESTS solo se orienta inicialmente la cabeza hacia el anfitrion Charlie con move_head_smooth en linea 1979; no alterna la mirada entre invitados durante el discurso).
+- Funcion / metodo verificado: NINGUNO
+- Estado: no hecho
+- Esfuerzo estimado: bajo [estimacion] (interpolar pan-tilt hacia las coordenadas de cada invitado antes de emitir cada frase del dialogo).
+
+ITEM 1.10: Receive the bag from the guest via handover
+- Puntos: 50 pts max (penalidades: -25 pts por pedir ayuda en handover, -50 pts si se coloca en la estructura del robot)
+- Habilidad que requiere: Interaccion fisica humano-robot segura para recepcion de objeto (handover: extender brazo a menos de 10 cm, esperar deteccion de objeto en pinza, cerrar suavemente).
+- Skill o nodo nuestro que lo cubre: NO HAY
+  (bag_task.py y ensenar_pregrasp.py solo cubren levantamiento de bolsas desde el piso; no hay rutina de recepcion mano-a-pinza con guardias de seguridad).
+- Funcion / metodo verificado: NINGUNO
+- Estado: no hecho
+- Esfuerzo estimado: medio [estimacion] (pose de recepcion enseñada, monitoreo de corriente/presencia y cierre temporizado seguro).
+
+ITEM 1.11: Following the host to the bag drop area
+- Puntos: 200 pts max (penalidades: -50 pts si se cae la bolsa, -50 pts rediscovery natural, -50 pts pedir esperar, -150 pts contacto fisico)
+- Habilidad que requiere: Seguimiento continuo de personas (person following) manteniendo la distancia y navegando de forma reactiva detras del anfitrion.
+- Skill o nodo nuestro que lo cubre: NO HAY
+  (En src/base_athome_skills/base_athome_skills/mission/skills.py, la skill 'follow_person' figura explicitamente como status=UNAVAILABLE en linea 150. En calibrate_tracking.py solo hay seguimiento visual de cabeza, no traslacion de base).
+- Funcion / metodo verificado: NINGUNO
+- Estado: no hecho
+- Esfuerzo estimado: alto [estimacion] (requiere fusion de lidar/camara para estimar la trayectoria de la persona y cliente reactivo de navegacion/cmd_vel sin colisionar).
+
+ITEM 1.12: Drop the bag in the correct area
+- Puntos: 50 pts max
+- Habilidad que requiere: Colocacion y apertura controlada de pinza para depositar bolsa en el area designada.
+- Skill o nodo nuestro que lo cubre:
+  * Archivo: src/base_athome_perception/base_athome_perception/arm_manipulation.py
+    Metodo comprobado con grep: place_blocking (linea 481)
+  * Archivo: src/base_athome_skills/base_athome_skills/mission/skills.py
+    Skill comprobada con grep: place_object (linea 147)
+- Estado: simulacion (SIM_PASS con MoveIt 2 en simulacion; en hardware real la pinza nunca abrio sobre un objetivo de bolsa en piso).
+- Esfuerzo estimado: bajo [estimacion] (la rutina de soltar en pre_grasp y retornar a home ya existe).
+
+PENALIDADES ESPECIFICAS EN HRI CHALLENGE:
+- Wrong guest information was memorized: 4 x -40 pts (-160 max). Mitigado con ASR Silero/Whisper y verificacion fonetica en guest_vocabulary.py.
+- Alternative HRI: 6 x -20 pts (-120 max). Aplica si se usa teclado o pantalla para ingresar datos.
+- Not acknowledging people: 2 x -200 pts (-400 max). Mitigado manteniendo la cabeza orientada a las personas en interaccion.
+
+
+--------------------------------------------------------------------------------
+2.2. PICK AND PLACE CHALLENGE (max. 3515 pts)
+Fuente: scoresheets/PickAndPlaceChallenge.tex y tasks/PickAndPlaceChallenge.tex
+--------------------------------------------------------------------------------
+
+ITEM 2.1: Navigate to the table
+- Puntos: 15 pts
+- Habilidad que requiere: Navegacion autonoma a la mesa de comedor (cliente de action navigate_to_pose en Nav2).
+- Skill o nodo nuestro que lo cubre:
+  * Archivo: src/base_athome_skills/base_athome_skills/mission/skills.py
+    Skill comprobada con grep: navigate_to (linea 94)
+  * Archivo: src/base_athome_navigation/base_athome_navigation/waypoint_navigator.py
+    Funciones: load_waypoints, save_waypoints
+- Estado: hardware (NUC_VERIFIED, Nav2 funcional protegido en NUC).
+- Esfuerzo estimado: bajo [estimacion] (funcionalidad de base operativa).
+
+ITEM 2.2: Correctly recognize an object
+- Puntos: 120 pts max (12 x 10 pts por objeto reconocido en la mesa o estante)
+- Habilidad que requiere: Percepcion y clasificacion 2D/3D de objetos domesticos (vajilla, cubiertos, latas, alimentos) mediante camara de muñeca o cabeza.
+- Skill o nodo nuestro que lo cubre:
+  * Archivo: jetson_head/scripts/yolo_trt_node.py
+    Clase comprobada con grep: YoloTrtNode (publicando /arm_camera/detections a 29.9 Hz en GPU Jetson)
+  * Archivo: src/base_athome_perception/base_athome_perception/wrist_detector.py
+    Clases comprobadas con grep: WristDetector (linea 73), TargetTracker (linea 32)
+  * Archivo: src/base_athome_skills/base_athome_skills/mission/skills.py
+    Skill comprobada con grep: detect_object (linea 132)
+- Estado: hardware (nodo TensorRT corriendo en Jetson a 30 Hz; pero los pesos actuales son COCO y detector de bolsas; falta entrenamiento/export de clases oficiales del RuleBook: Pringles, Red Bull, cubiertos, etc.).
+- Esfuerzo estimado: medio [estimacion] (export de YOLO-World v2 a TensorRT o fine-tuning de objetos domesticos).
+
+ITEM 2.3: Perceive objects on a shelf and indicate the correct placement
+- Puntos: 60 pts max (2 x 30 pts por estante/objeto)
+- Habilidad que requiere: Analisis de organizacion de estantes / alacena (agrupacion semantica por categorias) y senalizacion de posicion de guardado.
+- Skill o nodo nuestro que lo cubre: NO HAY
+  (map_zone_editor.py contiene plantillas geometricas de 'shelf', pero no hay modulo de clasificacion semantica de niveles de estanteria).
+- Funcion / metodo verificado: NINGUNO
+- Estado: no hecho
+- Esfuerzo estimado: medio [estimacion] (barrido de camara de cabeza/muñeca frente a la alacena y clasificacion por clusters).
+
+ITEM 2.4: Picking up an object for transportation (Base Picking)
+- Puntos: 600 pts max (12 x 50 pts por objeto levantado con exito)
+- Habilidad que requiere: Manipulacion robótica 3D con brazo de 6-DOF (deteccion de pose con camara Orbbec DaBai, planificacion de trayectoria cinematica con MoveIt 2, cierre de pinza y confirmacion de agarre mediante sensor de ancho/corriente).
+- Skill o nodo nuestro que lo cubre:
+  * Archivo: src/base_athome_perception/base_athome_perception/arm_manipulation.py
+    Metodos comprobados con grep:
+    - pick_blocking (linea 440)
+    - go_to_blocking (linea 352)
+    - gripper (linea 222)
+  * Archivo: src/base_athome_skills/base_athome_skills/mission/skills.py
+    Skill comprobada con grep: pick_object (linea 142)
+  * Archivo: src/base_athome_perception/scripts/pringles_grasping_node.py
+    Clase: PringlesGraspNode
+- Estado: simulacion (SIM_PASS con MoveIt 2 y FollowJointTrajectory en sim; controlador Piper verificado en Jetson con md5 2e347c49; agarre real en hardware pendiente de calibracion hand-eye y sesion supervisada).
+- Esfuerzo estimado: medio [estimacion] (requiere calibracion hand-eye camara-gripper y prueba fisica de agarre).
+
+MODIFICADORES DE PICKING:
+- First Pick Bonus: 100 pts (se otorga 1 sola vez al lograr el primer agarre).
+  * Cubierto por: misma rutina de pick_blocking. Estado: simulacion. Esfuerzo: bajo [estimacion].
+- From the floor: 30 pts (1x objeto levantado del suelo cerca del tacho de basura).
+  * Habilidad: Agarre a nivel de suelo coordinando elevador de columna y brazo.
+  * Cubierto por: ensenar_pregrasp.py, bag_task.py (metodos floor_grasp_from_tcp, torso_for_object), pick_blocking(plane_z=0.0).
+  * Estado: simulacion (SIM_PASS en sim; hardware sin prueba fisica de elevador). Esfuerzo: medio [estimacion].
+- Cutlery: 100 pts max (2 x 50 pts por cubiertos: tenedor, cuchillo o cuchara).
+  * Habilidad: Agarre de objetos delgados y planos sobre superficie rigida.
+  * Cubierto por: pick_blocking generico.
+  * Estado: solo codigo (sin estrategia rasante de agarre para objetos milimetricos). Esfuerzo: alto [estimacion].
+- Plate: 100 pts (1x plato).
+  * Habilidad: Agarre de objeto plano circular por el borde sin deslizamiento.
+  * Cubierto por: pick_blocking generico.
+  * Estado: solo codigo (requiere pose lateral especifica). Esfuerzo: alto [estimacion].
+- Dishwasher tab: 100 pts (1x pastilla de lavavajillas).
+  * Habilidad: Agarre de objeto pequeño en superficie designada.
+  * Cubierto por: pick_blocking generico.
+  * Estado: solo codigo. Esfuerzo: medio [estimacion].
+- Penalidad modificador: Common object from auxiliary table: 2 x -20 pts (-40 max).
+
+ITEM 2.5: Place an object in its designated location (Base Placing)
+- Puntos: 480 pts max (12 x 40 pts por objeto colocado en su lugar)
+- Habilidad que requiere: Posicionamiento seguro y apertura controlada de la pinza sobre superficie de destino (mesa, tacho o alacena).
+- Skill o nodo nuestro que lo cubre:
+  * Archivo: src/base_athome_perception/base_athome_perception/arm_manipulation.py
+    Metodo comprobado con grep: place_blocking (linea 481)
+  * Archivo: src/base_athome_skills/base_athome_skills/mission/skills.py
+    Skill comprobada con grep: place_object (linea 147)
+- Estado: simulacion (SIM_PASS en simulacion; en hardware real la pinza y trayectorias estan listas pero no probadas con piezas sueltas).
+- Esfuerzo estimado: bajo [estimacion] (la rutina cinematica de aproximacion y liberacion ya esta escrita).
+
+MODIFICADORES DE PLACING:
+- Correctly in the dishwasher: 210 pts max (3 x 70 pts por colocar vajilla en el lavavajillas).
+  * Habilidad: Insercion en compartimiento interno confinado del lavavajillas.
+  * Cubierto por: NO HAY especifico. Estado: no hecho. Esfuerzo: alto [estimacion].
+- Next to similar objects in the cabinet: 40 pts max (2 x 20 pts por agrupar en alacena).
+  * Habilidad: Colocacion por categorias en estantes.
+  * Cubierto por: NO HAY. Estado: no hecho. Esfuerzo: medio [estimacion].
+- In the dishwasher tab slot inside the dishwasher: 160 pts (1x ranura de pastilla).
+  * Habilidad: Insercion milimetrica de pastilla en el slot de la puerta del lavavajillas.
+  * Cubierto por: NO HAY. Estado: no hecho. Esfuerzo: alto [estimacion].
+- Penalidad modificador: Area around breakfast items is not cleaned: 4 x -30 pts.
+- Penalidad modificador: Common object from auxiliary table: 2 x -20 pts.
+
+ITEM 2.6: Extra Rewards en Pick and Place
+- Pull or push the dishwasher rack: 200 pts max (2 x 100 pts por tirar o empujar el canasto del lavavajillas).
+  * Habilidad: Manipulacion de guias lineales y mecanismos prismaticos.
+  * Cubierto por: NO HAY. Estado: no hecho. Esfuerzo: medio [estimacion] (empujar con la pinza cerrada es simple; tirar requiere enganchar manija).
+- Open or close the dishwasher door without assistance: 400 pts max (2 x 200 pts por abrir o cerrar puerta).
+  * Habilidad: Manipulacion de puerta basculante con traba de presion.
+  * Cubierto por: NO HAY. Estado: no hecho. Esfuerzo: alto [estimacion] (vencer traba mecanica y soportar torque sin dañar el brazo).
+- Open milk container without assistance: 400 pts (1x destapar carton de leche).
+  * Habilidad: Destape de envase (desenroscar tapa o abrir solapa).
+  * Cubierto por: NO HAY. Estado: no hecho. Esfuerzo: alto [estimacion] (muy dificil con una sola pinza de 2 dedos sin herramienta bimanual).
+- Pour cereal or milk into the bowl without assistance: 400 pts max (2 x 200 pts por verter leche o cereal).
+  * Habilidad: Vertido controlado por rotacion de muñeca (articulacion joint_6 del Piper).
+  * Cubierto por: NO HAY (cinematica disponible en MoveIt, pero no existe rutina de vertido implementada).
+  * Estado: no hecho. Esfuerzo: medio [estimacion] (orientar envase sobre el bol y aplicar rampa angular al roll de la muñeca).
+
+PENALIDADES EN PICK AND PLACE:
+- Objects thrown or dropped while placing: 12 x -40 pts.
+- Breakfast not served in typical meal setting: -50 pts.
+- Objects dropped on floor: 12 x -40 pts.
+- Spilling cereal and milk while pouring: 2 x -100 pts.
+- Human assistance: object repositioned (-30 c/u), handover (-100 c/u), environment changes (-40 c/u).
+
+
+--------------------------------------------------------------------------------
+2.3. GENERAL PURPOSE SERVICE ROBOT CHALLENGE (GPSR, max. 1490 pts)
+Fuente: scoresheets/GPSR.tex y tasks/GPSR.tex
+--------------------------------------------------------------------------------
+
+ITEM 3.1: Understand the spoken command
+- Puntos: 240 pts max (3 x 80 pts por comando entendido, 3 comandos)
+- Habilidad que requiere: Reconocimiento automatico del habla (ASR Whisper) y transcripcion fonetica precisa en idioma ingles.
+- Skill o nodo nuestro que lo cubre:
+  * Archivo: jetson_head/src/audio_asr/audio_asr/whisper_node.py
+    Clase: WhisperNode (topicos /voice/status, /voice/result, servicio /voice/listen)
+  * Archivo: jetson_head/src/audio_asr/audio_asr/asr_core.py
+    Clases comprobadas con grep: SileroStream, EnergyVAD, Endpointer
+  * Archivo: src/base_athome_perception/base_athome_perception/voice_client.py
+    Clase comprobada con grep: VoiceClient (linea 45)
+  * Archivo: src/base_athome_skills/base_athome_skills/mission/skills.py
+    Skill comprobada con grep: listen (linea 104)
+- Estado: hardware (JETSON_VERIFIED corriendo en Jetson con microfono RØDE VideoMic GO II por USB; ~1.4 s de latencia; pendiente calibracion de reduccion de ruido ambiental).
+- Esfuerzo estimado: bajo [estimacion] (infraestructura ya desplegada y operativa).
+
+ITEM 3.2: Demonstrate a plan has been generated
+- Puntos: 300 pts max (3 x 100 pts por plan generado y demostrado, 3 comandos)
+- Habilidad que requiere: Comprension de lenguaje natural, extraccion de intenciones/entidades, generacion de secuencia de acciones en JSON/texto y despliegue visual/verbal.
+- Skill o nodo nuestro que lo cubre:
+  * Archivo: tools/gpsr_parser/gpsr_parser/parser.py
+    Clase comprobada con grep: GPSRParser
+    Metodos comprobados con grep:
+    - parse (linea 160)
+    - explain_plan (linea 757)
+  * Archivo: src/base_athome_skills/base_athome_skills/mission/command_parser.py
+    Funcion comprobada con grep: compile_command (linea 564)
+  * Archivo: src/base_athome_skills/base_athome_skills/mission/commander_node.py
+    Clase comprobada con grep: Commander (servidor web local :8770 para despliegue visual del plan)
+- Estado: simulacion / solo codigo (UNIT_PASS con 34 tests del GPSR parser pasando offline sobre dataset oficial; servidor web implementado; falta enlazar la salida del parser directo al ejecutor de misiones).
+- Esfuerzo estimado: bajo [estimacion] (la base algoritmica ya esta resuelta y probada).
+
+ITEM 3.3: Solving the first command (250 pts), second command (250 pts), third command (250 pts)
+- Puntos: 750 pts max (3 x 250 pts por comando completado)
+- Habilidad que requiere: Ejecucion integrada y orquestada de misiones complejas (navegacion semantica, busqueda de objetos/personas, agarre/entrega, dialogo).
+- Skill o nodo nuestro que lo cubre:
+  * Archivo: src/base_athome_skills/base_athome_skills/mission/executor.py
+    Clase comprobada con grep: MissionExecutor (linea 89), metodo run (linea 138)
+  * Archivo: src/base_athome_skills/base_athome_skills/mission/node.py
+    Clase comprobada con grep: MissionExecutorNode (linea 63)
+  * Archivo: src/base_athome_skills/base_athome_skills/mission/skills.py
+    Skills disponibles: navigate_to, speak, listen, wait, return_home.
+    Skills NO disponibles aun: find_person, follow_person, guide_person, deliver_object, answer_question (marcadas UNAVAILABLE).
+- Estado: simulacion (SIM_PASS para secuencias basicas de navegacion y habla como demo_a_b_voice_c_home; para comandos generales de GPSR en hardware: no hecho / parcial debido a habilidades faltantes de personas y entrega).
+- Esfuerzo estimado: alto [estimacion] (requiere cerrar todas las habilidades elementales de percepcion de personas y manipulacion en hardware).
+
+ITEM 3.4: Interleaved Task Bonus
+- Puntos: 200 pts
+- Habilidad que requiere: Planificacion y optimizacion de tareas intercaladas (reordenar acciones de los 3 comandos recibidos para minimizar trayectorias o paralelizar tareas).
+- Skill o nodo nuestro que lo cubre: NO HAY
+  (No existe optimizador de grafos de misiones para intercalar acciones entre comandos independientes).
+- Funcion / metodo verificado: NINGUNO
+- Estado: no hecho
+- Esfuerzo estimado: medio [estimacion] (algoritmo de optimizacion sobre lista combinada de acciones de los 3 planes).
+
+PENALIDADES ESPECIFICAS EN GPSR:
+- Using a custom operator: 3 x -20 pts (-60 max).
+- Request a rephrasing: 6 x -30 pts (-180 max).
+- Bypassing speech recognition: 3 x -50 pts (-150 max).
+
+
+--------------------------------------------------------------------------------
+2.4. DOING LAUNDRY CHALLENGE (max. 4415 pts)
+Fuente: scoresheets/DoingLaundry.tex y tasks/DoingLaundry.tex
+--------------------------------------------------------------------------------
+
+ITEM 4.1: Navigating to the laundry area
+- Puntos: 15 pts
+- Habilidad que requiere: Navegacion autonoma al waypoint del area de lavado con Nav2.
+- Skill o nodo nuestro que lo cubre:
+  * Archivo: src/base_athome_skills/base_athome_skills/mission/skills.py
+    Skill comprobada con grep: navigate_to (linea 94)
+  * Archivo: src/base_athome_navigation/base_athome_navigation/waypoint_navigator.py
+- Estado: hardware (NUC_VERIFIED, Nav2 funcional protegido).
+- Esfuerzo estimado: bajo [estimacion] (agregar waypoint 'laundry' en waypoints.yaml).
+
+ITEM 4.2: Picking up a piece of clothing from the basket
+- Puntos: 100 pts max (penalidad de -100 pts por tomar varias prendas juntas)
+- Habilidad que requiere: Manipulacion de objetos deformables / textiles (detectar arruga/vertice de prenda textil dentro de un canasto y pinzar una sola prenda).
+- Skill o nodo nuestro que lo cubre: NO HAY
+- Funcion / metodo verificado: NINGUNO
+- Estado: no hecho
+- Esfuerzo estimado: alto [estimacion] (deteccion de caracteristicas en telas arrugadas y modulacion de fuerza de agarre con pinza de 2 dedos).
+
+ITEM 4.3: Folding a piece of clothing
+- Puntos: 800 pts max (penalidad por calidad hasta -800 pts; -200 pts por asistencia humana para alisar; penalidad proporcional por ayuda)
+- Habilidad que requiere: Doblado de prendas textiles sobre mesa (alisado previo, sujecion en dos extremos, pliegue secuencial).
+- Skill o nodo nuestro que lo cubre: NO HAY
+- Funcion / metodo verificado: NINGUNO
+- Estado: no hecho
+- Esfuerzo estimado: alto [estimacion] (problema abierto en robotica de servicio; el reglamento asume mayormente robots bimanuales).
+
+ITEM 4.4: Opening the washing machine door
+- Puntos: 300 pts
+- Habilidad que requiere: Apertura de puerta de lavarropas (destrabar pestillo y abrir en trayectoria circular).
+- Skill o nodo nuestro que lo cubre: NO HAY
+- Funcion / metodo verificado: NINGUNO
+- Estado: no hecho
+- Esfuerzo estimado: alto [estimacion] (fuerza de desenganche del pestillo y alcance espacial).
+
+ITEM 4.5: Removing one or more pieces of clothing from the washing machine
+- Puntos: 300 pts max (penalidad de -200 pts si la prenda toca el suelo)
+- Habilidad que requiere: Extraccion de ropa desde el tambor del lavarropas y transporte a la mesa sin rozar el piso.
+- Skill o nodo nuestro que lo cubre: NO HAY
+- Funcion / metodo verificado: NINGUNO
+- Estado: no hecho
+- Esfuerzo estimado: medio [estimacion] (introducir gripper en tambor abierto, cerrar pinza y retirar verticalmente hacia la mesa).
+
+ITEM 4.6: Using the basket for transportation
+- Puntos: 300 pts max (penalidad de -200 pts si se cae ropa durante el traslado)
+- Habilidad que requiere: Traslado de canasto de lavanderia (el reglamento §Setup especifica: "requiring two arms to carry").
+- Skill o nodo nuestro que lo cubre: NO HAY
+  (Base@Home cuenta con 1 solo brazo Piper montado; inviable en configuracion monomanual sin adaptacion fisica especial).
+- Funcion / metodo verificado: NINGUNO
+- Estado: no hecho
+- Esfuerzo estimado: alto [estimacion] (requeriria un segundo brazo o gancho en la base).
+
+ITEM 4.7: Folding additional clothes (per item)
+- Puntos: 2000 pts max (5 prendas x 400 pts c/u)
+- Habilidad que requiere: Doblado repetitivo y prolijo de t-shirts adicionales.
+- Skill o nodo nuestro que lo cubre: NO HAY
+- Funcion / metodo verificado: NINGUNO
+- Estado: no hecho
+- Esfuerzo estimado: alto [estimacion] (depende directamente del exito en el doblado base).
+
+ITEM 4.8: Stacking folded clothes neatly (per item)
+- Puntos: 600 pts max (6 prendas x 100 pts c/u)
+- Habilidad que requiere: Apilado ordenado de prendas dobladas una sobre otra.
+- Skill o nodo nuestro que lo cubre: NO HAY
+- Funcion / metodo verificado: NINGUNO
+- Estado: no hecho
+- Esfuerzo estimado: alto [estimacion] (manipulacion de precision de telas dobladas sin desarmar pliegues).
+
+PENALIDADES EN DOING LAUNDRY:
+- Picking up multiple at once: -100 pts.
+- Quality penalties on folding: hasta -800 pts.
+- Human assistance flattening/arranging: -200 pts.
+- Clothing touches floor: -200 pts.
+- Laundry dropped/lost in transport: -200 pts.
+- Human assistance environment changes: -40 pts por item.
+
+
+================================================================================
+3. LOS 10 ITEMS DE MAS PUNTOS POR ESFUERZO (ROI DE INTEGRACION)
+================================================================================
+
+Para priorizar las funcionalidades a integrar en Base@Home antes de la cualificacion
+y competencia, se evaluan los puntos otorgados por el RuleBook contra el esfuerzo
+técnico real necesario en nuestra plataforma (1 brazo Piper 6-DOF, base hoverboard,
+cabeza pan-tilt, camara de muñeca DaBai, RealSense D435 y ASR Whisper en Jetson).
+
+Escala de estimacion de esfuerzo:
+- BAJO: codigo ya escrito en el repositorio con tests pasando o modulo de hardware ya probado; requiere solo ajuste de integracion, formateo o calibracion menor.
+- MEDIO: componentes base existentes; requiere calibracion hand-eye, fine-tuning de modelos de vision o desarrollo de una maquina de estados/algoritmo acotado.
+- ALTO: no existe codigo, requiere manipulacion bimanual, alta destreza mecanica (puertas, platos, doblado de ropa) o coordinacion compleja persona-robot.
+
+Los 10 mejores items ordenados por retorno de puntos por esfuerzo:
+
+1. GPSR — Demostrar plan generado (3 x 100 = 300 pts)
+   - Prueba: GPSR (§5.3)
+   - Puntos: 300 pts
+   - Esfuerzo: BAJO [estimacion]
+   - Cobertura actual: tools/gpsr_parser/gpsr_parser/parser.py (GPSRParser.parse, explain_plan, 34 tests pasando), src/base_athome_skills/base_athome_skills/mission/command_parser.py (compile_command), interfaz web :8770 de commander_node.py.
+   - Justificacion: Todo el motor de parsing offline y visualizacion del plan ya esta terminado. Conectar el ASR con el parser y proyectar el plan en pantalla o decirlo verbalmente otorga 300 pts inmediatos sin mover actuadores.
+
+2. GPSR — Entender comando hablado (3 x 80 = 240 pts)
+   - Prueba: GPSR (§5.3)
+   - Puntos: 240 pts
+   - Esfuerzo: BAJO [estimacion]
+   - Cobertura actual: jetson_head/src/audio_asr/audio_asr/whisper_node.py, src/base_athome_perception/base_athome_perception/voice_client.py (VoiceClient).
+   - Justificacion: Whisper con VAD Silero ya esta desplegado y verificado en la Jetson por hardware (JETSON_VERIFIED), capturando con el microfono RØDE a ~1.4 s de latencia. Sumado al item 1, GPSR entrega 540 pts casi sin esfuerzo de desarrollo adicional.
+
+3. HRI — Ofrecer asiento libre al nuevo invitado (2 x 100 = 200 pts)
+   - Prueba: HRI Challenge (§5.1)
+   - Puntos: 200 pts
+   - Esfuerzo: BAJO [estimacion]
+   - Cobertura actual: src/base_athome_perception/base_athome_perception/seat_occupancy.py (choose_free_seat, seat_occupancy), hri_receptionist_challenge.py (scan_seats, STATE_DETECT_AND_OFFER_SEAT).
+   - Justificacion: Logica de ocupacion por poligonos y asientos ya implementada y respaldada por 122 tests de percepcion offline. Solo requiere afinar la clasificacion visual en el robot real.
+
+4. Pick and Place — Colocar objeto en su ubicacion designada (12 x 40 = 480 pts)
+   - Prueba: Pick and Place (§5.2)
+   - Puntos: 480 pts
+   - Esfuerzo: BAJO [estimacion]
+   - Cobertura actual: src/base_athome_perception/base_athome_perception/arm_manipulation.py (place_blocking), src/base_athome_skills/base_athome_skills/mission/skills.py (place_object).
+   - Justificacion: Colocar objetos sobre superficies abiertas (mesa de desayuno o tacho) solo requiere aproximar el brazo en pre_grasp, abrir la pinza a 105 mm y volver a home. La cinematica ya tiene SIM_PASS.
+
+5. Pick and Place — Recoger objeto para transporte + First Pick Bonus (600 + 100 = 700 pts)
+   - Prueba: Pick and Place (§5.2)
+   - Puntos: 700 pts
+   - Esfuerzo: MEDIO [estimacion]
+   - Cobertura actual: src/base_athome_perception/base_athome_perception/arm_manipulation.py (pick_blocking, go_to_blocking, gripper), src/base_athome_skills/base_athome_skills/mission/skills.py (pick_object).
+   - Justificacion: Es el bloque de puntos mas grande y alcanzable con un solo brazo. El controlador FollowJointTrajectory del Piper ya esta desplegado en Jetson y probado en sim; requiere calibracion hand-eye de la camara Orbbec DaBai y verificacion fisica con objetos faciles (Pringles, latas).
+
+6. Pick and Place — Servir leche o cereal en el tazon (2 x 200 = 400 pts)
+   - Prueba: Pick and Place (§5.2)
+   - Puntos: 400 pts
+   - Esfuerzo: MEDIO [estimacion]
+   - Cobertura actual: NO HAY rutina de vertido especifica, pero la articulacion joint_6 del Piper y el solver de MoveIt ya soportan control angular continuo.
+   - Justificacion: 400 puntos por una rutina cinematica relativamente simple: rotar la muñeca con una inclinacion de 90° sobre el bol y sacudir suavemente.
+
+7. Doing Laundry — Retirar ropa del interior del lavarropas (300 pts)
+   - Prueba: Doing Laundry (§5.4)
+   - Puntos: 300 pts
+   - Esfuerzo: MEDIO [estimacion]
+   - Cobertura actual: NO HAY
+   - Justificacion: En Doing Laundry, el doblado y apilado son extremadamente dificiles y riesgosos (penalidad de calidad -800 pts). Retirar una prenda del tambor abierto y llevarla a la mesa no requiere doblado ni bimanual, sumando 300 pts limpios.
+
+8. HRI — Decir nombre y bebida favorita de cada invitado en presentacion (4 x 30 = 120 pts)
+   - Prueba: HRI Challenge (§5.1)
+   - Puntos: 120 pts
+   - Esfuerzo: BAJO [estimacion]
+   - Cobertura actual: src/base_athome_perception/scripts/hri_receptionist_challenge.py (STATE_INTRODUCE_GUESTS, metodo say), src/base_athome_perception/base_athome_perception/speaker.py (RoboCupSpeaker).
+   - Justificacion: Logica de registro biométrico y persistencia de perfiles en profiles.json ya funcional. Solo falta pulir la plantilla verbal para la introduccion mutua simetrica.
+
+9. HRI — Mirar a la persona que habla y al invitado correcto durante presentacion (2 x 50 + 2 x 50 = 200 pts)
+   - Prueba: HRI Challenge (§5.1)
+   - Puntos: 200 pts
+   - Esfuerzo: BAJO [estimacion]
+   - Cobertura actual: src/base_athome_perception/base_athome_perception/scene_analysis.py (face_tracking_step), src/base_athome_perception/scripts/hri_receptionist_challenge.py (move_head_to, move_head_smooth).
+   - Justificacion: El algoritmo de seguimiento suave (gain 0.3, deadband 4.0°) ya esta probado en simulación. Una vez reparada la masa/cable del U2D2, este comportamiento suma 200 pts de manera automatica.
+
+10. HRI — No formular preguntas no esenciales para confirmar informacion (4 x 15 = 60 pts)
+    - Prueba: HRI Challenge (§5.1)
+    - Puntos: 60 pts
+    - Esfuerzo: BAJO [estimacion]
+    - Cobertura actual: src/base_athome_perception/scripts/hri_receptionist_challenge.py (STATE_CONFIRM_DETAILS).
+    - Justificacion: Omitir STATE_ASK_CONFIRM ("Is that correct?") cuando la distancia fonetica o probabilidad de ASR sea optima permite ganar los 60 pts de bonus sin costo computacional ni riesgo elevado.
+
+
+================================================================================
+4. RESUMEN GLOBAL Y CONCLUSIONES PARA LA CUALIFICACION (6/12/2026)
+================================================================================
+
+- Distribucion de los items normativos de las 4 hojas de puntaje:
+  * Total de items / categorias de puntuacion evaluadas: 34 items normativos.
+  * Cubiertos en hardware: 4 items (Navegacion a mesas/zonas, YOLO TRT en Jetson, ASR Whisper en Jetson).
+  * Cubiertos en simulacion: 6 items (Asientos libres, Seguimiento pan-tilt, Pick base, Place base, Floor pick, Drop bolsa).
+  * Cubiertos en solo codigo / tests offline: 4 items (Parser GPSR, Presentaciones HRI, Omision de preguntas confirmacion, Direccion de navegacion).
+  * No hechos (NO HAY): 20 items (Doblado de ropa, manipulacion de puertas, destape de leche, rack de lavavajillas, timbre, handover humano, atributos visuales, follow host).
+
+- Estrategia recomendada:
+  1. HRI Challenge y GPSR representan las fuentes mas seguras de puntaje con la arquitectura actual (NUC + Jetson con Whisper, pan-tilt y Nav2). Permiten asegurar ~800-1000 pts con esfuerzo predominantemente de software.
+  2. En Pick and Place, enfocarse en la combinacion Pick + Place de objetos estandar (Pringles, latas) y el vertido (leche/cereal), descartando apertura de lavavajillas y destape de carton que conllevan alto riesgo mecanico para un solo brazo.
+  3. En Doing Laundry, enfocarse unicamente en la navegacion y retiro de ropa del tambor (315 pts), descartando el doblado manual bimanual.
