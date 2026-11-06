@@ -192,16 +192,20 @@ class SimRobot(Node):
             ActionServer(self, FollowJointTrajectory, "/arm/follow_joint_trajectory", execute_callback=self._fjt_execute,
                          goal_callback=lambda g: GoalResponse.ACCEPT if self.arm.enabled else GoalResponse.REJECT,
                          cancel_callback=lambda g: CancelResponse.ACCEPT, callback_group=self.cb)
-        ActionServer(self, NavigateToPose, "navigate_to_pose", execute_callback=self._nav_execute,
-                     goal_callback=lambda g: GoalResponse.ACCEPT, cancel_callback=lambda g: CancelResponse.ACCEPT,
-                     callback_group=self.cb)
+        # ATHOME_SIM_NAV2=1: navega Nav2 de verdad; este nodo no ofrece la accion ni dice donde esta el robot en el mapa
+        self.real_nav = os.environ.get("ATHOME_SIM_NAV2") == "1"
+        if not self.real_nav:
+            ActionServer(self, NavigateToPose, "navigate_to_pose", execute_callback=self._nav_execute,
+                         goal_callback=lambda g: GoalResponse.ACCEPT, cancel_callback=lambda g: CancelResponse.ACCEPT,
+                         callback_group=self.cb)
 
         self.tf = TransformBroadcaster(self)
         st = TransformStamped()
         st.header.frame_id, st.child_frame_id = "map", "odom"
         st.transform.rotation.w = 1.0
         self.static_tf = StaticTransformBroadcaster(self)
-        self.static_tf.sendTransform(st)
+        if not self.real_nav:     # con Nav2, map -> odom y /amcl_pose los publica AMCL
+            self.static_tf.sendTransform(st)
         self.tf_buf = Buffer()
         self.tf_listener = TransformListener(self.tf_buf, self)
 
@@ -640,7 +644,8 @@ class SimRobot(Node):
         a.header.stamp, a.header.frame_id = stamp, "map"
         a.pose.pose.position.x, a.pose.pose.position.y = self.base.x, self.base.y
         _, _, a.pose.pose.orientation.z, a.pose.pose.orientation.w = yaw_quat(self.base.yaw)
-        self.pub_amcl.publish(a)
+        if not self.real_nav:
+            self.pub_amcl.publish(a)
         self._update_object(stamp)
         self._publish_scene(stamp)
 

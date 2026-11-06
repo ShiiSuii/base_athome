@@ -1,0 +1,44 @@
+"""Nav2 de verdad contra Gazebo: los mismos servidores y parametros que el robot, leidos de nav2_params.yaml sin modificarlo.
+Solo cambia, en una copia temporal: el mapa, la pose inicial y las rutas de este equipo."""
+import os
+import tempfile
+
+import yaml
+from ament_index_python.packages import get_package_share_directory
+from launch import LaunchDescription
+from launch.actions import OpaqueFunction
+from launch_ros.actions import Node
+
+NODES = ("map_server", "amcl", "planner_server", "controller_server", "behavior_server", "bt_navigator")
+
+
+def _params(map_yaml):
+    with open(os.path.join(get_package_share_directory("base_athome_navigation"), "config", "nav2_params.yaml"), encoding="utf-8") as f:
+        params = yaml.safe_load(f)
+    params["map_server"]["ros__parameters"]["yaml_filename"] = map_yaml
+    amcl = params["amcl"]["ros__parameters"]
+    amcl["set_initial_pose"] = True
+    amcl["initial_pose"] = dict(x=0.0, y=0.0, z=0.0, yaw=0.0)
+    bt = params["bt_navigator"]["ros__parameters"]
+    if "default_nav_to_pose_bt_xml" in bt:
+        bt["default_nav_to_pose_bt_xml"] = os.path.join(get_package_share_directory("base_athome_navigation"), "config", "bt_trees",
+                                                        os.path.basename(bt["default_nav_to_pose_bt_xml"]))
+    out = tempfile.NamedTemporaryFile("w", suffix="_nav2_sim.yaml", delete=False, encoding="utf-8")
+    yaml.safe_dump(params, out)
+    out.close()
+    return out.name
+
+
+def _setup(_context):
+    map_yaml = os.environ["ATHOME_SIM_MAP"]
+    params = _params(map_yaml)
+    packages = dict(amcl="nav2_amcl", map_server="nav2_map_server", planner_server="nav2_planner", controller_server="nav2_controller",
+                    behavior_server="nav2_behaviors", bt_navigator="nav2_bt_navigator")
+    actions = [Node(package=pkg, executable=n, name=n, output="screen", parameters=[params]) for n, pkg in packages.items()]
+    actions.append(Node(package="nav2_lifecycle_manager", executable="lifecycle_manager", name="lifecycle_manager_navigation",
+                        output="screen", parameters=[dict(autostart=True, node_names=list(NODES), bond_timeout=20.0)]))
+    return actions
+
+
+def generate_launch_description():
+    return LaunchDescription([OpaqueFunction(function=_setup)])

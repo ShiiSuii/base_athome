@@ -28,12 +28,19 @@ cleanup() {
   echo "logs: $LOG"
 }
 trap cleanup EXIT; trap 'exit 130' HUP INT TERM
+[ "${NAV2:-0}" = 1 ] && export ATHOME_SIM_NAV2=1
 # GAZEBO=1: mundo con fisica y sensores reales de gz sim. GZ_GUI=1 abre su ventana.
 if [ "${GAZEBO:-0}" = 1 ]; then
   export GZ_PARTITION=sim_$$
   GUI=false; [ "${GZ_GUI:-0}" = 1 ] && GUI=true
   start ros2 launch base_athome_sim sim.launch.py rviz:=$RV gazebo:=true gz_gui:=$GUI > "$LOG/sim.log" 2>&1
   sleep 25
+  # NAV2=1: navega con Nav2 de verdad, con los parametros del robot, sobre el mapa de este mundo
+  if [ "${NAV2:-0}" = 1 ]; then
+    export ATHOME_SIM_MAP=$WS/simulation/config/casa_basura.yaml
+    start ros2 launch base_athome_sim nav2_sim.launch.py > "$LOG/nav2.log" 2>&1
+    sleep 15
+  fi
 else
   start ros2 launch base_athome_sim sim.launch.py rviz:=$RV > "$LOG/sim.log" 2>&1
   sleep 8
