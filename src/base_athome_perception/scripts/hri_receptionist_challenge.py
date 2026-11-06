@@ -31,7 +31,7 @@ import subprocess
 import sys
 import threading
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -43,7 +43,7 @@ from rclpy.node import Node
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.qos import DurabilityPolicy, QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy, qos_profile_sensor_data
 from geometry_msgs.msg import Vector3, PoseStamped, PoseWithCovarianceStamped
-from sensor_msgs.msg import CameraInfo, Image, JointState
+from sensor_msgs.msg import CameraInfo, Image, JointState, LaserScan
 from std_msgs.msg import String, Float32, Bool
 from std_srvs.srv import SetBool, Trigger
 
@@ -95,6 +95,36 @@ from base_athome_perception.piper_kinematics import (
 from base_athome_perception.guest_dialog import (COMMON_DRINKS, DRINK_TRANSLATIONS, STOP_WORDS,  # noqa: F401
                                                     extract_name_and_drink, parse_yes_no)
 from base_athome_perception.voice_client import VoiceClient, VoiceResult
+
+try:
+    from base_athome_skills.door_detector import (
+        DoorDetectorConfig,
+        DoorOpenDetector,
+        window_distance,
+    )
+except ImportError:
+    _ws_skills = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "base_athome_skills",
+    )
+    if os.path.isdir(_ws_skills) and _ws_skills not in sys.path:
+        sys.path.insert(0, _ws_skills)
+    from base_athome_skills.door_detector import (
+        DoorDetectorConfig,
+        DoorOpenDetector,
+        window_distance,
+    )
+
+
+def is_start_speech(text: str) -> bool:
+    """Verifica si el texto corresponde a una señal verbal de inicio (Regla 3.6.8)."""
+    if not text:
+        return False
+    t = text.lower().strip()
+    if re.search(r"\b(no|not|don't|dont|stop|wait|cancel|espera)\b", t):
+        return False
+    pattern = r"\b(start|begin|go|ready|arranca|arrancar|empeza|empezar|inicia|iniciar)\b"
+    return bool(re.search(pattern, t))
 
 
 # Ruta del ejecutable en la linea de comandos del driver real (evita coincidir con shells
@@ -188,6 +218,8 @@ class HriReceptionistChallengeNode(Node):
         arm_gestures: bool = False,
         track_faces: bool = False,
         gentle_tracking: bool = True,
+        door_config: Optional[Any] = None,
+        scan_topic: str = "/scan",
     ):
         super().__init__("hri_receptionist_challenge_node")
 
@@ -195,8 +227,11 @@ class HriReceptionistChallengeNode(Node):
         self.living_room_wp = living_room_wp
         self.sim_nav = sim_nav
         self.no_gui = no_gui
-        self.wait_start = wait_start      # esperar ESPACIO cuando termina de cargar todo
+        self.wait_start = wait_start      # esperar inicio (puerta, voz o ESPACIO)
         self.start_confirmed = False
+        self._last_voice_listen_attempt = 0.0
+        self.door_detector = DoorOpenDetector(cfg=door_config or DoorDetectorConfig())
+        self.scan_topic = scan_topic
         self._pt_retest_requested = False
         self.max_guests = max_guests
         self.arm_gestures = arm_gestures
@@ -381,6 +416,11 @@ class HriReceptionistChallengeNode(Node):
         )
         self.sub_voice_status = self.create_subscription(
             String, "/voice/status", self.voice_status_callback, 10
+        )
+
+        # Suscriptor a Hokuyo LaserScan para detección de puerta abierta (Regla 3.6.8)
+        self.sub_scan = self.create_subscription(
+            LaserScan, self.scan_topic, self._scan_callback, qos_profile_sensor_data
         )
 
         # 7. Variables de la Máquina de Estados
@@ -1080,11 +1120,12 @@ class HriReceptionistChallengeNode(Node):
         return result
 
     def _ready_banner(self) -> str:
-        """Estado en vivo mientras se espera ESPACIO: lo que falla se ve antes de arrancar."""
-        head = "OK" if (self.pt_selftest or {}).get("ok") and self.pt_connected else "FALLA (P revisa)"
+        """Estado en vivo mientras se espera inicio: puerta, voz o ESPACIO."""
+        head = "OK" if (self.pt_selftest or {}).get("ok") and getattr(self, "pt_connected", False) else "FALLA (P revisa)"
         mic = "OK" if self.voice.online() else "SIN RESPUESTA"
         nav = "simulada" if self.sim_nav else "OK"
-        return f"LISTO: ESPACIO arranca | Nav {nav} | Mic {mic} | Pan-tilt {head}"
+        door_st = self.door_detector.state if hasattr(self, "door_detector") else "?"
+        return f"LISTO: Puerta ({door_st}) | Voz ({mic}) | ESPACIO | Nav {nav} | Pan-tilt {head}"
 
     def _ensure_pantilt_torque(self):
         if self._pantilt_torque_requested or not self.cli_pantilt_torque.service_is_ready():
@@ -1440,6 +1481,25 @@ class HriReceptionistChallengeNode(Node):
     def voice_status_callback(self, msg: String):
         self.voice_status = msg.data.strip().upper()
 
+    def _voice_service_ready(self) -> bool:
+        try:
+            return bool(self.voice._new_protocol_available() or self.cli_mic_trigger.service_is_ready())
+        except Exception:
+            return False
+
+    def _scan_callback(self, msg: LaserScan):
+        if not (self.wait_start and not self.start_confirmed):
+            return
+        d = window_distance(
+            msg.ranges, msg.angle_min, msg.angle_increment,
+            msg.range_min, msg.range_max, self.door_detector.cfg
+        )
+        state = self.door_detector.update(d)
+        if state == "OPEN" and not self.start_confirmed:
+            if self.preflight_complete:
+                self.get_logger().info("🚪 [Inicio]: Puerta abierta detectada por láser (/scan). Arrancando...")
+                self.start_confirmed = True
+
     # --------------------------------------------------------------------------
     # BUCLE DE LA MAQUINA DE ESTADOS HRI
     # --------------------------------------------------------------------------
@@ -1531,9 +1591,48 @@ class HriReceptionistChallengeNode(Node):
                 if self._pt_retest_requested:
                     self._pt_retest_requested = False
                     self.pan_tilt_self_test()
-                self.current_banner_text = self._ready_banner()
-                return
+
+                # A. Arranque por apertura de puerta (/scan via door_detector)
+                if self.door_detector.state == "OPEN":
+                    self.get_logger().info("🚪 [Inicio]: Puerta abierta detectada por láser (/scan). Arrancando...")
+                    self.start_confirmed = True
+
+                # B. Arranque por palabra hablada (transcripcion directa o manual)
+                if not self.start_confirmed and self.voice_text:
+                    v_heard = self.voice_text
+                    self.voice_text = None
+                    if is_start_speech(v_heard):
+                        self.get_logger().info(f"🎙️ [Inicio]: Palabra de inicio detectada: '{v_heard}'. Arrancando...")
+                        self.start_confirmed = True
+
+                # C. Arranque por cliente de voz (VoiceClient poll)
+                if not self.start_confirmed:
+                    if self.listen_id is not None:
+                        res = self.voice.poll(self.listen_id)
+                        if res is not None:
+                            self.listen_id = None
+                            if res.ok and is_start_speech(res.text):
+                                self.get_logger().info(f"🎙️ [Inicio]: Palabra de inicio detectada por VoiceClient: '{res.text}'. Arrancando...")
+                                self.start_confirmed = True
+                    # Reabrir escucha si termino sin confirmar y el microfono esta disponible
+                    if self.listen_id is None and not self.start_confirmed:
+                        if now - self._last_voice_listen_attempt > 1.5:
+                            self._last_voice_listen_attempt = now
+                            if self.voice.online() or self._voice_service_ready():
+                                try:
+                                    self.listen_id = self.voice.request(prompt="start, robot start, begin, go")
+                                except Exception:
+                                    pass
+
+                if not self.start_confirmed:
+                    self.current_banner_text = self._ready_banner()
+                    return
+
             if self.preflight_complete:
+                if self.listen_id is not None:
+                    self.voice.cancel(self.listen_id)
+                    self.listen_id = None
+                self.voice_text = None
                 self.say("Starting Receptionist Challenge.", emotion="happy", blocking=True)
                 self.state = self.STATE_NAV_TO_DOOR
                 self.state_start_time = time.time()
@@ -1554,10 +1653,16 @@ class HriReceptionistChallengeNode(Node):
 
             self.preflight_complete = True
             if self.wait_start:
-                print("👉 Todo cargado. Con la ventana seleccionada: [ESPACIO] arranca la mision, "
+                print("👉 Todo cargado. Listo para arrancar: abre la puerta, di 'start' o presiona [ESPACIO]. "
                       "[P] vuelve a revisar el pan-tilt, [Q] sale.\n")
-                self.say("All systems online. Press space to start.", emotion="happy", blocking=True)
+                self.say("All systems online. Ready to start.", emotion="happy", blocking=True)
                 self.current_banner_text = self._ready_banner()
+                if self.voice.online() or self._voice_service_ready():
+                    try:
+                        self.listen_id = self.voice.request(prompt="start, robot start, begin, go")
+                        self._last_voice_listen_attempt = time.time()
+                    except Exception:
+                        pass
                 return
             self.say("All systems online. Camera and perception ready. Starting Receptionist Challenge.", emotion="happy", blocking=True)
             self.state = self.STATE_NAV_TO_DOOR
@@ -2307,7 +2412,7 @@ def main():
     parser.add_argument("--sim-nav", action="store_true", help="Simula navegacion sin mover la base fisica")
     parser.add_argument("--no-gui", action="store_true", help="Desactiva ventana grafica HUD OpenCV")
     parser.add_argument("--no-wait", action="store_true",
-                        help="Arranca solo al terminar de cargar, sin esperar ESPACIO (sin ventana no se espera)")
+                        help="Arranca solo al terminar de cargar, sin esperar apertura de puerta, voz ni ESPACIO")
     parser.add_argument("--max-guests", type=int, default=2, help="Cantidad de invitados a recibir")
     parser.add_argument("--no-gentle-tracking", action="store_true",
                         help="Desactivar el seguimiento leve del rostro durante el registro del invitado")
@@ -2325,7 +2430,7 @@ def main():
         living_room_wp=args.living_room_wp,
         sim_nav=args.sim_nav,
         no_gui=args.no_gui,
-        wait_start=not (args.no_wait or args.no_gui),
+        wait_start=not args.no_wait,
         max_guests=args.max_guests,
         arm_gestures=args.arm_gestures,
         track_faces=args.track_faces,
@@ -2351,7 +2456,8 @@ def main():
     print("\n" + "=" * 70)
     print("🤖 ROBOCUP @HOME - HRI RECEPTIONIST CHALLENGE")
     print("=" * 70)
-    print("   [ESPACIO / ENTER] : Arrancar cuando termina de cargar; despues, forzar avance de paso")
+    print("   [Apertura puerta / 'start'] : Arrancar por láser (/scan) o comando verbal (Regla 3.6.8)")
+    print("   [ESPACIO / ENTER]           : Atajo de laboratorio para arrancar; despues, forzar avance de paso")
     print("   [P]               : Volver a revisar el pan-tilt (antes de arrancar)")
     print("   [T]               : Escribir texto por teclado (simular microfono)")
     print("   [R]               : Forzar escucha de microfono (/voice/listen_trigger)")
