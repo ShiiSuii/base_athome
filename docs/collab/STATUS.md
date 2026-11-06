@@ -121,6 +121,14 @@ Antes de empezar: E-stop a mano, zona despejada y otra persona atenta. Bolsa liv
 - **Clon limpio con Nav2 (`b8ca8e7`):** clon nuevo con `HOME` vacío, en esta NUC, que ya tiene ROS y Gazebo: compila y completa "take out the trash" con la pinza a 1.4 cm. Sin probar en otra máquina.
 - Durante el seguimiento, la cámara usa el TF del instante de la imagen; si los relojes de NUC y Jetson no coinciden, usa el último. Sincronizar con chrony sigue pendiente.
 
+## 2i. Graphify, grafo de conocimiento del código (2026-11-06)
+
+- `graphifyy` 0.9.103 en `~/.local/share/graphify-venv`, enlazado en `~/.local/bin/graphify`. Instalado con `graphify install --project`: skill en `.claude/skills/graphify/`, sección en `CLAUDE.md` y hooks en `.claude/settings.json`, que recuerdan consultar el grafo.
+- **Uso:** `graphify query "..."`, `graphify path A B`, `graphify explain X`; tras cambiar código, `graphify update .`. Salida local en `graphify-out/`, sin subir.
+- **Probado:** grafo de código en 9 s, 5415 nodos y 11060 aristas; una consulta encontró `wrist_measure` en `bag_vision.py`, mezclada con resultados poco útiles, como `camera` del editor URDF. Solo código: documentos e imágenes requieren `/graphify` y gastan tokens.
+- **Otros integrantes:** sin `graphify` instalado, los hooks fallan al ejecutarse; instalar con `pip install graphifyy==0.9.103` en un entorno aparte.
+- **Rollback:** `graphify claude uninstall --project`, o revertir el commit de este bloque.
+
 ## 3. Cómo retomar la teleoperación con el Quest (pendiente: prueba completa en el brazo real)
 
 1. Quest por USB a la **Jetson**, depuración USB autorizada (`adb devices` → `device`).

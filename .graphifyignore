@@ -1,0 +1,11 @@
+# Lo que no aporta al grafo: compilados, terceros, datos binarios y documentos de trabajo muy largos
+build/
+install/
+log/
+firmware/firmware_config/
+src/piper_description/meshes/
+src/base_athome_perception/models/
+tools/urdf_editor/static/vendor/
+docs/INVESTIGACION_*.txt
+docs/PAPERS_*.txt
+docs/WEB_URUBOTS_FALTANTES.txt

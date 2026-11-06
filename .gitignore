@@ -41,3 +41,7 @@ src/base_athome_perception/config/faces_database/
 
 # Mapas generados de los mundos de simulacion: hacen falta para correr Nav2 en un clon nuevo
 !simulation/config/*.pgm
+
+# Grafo de graphify: se regenera local
+graphify-out/
+.claude/settings.json.graphify-bak
