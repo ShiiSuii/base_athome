@@ -27,6 +27,7 @@ zones:
 
 waypoints:
   home: {x: 0.0, y: 0.0, yaw_deg: 0}
+  instruction_point: {x: 1.0, y: 0.0, yaw_deg: 180}
   door: {x: -2.0, y: 0.0, yaw_deg: 180}
   entrance: {x: -2.0, y: 0.0, yaw_deg: 180}
   living_room: {x: 0.0, y: 0.0, yaw_deg: 0}

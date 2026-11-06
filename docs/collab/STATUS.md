@@ -129,6 +129,13 @@ Antes de empezar: E-stop a mano, zona despejada y otra persona atenta. Bolsa liv
 - **Otros integrantes:** sin `graphify` instalado, los hooks fallan al ejecutarse; instalar con `pip install graphifyy==0.9.103` en un entorno aparte.
 - **Rollback:** `graphify claude uninstall --project`, o revertir el commit de este bloque.
 
+## 2j. El commander como GPSR (2026-11-06)
+
+- **Alias `gpsr`:** mismo commander con `gpsr:=true`. Espera `/start_signal/door_open`, va a `instruction_point`, atiende hasta 3 órdenes una por vez y vuelve al punto después de cada una. Con 3 órdenes no entendidas, sugiere un operador propio. `commander` sigue igual. **Al abrirse la puerta el robot se mueve solo, sin "yes":** E-stop a mano. Las órdenes siguen pidiendo "yes".
+- **Gramática oficial:** si el compilador propio no entiende, se usa `tools/gpsr_parser` con las skills disponibles (`compile_gpsr_actions`). De los 500 comandos de `tools/gpsr_parser/data/commands.jsonl`, 121 compilan por esa vía, con un mapa que contiene todos sus lugares; lo demás pide reconocer personas por nombre, gesto o postura, o responder preguntas, y se rechaza entero. Compilar no significa que se ejecute bien.
+- **Probado:** tests con ASR y ejecutor falsos; sesión en el simulador liviano con voz guionada: dos órdenes hasta terminar y vuelta al punto. La primera se perdió porque el guion arrancó tarde, y eso llevó a que el silencio no gaste intentos.
+- **Sin probar:** detector de puerta real, Whisper con órdenes reales, robot real. Falta marcar `instruction_point` en el mapa real.
+
 ## 3. Cómo retomar la teleoperación con el Quest (pendiente: prueba completa en el brazo real)
 
 1. Quest por USB a la **Jetson**, depuración USB autorizada (`adb devices` → `device`).

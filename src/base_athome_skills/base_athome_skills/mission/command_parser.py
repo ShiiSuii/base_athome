@@ -615,6 +615,11 @@ def compile_command(text: str, places: Dict[str, Any], name: str = "pedido",
         _clause(c, raw, quotes)
     if not c.errors and not c.steps:
         c.errors.append("no encontre ninguna accion en el pedido")
+    return _finish(c, name)
+
+
+def _finish(c: "_Ctx", name: str) -> Compiled:
+    """Del contexto al plan: separarse de la mesa, objetivo y recuperacion."""
     if c.errors:
         return Compiled(False, errors=c.errors, steps_text=c.text)
     # objetivo: la ultima accion util que no sea la rama alternativa ("si no lo ves ...")
@@ -633,7 +638,7 @@ def compile_command(text: str, places: Dict[str, Any], name: str = "pedido",
     goal = next((s["id"] for s in reversed(c.steps) if s["skill"] not in ("speak", "listen", "wait")
                  and s.get("if", {}).get("state") != "FAILED"), None)
     recovery = [{"id": "avisar", "skill": "speak", "args": {"text": "I could not complete the request."}}]
-    if resolve(places, "home") is not None or resolve(places, "default") is not None:
+    if resolve(c.places, "home") is not None or resolve(c.places, "default") is not None:
         recovery.append({"id": "volver", "skill": "return_home", "timeout_s": 180})
     if any(s["skill"] == "dock_table" for s in c.steps):
         recovery.insert(1, {"id": "separarse", "skill": "undock_table", "timeout_s": 30})
@@ -645,3 +650,69 @@ def compile_command(text: str, places: Dict[str, Any], name: str = "pedido",
     if not any(s.get("on_failure") == "avisar" for s in c.steps):
         plan.pop("recovery")
     return Compiled(True, plan=plan, steps_text=c.text)
+
+
+# Lo que el robot no sabe contestar todavia: decirlo es mejor que pronunciar la frase de la orden
+GPSR_SPEECH_OK = re.compile(r"^(?:hello|hi|greet|good (?:morning|afternoon|evening)|welcome)\b", re.I)
+
+
+def compile_gpsr_actions(actions: List[Dict[str, Any]], places: Dict[str, Any], name: str = "gpsr",
+                         objects: Optional[List[Dict[str, Any]]] = None,
+                         tables: Optional[Dict[str, Dict[str, str]]] = None) -> Compiled:
+    """Acciones del parser oficial de GPSR a un plan con las skills que hoy ejecuta el robot.
+    Lo que no se puede hacer es un error: nunca se arma un plan que solo haga una parte de la orden."""
+    c = _Ctx(places=places, objects=objects or [], tables=tables or {})
+    if not actions:
+        c.errors.append("no entendi la orden")
+    for a in actions:
+        act, p = a.get("action", ""), a.get("params", {}) or {}
+        raw = f"{act} {p}"
+        if act == "go_to":
+            _go(c, str(p.get("location", "")), raw)
+        elif act == "find_object":
+            obj = p.get("object") or p.get("category")
+            if not obj:
+                c.errors.append(f"'{raw}': no se que objeto buscar")
+            else:
+                _observe_and_detect(c, str(obj))
+        elif act == "pick":
+            _pick(c, p.get("object") or c.seen or c.last_obj, raw)
+        elif act == "place":
+            dest = None
+            if p.get("location"):
+                dest, cleaned = find_place(str(p["location"]), c.places, c.tables)
+                if dest is None:
+                    c.errors.append(_unknown_place(c, cleaned))
+                else:
+                    _go(c, str(p["location"]), raw)
+            _place(c, dest, raw)
+        elif act == "deliver_to":
+            if not c.holding:
+                c.errors.append(f"'{raw}': no tengo nada para entregar")
+                continue
+            if p.get("location"):
+                _go(c, str(p["location"]), raw)
+            if p.get("person") not in (None, "me"):
+                c.add("approach_person", {}, "acercarse a la persona", timeout=120)
+            c.add("speak", {"text": GIVE_SPEECH}, "avisar que va a soltar el objeto", recover=False)
+            c.add("give_object", {}, f"entregar '{c.holding}'", timeout=30)
+            c.holding, c.seen, c.observing = None, None, False
+        elif act == "find_person":
+            if p.get("name") or p.get("gesture") or p.get("posture") or p.get("clothing"):
+                c.errors.append(f"'{raw}': todavia no se reconocer a una persona por nombre, gesto o ropa")
+            else:
+                c.add("approach_person", {}, "buscar a la persona y acercarse", timeout=120)
+        elif act == "follow":
+            c.add("speak", {"text": "I will follow you. Stop walking when we arrive."}, "avisar que va a seguir", recover=False)
+            c.add("follow_person", {}, "seguir a la persona", timeout=300)
+        elif act == "guide":
+            _guide(c, str(p.get("location", "")), raw)
+        elif act == "say":
+            text = str(p.get("text", ""))
+            if GPSR_SPEECH_OK.match(text):
+                c.add("speak", {"text": text}, f"decir: {text}", recover=False)
+            else:
+                c.errors.append(f"'{raw}': todavia no se responder eso")
+        else:
+            c.errors.append(f"'{raw}': todavia no esta implementado")
+    return _finish(c, name)

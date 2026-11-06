@@ -426,3 +426,19 @@ def evaluate_batch(
         "rejection_reasons": rejection_reasons,
         "details": details,
     }
+
+
+_shared_parser = None
+
+
+def gpsr_actions(text: str) -> List[Dict[str, Any]]:
+    """Acciones de la gramatica oficial de GPSR, o [] si no la entiende o el parser no esta disponible."""
+    global _shared_parser
+    try:
+        if _shared_parser is None:
+            from gpsr_parser.parser import GPSRParser
+            _shared_parser = GPSRParser()
+        result = _shared_parser.parse(text)
+    except Exception:  # noqa: BLE001 - sin parser, solo queda el compilador propio
+        return []
+    return [a.to_dict() if hasattr(a, "to_dict") else dict(a) for a in (getattr(result, "actions", []) or [])]

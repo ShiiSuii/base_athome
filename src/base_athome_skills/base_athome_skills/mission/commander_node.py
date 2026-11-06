@@ -26,7 +26,8 @@ from rclpy.qos import DurabilityPolicy, QoSProfile
 from std_msgs.msg import Bool, String
 from std_srvs.srv import Trigger
 
-from .command_parser import compile_command
+from .command_parser import compile_command, compile_gpsr_actions
+from .gpsr_plan import gpsr_actions
 from .node import _share_config
 from .places import load_objects, load_places, load_tables
 from .plan import parse_plan, validate_plan
@@ -71,6 +72,10 @@ async function poll(){try{const j=await(await fetch('/api/status')).json();$('mo
 </script></body></html>"""
 
 
+GPSR_COMMANDS = 3      # RuleBook: tres ordenes
+GPSR_TRIES = 3         # tras tres intentos, el RuleBook admite pedir un operador propio
+
+
 class Commander(Node):
     def __init__(self):
         super().__init__("commander")
@@ -81,6 +86,9 @@ class Commander(Node):
         self.declare_parameter("voice", False)
         self.declare_parameter("port", PORT)
         self.declare_parameter("tts", True)          # false: no usa el parlante (pruebas)
+        self.declare_parameter("gpsr", False)        # sesion de la prueba: puerta, punto de instrucciones, tres ordenes
+        self.declare_parameter("gpsr_wait_door", True)
+        self.declare_parameter("instruction_point", "instruction_point")
         self.voice_state = "apagada"
         self.semantic_map = self.get_parameter("semantic_map").value or _share_config("semantic_map.yaml")
         self.waypoints = self.get_parameter("waypoints").value or _share_config("waypoints.yaml")
@@ -95,9 +103,12 @@ class Commander(Node):
         latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.create_subscription(String, "/mission/status", self._status, latched)
         self.create_subscription(String, "/commander/command", self._command, 5)
+        self.door_open = False
+        self.create_subscription(Bool, "/start_signal/door_open", lambda m: setattr(self, "door_open", bool(m.data)), latched)
         self._start_web()
         if bool(self.get_parameter("voice").value):
-            threading.Thread(target=self._voice_loop, daemon=True).start()
+            target = self._gpsr_loop if bool(self.get_parameter("gpsr").value) else self._voice_loop
+            threading.Thread(target=target, daemon=True).start()
         self.get_logger().info(f"commander listo: http://127.0.0.1:{self.httpd.server_port} | lugares: {sorted(self.places())}")
 
     def places(self):
@@ -112,7 +123,12 @@ class Commander(Node):
     def compile(self, text):
         """Pedido -> resultado (dict). Valida contra el registro y el mapa con las mismas reglas del ejecutor."""
         places = self.places()
-        c = compile_command(text, places, objects=load_objects(self.semantic_map), tables=load_tables(self.semantic_map))
+        objects, tables = load_objects(self.semantic_map), load_tables(self.semantic_map)
+        c = compile_command(text, places, objects=objects, tables=tables)
+        if not c.ok and not c.cancel:     # la gramatica oficial de GPSR, si la propia no lo entendio
+            official = gpsr_actions(text)
+            if official:
+                c = compile_gpsr_actions(official, places, objects=objects, tables=tables)
         errors = list(c.errors)
         plan = None
         if c.ok:
@@ -179,6 +195,78 @@ class Commander(Node):
             self.voice_state = f"microfono no disponible ({res.status})"
             time.sleep(2.0)
         return ""
+
+    def _go_to_instruction_point(self):
+        """Va al punto de instrucciones y espera a llegar. False si no se pudo."""
+        place = str(self.get_parameter("instruction_point").value)
+        res = self.compile(f"go to {place.replace('_', ' ')}")
+        if not res["ok"]:
+            self.get_logger().error(f"GPSR: no hay punto de instrucciones '{place}' en el mapa: {res['errors']}")
+            return False
+        return self._run_and_wait(res) == "SUCCEEDED"
+
+    def _run_and_wait(self, res, timeout_s=600.0):
+        """Manda el plan y espera a que termine. Devuelve el estado final."""
+        before = self.mission.get("mission_id")
+        if not self.run(res)["executed"]:
+            return "NOT_SENT"
+        end = time.time() + timeout_s
+        while time.time() < end and rclpy.ok():
+            m = self.mission
+            if m.get("mission_id") != before and m.get("state") in ("SUCCEEDED", "FAILED", "CANCELED", "ABORTED"):
+                return m["state"]
+            time.sleep(0.2)
+        return "TIMEOUT"
+
+    def _gpsr_loop(self):
+        """La prueba GPSR: al abrirse la puerta va al punto de instrucciones y atiende hasta tres ordenes, una por vez."""
+        from base_athome_perception.guest_dialog import parse_yes_no
+        from base_athome_perception.voice_client import VoiceClient
+        if bool(self.get_parameter("tts").value):
+            from base_athome_perception.speaker import RoboCupSpeaker
+            self._speaker = RoboCupSpeaker()
+        voice = VoiceClient(self, start_timeout=30.0)
+        self.voice_state = "esperando el microfono"
+        while rclpy.ok() and not voice.online():
+            time.sleep(0.5)
+        if bool(self.get_parameter("gpsr_wait_door").value):
+            self.voice_state = "esperando que abran la puerta"
+            while rclpy.ok() and not self.door_open:
+                time.sleep(0.1)
+        if not self._go_to_instruction_point():
+            self._say("I could not reach the instruction point.")
+            return
+        done = 0
+        while rclpy.ok() and done < GPSR_COMMANDS:
+            self._say(f"I am ready for command {done + 1}. Please give me one command at a time.")
+            res, tries = None, 0
+            while tries < GPSR_TRIES and rclpy.ok():
+                text = self._hear(voice, f"orden {done + 1}: intento {tries + 1}", start_timeout=20.0)
+                if not text:                 # el silencio no gasta intentos: el operador todavia no hablo
+                    continue
+                tries += 1
+                res = self.compile(text)
+                if res["ok"]:
+                    break
+                self._say(error_to_speech(res["errors"]))
+                res = None
+            if res is None:
+                self._say("I cannot understand the command. You may request a custom operator.")
+                done += 1
+                continue
+            self.pub_result.publish(String(data=json.dumps({k: v for k, v in res.items() if k != "plan"})))
+            self._say(plan_to_speech(res["plan"], load_objects(self.semantic_map)) + " Is that right?")
+            if parse_yes_no(self._hear(voice, "esperando yes o no", start_timeout=10.0)) is not True:
+                self._say("Okay. Please repeat the command.")
+                continue
+            state = self._run_and_wait(res)
+            self._say("Done." if state == "SUCCEEDED" else "I could not complete that command.")
+            done += 1
+            if not self._go_to_instruction_point():
+                self._say("I could not return to the instruction point.")
+                return
+        self._say("I have finished all the commands.")
+        self.voice_state = "GPSR terminado"
 
     def _voice_loop(self):
         from base_athome_perception.guest_dialog import parse_yes_no

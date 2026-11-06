@@ -1,5 +1,5 @@
 #!/bin/bash
-# Alias `commander`: robot real, con microfono. Un solo comando: levanta Nav2 si no esta, el ejecutor y el commander.
+# Alias `commander` y `gpsr` (GPSR=1): robot real, con microfono. Un solo comando: levanta Nav2 si no esta, el ejecutor y el commander.
 # El robot dice el plan y solo se mueve si le contestan "yes"; "stop" cancela. Ctrl-C cierra lo que abrio.
 # Solo para simulacion, sin microfono: simulation/scripts/sim_commander.sh
 set -u
@@ -48,7 +48,10 @@ export OMP_NUM_THREADS=2
 session_start bag_finder /home/athome/ros2_vision_venv/bin/python3 "$WS/src/base_athome_perception/scripts/bag_finder.py"
 session_start executor ros2 run base_athome_skills mission_executor --ros-args -p mode:=real -p supervised:=true \
   -p allow_manipulation_real:=true
-session_start commander ros2 run base_athome_skills commander --ros-args -p real:=true -p voice:=true
+# GPSR=1 (alias gpsr): la prueba completa; al abrirse la puerta el robot SE MUEVE solo hasta el punto de instrucciones
+GPSR_ARGS=(); [ "${GPSR:-0}" = 1 ] && GPSR_ARGS=(-p gpsr:=true)
+[ "${GPSR:-0}" = 1 ] && session_start door ros2 run base_athome_skills door_open_detector
+session_start commander ros2 run base_athome_skills commander --ros-args -p real:=true -p voice:=true "${GPSR_ARGS[@]}"
 echo "ROBOT REAL: decile que hacer en ingles, responde 'yes' para que se mueva, 'stop' para cancelar. E-stop a mano."
 echo "Plan y avance: http://127.0.0.1:8770  (Ctrl-C cierra)"
 sleep 3

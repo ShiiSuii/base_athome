@@ -42,6 +42,9 @@ GAZEBO=1 NAV2=1 GZ_GUI=1 ATHOME_SIM_WORLD=casa_pick_place.sdf \
   ATHOME_SIM_SEMANTIC_MAP=$PWD/simulation/base_athome_sim/config/sim_pick_place_semantic_map.yaml \
   simulation/scripts/sim_commander.sh "go to the table"
 
+# GPSR session with scripted speech on /sim/speech, without waiting for the door
+COMMANDER_ARGS="-p voice:=true -p tts:=false -p gpsr:=true -p gpsr_wait_door:=false" simulation/scripts/sim_commander.sh
+
 # Lightweight simulator, no physics
 simulation/scripts/sim_commander.sh "go to the table"
 
