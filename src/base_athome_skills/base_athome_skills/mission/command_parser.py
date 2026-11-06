@@ -167,6 +167,7 @@ def _unknown_place(c: "_Ctx", cleaned: str) -> str:
 
 
 TRASH_PLACE = "trash_drop"
+GIVE_SPEECH = "Here you are. Please hold it. I will open my gripper in five seconds."
 HANDOVER_SPEECH = "I could not pick up the bag. Please put its handle between my fingers. I will close them in five seconds."
 TRASH_RE = re.compile(r"(?:^|\b)(?:saca|sacar|saques|sacame|tira|tirar|tires|tirame|lleva|llevar|take|taking|throw|put|bring)\b"
                       r".*\b(?:basura|trash|garbage|rubbish)\b")
@@ -381,12 +382,29 @@ def _place(c: _Ctx, dest: Optional[str], raw: str) -> None:
     c.holding, c.seen, c.observing = None, None, False
 
 
+def _guide(c: _Ctx, rest: str, raw: str) -> None:
+    """Guiar: avisa, va y avisa al llegar. No comprueba que la persona lo siga: el RuleBook no lo puntua (HOME-60)."""
+    rest = re.sub(r"^(?:me|us|him|her|them|the\s+(?:person|guest|visitor|operator)|a\s+(?:la\s+persona|el\s+invitado))\s*", "", rest).strip()
+    rest = re.sub(r"^(?:a|al|hasta|hacia|to|into)\s+", "", rest).strip()
+    if not rest:
+        c.errors.append(f"'{raw}': a donde guio?")
+        return
+    dest, cleaned = find_place(rest, c.places, c.tables)
+    if dest is None:
+        c.errors.append(_unknown_place(c, cleaned))
+        return
+    c.add("speak", {"text": f"Please follow me to the {dest.replace('_', ' ')}."}, f"pedir que lo sigan hasta '{dest}'", recover=False)
+    _go(c, rest, raw)
+    c.add("speak", {"text": "We have arrived."}, "avisar que llego", recover=False)
+
+
 VERBS = [
     ("home", r"(?:volve|volver|regresa|regresar|vuelve|retorna)\b(?:\s+a\s+(?:casa|home|inicio|la base|base))?|(?:go|come|return)\s+(?:back\s+)?(?:home|to base)|return\b|go back\b"),
     ("carry", r"(?:llevala|llevalo|llevar|lleva|traela|traelo|traeme|trae|traer|bring|carry|deliver|take(?=\s.+\sto\s))\b"),
     ("pick", r"(?:agarrala|agarralo|agarrar|agarra|tomala|tomalo|tomar|toma|levantala|levantalo|levantar|levanta|recogela|recogelo|recoger|recoge|pick\s+up|pick|grab|take)\b"),
     ("place", r"(?:dejala|dejalo|dejar|deja|ponela|ponelo|poner|pone|soltala|soltalo|soltar|suelta|colocala|colocalo|colocar|coloca|put|place|drop|leave|release)\b"),
     ("find", r"(?:buscala|buscalo|buscar|busca|encontra|encontrar|encuentra|identifica|identificar|localiza|localizar|detecta|detectar|find|look\s+for|locate|identify|detect|search\s+for)\b"),
+    ("guide", r"(?:guiame|guiala|guialo|guia|guiar|acompaname|acompanala|acompanalo|acompana|acompanar|guide|lead|escort)\b"),
     ("greet", r"(?:saludala|saludalo|saludar|saluda|greet|say\s+hello(?:\s+to)?)\b"),
     ("say", r"(?:decile|deci|decir|di|dile|anuncia|say|tell)\b"),
     ("ask", r"(?:preguntale|pregunta|preguntar|ask)\b"),
@@ -463,8 +481,8 @@ def _clause(c: _Ctx, raw: str, quotes: Dict[str, str]) -> None:
     if verb is None and c.last_verb == "go":          # "... despues al B": mismo verbo
         verb, rest = "go", t
     if verb is None:
-        if re.match(r"(?:segui|seguir|sigue|follow|guia|guiar|guide|acompana|acompanar|escort|responde|answer|contesta)\b", t):
-            c.errors.append(f"'{raw}': seguir o guiar personas y responder preguntas todavia no esta implementado")
+        if re.match(r"(?:segui|seguir|sigue|follow|responde|answer|contesta)\b", t):
+            c.errors.append(f"'{raw}': seguir personas y responder preguntas todavia no esta implementado")
         else:
             c.errors.append(f"no entendi '{raw}'")
         return
@@ -472,7 +490,9 @@ def _clause(c: _Ctx, raw: str, quotes: Dict[str, str]) -> None:
     if re.search(PERSON_WORDS, rest) and verb in ("find", "pick", "carry"):
         c.errors.append(f"'{raw}': buscar o llevar personas todavia no esta implementado (find_person, guide_person)")
         return
-    if verb == "home":
+    if verb == "guide":
+        _guide(c, rest, raw)
+    elif verb == "home":
         _go(c, "home", raw)
     elif verb == "go":
         _go(c, rest, raw)
@@ -565,7 +585,9 @@ def _clause(c: _Ctx, raw: str, quotes: Dict[str, str]) -> None:
             _go(c, dest_txt, raw)
             _place(c, find_place(dest_txt, c.places, c.tables)[0], raw)
         else:
-            c.add("speak", {"text": "Here you are."}, "avisar que trae el objeto", recover=False)
+            c.add("speak", {"text": GIVE_SPEECH}, "avisar que va a soltar el objeto", recover=False)
+            c.add("give_object", {}, f"entregar '{c.holding}'", timeout=30)
+            c.holding, c.seen, c.observing = None, None, False
 
 
 def compile_command(text: str, places: Dict[str, Any], name: str = "pedido",

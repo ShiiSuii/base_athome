@@ -397,3 +397,30 @@ def test_trash_plan_asks_for_the_bag_in_hand_only_if_the_grasp_fails():
     assert receive["if"] == {"step": pick["id"], "state": "FAILED"} and receive["on_failure"] == "avisar"
     i = [s["id"] for s in steps]
     assert i.index(pick["id"]) < i.index(receive["id"]) < i.index(next(s for s in steps if s["skill"] == "navigate_to")["id"])
+
+
+def _sim_places():
+    from base_athome_skills.mission.places import load_places
+    import os
+    return load_places(os.path.join(os.path.dirname(__file__), "..", "..", "..", "simulation", "base_athome_sim", "config",
+                                    "sim_semantic_map.yaml"))
+
+
+@pytest.mark.parametrize("text", ["guide me to the kitchen", "guia a la persona a la cocina", "guiame a la cocina"])
+def test_guide_goes_there_and_announces(text):
+    c = compile_command(text, _sim_places())
+    assert c.ok, c.errors
+    skills = [s["skill"] for s in c.plan["steps"]]
+    assert skills == ["speak", "navigate_to", "speak"]
+    assert c.plan["steps"][1]["args"]["place"] == "kitchen"
+
+
+def test_guide_to_an_unknown_place_is_an_error():
+    assert not compile_command("guide me to the moon", _sim_places()).ok
+
+
+def test_bring_me_hands_the_object_over():
+    c = compile_command("bring me the bottle", _sim_places())
+    assert c.ok, c.errors
+    skills = [s["skill"] for s in c.plan["steps"]]
+    assert skills[-1] == "give_object" and "speak" == skills[-2]

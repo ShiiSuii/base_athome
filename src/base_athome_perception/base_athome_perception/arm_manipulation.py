@@ -497,6 +497,20 @@ class Manipulacion(Node):
             return False, f"agarre vacio: la pinza cerro hasta {width:.0f} mm (sin bolsa)", dict(gripper_mm=round(width, 1))
         return True, f"bolsa recibida (pinza {width:.0f} mm)", dict(gripper_mm=round(width, 1))
 
+    def give_blocking(self, wait_s: float = 5.0):
+        """Entrega: espera, abre la pinza y confirma por ancho. El brazo no se mueve. (ok, mensaje, datos)."""
+        self.abort = False
+        end = time.time() + wait_s
+        while time.time() < end:
+            if self.abort:
+                return False, "cancelado", {}
+            time.sleep(0.1)
+        self.gripper(GRIPPER_OPEN_MM)
+        time.sleep(2.0)
+        if self.gripper_mm < GRIPPER_OPEN_MM - 10.0:
+            return False, f"la pinza no abrio ({self.gripper_mm:.0f} mm)", {}
+        return True, "objeto entregado", {}
+
     def place_blocking(self):
         """Coloca adelante (PRE-GRASP), abre la pinza, verifica y vuelve a HOME. (ok, mensaje)."""
         self.abort = False

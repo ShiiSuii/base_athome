@@ -122,7 +122,7 @@ class MissionExecutorNode(Node):
         self.registry = default_registry()
         handlers = dict(navigate_to=self.h_navigate_to, navigate_sequence=self.h_navigate_sequence,
                         return_home=self.h_return_home, speak=self.h_speak, listen=self.h_listen, wait=self.h_wait,
-                        detect_object=self.h_detect, pick_object=self.h_pick, receive_bag=self.h_receive_bag, place_object=self.h_place,
+                        detect_object=self.h_detect, pick_object=self.h_pick, receive_bag=self.h_receive_bag, give_object=self.h_give, place_object=self.h_place,
                         arm_pose=self.h_arm_pose, find_pointed_bag=self.h_find_pointed_bag, approach_person=self.h_approach_person,
                         approach_bag=self.h_approach_bag, dock_bag=self.h_dock_bag, remember_bag=self.h_remember_bag, set_torso=self.h_set_torso)
         self.executor_core = MissionExecutor(self.registry, handlers, mode=self.mode, on_update=self._publish)
@@ -363,6 +363,9 @@ class MissionExecutorNode(Node):
         if not r.ok and "vacio" in r.message:
             r.error = "grasp_empty"
         return r
+
+    def h_give(self, ctx: SkillContext) -> SkillResult:
+        return self._with_manip(ctx, lambda m: m.give_blocking(), "place_failed")
 
     def h_place(self, ctx: SkillContext) -> SkillResult:
         return self._with_manip(ctx, lambda m: m.place_blocking(), "place_failed")
