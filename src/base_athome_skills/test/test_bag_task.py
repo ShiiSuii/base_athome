@@ -137,3 +137,21 @@ def test_correction_phrase_says_what_to_fix():
     assert "step back" in bt.correction_phrase("no vi a nadie senalando: no ve el hombro, la muneca o la cadera: falta cuerpo en la imagen")
     assert "closer" in bt.correction_phrase("no encuentro la bolsa senalada: a 138 cm de donde deberia estar")
     assert bt.correction_phrase("bag_finder no respondio") is None
+
+
+def test_dock_does_not_report_done_with_the_bag_far_to_a_side():
+    action, lateral = bt.dock_step((0.50, 1.0), bt.FloorGrasp(reach_x=0.58, reach_y=0.09))
+    assert action == "off" and lateral > 0.5
+
+
+def test_margin_with_degenerate_pose_does_not_divide_by_zero():
+    g = bt.FloorGrasp(reach_x=0.0, reach_y=0.1)
+    assert bt.with_reach_margin(g) == g
+    assert bt.dock_step((1.0, 0.0), g)[0] == "turn"
+
+
+def test_dock_stops_for_something_the_extended_arm_would_hit():
+    g = bt.FloorGrasp(reach_x=0.54, reach_y=0.09)
+    stop = bt.dock_stop_range_with_arm(g)
+    assert bt.dock_verdict(0.0, 0.18, stop_range_m=stop) == "blocked"   # a 40 cm del centro: el chasis pasa, la pinza no
+    assert bt.dock_verdict(0.0, 0.60, stop_range_m=stop) == "go"

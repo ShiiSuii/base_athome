@@ -452,16 +452,18 @@ class Manipulacion(Node):
             ok, msg, data = self.detect_blocking(label, timeout_s=3.0 if memory_xyz is not None else 8.0 if plane_z is not None else 5.0)
             if not ok and memory_xyz is None:
                 return False, msg, data
+            fixed = None
             if not ok:     # de cerca puede dejar de verla: la base no se movio, sigue donde la medi
                 self.get_logger().warn(f"{msg}: agarro con la posicion guardada {[round(float(v), 3) for v in memory_xyz]}")
-                self.plane_z, self.bag_vision, self.detection = None, False, None
-                self.target = dict(self.target or {}, obj=[float(v) for v in memory_xyz], t=time.time(), label="memoria")
-                data = dict(source="memoria", base_link_xyz=[round(float(v), 3) for v in memory_xyz])
+                # bag_vision sigue activa: con ella apagada el detector general escribiria su objeto en self.target
+                fixed = [float(v) for v in memory_xyz]
+                data = dict(source="memoria", base_link_xyz=[round(v, 3) for v in fixed])
             if plane_z is None:
                 ok, why = self._grasp_core()
             else:
                 offset = bag_task.GROUND_TO_BASE_LINK_M
-                ok, why = self._grasp_core(close_mm=GRIPPER_CLOSE_BAG_MM, grasp_z=bag_task.grasp_height(plane_z) - offset)
+                ok, why = self._grasp_core(close_mm=GRIPPER_CLOSE_BAG_MM, grasp_z=bag_task.grasp_height(plane_z) - offset,
+                                           fixed_xyz=fixed)
         finally:
             self.plane_z, self.bag_vision, self.bag_expected = None, False, None
         if not ok:
@@ -789,10 +791,11 @@ class Manipulacion(Node):
                 out.append((deg, self._axis_angle(ax, r)))
         return out
 
-    def _grasp_core(self, close_mm: float = GRIPPER_CLOSE_MM, grasp_z=None):
+    def _grasp_core(self, close_mm: float = GRIPPER_CLOSE_MM, grasp_z=None, fixed_xyz=None):
         """Aproximacion + avance + cierre + subida. (ok, motivo). No va a POST-GRASP.
-        `grasp_z`: altura de agarre en base_link, si no es la del objeto detectado."""
-        tg = self.held_target()
+        `grasp_z`: altura de agarre en base_link, si no es la del objeto detectado. `fixed_xyz`: punto guardado, en lugar de
+        lo ultimo que vio la camara."""
+        tg = dict(obj=fixed_xyz, t=time.time()) if fixed_xyz is not None else self.held_target()
         if tg is None:
             return False, "Agarre: no veo el objeto (ni hay una posicion retenida reciente)."
         if not self.torso_known():

@@ -51,6 +51,7 @@ MAX_POINT_RANGE_M = 6.0
 BAG_GRASP_BELOW_TOP_M = 0.04        # los dedos toman el nudo o el asa, no el aire sobre la bolsa
 BAG_GRASP_MIN_Z_M = 0.03            # nunca mas cerca del piso que esto
 DOCK_POSITION_TOL_M = 0.01
+DOCK_LATERAL_TOL_M = 0.10           # mas corrida que esto a un costado, el brazo no la alcanza desde esa pose
 DOCK_ALIGN_TOL_RAD = math.radians(1.0)
 # La pose enseñada deja la bolsa justo en el borde de lo que alcanza el brazo con esa orientacion (con la pose del 05/11
 # a z=0.20: x=0.55 da IK, x=0.57 casi no y x=0.60 nunca). Parar un poco mas cerca da margen para corregir.
@@ -167,6 +168,8 @@ def dock_stop_range(margin_m: float = MIN_BASE_CLEARANCE_M) -> float:
 
 def with_reach_margin(grasp: FloorGrasp, margin_m: float = REACH_MARGIN_M) -> FloorGrasp:
     """El punto donde conviene dejar la bolsa: mas cerca que el limite de alcance de la pose, sobre el mismo rayo."""
+    if grasp.reach_x <= float(margin_m):
+        return grasp
     k = (grasp.reach_x - float(margin_m)) / grasp.reach_x
     return dataclasses.replace(grasp, reach_x=grasp.reach_x * k, reach_y=grasp.reach_y * k)
 
@@ -192,11 +195,19 @@ def dock_step(bag_in_base: Sequence[float], grasp: FloorGrasp = FloorGrasp()) ->
     x, y = float(bag_in_base[0]), float(bag_in_base[1])
     remaining = x - grasp.reach_x
     if remaining <= DOCK_POSITION_TOL_M:
-        return "done", 0.0
-    error = math.atan2(y - grasp.reach_y * x / grasp.reach_x, x)
+        # Llegar a la distancia no alcanza: con la bolsa corrida a un costado el brazo tampoco llega
+        lateral = y - grasp.reach_y
+        return ("done", 0.0) if abs(lateral) <= DOCK_LATERAL_TOL_M else ("off", lateral)
+    error = math.atan2(y, x) - math.atan2(grasp.reach_y, grasp.reach_x)
     if abs(error) > DOCK_ALIGN_TOL_RAD:
         return "turn", error
     return "go", remaining
+
+
+def dock_stop_range_with_arm(grasp: FloorGrasp, margin_m: float = MIN_BASE_CLEARANCE_M) -> float:
+    """Como dock_stop_range, para el brazo en la pose de piso: la pinza va mas adelante que el chasis. La bolsa no frena
+    nada porque esta debajo del haz."""
+    return max(CHASSIS_FRONT_M, grasp.reach_x) - LASER_X_M + margin_m
 
 
 def dock_verdict(travelled_m: float, front_range_m: Optional[float], goal_m: float = DOCK_DISTANCE_M,

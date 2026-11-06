@@ -88,6 +88,27 @@ def wrist_measure(box: Sequence[float], T: Sequence[float], R: np.ndarray, K: Se
     return Measurement(xy=(float(p[0]), float(p[1])), top_z=float(top_z))
 
 
+def _head_without_depth(box, T, R, K) -> Measurement:
+    """Bolsa negra: la RealSense casi no devuelve profundidad sobre ella. El pie de la caja toca el piso: el rayo por ese
+    punto da la distancia, y a esa distancia el borde superior da la altura. Vale solo mirando bien hacia abajo."""
+    T = np.asarray(T, dtype=float)
+    u = (box[0] + box[2]) / 2.0
+    foot = pixel_ray(u, box[3], R, K)
+    if math.degrees(math.atan2(-foot[2], math.hypot(foot[0], foot[1]))) < MIN_RAY_DOWN_DEG:
+        return Measurement(reason="sin profundidad y el rayo al piso es casi horizontal")
+    s = -float(T[2]) / foot[2]
+    near = T + s * foot
+    if not HEAD_DEPTH_RANGE_M[0] <= s <= HEAD_DEPTH_RANGE_M[1]:
+        return Measurement(reason=f"sin profundidad y el piso queda fuera de rango ({s:.2f})")
+    top_z = float(T[2] + s * pixel_ray(u, box[1], R, K)[2])
+    if not 0.05 <= top_z <= BAG_MAX_TOP_M:
+        return Measurement(reason=f"sin profundidad y la altura no es razonable ({top_z:.2f} m)")
+    radius = min(BAG_MAX_RADIUS_M, abs(box[2] - box[0]) * s / K[0] / 2.0)
+    d = np.array([near[0] - T[0], near[1] - T[1]])
+    xy = near[:2] + radius * d / max(1e-3, float(np.linalg.norm(d)))
+    return Measurement(xy=(float(xy[0]), float(xy[1])), top_z=top_z, radius=float(radius))
+
+
 def head_measure(box: Sequence[float], depth: np.ndarray, T: Sequence[float], R: np.ndarray, K: Sequence[float],
                  allow_clipped: bool = False) -> Measurement:
     """Bolsa vista por la cabeza, con los puntos de profundidad que caen en la caja.
@@ -108,7 +129,7 @@ def head_measure(box: Sequence[float], depth: np.ndarray, T: Sequence[float], R:
     z = depth[vs, us].astype(float) / 1000.0
     valid = (z >= HEAD_DEPTH_RANGE_M[0]) & (z <= HEAD_DEPTH_RANGE_M[1])
     if int(valid.sum()) < MIN_DEPTH_POINTS:
-        return Measurement(reason="sin profundidad valida en la caja")
+        return _head_without_depth(box, T, R, K)
     rays = np.stack([(us[valid] - K[2]) / K[0], (vs[valid] - K[3]) / K[1], np.ones(int(valid.sum()))])
     T = np.asarray(T, dtype=float)
     pts = T + (np.asarray(R, dtype=float) @ (rays * z[valid])).T

@@ -66,7 +66,6 @@ def test_cabeza_rechaza_lo_que_no_sirve():
     eye = np.array([0.0, 0.0, 1.35])
     R, _, depth = view(eye, (2.0, 0.0, 0.0), K_HEAD, [])
     assert not bv.head_measure((300, 220, 340, 260), depth, eye, R, K_HEAD).ok          # solo piso
-    assert not bv.head_measure((300, 220, 340, 260), np.zeros_like(depth), eye, R, K_HEAD).ok   # sin profundidad
     R, _, depth = view(eye, (2.0, 0.0, 1.8), K_HEAD, sc.box_faces((2.0, 0.0, 1.8), (0.4, 0.4, 0.4), sc.BAG_BGR))
     assert not bv.head_measure((280, 200, 360, 280), depth, eye, R, K_HEAD).ok          # en el aire
 
@@ -78,6 +77,23 @@ def test_cabeza_con_bolsa_al_costado_solo_sirve_si_se_acepta_explicitamente():
     box = (500, 150, 639, 330)
     assert "borde" in bv.head_measure(box, depth, eye, R, K_HEAD).reason
     assert bv.head_measure(box, depth, eye, R, K_HEAD, allow_clipped=True).ok
+
+
+def test_bolsa_negra_sin_profundidad_se_mide_por_el_rayo_al_piso():
+    bag = (2.0, 0.3)
+    eye = np.array([0.0, 0.0, 1.35])
+    R, rgb, depth = view(eye, (bag[0], bag[1], 0.0), K_HEAD, sc.bag_faces(bag, 0.30))
+    box = SimColorDetector().detect(rgb)[0][0]
+    m = bv.head_measure(box, np.zeros_like(depth), eye, R, K_HEAD)
+    assert m.ok
+    assert math.hypot(m.xy[0] - bag[0], m.xy[1] - bag[1]) < 0.15
+    assert abs(m.top_z - 0.30) < 0.15
+
+
+def test_sin_profundidad_y_camara_casi_horizontal_no_mide():
+    eye = np.array([0.0, 0.0, 0.5])
+    R = look_at(eye, (5.0, 0.0, 0.4))
+    assert not bv.head_measure((280, 230, 360, 250), np.zeros((480, 640), np.uint16), eye, R, K_HEAD).ok
 
 
 def test_elegir_la_cercana_a_lo_esperado_no_la_de_mayor_confianza():

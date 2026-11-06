@@ -536,13 +536,16 @@ class MissionExecutorNode(Node):
                 action, amount = bag_task.dock_step(bag_task.object_in_base(self.bag_target, self._pose_now()), grasp)
                 if action == "done":
                     return SkillResult.success(f"junto a la bolsa (tramo final {done:.2f} m)")
+                if action == "off":
+                    return SkillResult.failure("blocked", f"la bolsa quedo {amount * 100:.0f} cm a un costado: no la alcanzo")
                 if done > bag_task.DOCK_MAX_TRAVEL_M:
                     return SkillResult.failure("blocked", f"el tramo final ya lleva {done:.2f} m sin llegar a la bolsa: paro")
                 msg = Twist()
                 if action == "turn":
                     msg.angular.z = max(-DOCK_TURN_RPS, min(DOCK_TURN_RPS, 1.5 * amount))
                 else:
-                    if bag_task.dock_verdict(0.0, self.front_range) == "blocked":
+                    stop = bag_task.dock_stop_range_with_arm(grasp)
+                    if bag_task.dock_verdict(0.0, self.front_range, stop_range_m=stop) == "blocked":
                         return SkillResult.failure("blocked", f"algo a {self.front_range:.2f} m adelante: paro")
                     msg.linear.x = min(DOCK_SPEED_MPS, max(0.03, amount))
                 self.pub_cmd_vel.publish(msg)

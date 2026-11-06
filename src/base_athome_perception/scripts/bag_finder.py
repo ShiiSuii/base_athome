@@ -36,6 +36,7 @@ SEARCH_PANS = (0.0, 30.0, -30.0, 60.0, -60.0)
 SEARCH_TILT = 0.0
 SEARCH_VIEW_S = 1.5
 LOST_PERSON_S = 1.5
+GESTURE_MAX_JUMP_M = 0.8      # el gesto humano tiene 8-15 grados de error: entre vistas salta decimetros
 BAG_VIEWS = 3                 # mediciones coherentes de la bolsa antes de creerla
 BAG_MAX_SPREAD_M = 0.10
 
@@ -44,6 +45,7 @@ class BagFinder(Node):
     def __init__(self):
         super().__init__("bag_finder")
         self.lock = threading.Lock()
+        self.serve_lock = threading.Lock()
         self.rgb, self.depth, self.K = None, None, None
         self.tf_buf = Buffer()
         self.tf_listener = TransformListener(self.tf_buf, self)
@@ -202,6 +204,10 @@ class BagFinder(Node):
         threading.Thread(target=self._serve, args=(json.loads(msg.data),), daemon=True).start()
 
     def _serve(self, req):
+        with self.serve_lock:      # un pedido por vez: dos hilos mandando la cabeza la harian oscilar
+            self._serve_one(req)
+
+    def _serve_one(self, req):
         mode = req.get("mode")
         out = self._locate_person(req) if mode == "locate_person" else self._refine(req) if mode == "refine_bag" else self._find(req)
         self.pub.publish(String(data=json.dumps(out)))
@@ -224,6 +230,9 @@ class BagFinder(Node):
             if cam is not None and self.K is not None and rgb is not None and self._head_still():
                 target, reason = bv.pointed_target(people, depth, cam[0], cam[1], self.K)
                 if target:
+                    # El gesto vale si las vistas coinciden: uno que salta de lugar es otra cosa
+                    if hits and math.hypot(target[0] - hits[-1][0], target[1] - hits[-1][1]) > GESTURE_MAX_JUMP_M:
+                        hits = []
                     hits.append(target)
                 else:
                     why = reason
