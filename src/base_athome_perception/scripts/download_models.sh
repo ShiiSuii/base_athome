@@ -47,6 +47,20 @@ if [ ! -f "${MODELS_DIR}/yolov8n.pt" ]; then
         https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8n.pt
 fi
 
+# 5. Detector Facial YuNet (OpenCV DNN ONNX)
+if [ ! -f "${MODELS_DIR}/face_detection_yunet_2023mar.onnx" ]; then
+    echo "[+] Descargando face_detection_yunet_2023mar.onnx (~400 KB)..."
+    curl -L -o "${MODELS_DIR}/face_detection_yunet_2023mar.onnx" \
+        https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx
+fi
+
+# 6. Detector YOLO-World v2 (Open-Vocabulary para manipulacion y bolsa)
+if [ ! -f "${MODELS_DIR}/yolov8s-worldv2.pt" ]; then
+    echo "[+] Descargando yolov8s-worldv2.pt (~28 MB)..."
+    curl -L -o "${MODELS_DIR}/yolov8s-worldv2.pt" \
+        https://github.com/ultralytics/assets/releases/download/v8.2.0/yolov8s-worldv2.pt
+fi
+
 echo "--------------------------------------------------"
 echo "Todos los modelos de percepcion estan listos en:"
 ls -lh "$MODELS_DIR"

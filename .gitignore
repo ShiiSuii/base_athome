@@ -1,5 +1,7 @@
 # ROS 2 build directories
 build/
+!tools/urdf_editor/static/vendor/three/build/
+!tools/urdf_editor/static/vendor/three/build/**
 install/
 log/
 

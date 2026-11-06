@@ -1,0 +1,500 @@
+{"id": 1, "category": "mixed", "command": "go to the bed then meet Angel and follow them"}
+{"id": 2, "category": "people", "command": "navigate to the side tables then locate the person pointing to the left and tell the day of the month"}
+{"id": 3, "category": "objects", "command": "get a drink from the cabinet and bring it to me"}
+{"id": 4, "category": "mixed", "command": "give me a milk from the storage rack"}
+{"id": 5, "category": "people", "command": "go to the bedroom then meet Angel and say your teams country"}
+{"id": 6, "category": "objects", "command": "bring me a bowl from the cabinet"}
+{"id": 7, "category": "mixed", "command": "meet Simone in the bathroom and follow them to the kitchen"}
+{"id": 8, "category": "people", "command": "navigate to the bedroom then meet Adel and follow them to the chairs"}
+{"id": 9, "category": "objects", "command": "give me a pear from the cabinet"}
+{"id": 10, "category": "mixed", "command": "tell your teams name to the person raising their left arm in the bathroom"}
+{"id": 11, "category": "people", "command": "meet Angel in the bedroom and take them to the potted plant"}
+{"id": 12, "category": "objects", "command": "look for a tennis ball in the office then grasp it and bring it to Morgan in the bathroom"}
+{"id": 13, "category": "mixed", "command": "get a cup from the storage rack and bring it to the person pointing to the right in the office"}
+{"id": 14, "category": "people", "command": "tell the gesture of the person at the coatrack to the person at the shelf"}
+{"id": 15, "category": "objects", "command": "tell me what is the largest drink on the storage rack"}
+{"id": 16, "category": "mixed", "command": "go to the kitchen then meet Robin and tell what day is today"}
+{"id": 17, "category": "people", "command": "tell me how many people in the living room are wearing gray jackets"}
+{"id": 18, "category": "objects", "command": "grasp a cleanser from the storage rack and give it to Charlie in the bedroom"}
+{"id": 19, "category": "mixed", "command": "navigate to the side tables then find a lemon and grasp it and put it on the storage rack"}
+{"id": 20, "category": "people", "command": "tell the day of the week to the person raising their left arm in the bedroom"}
+{"id": 21, "category": "objects", "command": "find an orange in the bathroom then grasp it and give it to the waving person in the living room"}
+{"id": 22, "category": "mixed", "command": "get a spoon from the bed and give it to me"}
+{"id": 23, "category": "people", "command": "follow Angel from the trashbin to the living room"}
+{"id": 24, "category": "objects", "command": "fetch a snack from the shelf and bring it to the sitting person in the office"}
+{"id": 25, "category": "mixed", "command": "go to the entrance then find the lying person and say something about yourself"}
+{"id": 26, "category": "people", "command": "go to the bathroom then find the person pointing to the right and follow them"}
+{"id": 27, "category": "objects", "command": "find a snack in the office then grasp it and bring it to me"}
+{"id": 28, "category": "mixed", "command": "tell me what is the biggest snack on the bed"}
+{"id": 29, "category": "people", "command": "say what day is today to the waving person in the office"}
+{"id": 30, "category": "objects", "command": "go to the bathroom then locate an iced tea and get it and deliver it to Robin in the bedroom"}
+{"id": 31, "category": "mixed", "command": "fetch a cleaning supply from the bed and deliver it to me"}
+{"id": 32, "category": "people", "command": "say something about yourself to the person raising their right arm in the office"}
+{"id": 33, "category": "objects", "command": "go to the office then locate a knife and take it and bring it to Angel in the bathroom"}
+{"id": 34, "category": "mixed", "command": "salute Angel in the bathroom and say what day is tomorrow"}
+{"id": 35, "category": "people", "command": "salute Morgan in the kitchen and escort them to the side tables"}
+{"id": 36, "category": "objects", "command": "tell me what is the thinnest cleaning supply on the refrigerator"}
+{"id": 37, "category": "mixed", "command": "tell me how many cleaning supplies there are on the sofa"}
+{"id": 38, "category": "people", "command": "tell me the pose of the person at the entrance"}
+{"id": 39, "category": "objects", "command": "tell me what is the largest object on the side tables"}
+{"id": 40, "category": "mixed", "command": "go to the shelf then find the person raising their right arm and follow them to the bathroom"}
+{"id": 41, "category": "people", "command": "tell me how many lying persons are in the living room"}
+{"id": 42, "category": "objects", "command": "bring me an apple from the side tables"}
+{"id": 43, "category": "mixed", "command": "look for a dish in the bedroom then take it and give it to me"}
+{"id": 44, "category": "people", "command": "take the lying person from the refrigerator to the bathroom"}
+{"id": 45, "category": "objects", "command": "navigate to the living room then locate a toy and take it and place it on the cabinet"}
+{"id": 46, "category": "mixed", "command": "tell the time to the person pointing to the right in the bedroom"}
+{"id": 47, "category": "people", "command": "salute Charlie in the bedroom and follow them"}
+{"id": 48, "category": "objects", "command": "navigate to the sofa then look for an iced tea and get it and give it to the standing person in the kitchen"}
+{"id": 49, "category": "mixed", "command": "tell the day of the month to the waving person in the kitchen"}
+{"id": 50, "category": "people", "command": "salute Paris in the office and follow them to the kitchen"}
+{"id": 51, "category": "objects", "command": "give me a tuna from the side tables"}
+{"id": 52, "category": "mixed", "command": "grasp a fruit from the shelf and bring it to me"}
+{"id": 53, "category": "people", "command": "navigate to the living room then meet Morgan and follow them"}
+{"id": 54, "category": "objects", "command": "navigate to the coatrack then locate a cleaning supply and take it and deliver it to Simone in the living room"}
+{"id": 55, "category": "mixed", "command": "fetch a food from the side tables and throw it in the trash"}
+{"id": 56, "category": "people", "command": "go to the kitchen then meet Simone and follow them"}
+{"id": 57, "category": "objects", "command": "bring me an orange juice from the cabinet"}
+{"id": 58, "category": "mixed", "command": "grasp a fruit from the cabinet and give it to me"}
+{"id": 59, "category": "people", "command": "go to the trashbin then find the person raising their left arm and follow them to the armchair"}
+{"id": 60, "category": "objects", "command": "tell me how many snacks there are on the sofa"}
+{"id": 61, "category": "mixed", "command": "locate a snack in the bedroom then take it and place it on the side tables"}
+{"id": 62, "category": "people", "command": "escort Angel from the entrance to the refrigerator"}
+{"id": 63, "category": "objects", "command": "find a cleaning supply in the bedroom then grasp it and throw it in the trash"}
+{"id": 64, "category": "mixed", "command": "fetch a snack from the refrigerator and deliver it to the sitting person in the bathroom"}
+{"id": 65, "category": "people", "command": "salute Paris in the office and say the day of the week"}
+{"id": 66, "category": "objects", "command": "go to the side tables then look for a tuna and grasp it and bring it to the standing person in the bathroom"}
+{"id": 67, "category": "mixed", "command": "locate a plum in the living room then get it and deliver it to the sitting person in the office"}
+{"id": 68, "category": "people", "command": "say your teams affiliation to the person raising their right arm in the office"}
+{"id": 69, "category": "objects", "command": "navigate to the entrance then find a coffee grounds and get it and place it on the shelf"}
+{"id": 70, "category": "mixed", "command": "get a drink from the storage rack and bring it to me"}
+{"id": 71, "category": "people", "command": "find a person pointing to the right in the living room and follow them"}
+{"id": 72, "category": "objects", "command": "take a cleaning supply from the bed and bring it to me"}
+{"id": 73, "category": "mixed", "command": "meet Simone in the bedroom and tell what day is today"}
+{"id": 74, "category": "people", "command": "follow the lying person in the living room"}
+{"id": 75, "category": "objects", "command": "give me a cleanser from the refrigerator"}
+{"id": 76, "category": "mixed", "command": "go to the cabinet then find a dice and take it and put it on the storage rack"}
+{"id": 77, "category": "people", "command": "lead Jane from the potted plant to the living room"}
+{"id": 78, "category": "objects", "command": "go to the trashbin then look for a lemon and get it and deliver it to Morgan in the bathroom"}
+{"id": 79, "category": "mixed", "command": "say the day of the week to the person pointing to the left in the living room"}
+{"id": 80, "category": "people", "command": "tell me how many people in the bedroom are wearing gray blouses"}
+{"id": 81, "category": "objects", "command": "go to the bathroom then look for a dish and take it and give it to Angel in the bathroom"}
+{"id": 82, "category": "mixed", "command": "meet Simone at the storage rack then locate them in the living room"}
+{"id": 83, "category": "people", "command": "meet Morgan in the office and follow them to the storage rack"}
+{"id": 84, "category": "objects", "command": "tell me what is the heaviest drink on the refrigerator"}
+{"id": 85, "category": "mixed", "command": "tell me what is the lightest cleaning supply on the side tables"}
+{"id": 86, "category": "people", "command": "say hello to Simone in the living room and lead them to the sofa"}
+{"id": 87, "category": "objects", "command": "go to the bathroom then find a sponge and fetch it and give it to me"}
+{"id": 88, "category": "mixed", "command": "take a mustard from the storage rack and put it on the sofa"}
+{"id": 89, "category": "people", "command": "look for a person pointing to the left in the bathroom and lead them to the kitchen"}
+{"id": 90, "category": "objects", "command": "give me a plate from the sofa"}
+{"id": 91, "category": "mixed", "command": "introduce yourself to Robin in the office and follow them to the refrigerator"}
+{"id": 92, "category": "people", "command": "say the day of the week to the person raising their left arm in the bathroom"}
+{"id": 93, "category": "objects", "command": "get a drink from the storage rack and bring it to the lying person in the living room"}
+{"id": 94, "category": "mixed", "command": "meet Adel in the living room and say the time"}
+{"id": 95, "category": "people", "command": "introduce yourself to Jane in the bathroom and follow them"}
+{"id": 96, "category": "objects", "command": "tell me how many cleaning supplies there are on the sofa"}
+{"id": 97, "category": "mixed", "command": "say the day of the week to the person pointing to the right in the kitchen"}
+{"id": 98, "category": "people", "command": "say what day is tomorrow to the person pointing to the left in the bedroom"}
+{"id": 99, "category": "objects", "command": "take a cleaning supply from the refrigerator and bring it to me"}
+{"id": 100, "category": "mixed", "command": "get a red wine from the storage rack and place it on the sofa"}
+{"id": 101, "category": "people", "command": "locate a standing person in the bedroom and follow them"}
+{"id": 102, "category": "objects", "command": "give me a banana from the bed"}
+{"id": 103, "category": "mixed", "command": "get a cleaning supply from the bed and give it to Jane in the office"}
+{"id": 104, "category": "people", "command": "look for a standing person in the bathroom and follow them to the entrance"}
+{"id": 105, "category": "objects", "command": "tell me how many dishes there are on the sofa"}
+{"id": 106, "category": "mixed", "command": "find a person pointing to the right in the kitchen and follow them"}
+{"id": 107, "category": "people", "command": "tell your teams name to the waving person in the kitchen"}
+{"id": 108, "category": "objects", "command": "navigate to the bedroom then find a cleaning supply and grasp it and bring it to the person pointing to the right in the bathroom"}
+{"id": 109, "category": "mixed", "command": "go to the office then find the lying person and take them to the bathroom"}
+{"id": 110, "category": "people", "command": "greet Simone in the bathroom and follow them to the kitchen"}
+{"id": 111, "category": "objects", "command": "find a milk in the office then fetch it and deliver it to me"}
+{"id": 112, "category": "mixed", "command": "navigate to the bedroom then locate the lying person and follow them"}
+{"id": 113, "category": "people", "command": "salute Paris in the kitchen and take them to the living room"}
+{"id": 114, "category": "objects", "command": "navigate to the storage rack then locate a tennis ball and fetch it and throw it in the trash"}
+{"id": 115, "category": "mixed", "command": "tell the pose of the person at the trashbin to the person at the shelf"}
+{"id": 116, "category": "people", "command": "salute Jules in the bathroom and follow them"}
+{"id": 117, "category": "objects", "command": "navigate to the chairs then locate a cleanser and take it and give it to Angel in the kitchen"}
+{"id": 118, "category": "mixed", "command": "tell me how many food there are on the cabinet"}
+{"id": 119, "category": "people", "command": "tell me how many persons pointing to the left are in the bathroom"}
+{"id": 120, "category": "objects", "command": "go to the bedroom then locate a snack and take it and throw it in the trash"}
+{"id": 121, "category": "mixed", "command": "find a lying person in the living room and follow them"}
+{"id": 122, "category": "people", "command": "follow the lying person at the sofa"}
+{"id": 123, "category": "objects", "command": "tell me how many snacks there are on the shelf"}
+{"id": 124, "category": "mixed", "command": "tell me what is the heaviest object on the refrigerator"}
+{"id": 125, "category": "people", "command": "meet Angel in the bedroom and follow them to the bathroom"}
+{"id": 126, "category": "objects", "command": "navigate to the waste basket then look for a banana and fetch it and bring it to Angel in the office"}
+{"id": 127, "category": "mixed", "command": "navigate to the bathroom then meet Robin and follow them"}
+{"id": 128, "category": "people", "command": "find a lying person in the office and guide them to the refrigerator"}
+{"id": 129, "category": "objects", "command": "go to the living room then look for a red wine and get it and throw it in the trash"}
+{"id": 130, "category": "mixed", "command": "take a baseball from the sofa and deliver it to me"}
+{"id": 131, "category": "people", "command": "tell your teams name to the person pointing to the left in the bathroom"}
+{"id": 132, "category": "objects", "command": "take a snack from the refrigerator and bring it to me"}
+{"id": 133, "category": "mixed", "command": "say something about yourself to the person pointing to the left in the bedroom"}
+{"id": 134, "category": "people", "command": "go to the kitchen then locate the sitting person and follow them"}
+{"id": 135, "category": "objects", "command": "go to the entrance then look for a knife and fetch it and throw it in the trash"}
+{"id": 136, "category": "mixed", "command": "grasp a chocolate jello from the bed and deliver it to the sitting person in the bedroom"}
+{"id": 137, "category": "people", "command": "tell me how many persons pointing to the left are in the bathroom"}
+{"id": 138, "category": "objects", "command": "go to the kitchen then look for a tuna and take it and place it on the shelf"}
+{"id": 139, "category": "mixed", "command": "navigate to the kitchen then find the standing person and follow them"}
+{"id": 140, "category": "people", "command": "tell me how many lying persons are in the office"}
+{"id": 141, "category": "objects", "command": "locate a drink in the bathroom then take it and bring it to Paris in the bedroom"}
+{"id": 142, "category": "mixed", "command": "meet Simone in the bathroom and say what day is tomorrow"}
+{"id": 143, "category": "people", "command": "go to the bathroom then look for the waving person and guide them to the armchair"}
+{"id": 144, "category": "objects", "command": "locate a food in the office then fetch it and give it to me"}
+{"id": 145, "category": "mixed", "command": "go to the living room then locate a cleanser and get it and give it to me"}
+{"id": 146, "category": "people", "command": "navigate to the office then look for the person pointing to the left and follow them to the trashbin"}
+{"id": 147, "category": "objects", "command": "tell me what is the heaviest toy on the shelf"}
+{"id": 148, "category": "mixed", "command": "go to the side tables then look for the sitting person and say what day is today"}
+{"id": 149, "category": "people", "command": "tell me how many lying persons are in the living room"}
+{"id": 150, "category": "objects", "command": "find a food in the living room then fetch it and put it on the sofa"}
+{"id": 151, "category": "mixed", "command": "take a cleaning supply from the storage rack and give it to Charlie in the office"}
+{"id": 152, "category": "people", "command": "tell me how many people in the bedroom are wearing yellow coats"}
+{"id": 153, "category": "objects", "command": "navigate to the bathroom then locate a drink and get it and throw it in the trash"}
+{"id": 154, "category": "mixed", "command": "grasp a cola from the bed and throw it in the trash"}
+{"id": 155, "category": "people", "command": "say hello to Paris in the living room and follow them to the coatrack"}
+{"id": 156, "category": "objects", "command": "find a spam in the bedroom then grasp it and throw it in the trash"}
+{"id": 157, "category": "mixed", "command": "locate a sitting person in the living room and tell what day is tomorrow"}
+{"id": 158, "category": "people", "command": "tell the day of the month to the person raising their left arm in the living room"}
+{"id": 159, "category": "objects", "command": "navigate to the bedroom then locate a drink and take it and give it to Angel in the bedroom"}
+{"id": 160, "category": "mixed", "command": "navigate to the living room then find the lying person and say what day is today"}
+{"id": 161, "category": "people", "command": "tell the time to the waving person in the kitchen"}
+{"id": 162, "category": "objects", "command": "go to the office then look for a fruit and fetch it and give it to me"}
+{"id": 163, "category": "mixed", "command": "navigate to the kitchen then locate a food and grasp it and bring it to me"}
+{"id": 164, "category": "people", "command": "say your teams country to the waving person in the bedroom"}
+{"id": 165, "category": "objects", "command": "take a cornflakes from the refrigerator and place it on the storage rack"}
+{"id": 166, "category": "mixed", "command": "meet Simone in the office and take them to the storage rack"}
+{"id": 167, "category": "people", "command": "follow the person pointing to the left at the bed"}
+{"id": 168, "category": "objects", "command": "go to the office then locate a dish and grasp it and put it on the refrigerator"}
+{"id": 169, "category": "mixed", "command": "go to the bathroom then find the waving person and follow them to the bedroom"}
+{"id": 170, "category": "people", "command": "look for a sitting person in the kitchen and follow them to the bedroom"}
+{"id": 171, "category": "objects", "command": "grasp a cleaning supply from the side tables and bring it to the lying person in the bathroom"}
+{"id": 172, "category": "mixed", "command": "escort Jules from the shelf to the potted plant"}
+{"id": 173, "category": "people", "command": "say hello to Paris in the bathroom and say the day of the month"}
+{"id": 174, "category": "objects", "command": "bring me a plum from the side tables"}
+{"id": 175, "category": "mixed", "command": "say the time to the person raising their right arm in the living room"}
+{"id": 176, "category": "people", "command": "tell me the name of the person in the living room"}
+{"id": 177, "category": "objects", "command": "locate a soccer ball in the kitchen then get it and throw it in the trash"}
+{"id": 178, "category": "mixed", "command": "tell me what is the biggest fruit on the side tables"}
+{"id": 179, "category": "people", "command": "tell the name of the person at the waste basket to the person at the armchair"}
+{"id": 180, "category": "objects", "command": "find a sugar in the kitchen then take it and place it on the sofa"}
+{"id": 181, "category": "mixed", "command": "tell the day of the week to the person raising their right arm in the kitchen"}
+{"id": 182, "category": "people", "command": "greet Axel in the living room and take them to the coatrack"}
+{"id": 183, "category": "objects", "command": "get a cleaning supply from the side tables and deliver it to me"}
+{"id": 184, "category": "mixed", "command": "meet Charlie in the bedroom and escort them to the refrigerator"}
+{"id": 185, "category": "people", "command": "tell me how many waving persons are in the living room"}
+{"id": 186, "category": "objects", "command": "give me a strawberry from the sofa"}
+{"id": 187, "category": "mixed", "command": "locate a snack in the bedroom then fetch it and put it on the storage rack"}
+{"id": 188, "category": "people", "command": "tell what day is tomorrow to the waving person in the office"}
+{"id": 189, "category": "objects", "command": "grasp a fruit from the cabinet and give it to the person pointing to the left in the office"}
+{"id": 190, "category": "mixed", "command": "look for a rubiks cube in the living room then grasp it and give it to Morgan in the bathroom"}
+{"id": 191, "category": "people", "command": "meet Robin in the bedroom and follow them to the shelf"}
+{"id": 192, "category": "objects", "command": "navigate to the bathroom then find a dish and grasp it and give it to Simone in the office"}
+{"id": 193, "category": "mixed", "command": "tell me what is the smallest object on the cabinet"}
+{"id": 194, "category": "people", "command": "tell the day of the week to the person pointing to the right in the bedroom"}
+{"id": 195, "category": "objects", "command": "find a spoon in the living room then take it and deliver it to Axel in the bedroom"}
+{"id": 196, "category": "mixed", "command": "tell me how many dishes there are on the sofa"}
+{"id": 197, "category": "people", "command": "salute Robin in the living room and tell the day of the month"}
+{"id": 198, "category": "objects", "command": "look for a dish in the kitchen then grasp it and place it on the shelf"}
+{"id": 199, "category": "mixed", "command": "navigate to the waste basket then meet Jules and follow them to the bathroom"}
+{"id": 200, "category": "people", "command": "meet Jane in the office and take them to the bathroom"}
+{"id": 201, "category": "objects", "command": "find a cleanser in the kitchen then grasp it and put it on the bed"}
+{"id": 202, "category": "mixed", "command": "tell something about yourself to the person pointing to the left in the living room"}
+{"id": 203, "category": "people", "command": "go to the office then look for the standing person and tell your teams affiliation"}
+{"id": 204, "category": "objects", "command": "locate a toy in the bedroom then take it and bring it to Axel in the kitchen"}
+{"id": 205, "category": "mixed", "command": "look for a toy in the office then fetch it and give it to me"}
+{"id": 206, "category": "people", "command": "navigate to the trashbin then look for the waving person and follow them to the bathroom"}
+{"id": 207, "category": "objects", "command": "give me a knife from the bed"}
+{"id": 208, "category": "mixed", "command": "navigate to the office then locate the sitting person and take them to the waste basket"}
+{"id": 209, "category": "people", "command": "guide the lying person from the side tables to the storage rack"}
+{"id": 210, "category": "objects", "command": "go to the living room then find a coffee grounds and get it and deliver it to the person raising their right arm in the bathroom"}
+{"id": 211, "category": "mixed", "command": "meet Charlie at the armchair then locate them in the bedroom"}
+{"id": 212, "category": "people", "command": "meet Adel at the waste basket then look for them in the kitchen"}
+{"id": 213, "category": "objects", "command": "navigate to the armchair then find a toy and fetch it and place it on the cabinet"}
+{"id": 214, "category": "mixed", "command": "find a person pointing to the right in the bedroom and say your teams name"}
+{"id": 215, "category": "people", "command": "meet Adel in the living room and tell the time"}
+{"id": 216, "category": "objects", "command": "go to the trashbin then locate a drink and fetch it and give it to me"}
+{"id": 217, "category": "mixed", "command": "meet Adel in the living room and follow them"}
+{"id": 218, "category": "people", "command": "follow Robin from the entrance to the kitchen"}
+{"id": 219, "category": "objects", "command": "take a plate from the shelf and place it on the refrigerator"}
+{"id": 220, "category": "mixed", "command": "find an orange juice in the bathroom then fetch it and deliver it to Charlie in the living room"}
+{"id": 221, "category": "people", "command": "follow the lying person at the chairs"}
+{"id": 222, "category": "objects", "command": "bring me a plate from the refrigerator"}
+{"id": 223, "category": "mixed", "command": "tell me what is the thinnest food on the storage rack"}
+{"id": 224, "category": "people", "command": "say your teams affiliation to the person pointing to the left in the kitchen"}
+{"id": 225, "category": "objects", "command": "navigate to the cabinet then locate a spam and get it and put it on the shelf"}
+{"id": 226, "category": "mixed", "command": "go to the sofa then find the standing person and take them to the entrance"}
+{"id": 227, "category": "people", "command": "tell the day of the week to the person raising their right arm in the bedroom"}
+{"id": 228, "category": "objects", "command": "navigate to the living room then locate a fruit and fetch it and bring it to the sitting person in the office"}
+{"id": 229, "category": "mixed", "command": "tell me what is the smallest toy on the refrigerator"}
+{"id": 230, "category": "people", "command": "meet Jane in the office and follow them"}
+{"id": 231, "category": "objects", "command": "go to the trashbin then look for a snack and fetch it and deliver it to the lying person in the office"}
+{"id": 232, "category": "mixed", "command": "tell the day of the month to the waving person in the bedroom"}
+{"id": 233, "category": "people", "command": "meet Adel in the bathroom and follow them"}
+{"id": 234, "category": "objects", "command": "fetch a drink from the storage rack and throw it in the trash"}
+{"id": 235, "category": "mixed", "command": "go to the office then find a strawberry and take it and give it to Robin in the kitchen"}
+{"id": 236, "category": "people", "command": "introduce yourself to Simone in the kitchen and say your teams affiliation"}
+{"id": 237, "category": "objects", "command": "navigate to the side tables then locate a dish and fetch it and throw it in the trash"}
+{"id": 238, "category": "mixed", "command": "get a fruit from the bed and deliver it to the person pointing to the right in the kitchen"}
+{"id": 239, "category": "people", "command": "take Robin from the trashbin to the potted plant"}
+{"id": 240, "category": "objects", "command": "find a sugar in the bathroom then grasp it and throw it in the trash"}
+{"id": 241, "category": "mixed", "command": "tell me what is the thinnest object on the storage rack"}
+{"id": 242, "category": "people", "command": "take the person wearing a blue sweater from the cabinet to the refrigerator"}
+{"id": 243, "category": "objects", "command": "locate a toy in the bathroom then grasp it and bring it to me"}
+{"id": 244, "category": "mixed", "command": "meet Angel in the kitchen and guide them to the cabinet"}
+{"id": 245, "category": "people", "command": "escort the standing person from the shelf to the chairs"}
+{"id": 246, "category": "objects", "command": "get a dice from the cabinet and bring it to me"}
+{"id": 247, "category": "mixed", "command": "tell something about yourself to the person raising their right arm in the bathroom"}
+{"id": 248, "category": "people", "command": "say your teams affiliation to the person raising their right arm in the living room"}
+{"id": 249, "category": "objects", "command": "tell me what is the lightest object on the side tables"}
+{"id": 250, "category": "mixed", "command": "navigate to the living room then meet Morgan and follow them to the sofa"}
+{"id": 251, "category": "people", "command": "go to the bedroom then meet Paris and follow them"}
+{"id": 252, "category": "objects", "command": "tell me what is the lightest snack on the cabinet"}
+{"id": 253, "category": "mixed", "command": "tell me what is the smallest object on the storage rack"}
+{"id": 254, "category": "people", "command": "tell the pose of the person at the trashbin to the person at the cabinet"}
+{"id": 255, "category": "objects", "command": "go to the side tables then locate a drink and grasp it and give it to me"}
+{"id": 256, "category": "mixed", "command": "tell me how many cleaning supplies there are on the sofa"}
+{"id": 257, "category": "people", "command": "lead Paris from the storage rack to the chairs"}
+{"id": 258, "category": "objects", "command": "look for a cup in the bedroom then fetch it and bring it to the lying person in the bathroom"}
+{"id": 259, "category": "mixed", "command": "follow Axel from the waste basket to the office"}
+{"id": 260, "category": "people", "command": "tell the name of the person at the shelf to the person at the chairs"}
+{"id": 261, "category": "objects", "command": "locate a banana in the bedroom then take it and give it to the lying person in the office"}
+{"id": 262, "category": "mixed", "command": "tell me what is the smallest fruit on the cabinet"}
+{"id": 263, "category": "people", "command": "introduce yourself to Paris in the bedroom and take them to the refrigerator"}
+{"id": 264, "category": "objects", "command": "go to the bathroom then look for a strawberry and take it and deliver it to me"}
+{"id": 265, "category": "mixed", "command": "get a dish from the cabinet and deliver it to the person pointing to the left in the bedroom"}
+{"id": 266, "category": "people", "command": "go to the office then look for the person pointing to the right and follow them"}
+{"id": 267, "category": "objects", "command": "navigate to the bathroom then locate a cleaning supply and take it and deliver it to the lying person in the bathroom"}
+{"id": 268, "category": "mixed", "command": "follow Angel from the chairs to the kitchen"}
+{"id": 269, "category": "people", "command": "meet Simone in the bathroom and follow them"}
+{"id": 270, "category": "objects", "command": "get a fruit from the shelf and place it on the cabinet"}
+{"id": 271, "category": "mixed", "command": "say something about yourself to the person raising their left arm in the living room"}
+{"id": 272, "category": "people", "command": "tell the pose of the person at the cabinet to the person at the armchair"}
+{"id": 273, "category": "objects", "command": "navigate to the waste basket then find a toy and grasp it and bring it to me"}
+{"id": 274, "category": "mixed", "command": "tell me what is the lightest object on the sofa"}
+{"id": 275, "category": "people", "command": "escort the sitting person from the chairs to the office"}
+{"id": 276, "category": "objects", "command": "fetch a strawberry from the sofa and throw it in the trash"}
+{"id": 277, "category": "mixed", "command": "lead Axel from the sofa to the sofa"}
+{"id": 278, "category": "people", "command": "navigate to the sofa then meet Simone and follow them to the living room"}
+{"id": 279, "category": "objects", "command": "tell me what is the thinnest toy on the shelf"}
+{"id": 280, "category": "mixed", "command": "navigate to the cabinet then look for the standing person and lead them to the bathroom"}
+{"id": 281, "category": "people", "command": "take the person wearing a red jacket from the refrigerator to the side tables"}
+{"id": 282, "category": "objects", "command": "tell me what is the biggest cleaning supply on the shelf"}
+{"id": 283, "category": "mixed", "command": "say hello to Robin in the bathroom and take them to the living room"}
+{"id": 284, "category": "people", "command": "introduce yourself to Adel in the kitchen and tell the time"}
+{"id": 285, "category": "objects", "command": "fetch a rubiks cube from the shelf and throw it in the trash"}
+{"id": 286, "category": "mixed", "command": "greet Jules in the bedroom and say your teams name"}
+{"id": 287, "category": "people", "command": "meet Adel in the living room and follow them to the shelf"}
+{"id": 288, "category": "objects", "command": "go to the coatrack then look for a cleaning supply and take it and throw it in the trash"}
+{"id": 289, "category": "mixed", "command": "take a fruit from the shelf and throw it in the trash"}
+{"id": 290, "category": "people", "command": "meet Robin in the bathroom and follow them"}
+{"id": 291, "category": "objects", "command": "look for a plate in the kitchen then get it and deliver it to me"}
+{"id": 292, "category": "mixed", "command": "go to the bedroom then find the person raising their right arm and take them to the living room"}
+{"id": 293, "category": "people", "command": "go to the armchair then locate the sitting person and take them to the bed"}
+{"id": 294, "category": "objects", "command": "tell me what is the largest snack on the refrigerator"}
+{"id": 295, "category": "mixed", "command": "go to the sofa then meet Jane and tell the time"}
+{"id": 296, "category": "people", "command": "meet Robin in the office and follow them to the bedroom"}
+{"id": 297, "category": "objects", "command": "go to the bedroom then look for an orange juice and fetch it and give it to Simone in the office"}
+{"id": 298, "category": "mixed", "command": "look for a soccer ball in the office then get it and put it on the storage rack"}
+{"id": 299, "category": "people", "command": "say what day is today to the person raising their left arm in the bedroom"}
+{"id": 300, "category": "objects", "command": "tell me what is the smallest object on the refrigerator"}
+{"id": 301, "category": "mixed", "command": "look for a sitting person in the bathroom and say the day of the week"}
+{"id": 302, "category": "people", "command": "go to the coatrack then look for the waving person and follow them to the refrigerator"}
+{"id": 303, "category": "objects", "command": "fetch a cornflakes from the cabinet and put it on the sofa"}
+{"id": 304, "category": "mixed", "command": "tell me what is the biggest object on the shelf"}
+{"id": 305, "category": "people", "command": "locate a standing person in the bedroom and say the time"}
+{"id": 306, "category": "objects", "command": "look for a food in the living room then grasp it and bring it to me"}
+{"id": 307, "category": "mixed", "command": "tell me what is the thinnest dish on the shelf"}
+{"id": 308, "category": "people", "command": "navigate to the office then meet Adel and tell the day of the month"}
+{"id": 309, "category": "objects", "command": "go to the storage rack then look for a snack and fetch it and bring it to the sitting person in the kitchen"}
+{"id": 310, "category": "mixed", "command": "navigate to the shelf then look for a fruit and fetch it and deliver it to the person raising their right arm in the office"}
+{"id": 311, "category": "people", "command": "tell me how many people in the kitchen are wearing yellow t shirts"}
+{"id": 312, "category": "objects", "command": "navigate to the entrance then find a soccer ball and grasp it and bring it to the person pointing to the left in the living room"}
+{"id": 313, "category": "mixed", "command": "go to the living room then look for a fruit and take it and give it to me"}
+{"id": 314, "category": "people", "command": "tell the time to the waving person in the bedroom"}
+{"id": 315, "category": "objects", "command": "go to the potted plant then look for a cleaning supply and take it and place it on the side tables"}
+{"id": 316, "category": "mixed", "command": "navigate to the bedroom then meet Axel and tell the day of the week"}
+{"id": 317, "category": "people", "command": "meet Jane in the living room and escort them to the trashbin"}
+{"id": 318, "category": "objects", "command": "go to the office then locate a tuna and get it and give it to the waving person in the living room"}
+{"id": 319, "category": "mixed", "command": "tell me what is the lightest object on the cabinet"}
+{"id": 320, "category": "people", "command": "find a sitting person in the bathroom and say what day is tomorrow"}
+{"id": 321, "category": "objects", "command": "grasp a peach from the refrigerator and bring it to Angel in the kitchen"}
+{"id": 322, "category": "mixed", "command": "follow the person raising their left arm at the waste basket"}
+{"id": 323, "category": "people", "command": "navigate to the bedroom then meet Robin and follow them"}
+{"id": 324, "category": "objects", "command": "go to the kitchen then find a dish and fetch it and throw it in the trash"}
+{"id": 325, "category": "mixed", "command": "salute Angel in the bedroom and follow them to the cabinet"}
+{"id": 326, "category": "people", "command": "lead the person raising their right arm from the refrigerator to the side tables"}
+{"id": 327, "category": "objects", "command": "tell me what is the thinnest fruit on the side tables"}
+{"id": 328, "category": "mixed", "command": "take Charlie from the cabinet to the kitchen"}
+{"id": 329, "category": "people", "command": "go to the refrigerator then look for the person pointing to the right and guide them to the bedroom"}
+{"id": 330, "category": "objects", "command": "go to the refrigerator then locate an apple and grasp it and throw it in the trash"}
+{"id": 331, "category": "mixed", "command": "navigate to the office then look for the sitting person and say the day of the week"}
+{"id": 332, "category": "people", "command": "tell the day of the week to the person raising their left arm in the bedroom"}
+{"id": 333, "category": "objects", "command": "tell me what is the smallest object on the refrigerator"}
+{"id": 334, "category": "mixed", "command": "go to the bedroom then meet Angel and follow them"}
+{"id": 335, "category": "people", "command": "meet Adel in the office and follow them"}
+{"id": 336, "category": "objects", "command": "navigate to the refrigerator then find a dish and take it and deliver it to Jane in the kitchen"}
+{"id": 337, "category": "mixed", "command": "navigate to the living room then find a drink and get it and put it on the cabinet"}
+{"id": 338, "category": "people", "command": "say the time to the person raising their left arm in the living room"}
+{"id": 339, "category": "objects", "command": "grasp a baseball from the bed and bring it to the standing person in the kitchen"}
+{"id": 340, "category": "mixed", "command": "introduce yourself to Robin in the bathroom and escort them to the kitchen"}
+{"id": 341, "category": "people", "command": "tell me the pose of the person in the bedroom"}
+{"id": 342, "category": "objects", "command": "tell me what is the largest toy on the sofa"}
+{"id": 343, "category": "mixed", "command": "navigate to the office then locate the waving person and escort them to the bathroom"}
+{"id": 344, "category": "people", "command": "meet Simone at the shelf then locate them in the kitchen"}
+{"id": 345, "category": "objects", "command": "locate a snack in the living room then take it and throw it in the trash"}
+{"id": 346, "category": "mixed", "command": "say something about yourself to the person raising their right arm in the kitchen"}
+{"id": 347, "category": "people", "command": "say something about yourself to the person raising their right arm in the bedroom"}
+{"id": 348, "category": "objects", "command": "tell me how many fruits there are on the refrigerator"}
+{"id": 349, "category": "mixed", "command": "find a lying person in the office and follow them to the chairs"}
+{"id": 350, "category": "people", "command": "guide the person pointing to the left from the entrance to the bathroom"}
+{"id": 351, "category": "objects", "command": "bring me a tomato soup from the bed"}
+{"id": 352, "category": "mixed", "command": "find a chocolate jello in the office then take it and deliver it to Axel in the kitchen"}
+{"id": 353, "category": "people", "command": "take the standing person from the storage rack to the potted plant"}
+{"id": 354, "category": "objects", "command": "get a food from the refrigerator and give it to Paris in the office"}
+{"id": 355, "category": "mixed", "command": "go to the kitchen then look for a dish and grasp it and put it on the side tables"}
+{"id": 356, "category": "people", "command": "navigate to the office then look for the lying person and follow them"}
+{"id": 357, "category": "objects", "command": "fetch a juice pack from the storage rack and place it on the sofa"}
+{"id": 358, "category": "mixed", "command": "locate a lying person in the office and say the time"}
+{"id": 359, "category": "people", "command": "find a lying person in the kitchen and follow them to the side tables"}
+{"id": 360, "category": "objects", "command": "go to the storage rack then locate a cleanser and fetch it and give it to me"}
+{"id": 361, "category": "mixed", "command": "say hello to Angel in the kitchen and follow them to the side tables"}
+{"id": 362, "category": "people", "command": "look for a person raising their left arm in the kitchen and follow them"}
+{"id": 363, "category": "objects", "command": "tell me how many snacks there are on the refrigerator"}
+{"id": 364, "category": "mixed", "command": "navigate to the entrance then find the person pointing to the left and guide them to the kitchen"}
+{"id": 365, "category": "people", "command": "navigate to the refrigerator then locate the waving person and follow them to the side tables"}
+{"id": 366, "category": "objects", "command": "navigate to the living room then find a knife and fetch it and put it on the cabinet"}
+{"id": 367, "category": "mixed", "command": "look for a cola in the kitchen then grasp it and throw it in the trash"}
+{"id": 368, "category": "people", "command": "locate a sitting person in the bedroom and follow them to the refrigerator"}
+{"id": 369, "category": "objects", "command": "tell me what is the thinnest dish on the cabinet"}
+{"id": 370, "category": "mixed", "command": "follow the standing person in the living room"}
+{"id": 371, "category": "people", "command": "go to the bedroom then look for the person pointing to the right and follow them"}
+{"id": 372, "category": "objects", "command": "take an iced tea from the bed and deliver it to me"}
+{"id": 373, "category": "mixed", "command": "meet Charlie in the office and guide them to the bathroom"}
+{"id": 374, "category": "people", "command": "follow Simone from the cabinet to the bathroom"}
+{"id": 375, "category": "objects", "command": "tell me how many fruits there are on the sofa"}
+{"id": 376, "category": "mixed", "command": "navigate to the office then locate the waving person and follow them to the kitchen"}
+{"id": 377, "category": "people", "command": "navigate to the office then find the waving person and say what day is today"}
+{"id": 378, "category": "objects", "command": "go to the bed then look for a snack and grasp it and put it on the refrigerator"}
+{"id": 379, "category": "mixed", "command": "go to the living room then meet Axel and take them to the office"}
+{"id": 380, "category": "people", "command": "salute Adel in the bedroom and lead them to the coatrack"}
+{"id": 381, "category": "objects", "command": "give me a sugar from the shelf"}
+{"id": 382, "category": "mixed", "command": "introduce yourself to the person wearing a yellow shirt in the living room and tell the day of the week"}
+{"id": 383, "category": "people", "command": "go to the living room then meet Morgan and follow them to the kitchen"}
+{"id": 384, "category": "objects", "command": "bring me a juice pack from the storage rack"}
+{"id": 385, "category": "mixed", "command": "introduce yourself to Jules in the office and follow them"}
+{"id": 386, "category": "people", "command": "tell the gesture of the person at the armchair to the person at the cabinet"}
+{"id": 387, "category": "objects", "command": "tell me what is the heaviest object on the sofa"}
+{"id": 388, "category": "mixed", "command": "navigate to the armchair then meet Angel and take them to the bathroom"}
+{"id": 389, "category": "people", "command": "navigate to the office then locate the person raising their left arm and follow them to the bathroom"}
+{"id": 390, "category": "objects", "command": "go to the coatrack then look for a food and grasp it and give it to me"}
+{"id": 391, "category": "mixed", "command": "tell me how many drinks there are on the storage rack"}
+{"id": 392, "category": "people", "command": "navigate to the sofa then look for the sitting person and escort them to the coatrack"}
+{"id": 393, "category": "objects", "command": "take a cleaning supply from the storage rack and deliver it to Paris in the bathroom"}
+{"id": 394, "category": "mixed", "command": "meet Axel at the cabinet then look for them in the bathroom"}
+{"id": 395, "category": "people", "command": "say hello to Jane in the kitchen and escort them to the office"}
+{"id": 396, "category": "objects", "command": "get a food from the side tables and give it to Robin in the kitchen"}
+{"id": 397, "category": "mixed", "command": "tell me how many dishes there are on the side tables"}
+{"id": 398, "category": "people", "command": "go to the kitchen then meet Robin and lead them to the bedroom"}
+{"id": 399, "category": "objects", "command": "tell me how many fruits there are on the refrigerator"}
+{"id": 400, "category": "mixed", "command": "go to the armchair then locate the person pointing to the right and follow them to the office"}
+{"id": 401, "category": "people", "command": "guide Morgan from the cabinet to the bed"}
+{"id": 402, "category": "objects", "command": "tell me how many dishes there are on the sofa"}
+{"id": 403, "category": "mixed", "command": "look for a dice in the bathroom then get it and deliver it to Charlie in the living room"}
+{"id": 404, "category": "people", "command": "navigate to the bed then find the sitting person and take them to the potted plant"}
+{"id": 405, "category": "objects", "command": "tell me what is the thinnest dish on the cabinet"}
+{"id": 406, "category": "mixed", "command": "tell your teams country to the person raising their left arm in the bathroom"}
+{"id": 407, "category": "people", "command": "navigate to the kitchen then meet Jules and say what day is tomorrow"}
+{"id": 408, "category": "objects", "command": "tell me what is the lightest cleaning supply on the bed"}
+{"id": 409, "category": "mixed", "command": "tell me how many persons raising their right arm are in the bedroom"}
+{"id": 410, "category": "people", "command": "meet Adel in the kitchen and follow them to the living room"}
+{"id": 411, "category": "objects", "command": "look for a knife in the kitchen then get it and put it on the storage rack"}
+{"id": 412, "category": "mixed", "command": "introduce yourself to Jules in the bedroom and guide them to the trashbin"}
+{"id": 413, "category": "people", "command": "navigate to the office then meet Morgan and tell your teams name"}
+{"id": 414, "category": "objects", "command": "go to the living room then locate a dish and take it and bring it to Angel in the bathroom"}
+{"id": 415, "category": "mixed", "command": "look for a food in the office then fetch it and put it on the side tables"}
+{"id": 416, "category": "people", "command": "greet Adel in the bathroom and follow them to the armchair"}
+{"id": 417, "category": "objects", "command": "tell me what is the largest food on the shelf"}
+{"id": 418, "category": "mixed", "command": "find a dice in the bathroom then grasp it and put it on the cabinet"}
+{"id": 419, "category": "people", "command": "tell your teams name to the person raising their right arm in the kitchen"}
+{"id": 420, "category": "objects", "command": "tell me how many fruits there are on the shelf"}
+{"id": 421, "category": "mixed", "command": "locate a standing person in the bathroom and follow them to the kitchen"}
+{"id": 422, "category": "people", "command": "say your teams country to the person raising their left arm in the office"}
+{"id": 423, "category": "objects", "command": "navigate to the office then look for a snack and get it and give it to me"}
+{"id": 424, "category": "mixed", "command": "go to the bathroom then locate a tropical juice and get it and bring it to me"}
+{"id": 425, "category": "people", "command": "navigate to the bathroom then locate the person pointing to the right and follow them to the bedroom"}
+{"id": 426, "category": "objects", "command": "get a toy from the storage rack and bring it to Simone in the bathroom"}
+{"id": 427, "category": "mixed", "command": "follow Paris from the bed to the living room"}
+{"id": 428, "category": "people", "command": "look for a person pointing to the right in the living room and follow them to the coatrack"}
+{"id": 429, "category": "objects", "command": "tell me what is the biggest food on the bed"}
+{"id": 430, "category": "mixed", "command": "say your teams name to the person pointing to the left in the office"}
+{"id": 431, "category": "people", "command": "tell the day of the month to the person pointing to the left in the bathroom"}
+{"id": 432, "category": "objects", "command": "fetch a tomato soup from the cabinet and give it to me"}
+{"id": 433, "category": "mixed", "command": "navigate to the coatrack then locate a peach and get it and put it on the side tables"}
+{"id": 434, "category": "people", "command": "tell me the gesture of the person in the bedroom"}
+{"id": 435, "category": "objects", "command": "navigate to the bedroom then find a toy and take it and put it on the refrigerator"}
+{"id": 436, "category": "mixed", "command": "tell me what is the largest toy on the storage rack"}
+{"id": 437, "category": "people", "command": "navigate to the shelf then look for the person raising their left arm and follow them to the bedroom"}
+{"id": 438, "category": "objects", "command": "go to the bathroom then find a food and take it and bring it to Paris in the bathroom"}
+{"id": 439, "category": "mixed", "command": "give me a peach from the sofa"}
+{"id": 440, "category": "people", "command": "say hello to the person wearing an orange t shirt in the bedroom and follow them to the refrigerator"}
+{"id": 441, "category": "objects", "command": "look for a sugar in the bathroom then take it and bring it to me"}
+{"id": 442, "category": "mixed", "command": "look for a dish in the living room then fetch it and give it to the person pointing to the left in the office"}
+{"id": 443, "category": "people", "command": "lead the person wearing an orange jacket from the trashbin to the office"}
+{"id": 444, "category": "objects", "command": "tell me what is the thinnest snack on the sofa"}
+{"id": 445, "category": "mixed", "command": "go to the bedroom then look for the standing person and escort them to the entrance"}
+{"id": 446, "category": "people", "command": "go to the living room then locate the person raising their right arm and lead them to the waste basket"}
+{"id": 447, "category": "objects", "command": "look for a toy in the bathroom then get it and bring it to Paris in the bedroom"}
+{"id": 448, "category": "mixed", "command": "escort Adel from the potted plant to the shelf"}
+{"id": 449, "category": "people", "command": "follow the lying person at the waste basket"}
+{"id": 450, "category": "objects", "command": "navigate to the coatrack then look for a fruit and grasp it and throw it in the trash"}
+{"id": 451, "category": "mixed", "command": "say what day is today to the person pointing to the right in the bathroom"}
+{"id": 452, "category": "people", "command": "navigate to the living room then meet Morgan and follow them to the bathroom"}
+{"id": 453, "category": "objects", "command": "bring me a coffee grounds from the refrigerator"}
+{"id": 454, "category": "mixed", "command": "look for an apple in the office then grasp it and place it on the bed"}
+{"id": 455, "category": "people", "command": "meet Jules in the bathroom and follow them to the office"}
+{"id": 456, "category": "objects", "command": "go to the sofa then find an orange and grasp it and put it on the bed"}
+{"id": 457, "category": "mixed", "command": "go to the kitchen then locate a snack and grasp it and bring it to Paris in the bathroom"}
+{"id": 458, "category": "people", "command": "escort the person wearing a blue sweater from the coatrack to the living room"}
+{"id": 459, "category": "objects", "command": "bring me a chocolate jello from the side tables"}
+{"id": 460, "category": "mixed", "command": "locate a person raising their right arm in the bathroom and tell what day is tomorrow"}
+{"id": 461, "category": "people", "command": "salute Jane in the bathroom and follow them"}
+{"id": 462, "category": "objects", "command": "get a food from the refrigerator and place it on the storage rack"}
+{"id": 463, "category": "mixed", "command": "navigate to the trashbin then look for the sitting person and follow them"}
+{"id": 464, "category": "people", "command": "greet Axel in the living room and follow them"}
+{"id": 465, "category": "objects", "command": "go to the living room then locate a soccer ball and take it and give it to me"}
+{"id": 466, "category": "mixed", "command": "go to the refrigerator then look for a fruit and grasp it and give it to me"}
+{"id": 467, "category": "people", "command": "say hello to Jules in the bathroom and follow them"}
+{"id": 468, "category": "objects", "command": "grasp a food from the sofa and bring it to the standing person in the kitchen"}
+{"id": 469, "category": "mixed", "command": "navigate to the living room then meet Jane and follow them"}
+{"id": 470, "category": "people", "command": "salute the person wearing a blue shirt in the kitchen and follow them to the storage rack"}
+{"id": 471, "category": "objects", "command": "go to the bathroom then find a dish and take it and place it on the sofa"}
+{"id": 472, "category": "mixed", "command": "navigate to the trashbin then locate a strawberry and fetch it and throw it in the trash"}
+{"id": 473, "category": "people", "command": "tell something about yourself to the person raising their right arm in the living room"}
+{"id": 474, "category": "objects", "command": "fetch a dish from the refrigerator and give it to Axel in the bathroom"}
+{"id": 475, "category": "mixed", "command": "go to the refrigerator then locate the person raising their right arm and take them to the office"}
+{"id": 476, "category": "people", "command": "tell me the gesture of the person at the chairs"}
+{"id": 477, "category": "objects", "command": "go to the living room then look for a snack and fetch it and bring it to Robin in the kitchen"}
+{"id": 478, "category": "mixed", "command": "navigate to the bathroom then find a rubiks cube and get it and deliver it to Jane in the living room"}
+{"id": 479, "category": "people", "command": "tell me how many persons raising their right arm are in the kitchen"}
+{"id": 480, "category": "objects", "command": "go to the trashbin then locate a spoon and grasp it and throw it in the trash"}
+{"id": 481, "category": "mixed", "command": "go to the chairs then meet Jules and follow them to the living room"}
+{"id": 482, "category": "people", "command": "go to the cabinet then meet Morgan and follow them"}
+{"id": 483, "category": "objects", "command": "tell me what is the largest object on the shelf"}
+{"id": 484, "category": "mixed", "command": "tell me what is the heaviest object on the side tables"}
+{"id": 485, "category": "people", "command": "tell the name of the person at the side tables to the person at the chairs"}
+{"id": 486, "category": "objects", "command": "grasp a pear from the shelf and bring it to me"}
+{"id": 487, "category": "mixed", "command": "meet Morgan in the bedroom and follow them"}
+{"id": 488, "category": "people", "command": "tell the gesture of the person at the refrigerator to the person at the potted plant"}
+{"id": 489, "category": "objects", "command": "go to the kitchen then locate a strawberry jello and take it and throw it in the trash"}
+{"id": 490, "category": "mixed", "command": "find a food in the bathroom then grasp it and deliver it to the person pointing to the left in the kitchen"}
+{"id": 491, "category": "people", "command": "locate a standing person in the bedroom and escort them to the office"}
+{"id": 492, "category": "objects", "command": "grasp a drink from the side tables and deliver it to me"}
+{"id": 493, "category": "mixed", "command": "navigate to the bathroom then meet Robin and follow them"}
+{"id": 494, "category": "people", "command": "go to the trashbin then meet Robin and follow them to the bed"}
+{"id": 495, "category": "objects", "command": "navigate to the refrigerator then look for a food and take it and throw it in the trash"}
+{"id": 496, "category": "mixed", "command": "tell me how many toys there are on the sofa"}
+{"id": 497, "category": "people", "command": "go to the bedroom then look for the lying person and follow them to the chairs"}
+{"id": 498, "category": "objects", "command": "tell me what is the biggest food on the storage rack"}
+{"id": 499, "category": "mixed", "command": "navigate to the sofa then look for a food and grasp it and deliver it to Robin in the bedroom"}
+{"id": 500, "category": "people", "command": "navigate to the living room then meet Robin and follow them to the office"}
