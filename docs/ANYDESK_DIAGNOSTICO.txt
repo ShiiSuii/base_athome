@@ -1,0 +1,132 @@
+DIAGNOSTICO Y ESTABILIZACION DE ANYDESK EN LA NUC (HOME-66)
+===========================================================
+Fecha: 2026-11-05
+Evidencia analizada: logs enmascarados en .anydesk_diag/ (NUC Ubuntu 24.04, AnyDesk 7.1.1, X11).
+
+
+1. CAUSAS IDENTIFICADAS CON EVIDENCIA EN LOS LOGS
+-------------------------------------------------
+
+A) Cambio automatico de red Wi-Fi (wlo1) a una red abierta de invitados
+   - Archivo: .anydesk_diag/journal_red_escritorio.txt
+   - Lineas 35-90 (Nov 05 15:05:43): wlo1 conecta a 'Urubots_5G' (5500 MHz); en lineas 91-94
+     la senial cae hasta -70 dBm (CTRL-EVENT-SIGNAL-CHANGE above=0 signal=-70).
+   - Lineas 104-127 (Nov 05 16:30:16 - 16:30:17): NetworkManager desconecta wlo1 de 'Urubots_5G'
+     por una nueva activacion ("device (wlo1): disconnecting for new activation request",
+     "state change: activated -> deactivating (reason 'new-activation')", "DEAUTH_LEAVING"),
+     cancela DHCP/DNS (lineas 110-121) y conecta a la red abierta 'UTEC-Invitados'
+     ("Activation: starting connection 'UTEC-Invitados'", "requires no security", lineas 122-127).
+   - Efecto: el cambio de SSID/IP/ruta corta de inmediato todos los sockets activos de AnyDesk.
+
+B) Caida del proceso/servicio de AnyDesk y falta de reinicio automatico (Restart=no)
+   - Archivo: .anydesk_diag/trace_filtrado.txt
+   - Lineas 433-456 (2026-10-23 00:32:11.656): perdida de conexion con el servicio y aborto del
+     proceso ("unix_app.control - Service connection lost.", "unix_app.backend - Service
+     connection lost.", "backtrace - Process crashed" en /usr/bin/anydesk).
+   - Lineas 2111-2116 (2026-10-30 02:13:49.802): en plena sesion activa se pierde el servicio y
+     cae el relay ("unix_app.control - Service connection lost.", "Relay state changed (2 -> 0)",
+     "The socket was closed remotely.").
+   - Lineas 1389-1400, 1788-1820 y 2194-2206: tras varios cortes se observan multiples intentos
+     entrantes ("Incoming IPC connection" / "Initializing session") que no logran abrir sesion
+     mientras el relay oscila ("Relay state changed (0 -> 1) / (1 -> 0)") o falla el IPC
+     ("hub_ipc_socket - IPC packet deserialization failed", lineas 1400, 1814, 1820).
+   - Archivos: .anydesk_diag/anydesk.service.txt (lineas 6-13) y .anydesk_diag/estado.txt (linea 1):
+     anydesk.service no define Restart= (queda en Restart=no) y usa PIDFile=/var/run/anydesk.pid
+     (advertencia en journal_red_escritorio.txt lineas 1 y 6). Si el servicio cae, systemd no lo
+     levanta.
+
+C) Cortes periodicos exactos a los 15 minutos (~900 s) con cierre remoto del socket
+   - Archivo: .anydesk_diag/trace_filtrado.txt
+   - En al menos 12 sesiones (22, 23, 24 y 30 de octubre) la sesion inicia ("Session started (ok)")
+     y se corta exactamente 15 minutos despues (~899 a 901 s) con el par:
+       "app.backend_session - The user has requested a connection quit."
+       "app.backend_session - The socket was closed remotely."
+     Ejemplos (inicio -> corte):
+       * Lineas 9 -> 22-23 (12:22:19 -> 12:37:20)
+       * Lineas 206 -> 218-219 (20:41:19 -> 20:56:20)
+       * Lineas 419 -> 424-425 (00:04:53 -> 00:19:54)
+       * Lineas 557 -> 563-564 (15:35:27 -> 15:50:27)
+       * Lineas 648 -> 660-661 (15:51:44 -> 16:06:45)
+       * Lineas 745 -> 758-759 (16:08:48 -> 16:23:49)
+       * Lineas 865 -> 870-871 (20:00:34 -> 20:15:33)
+       * Lineas 957 -> 969-970 (22:23:52 -> 22:38:53)
+       * Lineas 1484 -> 1498-1499 (00:44:45 -> 00:59:45)
+       * Lineas 1583 -> 1596-1597 (00:59:48 -> 01:14:50)
+       * Lineas 1681 -> 1693-1694 (01:14:52 -> 01:29:53)
+       * Lineas 1904 -> 1916-1917 (01:39:54 -> 01:54:53)
+       * Lineas 2001 -> 2014-2015 (01:56:25 -> 02:11:26)
+   - Ademas aparecen caidas de tasa por timeout de red ("desk_rt.auto_adjust - Forced adjust
+     because of a timeout", p. ej. 8.80 kb/s en linea 1089 antes del corte de linea 1090; tambien
+     lineas 21, 562, 757, 1187, 1310, 1496, 1595, 2013, 2497).
+
+D) Bloqueo de pantalla GNOME activo (lock-enabled=true) y operacion sin monitor
+   - Archivos: .anydesk_diag/estado.txt (linea 3: "screensaver lock-enabled=true"),
+     .anydesk_diag/journal_red_escritorio.txt (linea 97: activacion de org.gnome.ScreenSaver) y
+     .anydesk_diag/trace_filtrado.txt (lineas 33-37, 82-85, 1313-1317, 2119-2123:
+     "base.monitor_info - Could not find a primary monitor").
+   - Si la sesion grafica se bloquea o no tiene Acceso Desatendido configurado, tras cualquier
+     corte no es posible reconectar sin intervencion fisica en la NUC.
+
+
+2. QUE HACE CADA CAMBIO DE scripts/anydesk_estable.sh
+-----------------------------------------------------
+El script tiene tres modos: --check (por defecto, solo lectura), --apply (con sudo, respalda en
+/var/backups/base_athome_anydesk/orig y es idempotente) y --revert (con sudo, restaura el respaldo).
+En ningun modo reinicia ni detiene AnyDesk, NetworkManager, GDM ni la NUC, ni toca enp1s0.
+
+1) /etc/systemd/system/anydesk.service.d/base-athome-estable.conf + systemctl daemon-reload:
+   Configura Restart=always, RestartSec=5, StartLimitIntervalSec=0, PIDFile=/run/anydesk.pid y
+   ordenamiento tras network-online.target. Si anydesk --service crashea, systemd lo levanta en 5 s.
+2) /etc/NetworkManager/conf.d/90-base-athome-wifi-powersave-off.conf:
+   Fija wifi.powersave = 2 para evitar que el driver iwlwifi (wlo1) entre en ahorro de energia.
+3) Perfiles Wi-Fi en NetworkManager (solo 802-11-wireless, sin tocar enp1s0 ni cortar la red activa):
+   Desactiva autoconnect en 'UTEC-Invitados' (autoconnect=no) para que no robe la conexion, y
+   prioriza 'Urubots_5G' (autoconnect=yes, priority=100, retries=0 infinitos, powersave=2).
+4) /etc/sysctl.d/90-base-athome-anydesk-keepalive.conf + sysctl -w:
+   Baja net.ipv4.tcp_keepalive_time=120, intvl=30, probes=6 (desde 7200 s) para mantener vivos los
+   mapeos de NAT/firewall intermedios antes del umbral de 15 min (900 s).
+5) GNOME screensaver (gsettings del usuario athome):
+   Fija org.gnome.desktop.screensaver lock-enabled=false y ubuntu-lock-on-suspend=false para que la
+   sesion X11 no quede bloqueada impidiendo reconectar.
+
+
+3. QUE NO SE CONFIRMO
+---------------------
+- Origen exacto del corte a los 15 min (900 s): el log registra "The user has requested a
+  connection quit" + "The socket was closed remotely" desde el cliente remoto (Windows, AnyDesk
+  9.6.9, flags "direct paid 3 4"). No se puede distinguir solo desde la NUC si proviene de un
+  temporizador/politica de la cuenta o cliente remoto de AnyDesk o de un timeout de sesion en el
+  firewall/router de la red.
+- Ahorro de energia de iwlwifi: en NetworkManager.conf no estaba desactivado (wifi.powersave=2),
+  pero en journal_red_escritorio.txt no aparece un evento explicito del kernel atribuible a power
+  save; el corte de red confirmado del 05/11 fue el salto automatico a 'UTEC-Invitados'.
+- Estado actual de la contrasenia de Acceso Desatendido: por seguridad no se leyeron
+  /etc/anydesk/service.conf ni system.conf.
+
+
+4. COMO ACTIVAR EL ACCESO DESATENDIDO EN LA INTERFAZ DE ANYDESK (EN EL LUGAR)
+-----------------------------------------------------------------------------
+1) Abrir la ventana de AnyDesk en el escritorio de la NUC.
+2) Ir al menu (arriba a la derecha) -> Configuracion (Settings) -> Seguridad (Security).
+3) Pulsar "Desbloquear el control de seguridad..." (Unlock Security Settings...) e ingresar la
+   contrasenia de sudo del sistema.
+4) En "Acceso interactivo" (Interactive Access), mantener la opcion que permite aceptar o usar
+   acceso desatendido (NUNCA elegir "Aceptar siempre" sin contrasenia).
+5) Marcar "Permitir el acceso no presencial" / "Habilitar el acceso desatendido" (Enable Unattended
+   Access) y definir una contrasenia fuerte propia (el script nunca crea ni modifica contrasenias).
+6) En "Permisos para perfiles" (Permission Profiles -> Unattended Access), verificar que esten
+   habilitados teclado/raton, portapapeles y reinicio de sesion.
+
+
+5. LIMITACIONES FUERA DE CONTROL DE LA NUC (NO SE PROMETE CERO CORTES)
+----------------------------------------------------------------------
+Ningun ajuste local puede garantizar que la conexion nunca se caiga porque:
+- Internet en la NUC depende exclusivamente del Wi-Fi wlo1 (senial observada hasta -70 dBm):
+  interferencias en 5 GHz, caidas del AP 'Urubots_5G' o del ISP cortaran la sesion mientras dure
+  la falla de red.
+- Si el corte exacto cada 15 minutos proviene de una politica/licencia o configuracion del cliente
+  remoto (Windows 9.6.9) o del firewall institucional, la sesion seguira cerrandose a los 15 min,
+  pero con el Acceso Desatendido activo, la pantalla sin bloqueo, Urubots_5G fijo y Restart=always,
+  la reconexion sera inmediata en pocos segundos sin necesitar a nadie frente al robot.
+- Un apagado por bateria/energia de la NUC o un reinicio completo sin login grafico previo a que
+  cargue la red seguira dependiendo de la alimentacion electrica y del estado fisico del equipo.
