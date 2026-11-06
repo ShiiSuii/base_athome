@@ -51,6 +51,9 @@ else
   sleep 8
 fi
 ARGS=(--ros-args -p semantic_map:="$MAP" -p waypoints:=/nonexistent)
+# LLM=1: la LLM local (ver src/base_athome_skills/scripts/llm_server.py), si esta instalada
+LLM_PY=$HOME/.local/share/llm-venv/bin/python
+[ "${LLM:-0}" = 1 ] && [ -x "$LLM_PY" ] && start env -u PYTHONPATH "$LLM_PY" "$WS/src/base_athome_skills/scripts/llm_server.py" > "$LOG/llm.log" 2>&1
 # La percepcion real de la bolsa, contra la imagen dibujada por la simulacion
 [ -n "${ATHOME_SIM_BAG:-}" ] && start python3 "$WS/src/base_athome_perception/scripts/bag_finder.py" > "$LOG/bag_finder.log" 2>&1
 start ros2 run base_athome_skills mission_executor "${ARGS[@]}" > "$LOG/executor.log" 2>&1

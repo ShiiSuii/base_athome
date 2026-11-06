@@ -50,6 +50,9 @@ session_start executor ros2 run base_athome_skills mission_executor --ros-args -
   -p allow_manipulation_real:=true
 # GPSR=1 (alias gpsr): la prueba completa; al abrirse la puerta el robot SE MUEVE solo hasta el punto de instrucciones
 GPSR_ARGS=(); [ "${GPSR:-0}" = 1 ] && GPSR_ARGS=(-p gpsr:=true)
+# La LLM local, si esta instalada: 1.9 GiB y baja prioridad. Sin ella, el commander funciona igual.
+LLM_PY=$HOME/.local/share/llm-venv/bin/python
+[ -x "$LLM_PY" ] && session_start llm env -u PYTHONPATH nice -n 10 "$LLM_PY" "$HERE/llm_server.py"
 [ "${GPSR:-0}" = 1 ] && session_start door ros2 run base_athome_skills door_open_detector
 session_start commander ros2 run base_athome_skills commander --ros-args -p real:=true -p voice:=true "${GPSR_ARGS[@]}"
 echo "ROBOT REAL: decile que hacer en ingles, responde 'yes' para que se mueva, 'stop' para cancelar. E-stop a mano."

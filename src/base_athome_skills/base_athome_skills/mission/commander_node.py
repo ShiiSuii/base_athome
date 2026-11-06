@@ -26,7 +26,8 @@ from rclpy.qos import DurabilityPolicy, QoSProfile
 from std_msgs.msg import Bool, String
 from std_srvs.srv import Trigger
 
-from .command_parser import compile_command, compile_gpsr_actions
+from . import llm_intent
+from .command_parser import OBJECT_ALIASES, compile_command, compile_gpsr_actions
 from .gpsr_plan import gpsr_actions
 from .node import _share_config
 from .places import load_objects, load_places, load_tables
@@ -129,6 +130,15 @@ class Commander(Node):
             official = gpsr_actions(text)
             if official:
                 c = compile_gpsr_actions(official, places, objects=objects, tables=tables)
+        if not c.ok and not c.cancel:     # lo ultimo: la LLM local, que solo propone. El plan pasa por lo mismo y pide "yes"
+            names = [k.replace("_", " ") for k in places if not k.startswith("object:")]
+            labels = list(OBJECT_ALIASES) + [o.get("label", "") for o in objects]
+            guess = llm_intent.ask(text, names, labels)
+            if guess:
+                g = compile_gpsr_actions(guess, places, objects=objects, tables=tables)
+                if g.ok:
+                    c = g
+                    self.get_logger().info(f"LLM: {text!r} -> {guess}")
         errors = list(c.errors)
         plan = None
         if c.ok:

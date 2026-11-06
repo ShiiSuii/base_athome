@@ -136,6 +136,12 @@ Antes de empezar: E-stop a mano, zona despejada y otra persona atenta. Bolsa liv
 - **Probado:** tests con ASR y ejecutor falsos; sesión en el simulador liviano con voz guionada: dos órdenes hasta terminar y vuelta al punto. La primera se perdió porque el guion arrancó tarde, y eso llevó a que el silencio no gaste intentos.
 - **Sin probar:** detector de puerta real, Whisper con órdenes reales, robot real. Falta marcar `instruction_point` en el mapa real.
 
+## 2k. LLM local en el commander (2026-11-06)
+
+- Qwen2.5 1.5B Q4 en `~/.local/share/llm-venv`, servidor local en `127.0.0.1:8771`. Si el compilador y la gramática oficial no entienden, propone acciones limitadas por gramática a nuestros lugares y objetos; pasa por el validador y pide "yes". El VLM no está hecho.
+- **Medido en la NUC:** 1.9 GiB, 0.4 s de mediana y 5 s de máximo. Frases de reserva: 14/16 correctas, 0/8 órdenes falsas. Son pocas frases.
+- **Sin probar:** sesión de voz completa con la LLM y Whisper real.
+
 ## 3. Cómo retomar la teleoperación con el Quest (pendiente: prueba completa en el brazo real)
 
 1. Quest por USB a la **Jetson**, depuración USB autorizada (`adb devices` → `device`).
