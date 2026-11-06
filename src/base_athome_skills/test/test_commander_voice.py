@@ -19,7 +19,7 @@ from std_srvs.srv import Trigger  # noqa: E402
 pytest.importorskip("base_athome_perception.voice_client")
 from base_athome_skills.mission.commander_node import Commander  # noqa: E402
 
-MAP = Path(__file__).resolve().parents[2] / "base_athome_sim" / "config" / "sim_semantic_map.yaml"
+MAP = Path(__file__).resolve().parents[3] / "simulation" / "base_athome_sim" / "config" / "sim_semantic_map.yaml"
 
 
 class FakeWorld(Node):

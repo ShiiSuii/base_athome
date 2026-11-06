@@ -310,7 +310,7 @@ def test_fetch_demo_valid_in_sim_map_and_rejected_in_empty_map():
     import os
     root = os.path.join(os.path.dirname(__file__), "..", "..")
     p = parse_plan(open(os.path.join(root, "base_athome_skills", "missions", "demo_fetch_bottle.yaml")).read())
-    sim = load_places(os.path.join(root, "base_athome_sim", "config", "sim_semantic_map.yaml"))
+    sim = load_places(os.path.join(root, "..", "simulation", "base_athome_sim", "config", "sim_semantic_map.yaml"))
     assert validate_plan(p, REG, sim) == []
     assert p.success_if == "put"
     assert any("reception" in e for e in validate_plan(p, REG, {"door": (0, 0, 0)}))
