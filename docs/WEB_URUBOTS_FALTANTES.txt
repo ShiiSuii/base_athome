@@ -1,0 +1,1691 @@
+================================================================================
+AUDITORIA DE https://urubots.uy Y PAQUETE DE ACTUALIZACION PARA EL PROGRAMADOR
+PROYECTO: Base@Home (UruBots - UTEC) | RoboCup@Home Open Platform League (OPL)
+ENTREGA DE CUALIFICACION 2027: 06/12/2026 (23:59 GMT)
+================================================================================
+Fecha de relevamiento: 2026-11-05
+Archivo: docs/WEB_URUBOTS_FALTANTES.txt
+Modo de relevamiento: Solo lectura sobre fuentes publicas (https://urubots.uy,
+arXiv, DOI/Crossref, IEEE Xplore, Springer LNCS, SBC Open Library, DBLP, ANII
+CVUy y portal institucional UTEC), sin enviar formularios ni iniciar sesion en
+ninguna cuenta.
+
+RESUMEN EJECUTIVO DE CONTADORES (LISTA DE 23 TITULOS DE PAPERS_PEDIDOS.txt):
+  - Total de titulos en PAPERS_PEDIDOS.txt: 23 (que corresponden a 21 trabajos
+    unicos, tras confirmar 2 pares de duplicados: #5 == #19 y #9 == #20).
+  - Ya estan publicados correctamente en https://urubots.uy/tdps ("SI"):
+      10 titulos (#1, #2, #3, #4, #7, #8, #15, #16, #17, #18).
+      Nota: En la web actual solo figuran con titulo y enlace al PDF en arXiv,
+      sin autores, sin sede/revista y mezclando papers cientificos con TDPs.
+  - Estan en el sitio de forma incompleta/erronea ("PARCIAL"):
+      2 titulos de la lista (#5 y su duplicado #19 = 1 trabajo unico).
+      Su PDF real (https://arxiv.org/pdf/2411.05011) YA esta enlazado en
+      https://urubots.uy/tdps (seccion 2024), pero bajo el titulo equivocado de
+      otro trabajo del equipo ("CONFIGURACAO E OPERACAO DA PLATAFORMA CLEARPATH
+      HUSKY A200...", cuyo PDF real es https://arxiv.org/pdf/2410.17453).
+  - Faltan por completo en https://urubots.uy ("NO"):
+      11 titulos de la lista (#6, #9, #10, #11, #12, #13, #14, #20 [duplicado
+      de #9], #21, #22, #23 = 10 trabajos unicos ausentes del sitio).
+  - Titulos cuya existencia o autoria quede POR CONFIRMAR:
+      0 de 23 (los 21 trabajos unicos fueron hallados y verificados en arXiv o
+      Springer LNCS con sus autores reales de UruBots/UTEC). Se marcan como
+      POR CONFIRMAR unicamente metadatos editoriales puntuales (DOIs definitivos
+      de actas 2025-2026 en prensa para articulos ya aceptados en LARS 2026,
+      ICCAS 2026, DATA 2026 e IEEE INDIN 2025, o sede de preprints sin campo
+      Comments en arXiv).
+  - Trabajos adicionales de UruBots fuera de la lista de 23 ("[SUGERENCIA]"):
+      7 trabajos adicionales verificados (3 que ya figuran en urubots.uy/tdps y
+      4 que no estan ni en la lista de 23 ni en la web).
+
+
+================================================================================
+1. INVENTARIO COMPLETO DEL SITIO ACTUAL (https://urubots.uy)
+================================================================================
+
+1.1 Estructura general y tecnologia observada
+---------------------------------------------
+El sitio https://urubots.uy es una aplicacion web moderna (SPA / SSR con rutas
+limpias y gestor de contenidos headless) que presenta al equipo de robotica e
+inteligencia artificial UruBots de la Universidad Tecnologica del Uruguay (UTEC,
+Instituto Tecnologico Regional Norte, sede Rivera). Cuenta con un selector de
+idioma en la barra superior (EN / ES / PT), menu de navegacion principal y pie
+de pagina institucional ("URUBOTS — 2026").
+
+1.2 Paginas y secciones existentes
+----------------------------------
+  [Ruta 1] Inicio (https://urubots.uy/)
+    - Hero principal: "Somos URUBOTS. Equipo de competencias en robotica ubicado
+      en UTEC" y boton "Saber mas".
+    - Seccion "Nuestros ultimos Posts" ("Aca puedes ver las ultimas noticias de
+      Urubots"): muestra 3 tarjetas de noticias recientes (temporada 2025/2026):
+        1) "Urubots vuelve a la escena global en la RoboCup y la FIRA RoboWorld
+           Cup 2026" (clasificacion a Corea del Sur y Canada, y organizacion de
+           la RoboFest el 18 de abril para recaudar fondos).
+        2) "“A la uruguaya”: Urubots logro podio en competencia internacional de
+           robotica en Corea del Sur" (1.er lugar en desafio tecnico y 3.er
+           puesto general de drones en FIRA Daegu; debut en RoboCup Salvador).
+        3) "Urubots sumo experiencia en su debut en la RoboCup y se prepara para
+           representar a Uruguay en Corea del Sur" (participacion en RoboCup en
+           Salvador de Bahia con 1.er puesto en subcategoria de movilidad).
+
+  [Ruta 2] Sobre nosotros (https://urubots.uy/about)
+    - Bloque "Somos URUBOTS": describe al grupo (~30 jovenes y profesores de
+      hasta tres carreras diferentes en UTEC), enumerando en texto corrido sus
+      areas generales: drones, humanoides, autos autonomos, talleres educativos
+      e investigacion.
+    - Bloque "Nuestra mision": objetivos de innovacion, talento local, educacion
+      tecnologica e insercion internacional.
+    - Nota sobre "Proyectos": No existe una pagina independiente con fichas
+      tecnicas de robots; las lineas de trabajo estan resumidas dentro de
+      /about y la portada.
+
+  [Ruta 3] Blog / Noticias (https://urubots.uy/blog)
+    - Encabezado institucional sobre la clasificacion a RoboCup (Salvador,
+      Brasil) y FIRA RoboWorld Cup (Daegu, Corea del Sur).
+    - Listado de 5 entradas (las 3 de la portada mas 2 notas de 2024):
+        4) "Preparados para un nuevo desafio: Urubots dice presente en la
+           RoboWorld Cup de Maranhao" (previa de FIRA 2024 en Brasil tras el
+           1.er puesto en "Mission Impossible United" en Alemania 2023).
+        5) "Los Urubots volvieron a destacarse en la FIRA RoboWorld Cup" (dos
+           3.os puestos en Autos Autonomos y Humanoides en FIRA 2024).
+        6) "La robotica como herramienta para la continuidad y la inclusion
+           educativa en el norte" (impacto en Rivera y evento RoboPampa).
+
+  [Ruta 4] Premios (https://urubots.uy/awards)
+    - Bloque "FIRA": menciona el 1.er puesto en "Mision Imposible" (FIRA 2023,
+      Alemania) y los dos 3.os puestos en "Humanoides" y "Autos Autonomos"
+      (FIRA 2024, Brasil).
+    - Bloque "Competencias": menciona primeros puestos en hackathones nacionales
+      y participacion en WorldSkills en Chile.
+
+  [Ruta 5] Equipo (https://urubots.uy/team)
+    - "Nuestro Equipo. Conoce mas sobre nuestros miembros": lista 22 tarjetas
+      con nombre y rol (en ingles):
+        * Founders (2): Ricardo Grando, Andre Kelbouscas.
+        * Teacher (1): Pamela Barboza.
+        * Programmer (1): Sebastian Barcelona.
+        * Students (18): Victoria Saravia, Hiago Sodre, Pablo Moraes, Juan
+          Manuel Deniz, Santiago Fernandez, Vinicio Melgar, William Moraes,
+          Ahilen Mazondo, Alexandra Rodriguez, Anthony Scirgalea, Any da Rosa,
+          Gabriel da Silvia [sic: errata por "da Silva"], Gabriela Flores, Igor
+          Nunes, Maximo Retamar, Vincent Sandin, Victor Castelli, Yeffrey Farias.
+
+  [Ruta 6] TDPs (https://urubots.uy/tdps)
+    - Titulo de pagina: "Team Description Papers".
+    - Publica 13 enlaces a PDFs en arXiv organizados por anio (4 en 2025, 6 en
+      2024, 2 en 2023, 1 en 2022). Ver detalle exacto en §1.3.
+
+  [Ruta 7] Donar (https://urubots.uy/donate)
+    - Texto "Apoya Nuestro Equipo" y seccion "¿Como puedes ayudarnos?" con 4
+      vias: donaciones economicas, equipos o materiales, colaboraciones o
+      patrocinio, y difusion.
+
+  [Ruta 8] Contacto (https://urubots.uy/contact)
+    - Datos institucionales:
+        * Email: urubots.itrn@utec.edu.uy
+        * Phone: 4622 2147
+        * Address: Guido Machado Brun KM 496 [sic: errata por "Brum"]
+    - Formulario "Envianos tu mensaje" (campos con etiquetas en ingles "Your
+      Name", "Your Email", "Your Message" y boton en espanol "Enviar"). No se
+      envio ni probo por regla estricta de solo lectura.
+
+1.3 Que papers publica actualmente https://urubots.uy/tdps (los 13 items)
+-------------------------------------------------------------------------
+La pagina /tdps muestra unicamente el titulo y el hipervinculo al PDF en arXiv
+(sin autores, sin conferencia/revista y sin resumen):
+
+  Anio 2025 (4 enlaces):
+    1) RoboCup Rescue 2025 Team Description Paper UruBots
+       -> https://arxiv.org/pdf/2504.09778  [Corresponde a #7 de la lista]
+    2) Mini Autonomous Car Driving based on 3D Convolutional Neural Networks
+       -> https://arxiv.org/pdf/2508.21271  [Corresponde a #15 de la lista]
+    3) UruBots Autonomous Cars Challenge Pro Team Description Paper for FIRA 2025
+       -> https://arxiv.org/pdf/2506.07348  [Corresponde a #16 de la lista]
+    4) UruBots RoboCup@Work Team Description Paper
+       -> https://arxiv.org/pdf/2504.09755  [Corresponde a #17 de la lista]
+
+  Anio 2024 (6 enlaces):
+    5) CONFIGURACAO E OPERACAO DA PLATAFORMA CLEARPATH HUSKY A200 E MANIPULADOR
+       COBOT UR5 2-FINGER GRIPPER
+       -> https://arxiv.org/pdf/2411.05011  [¡ENLACE CRUZADO! Ver §1.4]
+    6) IMPLEMENTACION DE NAVEGACION EN PLATAFORMA ROBOTICA MOVIL BASADA EN ROS
+       Y GAZEBO
+       -> https://arxiv.org/pdf/2410.19972  [Corresponde a #18 de la lista]
+    7) INTERACAO ENTRE ROBOS HUMANOIDES: DESENVOLVENDO A COLABORACAO E
+       COMUNICACAO AUTONOMA
+       -> https://arxiv.org/pdf/2410.17450  [Corresponde a #8 de la lista]
+    8) UruBots UAV - Air Emergency Service Indoor Team Description Paper for
+       FIRA 2024
+       -> https://arxiv.org/pdf/2406.08753  [Corresponde a #4 de la lista]
+    9) Behavior Cloning for Mini Autonomous Car Path Following
+       -> https://arxiv.org/pdf/2410.07209  [Corresponde a #1 de la lista]
+   10) UruBots Autonomous Cars Team One Description Paper for FIRA 2024
+       -> https://arxiv.org/pdf/2406.08745  [Corresponde a #3 de la lista]
+
+  Anio 2023 (2 enlaces):
+   11) APLICACION DE ROBOTS HUMANOIDES COMO GUIAS INTERACTIVOS EN MUSEOS: UNA
+       SIMULACION CON EL ROBOT NAO
+       -> https://arxiv.org/pdf/2310.17060  [Corresponde a #2 de la lista]
+   12) DISENO Y DESARROLLO DE PROTOTIPOS ROBOTICOS PARA COMPETENCIAS DE FUTBOL
+       UTILIZANDO MOTORES DYNAMIXEL
+       -> https://arxiv.org/pdf/2310.17058  [Fuera de la lista -> SUGERENCIA-02]
+
+  Anio 2022 (1 enlace):
+   13) ROBOTICA MOVEL E INTELIGENCIA ARTIFICIAL PARA INVESTIGACAO, COMPETICAO E
+       AUTOMATIZACAO DE SISTEMAS INDUSTRIAIS
+       -> https://arxiv.org/pdf/2210.11195  [Fuera de la lista -> SUGERENCIA-03]
+
+1.4 Enlaces rotos, cruzados o defectuosos detectados en https://urubots.uy
+--------------------------------------------------------------------------
+  1. [CRITICO - ENLACE CRUZADO EN /tdps]:
+     En la seccion 2024 de https://urubots.uy/tdps, el texto visible dice:
+       "CONFIGURACAO E OPERACAO DA PLATAFORMA CLEARPATH HUSKY A200 E MANIPULADOR
+        COBOT UR5 2-FINGER GRIPPER"
+     pero el hipervinculo apunta a:
+       https://arxiv.org/pdf/2411.05011
+     Al abrir arXiv:2411.05011, ese documento es en realidad:
+       "De la Extension a la Investigacion: Como La Robotica Estimula el Interes
+        Academico en Estudiantes de Grado" (Gabriela Flores et al., 2024, que es
+        el paper #5 / #19 de PAPERS_PEDIDOS.txt).
+     Por su parte, el paper del Clearpath Husky A200 + UR5 existe en arXiv bajo
+     otro identificador:
+       https://arxiv.org/pdf/2410.17453
+     Como consecuencia, hoy un visitante que busca el paper de Husky A200 abre
+     otro archivo, y quien busca el paper "De la Extension a la Investigacion..."
+     no lo encuentra por su titulo en la pagina.
+
+  2. [TARJETAS DE BLOG SIN PAGINA DE DETALLE PROPIA / 404 EN SLUGS]:
+     Las entradas del blog en / y /blog muestran resumenes, pero el sitio no
+     resuelve rutas individuales estables tipo /blog/<slug> (devuelven 404 si se
+     intenta navegar a una URL de detalle individual) ni enlaza directamente a
+     las notas completas publicadas en el portal de noticias de UTEC
+     (https://utec.edu.uy).
+
+  3. [FALTA DE ENLACES EXTERNOS OBLIGATORIOS]:
+     No hay enlaces activos en la barra, cuerpo o footer hacia la organizacion
+     de GitHub del equipo (https://github.com/UruBots), ni al repositorio del
+     robot de servicio Base@Home (https://github.com/ShiiSuii/base_athome), ni
+     a la web oficial de la liga RoboCup@Home (https://athome.robocup.org/).
+
+1.5 Fechas y senales de desactualizacion o inconsistencia
+---------------------------------------------------------
+  - Publicaciones (/tdps) congeladas en agosto de 2025: El ultimo documento
+    cargado es arXiv:2508.21271 (agosto de 2025). Faltan todos los trabajos de
+    2026 (8 papers en arXiv entre mayo y octubre de 2026), el capitulo de ICSR
+    (Springer LNCS) y el paper de IEEE INDIN 2025.
+  - Premios (/awards) congelados en 2024: Solo menciona FIRA 2023 (Alemania) y
+    FIRA 2024 (Brasil). No incluye los logros de 2025 y 2026 que el propio blog
+    del sitio anuncia (podio en RoboCup 2025 en Salvador de Bahia, 1.er y 3.er
+    puesto de drones en FIRA 2025 en Daegu, Corea del Sur, y 1.er puesto en el
+    desafio tecnico United de Autos Autonomos en FIRA 2026 en Canada).
+  - Ausencia total de RoboCup@Home OPL y del robot Base@Home: El sitio no
+    menciona en ninguna pagina la liga RoboCup@Home ni el robot domestico
+    Base@Home con el que el equipo se postula antes del 06/12/2026.
+  - Idioma por defecto en espanol y textos mezclados: Al abrir https://urubots.uy
+    carga en espanol por defecto (mientras el reglamento de RoboCup@Home exige
+    ingles como idioma por defecto). Ademas, en la version en espanol quedan
+    etiquetas sin traducir en /team ("Founder", "Teacher", "Programmer",
+    "Student") y en /contact ("Your Name", "Your Email", "Your Message" junto al
+    boton "Enviar").
+  - Erratas ortograficas visibles:
+    * En /team: "Gabriel da Silvia" (en los papers figura "Gabriel da Silva").
+    * En /contact: "Guido Machado Brun KM 496" (la avenida en Rivera es "Guido
+      Machado Brum").
+    * En /blog (nota 3): "se preparapara representar" (falta espacio).
+    * En portada (/): "Nuestros ultimos Posts" (falta tilde en "ultimos").
+
+
+================================================================================
+2. AUDITORIA DE LOS 23 PAPERS DE PAPERS_PEDIDOS.txt Y SUGERENCIAS ADICIONALES
+================================================================================
+
+Confirmacion de duplicados solicitada en PAPERS_PEDIDOS.txt:
+  * DUPLICADO 1 CONFIRMADO (#5 == #19):
+    - #5:  "De la extension a la investigacion: Como la robotica estimula el
+            interes academico en estudiantes de grado"
+    - #19: "De la Extension a la Investigacion: Como La Robotica Estimula el
+            Interes Academico en Estudiantes de Grado"
+    -> Son exactamente el mismo preprint de arXiv (arXiv:2411.05011, Gabriela
+       Flores et al., 2024); solo difiere el uso de mayusculas.
+  * DUPLICADO 2 CONFIRMADO (#9 == #20):
+    - #9:  "Stress-Query and Temporal Reliability of Vision-Language Models as
+            copilots in Autonomous UAV Navigation"
+    - #20: "Stress-Query and Temporal Reliability of Vision-Language Models as
+            copilots in Autonomous UAV Navigation"
+    -> Son exactamente el mismo titulo y trabajo (arXiv:2610.23877, Hiago Sodre
+       et al., aceptado en LARS 2026).
+
+A continuacion se detalla el estado y la ficha bibliografica verificada de cada
+uno de los 23 items numerados del 1 al 23:
+
+--------------------------------------------------------------------------------
+[01] Behavior cloning for mini autonomous car path following
+--------------------------------------------------------------------------------
+  - ¿Esta en urubots.uy?: SI (en /tdps bajo 2024, solo titulo y link a PDF de
+    arXiv; falta indicar que fue publicado en IEEE URUCON 2024 con DOI IEEE).
+  - Titulo exacto: Behavior Cloning for Mini Autonomous Car Path Following
+  - Autores: Pablo Moraes, Christopher Peters, Hiago Sodre, William Moraes,
+    Sebastian Barcelona, Juan Deniz, Victor D. Castelli, Bruna de Vargas
+    Guterres, Ricardo Bedin Grando
+  - Anio: 2024
+  - Sede o revista: 2024 IEEE URUCON (Montevideo, Uruguay, pp. 1-5) / Preprint
+    en arXiv (cs.RO)
+  - Tipo: Paper (articulo cientifico de conferencia IEEE)
+  - URL / DOI verificado:
+      * arXiv (abs): https://arxiv.org/abs/2410.07209
+      * arXiv (PDF): https://arxiv.org/pdf/2410.07209
+      * DOI IEEE:    https://doi.org/10.1109/URUCON63440.2024.10850290
+  - Resumen (1 linea): Implementa y evalua aprendizaje por imitacion (behavior
+    cloning con redes neuronales convolucionales) para el seguimiento autonomo
+    de trayectorias en vehiculos a escala a partir de imagenes de camara.
+
+--------------------------------------------------------------------------------
+[02] Aplicacion de Robots Humanoides como Guias Interactivos en Museos: Una
+     Simulacion con el Robot NAO
+--------------------------------------------------------------------------------
+  - ¿Esta en urubots.uy?: SI (en /tdps bajo 2023, solo titulo y link a PDF).
+  - Titulo exacto: Aplicacion de Robots Humanoides como Guias Interactivos en
+    Museos: Una Simulacion con el Robot NAO
+  - Autores: Hiago Sodre, Pablo Moraes, Monica Rodriguez, Victor Castelli,
+    Pamela Barboza, Martin Mattos, Guillermo Vivas, Bruna de Vargas, Tobias
+    Dörnbach, Ricardo Grando
+  - Anio: 2023
+  - Sede o revista: FEBITEC 2023 (Feira Binacional de Tecnologia, Rivera /
+    Sant'Ana do Livramento) / Preprint en arXiv (cs.RO)
+  - Tipo: Paper (articulo de congreso regional / preprint)
+  - URL / DOI verificado:
+      * arXiv (abs): https://arxiv.org/abs/2310.17060
+      * arXiv (PDF): https://arxiv.org/pdf/2310.17060
+      * DOI arXiv:   https://doi.org/10.48550/arXiv.2310.17060
+  - Resumen (1 linea): Disena y simula una aplicacion interactiva con el robot
+    humanoide NAO actuando como guia autonomo de museos para mejorar la
+    experiencia educativa y cultural de los visitantes.
+
+--------------------------------------------------------------------------------
+[03] Urubots autonomous cars team one description paper for fira 2024
+--------------------------------------------------------------------------------
+  - ¿Esta en urubots.uy?: SI (en /tdps bajo 2024, solo titulo y link a PDF).
+  - Titulo exacto: UruBots Autonomous Cars Team One Description Paper for FIRA
+    2024
+  - Autores: Pablo Moraes, Christopher Peters, Any Da Rosa, Vinicio Melgar,
+    Franco Nunez, Maximo Retamar, William Moraes, Victoria Saravia, Hiago Sodre,
+    Sebastian Barcelona, Anthony Scirgalea, Juan Deniz, Bruna Guterres, Andre
+    Kelbouscas, Ricardo Grando
+  - Anio: 2024
+  - Sede o revista: FIRA RoboWorld Cup 2024 (Maranhao, Brasil) / Preprint en
+    arXiv (cs.RO)
+  - Tipo: TDP (Team Description Paper)
+  - URL / DOI verificado:
+      * arXiv (abs): https://arxiv.org/abs/2406.08745
+      * arXiv (PDF): https://arxiv.org/pdf/2406.08745
+      * DOI arXiv:   https://doi.org/10.48550/arXiv.2406.08745
+  - Resumen (1 linea): Describe el diseno de hardware de bajo costo y el
+    pipeline de conduccion autonoma del Equipo 1 de UruBots para el desafio de
+    autos autonomos de la FIRA RoboWorld Cup 2024.
+
+--------------------------------------------------------------------------------
+[04] UruBots UAV--Air Emergency Service Indoor Team Description Paper for FIRA
+     2024
+--------------------------------------------------------------------------------
+  - ¿Esta en urubots.uy?: SI (en /tdps bajo 2024, solo titulo y link a PDF).
+  - Titulo exacto: UruBots UAV -- Air Emergency Service Indoor Team Description
+    Paper for FIRA 2024
+  - Autores: Hiago Sodre, Sebastian Barcelona, Anthony Scirgalea, Brandon
+    Macedo, Gabriel Sampson, Pablo Moraes, William Moraes, Victoria Saravia,
+    Juan Deniz, Bruna Guterres, Andre Kelbouscas, Ricardo Grando
+  - Anio: 2024
+  - Sede o revista: FIRA RoboWorld Cup 2024 (Maranhao, Brasil) / Preprint en
+    arXiv (cs.RO)
+  - Tipo: TDP (Team Description Paper)
+  - URL / DOI verificado:
+      * arXiv (abs): https://arxiv.org/abs/2406.08753
+      * arXiv (PDF): https://arxiv.org/pdf/2406.08753
+      * DOI arXiv:   https://doi.org/10.48550/arXiv.2406.08753
+  - Resumen (1 linea): Presenta la arquitectura de navegacion autonoma basada en
+    vision artificial sin operador externo para el dron de UruBots en la liga
+    Air Emergency Service Indoor de FIRA 2024.
+
+--------------------------------------------------------------------------------
+[05] De la extension a la investigacion: Como la robotica estimula el interes
+     academico en estudiantes de grado  [DUPLICADO CON #19]
+--------------------------------------------------------------------------------
+  - ¿Esta en urubots.uy?: PARCIAL (su enlace https://arxiv.org/pdf/2411.05011
+    SI esta en /tdps bajo 2024, pero figura por error con el titulo de otro
+    trabajo: "CONFIGURACAO E OPERACAO DA PLATAFORMA CLEARPATH HUSKY A200...").
+  - Titulo exacto: De la Extension a la Investigacion: Como La Robotica Estimula
+    el Interes Academico en Estudiantes de Grado
+  - Autores: Gabriela Flores, Ahilen Mazondo, Pablo Moraes, Hiago Sodre,
+    Christopher Peters, Victoria Saravia, Angel Da Silva, Santiago Fernandez,
+    Bruna de Vargas, Andre Kelbouscas, Ricardo Grando, Nathalie Assuncao
+  - Anio: 2024
+  - Sede o revista: Preprint en arXiv (cs.CY / cs.RO); sede de congreso/evento
+    POR CONFIRMAR por el equipo.
+  - Tipo: Paper (articulo de investigacion educativa / extension universitaria)
+  - URL / DOI verificado:
+      * arXiv (abs): https://arxiv.org/abs/2411.05011
+      * arXiv (PDF): https://arxiv.org/pdf/2411.05011
+      * DOI arXiv:   https://doi.org/10.48550/arXiv.2411.05011
+  - Resumen (1 linea): Analiza como la participacion estudiantil en proyectos de
+    extension y competencias de robotica (UruBots) fortalece el aprendizaje
+    colaborativo y despierta vocaciones de investigacion cientifica en grado.
+
+--------------------------------------------------------------------------------
+[06] Remote vs. Presence Laboratories in Human-Robot Interaction with Social
+     Robots: A Study on Task Performance
+--------------------------------------------------------------------------------
+  - ¿Esta en urubots.uy?: NO (falta por completo en el sitio).
+  - Titulo exacto: Remote vs. Presence Laboratories in Human-Robot Interaction
+    with Social Robots: A Study on Task Performance
+  - Autores: Christopher Peters, Kai M. Blum, Ibrahim Al Krad, Pablo Moraes,
+    Ricardo Bedin Grando, Reinhard Gerndt, Tobias Doernbach
+  - Anio: 2025 (conferencia ICSR 2024, publicado en Springer LNCS en 2025)
+  - Sede o revista: International Conference on Social Robotics (ICSR, "Social
+    Robotics + AI"), Lecture Notes in Computer Science (LNCS), Springer
+  - Tipo: Paper (articulo cientifico en actas de conferencia internacional)
+  - URL / DOI verificado:
+      * DOI oficial Springer: https://doi.org/10.1007/978-981-95-2379-5_7
+  - Resumen (1 linea): Compara experimentalmente el desempeno en tareas y la
+    experiencia de usuario al interactuar con robots sociales en laboratorios
+    remotos frente a laboratorios presenciales.
+
+--------------------------------------------------------------------------------
+[07] Robocup Rescue 2025 team description paper urubots
+--------------------------------------------------------------------------------
+  - ¿Esta en urubots.uy?: SI (en /tdps bajo 2025, solo titulo y link a PDF).
+  - Titulo exacto: RoboCup Rescue 2025 Team Description Paper UruBots
+  - Autores: Kevin Farias, Pablo Moraes, Igor Nunes, Juan Deniz, Sebastian
+    Barcelona, Hiago Sodre, William Moraes, Monica Rodriguez, Ahilen Mazondo,
+    Vincent Sandin, Gabriel da Silva, Victoria Saravia, Vinicio Melgar, Santiago
+    Fernandez, Ricardo Grando
+  - Anio: 2025
+  - Sede o revista: RoboCup 2025 Rescue Robot League (Salvador de Bahia, Brasil)
+    / Preprint en arXiv (cs.RO)
+  - Tipo: TDP (Team Description Paper)
+  - URL / DOI verificado:
+      * arXiv (abs): https://arxiv.org/abs/2504.09778
+      * arXiv (PDF): https://arxiv.org/pdf/2504.09778
+      * DOI arXiv:   https://doi.org/10.48550/arXiv.2504.09778
+  - Resumen (1 linea): Documenta el vehiculo de rescate abierto de UruBots y su
+    integracion de ROS, SLAM, percepcion y HRI para deteccion de victimas en el
+    debut del equipo en la RoboCup Rescue Robot League 2025.
+
+--------------------------------------------------------------------------------
+[08] Interação entre robôs humanoides: desenvolvendo a colaboração e comunicação
+     autônoma
+--------------------------------------------------------------------------------
+  - ¿Esta en urubots.uy?: SI (en /tdps bajo 2024, solo titulo y link a PDF).
+  - Titulo exacto: Interacao entre robos humanoides: desenvolvendo a colaboracao
+    e comunicacao autonoma
+  - Autores: Pablo Moraes, Monica Rodriguez, Christopher Peters, Hiago Sodre,
+    Ahilen Mazondo, Vincent Sandin, Sebastian Barcelona, William Moraes,
+    Santiago Fernandez, Nathalie Assuncao, Bruna de Vargas, Tobias Dörnbach,
+    Andre Kelbouscas, Ricardo Grando
+  - Anio: 2024
+  - Sede o revista: Preprint en arXiv (cs.RO / cs.CL); evento especifico POR
+    CONFIRMAR por el equipo.
+  - Tipo: Paper (articulo tecnico / preprint)
+  - URL / DOI verificado:
+      * arXiv (abs): https://arxiv.org/abs/2410.17450
+      * arXiv (PDF): https://arxiv.org/pdf/2410.17450
+      * DOI arXiv:   https://doi.org/10.48550/arXiv.2410.17450
+  - Resumen (1 linea): Explora mecanismos de comunicacion y coordinacion
+    autonoma entre robots humanoides para ejecutar tareas colaborativas sin
+    intervencion humana directa.
+
+--------------------------------------------------------------------------------
+[09] Stress-Query and Temporal Reliability of Vision-Language Models as copilots
+     in Autonomous UAV Navigation  [DUPLICADO CON #20]
+--------------------------------------------------------------------------------
+  - ¿Esta en urubots.uy?: NO (falta por completo en el sitio).
+  - Titulo exacto: Stress-Query and Temporal Reliability of Vision-Language
+    Models as copilots in Autonomous UAV Navigation
+  - Autores: Hiago Sodre, Sebastian Barcelona, Vincent Sandin, Pablo Moraes,
+    Andre S. Kelbouscas, Ricardo B. Grando
+  - Anio: 2026
+  - Sede o revista: Accepted at Latin American Robotics Symposium (LARS 2026) /
+    Preprint en arXiv (cs.RO). DOI de IEEE Xplore de las actas: POR CONFIRMAR
+    cuando se publique el volumen de LARS 2026.
+  - Tipo: Paper (articulo cientifico de conferencia)
+  - URL / DOI verificado:
+      * arXiv (abs): https://arxiv.org/abs/2610.23877
+      * arXiv (PDF): https://arxiv.org/pdf/2610.23877
+      * DOI arXiv:   https://doi.org/10.48550/arXiv.2610.23877
+  - Resumen (1 linea): Evalua mediante pruebas de estres los cuellos de botella
+    temporales y la confiabilidad operativa de modelos de vision-lenguaje (VLM)
+    actuando como copilotos en la navegacion autonoma de drones (UAVs).
+
+--------------------------------------------------------------------------------
+[10] A Heterogeneous UAV UGV Methodology for Aerial Tracking of Mini Autonomous
+     Cars
+--------------------------------------------------------------------------------
+  - ¿Esta en urubots.uy?: NO (falta por completo en el sitio).
+  - Titulo exacto: A Heterogeneous UAV UGV Methodology for Aerial Tracking of
+    Mini Autonomous Cars
+  - Autores: Santiago Fernandez, Angel Gabriel Da Silva, Hiago Sodre, Pablo
+    Moraes, Bruna Guterres, Ricardo B. Grando
+  - Anio: 2026
+  - Sede o revista: Preprint en arXiv (cs.RO); conferencia destino POR CONFIRMAR
+    por el equipo (posible envio a LARS/SBR 2026).
+  - Tipo: Paper (articulo cientifico / preprint)
+  - URL / DOI verificado:
+      * arXiv (abs): https://arxiv.org/abs/2610.23878
+      * arXiv (PDF): https://arxiv.org/pdf/2610.23878
+      * DOI arXiv:   https://doi.org/10.48550/arXiv.2610.23878
+  - Resumen (1 linea): Propone una metodologia cooperativa UAV-UGV en ROS 2 y
+    Gazebo que fusiona deteccion visual aerea con telemetria terrestre para
+    mitigar oclusiones en el seguimiento de mini vehiculos autonomos.
+
+--------------------------------------------------------------------------------
+[11] Vision-Language Models as copilots for Autonomous UAV Navigation: Analysis
+     of Latency and Reliability in Degraded Environments
+--------------------------------------------------------------------------------
+  - ¿Esta en urubots.uy?: NO (falta por completo en el sitio).
+  - Titulo exacto: Vision-Language Models as copilots for Autonomous UAV
+    Navigation: Analysis of Latency and Reliability in Degraded Environments
+  - Autores: Hiago Sodre, Sebastian Barcelona, Vincent Sandin, Pablo Ezequiel
+    Moraes, Ahilen Mazondo, Igor Nunes, William Moraes, Andre L. S. da
+    Kelbouscas, Ricardo B. Grando
+  - Anio: 2026
+  - Sede o revista: Preprint en arXiv (cs.RO); conferencia destino POR CONFIRMAR
+    por el equipo.
+  - Tipo: Paper (articulo cientifico / preprint)
+  - URL / DOI verificado:
+      * arXiv (abs): https://arxiv.org/abs/2609.26084
+      * arXiv (PDF): https://arxiv.org/pdf/2609.26084
+      * DOI arXiv:   https://doi.org/10.48550/arXiv.2609.26084
+  - Resumen (1 linea): Presenta una arquitectura hibrida FSM-VLM para drones en
+    entornos sin GPS y mide errores sintacticos frente a alucinaciones
+    semanticas bajo condiciones degradadas en simulacion SITL.
+
+--------------------------------------------------------------------------------
+[12] Situation Aware Locomotion for Dual Mobile Cobots in Shared Environments
+--------------------------------------------------------------------------------
+  - ¿Esta en urubots.uy?: NO (falta por completo en el sitio).
+  - Titulo exacto: Situation Aware Locomotion for Dual Mobile Cobots in Shared
+    Environments
+  - Autores: William Moraes, Igor Nunes, Ahilen Mazondo, Sebastian Barcelona,
+    Hiago Sodre, Pablo Ezequiel Moraes, Ricardo B. Grando
+  - Anio: 2026
+  - Sede o revista: Preprint en arXiv (cs.RO); conferencia destino POR CONFIRMAR
+    por el equipo.
+  - Tipo: Paper (articulo cientifico / preprint)
+  - URL / DOI verificado:
+      * arXiv (abs): https://arxiv.org/abs/2609.26083
+      * arXiv (PDF): https://arxiv.org/pdf/2609.26083
+      * DOI arXiv:   https://doi.org/10.48550/arXiv.2609.26083
+  - Resumen (1 linea): Desarrolla un marco de locomocion con conciencia
+    situacional para dos cobots moviles en espacios industriales compartidos,
+    eliminando conflictos de zona y paradas de emergencia en simulacion.
+
+--------------------------------------------------------------------------------
+[13] Situation Aware Frontier Prioritization for Quadruped Search and Rescue
+--------------------------------------------------------------------------------
+  - ¿Esta en urubots.uy?: NO (falta por completo en el sitio).
+  - Titulo exacto: Situation Aware Frontier Prioritization for Quadruped Search
+    and Rescue
+  - Autores: Kevin Farias, Santiago Martin, Barbara Flores, Vinicio Melgar,
+    Igor Nunes, Hiago Sodre, Pablo Moraes, Ricardo B. Grando
+  - Anio: 2026
+  - Sede o revista: Preprint en arXiv (cs.RO); conferencia destino POR CONFIRMAR
+    por el equipo.
+  - Tipo: Paper (articulo cientifico / preprint)
+  - URL / DOI verificado:
+      * arXiv (abs): https://arxiv.org/abs/2608.02571
+      * arXiv (PDF): https://arxiv.org/pdf/2608.02571
+      * DOI arXiv:   https://doi.org/10.48550/arXiv.2608.02571
+  - Resumen (1 linea): Extiende la exploracion por fronteras para robots
+    cuadrupedos en rescate urbano ponderando ganancia de informacion, relevancia
+    de victimas y penalizacion de terreno en escenarios interiores complejos.
+
+--------------------------------------------------------------------------------
+[14] Hybrid Attention Estimation Pipeline for Adaptive HRI Using an Expressive
+     Robotic Head
+--------------------------------------------------------------------------------
+  - ¿Esta en urubots.uy?: NO (falta por completo en el sitio).
+  - Titulo exacto: Hybrid Attention Estimation Pipeline for Adaptive HRI Using
+    an Expressive Robotic Head
+  - Autores: Pablo Moraes, Monica Rodriguez, Christopher Peters, Hiago Sodre,
+    Tobias Doernbach, Bruna Guterres, Ricardo Grando
+  - Anio: 2026
+  - Sede o revista: Preprint en arXiv (cs.RO / cs.AI); conferencia destino POR
+    CONFIRMAR por el equipo.
+  - Tipo: Paper (articulo cientifico / preprint)
+  - URL / DOI verificado:
+      * arXiv (abs): https://arxiv.org/abs/2608.00284
+      * arXiv (PDF): https://arxiv.org/pdf/2608.00284
+      * DOI arXiv:   https://doi.org/10.48550/arXiv.2608.00284
+  - Resumen (1 linea): Combina una capa geometrica rapida de pose de cabeza con
+    una capa semantica basada en VLM para estimar la atencion visual del usuario
+    en interaccion humano-robot con un cabezal robotico expresivo InMoov.
+
+--------------------------------------------------------------------------------
+[15] Mini Autonomous Car Driving Based on 3D Convolutional Neural Networks
+--------------------------------------------------------------------------------
+  - ¿Esta en urubots.uy?: SI (en /tdps bajo 2025, solo titulo y link a PDF de
+    arXiv; falta indicar que fue publicado en SBR/WRE 2025 - SBC).
+  - Titulo exacto: Mini Autonomous Car Driving Based on 3D Convolutional Neural
+    Networks
+  - Autores: Pablo Ezequiel Moraes, Monica Rodriguez, Kristofer S. Kappel,
+    Hiago Sodre, Santiago Fernandez, Igor Nunes, Bruna Guterres, Ricardo B.
+    Grando
+  - Anio: 2025
+  - Sede o revista: XVII Simposio Brasileiro de Robotica (SBR 2025) / XVI
+    Workshop de Robotica na Educacao (WRE 2025), Sociedade Brasileira de
+    Computacao (SBC), Vitoria/ES, Brasil, pp. 206-212 / Preprint en arXiv
+  - Tipo: Paper (articulo cientifico de conferencia SBC)
+  - URL / DOI verificado:
+      * arXiv (abs): https://arxiv.org/abs/2508.21271
+      * arXiv (PDF): https://arxiv.org/pdf/2508.21271
+      * DOI arXiv:   https://doi.org/10.48550/arXiv.2508.21271
+      * URL SBC SOL: POR CONFIRMAR URL exacta del articulo en sol.sbc.org.br
+  - Resumen (1 linea): Evalua redes neuronales convolucionales 3D (3D CNN) con
+    entradas RGB-D frente a arquitecturas recurrentes para conduccion autonoma
+    extremo a extremo en pistas simuladas de distinta complejidad.
+
+--------------------------------------------------------------------------------
+[16] UruBots Autonomous Cars Challenge Pro Team Description Paper for FIRA 2025
+--------------------------------------------------------------------------------
+  - ¿Esta en urubots.uy?: SI (en /tdps bajo 2025, solo titulo y link a PDF).
+  - Titulo exacto: UruBots Autonomous Cars Challenge Pro Team Description Paper
+    for FIRA 2025
+  - Autores: Pablo Moraes, Monica Rodriguez, Sebastian Barcelona, Angel Da
+    Silva, Santiago Fernandez, Hiago Sodre, Igor Nunes, Bruna de Vargas
+    Guterres, Ricardo Bedin Grando
+  - Anio: 2025
+  - Sede o revista: FIRA RoboWorld Cup 2025 (Daegu, Corea del Sur) / Preprint en
+    arXiv (cs.RO)
+  - Tipo: TDP (Team Description Paper)
+  - URL / DOI verificado:
+      * arXiv (abs): https://arxiv.org/abs/2506.07348
+      * arXiv (PDF): https://arxiv.org/pdf/2506.07348
+      * DOI arXiv:   https://doi.org/10.48550/arXiv.2506.07348
+  - Resumen (1 linea): Detalla la plataforma de vehiculo electrico a escala y el
+    sistema de control extremo a extremo mediante aprendizaje profundo para la
+    categoria Autonomous Cars Challenge Pro de FIRA 2025.
+
+--------------------------------------------------------------------------------
+[17] UruBots RoboCup Work Team Description Paper
+--------------------------------------------------------------------------------
+  - ¿Esta en urubots.uy?: SI (en /tdps bajo 2025, solo titulo y link a PDF).
+  - Titulo exacto: UruBots RoboCup Work Team Description Paper
+  - Autores: Hiago Sodre, Juan Deniz, Pablo Moraes, William Moraes, Igor Nunes,
+    Vincent Sandin, Ahilen Mazondo, Santiago Fernandez, Gabriel da Silva,
+    Monica Rodriguez, Sebastian Barcelona, Ricardo Grando
+  - Anio: 2025
+  - Sede o revista: RoboCup 2025 @Work League (Salvador de Bahia, Brasil) /
+    Preprint en arXiv (cs.RO)
+  - Tipo: TDP (Team Description Paper)
+  - URL / DOI verificado:
+      * arXiv (abs): https://arxiv.org/abs/2504.09755
+      * arXiv (PDF): https://arxiv.org/pdf/2504.09755
+      * DOI arXiv:   https://doi.org/10.48550/arXiv.2504.09755
+  - Resumen (1 linea): Presenta la arquitectura basada en el robot movil hibrido
+    AgileX LIMO con brazo manipulador para navegacion autonoma y manipulacion
+    industrial en la liga RoboCup@Work 2025.
+
+--------------------------------------------------------------------------------
+[18] Implementación de Navegación en Plataforma Robótica Móvil Basada en ROS y
+     Gazebo
+--------------------------------------------------------------------------------
+  - ¿Esta en urubots.uy?: SI (en /tdps bajo 2024, solo titulo y link a PDF).
+  - Titulo exacto: Implementacion de Navegacion en Plataforma Robotica Movil
+    Basada en ROS y Gazebo
+  - Autores: Angel Da Silva, Santiago Fernandez, Braian Vidal, Hiago Sodre,
+    Pablo Moraes, Christopher Peters, Sebastian Barcelona, Vincent Sandin,
+    William Moraes, Ahilen Mazondo, Brandon Macedo, Nathalie Assuncao, Bruna de
+    Vargas, Andre Kelbouscas, Ricardo Grando
+  - Anio: 2024
+  - Sede o revista: Preprint en arXiv (cs.RO); evento especifico POR CONFIRMAR
+    por el equipo.
+  - Tipo: Paper (articulo tecnico / preprint)
+  - URL / DOI verificado:
+      * arXiv (abs): https://arxiv.org/abs/2410.19972
+      * arXiv (PDF): https://arxiv.org/pdf/2410.19972
+      * DOI arXiv:   https://doi.org/10.48550/arXiv.2410.19972
+  - Resumen (1 linea): Implementa y valida un entorno de mapeo y navegacion
+    autonoma para plataformas roboticas moviles diferenciales empleando ROS y el
+    simulador fisico Gazebo.
+
+--------------------------------------------------------------------------------
+[19] De la Extensión a la Investigación: Como La Robótica Estimula el Interés
+     Académico en Estudiantes de Grado  [DUPLICADO EXACTO DE #5]
+--------------------------------------------------------------------------------
+  - ¿Esta en urubots.uy?: PARCIAL (ver ficha completa en [05]; es el mismo
+    documento arXiv:2411.05011, cuyo enlace figura en /tdps bajo el titulo
+    equivocado de Clearpath Husky A200). No duplicar al publicar en la web.
+
+--------------------------------------------------------------------------------
+[20] Stress-Query and Temporal Reliability of Vision-Language Models as copilots
+     in Autonomous UAV Navigation  [DUPLICADO EXACTO DE #9]
+--------------------------------------------------------------------------------
+  - ¿Esta en urubots.uy?: NO (ver ficha completa en [09]; es exactamente el
+    mismo trabajo arXiv:2610.23877 aceptado en LARS 2026). No duplicar al
+    publicar en la web.
+
+--------------------------------------------------------------------------------
+[21] Impact of Dataset Composition on Embedded Real-Time UAV Wildfire Detection
+     Using Compact YOLO Models
+--------------------------------------------------------------------------------
+  - ¿Esta en urubots.uy?: NO (falta por completo en el sitio).
+  - Titulo exacto: Impact of Dataset Composition on Embedded Real-Time UAV
+    Wildfire Detection Using Compact YOLO Models
+  - Autores: Eduardo de los Santos, Andre S. Kelbouscas, Ricardo B. Grando,
+    Bruna V. Guterres
+  - Anio: 2026
+  - Sede o revista: Accepted at 2026 International Conference on Control,
+    Automation and Systems (ICCAS 2026) / Preprint en arXiv (cs.CV). DOI de actas
+    ICCAS: POR CONFIRMAR tras publicacion final.
+  - Tipo: Paper (articulo cientifico de conferencia internacional)
+  - URL / DOI verificado:
+      * arXiv (abs): https://arxiv.org/abs/2608.07554
+      * arXiv (PDF): https://arxiv.org/pdf/2608.07554
+      * DOI arXiv:   https://doi.org/10.48550/arXiv.2608.07554
+  - Resumen (1 linea): Analiza el impacto de combinar datos reales, aumentados y
+    sinteticos en el entrenamiento de modelos YOLO compactos para deteccion de
+    incendios forestales en tiempo real a bordo de drones (UAVs).
+
+--------------------------------------------------------------------------------
+[22] Benchmarking ResNet Backbones in RT-DETR: Impact of Depth and
+     Regularization under environmental conditions
+--------------------------------------------------------------------------------
+  - ¿Esta en urubots.uy?: NO (falta por completo en el sitio).
+  - Titulo exacto: Benchmarking ResNet Backbones in RT-DETR: Impact of Depth and
+    Regularization under environmental conditions
+  - Autores: Pamela Barboza, Victor Castelli, Belen Pereira, Ricardo Grando,
+    Bruna de Vargas, Augusto Calfani, Gabriela Flores
+  - Anio: 2026
+  - Sede o revista: Accepted at International Conference on Data Science,
+    Technology and Applications (DATA 2026, SciTePress) / Preprint en arXiv
+    (cs.CV). DOI SciTePress (prefijo 10.5220): POR CONFIRMAR.
+  - Tipo: Paper (articulo cientifico de conferencia internacional)
+  - URL / DOI verificado:
+      * arXiv (abs): https://arxiv.org/abs/2605.08136
+      * arXiv (PDF): https://arxiv.org/pdf/2605.08136
+      * DOI arXiv:   https://doi.org/10.48550/arXiv.2605.08136
+  - Resumen (1 linea): Compara cuatro backbones ResNet (18, 34, 50 y 101) y
+    tasas de dropout en el detector RT-DETR ante variaciones de iluminacion y
+    contraste de fondo relevantes para robotica de competencia.
+
+--------------------------------------------------------------------------------
+[23] Reducing latency in llm-based natural language commands processing for
+     robot navigation
+--------------------------------------------------------------------------------
+  - ¿Esta en urubots.uy?: NO (falta por completo en el sitio).
+  - Titulo exacto: Reducing Latency in LLM-Based Natural Language Commands
+    Processing for Robot Navigation
+  - Autores: Diego Pollini, Bruna V. Guterres, Rodrigo S. Guerra, Ricardo B.
+    Grando
+  - Anio: 2025
+  - Sede o revista: Accepted at 23rd IEEE International Conference on Industrial
+    Informatics (INDIN 2025) / Preprint en arXiv (cs.RO). DOI IEEE Xplore de
+    INDIN: POR CONFIRMAR.
+  - Tipo: Paper (articulo cientifico de conferencia IEEE)
+  - URL / DOI verificado:
+      * arXiv (abs): https://arxiv.org/abs/2506.00075
+      * arXiv (PDF): https://arxiv.org/pdf/2506.00075
+      * DOI arXiv:   https://doi.org/10.48550/arXiv.2506.00075
+  - Resumen (1 linea): Propone una arquitectura directa entre modelos de
+    lenguaje (LLM) y ROS 2 en Gazebo que elimina capas intermedias de transporte
+    y reduce la latencia de procesamiento de comandos de navegacion en un 7,01%.
+
+
+================================================================================
+2B. PAPERS ADICIONALES DE URUBOTS ENCONTRADOS (NO INCLUIDOS EN LA LISTA DE 23)
+================================================================================
+Se encontraron 7 trabajos adicionales de UruBots / GIRIA-UTEC en fuentes
+publicas abiertas. Los primeros 3 ya estan en https://urubots.uy/tdps (uno de
+ellos con el enlace cruzado); los otros 4 no estan en la web ni en la lista:
+
+  [SUGERENCIA-01] (En urubots.uy/tdps figura su titulo, pero con link erroneo a
+  2411.05011; debe apuntar a 2410.17453)
+  - Titulo exacto: Configuracao e operacao da plataforma Clearpath Husky A200 e
+    manipulador Cobot UR5 2-finger gripper
+  - Autores: Hiago Sodre, Sebastian Barcelona, Vincent Sandin, Pablo Moraes,
+    Christopher Peters, Angel da Silva, Gabriela Flores, Ahilen Mazondo,
+    Santiago Fernandez, Nathalie Assuncao, Bruna de Vargas, Ricardo Grando,
+    Andre Kelbouscas
+  - Anio: 2024
+  - Sede o revista: FEBITEC 2024 (Categoria Internacional, Rivera, Uruguay) /
+    Preprint en arXiv (cs.RO)
+  - Tipo: Paper (informe tecnico / articulo de congreso)
+  - URL / DOI verificado:
+      * arXiv (abs): https://arxiv.org/abs/2410.17453
+      * arXiv (PDF): https://arxiv.org/pdf/2410.17453
+      * DOI arXiv:   https://doi.org/10.48550/arXiv.2410.17453
+  - Resumen (1 linea): Guia tecnica de integracion electrica, de seguridad y de
+    software en ROS para la plataforma movil Clearpath Husky A200 acoplada al
+    brazo colaborativo UR5 con pinza de dos dedos.
+
+  [SUGERENCIA-02] (Ya publicado en urubots.uy/tdps bajo 2023; conservar)
+  - Titulo exacto: Diseno y Desarrollo de Prototipos Roboticos para Competencias
+    de Futbol utilizando Motores Dynamixel
+  - Autores: Pablo Moraes, Hiago Sodre, Monica Rodriguez, Andre Kelbouscas, Jean
+    Schuster, Cristiano Schuster, Ricardo Grando
+  - Anio: 2023
+  - Sede o revista: FEBITEC 2023 / Preprint en arXiv (cs.RO)
+  - Tipo: Paper (articulo de congreso / preprint)
+  - URL / DOI verificado:
+      * arXiv (abs): https://arxiv.org/abs/2310.17058
+      * arXiv (PDF): https://arxiv.org/pdf/2310.17058
+      * DOI arXiv:   https://doi.org/10.48550/arXiv.2310.17058
+  - Resumen (1 linea): Presenta el diseno mecatronico y de control con servomotores
+    Dynamixel de los primeros prototipos de robots de futbol desarrollados por
+    el equipo.
+
+  [SUGERENCIA-03] (Ya publicado en urubots.uy/tdps bajo 2022; conservar)
+  - Titulo exacto: Robotica Movel e Inteligencia Artificial para Investigacao,
+    Competicao e Automatizacao de Sistemas Industriais
+  - Autores: Hiago Jacobs Sodre Pereira, Pablo Ezequiel Moraes, Andre Da Silva
+    Kelbouscas, Ricardo Grando
+  - Anio: 2022
+  - Sede o revista: Preprint en arXiv (cs.RO)
+  - Tipo: Paper (articulo fundacional / preprint)
+  - URL / DOI verificado:
+      * arXiv (abs): https://arxiv.org/abs/2210.11195
+      * arXiv (PDF): https://arxiv.org/pdf/2210.11195
+      * DOI arXiv:   https://doi.org/10.48550/arXiv.2210.11195
+  - Resumen (1 linea): Describe las lineas fundacionales de investigacion,
+    competencia y automatizacion industrial con robotica movil e inteligencia
+    artificial del grupo en UTEC.
+
+  [SUGERENCIA-04] (NO esta en urubots.uy ni en la lista de 23 — TDP oficial de
+  UruBots en FIRA 2024)
+  - Titulo exacto: UruBots Autonomous Car Team Two: Team Description Paper for
+    FIRA 2024
+  - Autores: William Moraes, Juan Deniz, Pablo Moraes, Christopher Peters,
+    Vincent Sandin, Gabriel da Silva, Franco Nunez, Maximo Retamar, Victoria
+    Saravia, Hiago Sodre, Sebastian Barcelona, Anthony Scirgalea, Bruna
+    Guterres, Andre Kelbouscas, Ricardo Grando
+  - Anio: 2024
+  - Sede o revista: FIRA RoboWorld Cup 2024 (Maranhao, Brasil) / Preprint en
+    arXiv (cs.RO)
+  - Tipo: TDP (Team Description Paper)
+  - URL / DOI verificado:
+      * arXiv (abs): https://arxiv.org/abs/2406.08741
+      * arXiv (PDF): https://arxiv.org/pdf/2406.08741
+      * DOI arXiv:   https://doi.org/10.48550/arXiv.2406.08741
+  - Resumen (1 linea): Describe el segundo vehiculo autonomo ultraliviano (1,15
+    kg con Raspberry Pi 4 y CNN) de UruBots para la FIRA RoboWorld Cup 2024.
+
+  [SUGERENCIA-05] (NO esta en urubots.uy ni en la lista de 23 — Paper IEEE LARS
+  2024 de miembros de UruBots)
+  - Titulo exacto: Real-time Robotics Situation Awareness for Accident
+    Prevention in Industry
+  - Autores: Juan M. Deniz, Andre S. Kelboucas, Ricardo Bedin Grando
+  - Anio: 2024
+  - Sede o revista: 2024 Latin American Robotics Symposium (LARS), IEEE
+  - Tipo: Paper (articulo cientifico de conferencia IEEE)
+  - URL / DOI verificado:
+      * arXiv (abs): https://arxiv.org/abs/2409.15305
+      * arXiv (PDF): https://arxiv.org/pdf/2409.15305
+      * DOI IEEE:    https://doi.org/10.1109/LARS64411.2024.10786413
+  - Resumen (1 linea): Utiliza un robot movil LoCoBot con YOLOv5/YOLOv8 y
+    alertas por voz (TTS) para detectar en tiempo real la falta de equipos de
+    proteccion personal y prevenir accidentes industriales.
+
+  [SUGERENCIA-06] (NO esta en urubots.uy ni en la lista de 23 — Articulo
+  institucional sobre la creacion de UruBots)
+  - Titulo exacto: Creacion del primer grupo universitario de competencias e
+    investigacion en robotica de UTEC: Urubots
+  - Autores: Andre Luiz da Silva Kelbouscas, Nathalie Assuncao Minuzi, Ricardo
+    Bedin Grando, Marion Agustina de Freitas Vidal
+  - Anio: 2024 (publicado en Vol. 2, N.º 2, 2024/2025)
+  - Sede o revista: LINKS Revista Internacional (Centro de Vinculacion Global,
+    UTEC), Vol. 2, N.º 2
+  - Tipo: Paper (articulo de revista institucional / divulgacion academica)
+  - URL / DOI verificado:
+      * DOI oficial: https://doi.org/10.65628/V2.N2.5
+  - Resumen (1 linea): Documenta la genesis, estructura interdisciplinaria,
+    primeros proyectos e impacto educativo internacional del equipo UruBots en
+    la sede Rivera de UTEC.
+
+  [SUGERENCIA-07] (NO esta en urubots.uy ni en la lista de 23 — Paper IEEE
+  URUCON 2024 del grupo GIRIA-UTEC; POR CONFIRMAR si el equipo desea incluirlo
+  en la web de UruBots)
+  - Titulo exacto: Enhancing cattle farming management: A case study from
+    Uruguay
+  - Autores: Ernesto Dos Santos, Bruna de Vargas Guterres, Ricardo Bedin Grando,
+    Je Nam Jun Junior
+  - Anio: 2024
+  - Sede o revista: 2024 IEEE URUCON (Montevideo, Uruguay)
+  - Tipo: Paper (articulo cientifico de conferencia IEEE)
+  - URL / DOI verificado:
+      * DOI IEEE:    https://doi.org/10.1109/URUCON63440.2024.10850188
+  - Resumen (1 linea): Caso de estudio sobre aplicacion de tecnologias de
+    monitoreo y analisis de datos para optimizar la gestion ganadera en Uruguay.
+
+
+================================================================================
+3. COMPARACION DE https://urubots.uy CONTRA LOS REQUISITOS OFICIALES DE
+   CUALIFICACION DE ROBOCUP@HOME OPL
+================================================================================
+
+Fuentes normativas vigentes y versiones citadas:
+  - [CFP-2027]: Call for Participation – RoboCup@Home 2027 (Nuremberg, Alemania,
+    15–21 de junio de 2027), secciones "Instructions for the Website (No IP
+    addresses permitted)" e "Instructions for Open-Source Software".
+    URL: https://athome.robocup.org/call-for-participation-robocuphome-2027/
+    (Verificada el 2026-11-05; fecha limite Paso 2: 06/12/2026 23:59 GMT).
+  - [RB-2026.2]: RoboCup@Home RuleBook, release oficial tag "2026.2" (PDF sha256
+    prefijo d35e93c7...0ce128), Capitulo 1, §1.3 "Team Registration" (archivo
+    fuente: pages/general_rules/TeamRegistration.tex) y §1.7.6 "Open-Source
+    Award". URL: https://github.com/RoboCupAtHome/RuleBook/releases/tag/2026.2
+  - [RB-master]: RoboCup@Home RuleBook, rama "master" ("2027 Rev-1", commit al
+    2026-10-14), donde pages/general_rules/TeamRegistration.tex es identico al
+    de la version 2026.2.
+
+Evaluacion requisito por requisito sobre el estado actual de https://urubots.uy:
+
+  ------------------------------------------------------------------------------
+  [REQ-01] Sitio web accesible por dominio propio ("No IP addresses permitted")
+  ------------------------------------------------------------------------------
+  - Fuente: [CFP-2027] "Instructions for the Website"; [RB-2026.2] §1.3.
+  - Estado en https://urubots.uy: CUMPLIDO.
+  - Detalle: El sitio opera bajo el dominio institucional https://urubots.uy
+    con HTTPS valido, sin direcciones IP en la URL.
+
+  ------------------------------------------------------------------------------
+  [REQ-02] Idioma por defecto en ingles ("The default language for the website
+           is English") y orientado a publico amplio
+  ------------------------------------------------------------------------------
+  - Fuente: [RB-2026.2] §1.3 TeamRegistration.tex; [CFP-2027].
+  - Estado en https://urubots.uy: FALTA (cumplimiento parcial).
+  - Detalle: Aunque existe un selector de idioma (EN / ES / PT), el sitio abre
+    por defecto en espanol ("Somos URUBOTS..."). Para la evaluacion del comite
+    internacional de RoboCup@Home, el idioma por defecto (o la ruta directa que
+    se declare en el Google Form, p. ej. https://urubots.uy/en o
+    https://urubots.uy/athome) DEBE cargar directamente en ingles completo, sin
+    mezclar textos en espanol.
+
+  ------------------------------------------------------------------------------
+  [REQ-03] Fotografias del robot ("Photos and videos of the robot(s)")
+  ------------------------------------------------------------------------------
+  - Fuente: [CFP-2027] "Instructions for the Website"; [RB-2026.2] §1.3.
+  - Estado en https://urubots.uy: FALTA.
+  - Detalle: No hay ninguna fotografia ni diagrama del robot de servicio
+    Base@Home (base diferencial hoverboard, columna con elevador NEMA23, brazo
+    AgileX Piper 6-DOF con camara Orbbec DaBai en muneca, cabeza pan-tilt
+    Dynamixel con RealSense D435 y pantalla facial) en ninguna seccion de
+    https://urubots.uy.
+
+  ------------------------------------------------------------------------------
+  [REQ-04] Videos del robot / Video de cualificacion ("Photos and videos of the
+           robot(s)")
+  ------------------------------------------------------------------------------
+  - Fuente: [CFP-2027] "Instructions for the Video" e "Instructions for the
+            Website"; [RB-2026.2] §1.3.
+  - Estado en https://urubots.uy: FALTA.
+  - Detalle: El sitio no publica ningun video de Base@Home ni cuenta con el
+    bloque destacado para incrustar/enlazar el video de cualificacion 2027 (<=10
+    min, formato 16:9 horizontal, demostrando >=5 habilidades integradas).
+
+  ------------------------------------------------------------------------------
+  [REQ-05] Descripcion de enfoques cientificos y logros ("Descriptions of
+           approaches and scientific achievements")
+  ------------------------------------------------------------------------------
+  - Fuente: [CFP-2027] "Instructions for the Website"; [RB-2026.2] §1.3.
+  - Estado en https://urubots.uy: FALTA para RoboCup@Home OPL.
+  - Detalle: /about solo incluye dos parrafos institucionales generales sobre
+    drones, humanoides y autos. No describe el enfoque cientifico ni la
+    arquitectura de hardware y software de Base@Home (reparto distribuido ROS 2
+    Jazzy + CycloneDDS entre NUC y Jetson Orin Nano, guardas de seguridad de
+    actuadores con auto_enable=False y verificacion de feedback CAN, compilador
+    determinista de lenguaje natural a planes JSON sin LLM en el lazo de control,
+    manipulacion con MoveIt 2 y FollowJointTrajectory, teleoperacion WebXR con
+    Meta Quest 2, cadena ASR con Silero VAD y deteccion YOLO TensorRT a 55 FPS).
+
+  ------------------------------------------------------------------------------
+  [REQ-06] Publicaciones relevantes de los ultimos 5 anos con enlaces de
+           descarga y TDP 2027 ("Relevant publications, ideally from the last 5
+           years, with download links")
+  ------------------------------------------------------------------------------
+  - Fuente: [CFP-2027] "Instructions for the Website"; [RB-2026.2] §1.3.
+  - Estado en https://urubots.uy: FALTA (incompleto y con un enlace cruzado).
+  - Detalle:
+    1) Faltan 10 trabajos unicos de la lista del equipo (todos los de 2026, el
+       capitulo Springer LNCS de ICSR y el paper de IEEE INDIN 2025) mas las
+       sugerencias de 2024 (LARS 2024, FIRA Team Two, revista LINKS).
+    2) El enlace de arXiv:2411.05011 tiene el titulo cambiado por el de
+       Clearpath Husky A200 (arXiv:2410.17453).
+    3) No figuran los autores ni las conferencias/revistas (IEEE URUCON, LARS,
+       SBR, ICSR, ICCAS, DATA, INDIN), y todos aparecen bajo el titulo "Team
+       Description Papers" aunque la mayoria son articulos cientificos.
+    4) Falta el espacio para descargar el TDP de RoboCup@Home OPL 2027.
+
+  ------------------------------------------------------------------------------
+  [REQ-07] Enlaces a repositorios de software abierto activos y documentados
+           para la comunidad ("Links to software repositories for the community.
+           Only documented active software repositories are considered as
+           contributions to the league")
+  ------------------------------------------------------------------------------
+  - Fuente: [CFP-2027] "Instructions for the Website" e "Instructions for
+            Open-Source Software"; [RB-2026.2] §1.3 y §1.7.6.
+  - Estado en https://urubots.uy: FALTA.
+  - Detalle: https://urubots.uy no enlaza al repositorio abierto de Base@Home
+    (https://github.com/ShiiSuii/base_athome) ni a la organizacion
+    https://github.com/UruBots, ni explica que paquetes propios aporta el equipo
+    a la liga (p. ej. base_athome_skills, tools/gpsr_parser, tools/urdf_editor,
+    jetson_head) y como instalarlos/usarlos.
+
+  ------------------------------------------------------------------------------
+  [REQ-08] Mencion explicita de Principal Investigator (con enlace a su web),
+           Team Leader, Contact Person e integrantes
+  ------------------------------------------------------------------------------
+  - Fuente: [CFP-2027] "Mention of the following team members: Principal
+            Investigator of the research group (with a link to their website),
+            Team Leader, Contact Person"; [RB-2026.2] §1.3.
+  - Estado en https://urubots.uy: FALTA (parcial en /team y /contact).
+  - Detalle: En /team aparecen Ricardo Grando y Andre Kelbouscas como "Founder",
+    Pamela Barboza como "Teacher", Sebastian Barcelona como "Programmer" y 18
+    "Student", pero NO se designa explicitamente con las etiquetas pedidas por
+    la convocatoria quien es el:
+      * Principal Investigator (PI) + enlace clicable a su web/perfil academico
+        (Google Scholar / ORCID / CVUy ANII / UTEC),
+      * Team Leader,
+      * Contact Person (nombre + correo institucional),
+    ni quienes integran el equipo especifico de RoboCup@Home OPL.
+
+  ------------------------------------------------------------------------------
+  [REQ-09] Participaciones y rankings previos en torneos internacionales y
+           locales
+  ------------------------------------------------------------------------------
+  - Fuente: [RB-2026.2] §1.3 TeamRegistration.tex; [CFP-2027].
+  - Estado en https://urubots.uy: FALTA ACTUALIZAR (parcial en /awards).
+  - Detalle: /awards solo lista FIRA 2023 y FIRA 2024. Faltan los resultados y
+    rankings de 2025 y 2026 (RoboCup 2025 en Salvador de Bahia —1.er puesto en
+    subcategoria de movilidad en Rescue y participacion en @Work—, FIRA 2025 en
+    Daegu Corea del Sur —1.er puesto desafio tecnico de drones y 3.er puesto
+    general—, FIRA 2026 en Canada —1.er puesto desafio tecnico United en Autos
+    Autonomos—, y torneos locales URUCUP / RoboPampa), ademas de indicar
+    honestamente que Nuremberg 2027 es la primera postulacion del equipo en la
+    liga RoboCup@Home OPL (POR CONFIRMAR por el equipo).
+
+  ------------------------------------------------------------------------------
+  [REQ-10] Enlace al sitio web oficial de la liga RoboCup@Home
+  ------------------------------------------------------------------------------
+  - Fuente: [RB-2026.2] §1.3 TeamRegistration.tex.
+  - Estado en https://urubots.uy: FALTA.
+  - Detalle: No existe ningun enlace hacia https://athome.robocup.org/ en el
+    sitio actual.
+
+
+================================================================================
+4. PAQUETE PARA EL PROGRAMADOR DE https://urubots.uy
+================================================================================
+
+--------------------------------------------------------------------------------
+4.1 Lista priorizada de cambios concretos (que pagina, que agregar y origen)
+--------------------------------------------------------------------------------
+
+PRIORIDAD P0 — OBLIGATORIO ANTES DEL 06/12/2026 PARA LA CUALIFICACION @HOME OPL:
+
+  1. [Nueva ruta/seccion https://urubots.uy/athome (o /projects/base-athome) +
+     Idioma Ingles por defecto]
+     - Que hacer: Crear una pagina dedicada a la postulacion de UruBots en
+       RoboCup@Home Open Platform League (OPL) 2027 con el robot Base@Home,
+       redactada integramente en ingles, o bien hacer que el idioma por defecto
+       de todo https://urubots.uy sea ingles ("EN") y destacar Base@Home en la
+       portada.
+     - Que agregar:
+       a) Bloque superior de "Qualification Materials (RoboCup@Home OPL 2027)":
+          enlaces directos al TDP 2027 (PDF), al Video de Cualificacion 2027
+          (YouTube), al repositorio de codigo abierto
+          (https://github.com/ShiiSuii/base_athome) y al sitio oficial de la
+          liga (https://athome.robocup.org/).
+       b) Galeria de fotos reales del robot Base@Home (vista completa, brazo
+          Piper con camara DaBai en muneca, cabeza pan-tilt con RealSense D435)
+          y diagrama de arquitectura NUC + Jetson Orin Nano.
+       c) Descripcion tecnica en ingles de Hardware y Software de Base@Home,
+          aclarando explicitamente que resultados estan medidos en hardware
+          (NUC_VERIFIED / JETSON_VERIFIED, p. ej. YOLO TensorRT a 55 FPS) y
+          cuales estan validados solo en simulacion (SIM_PASS) o tests unitarios
+          (UNIT_PASS), ya que la simulacion no demuestra seguridad fisica.
+     - De donde sale el dato: El contenido tecnico en ingles, las tablas de
+       hardware/software, el diagrama SVG y la estructura de modulos ya estan
+       redactados y verificados en esta rama dentro de:
+         * web_cualificacion/index.html
+         * web_cualificacion/hardware.html
+         * web_cualificacion/software.html
+         * web_cualificacion/research.html
+         * web_cualificacion/qualification.html
+       El programador puede copiar directamente las secciones HTML/texto de esos
+       archivos. Las fotos y el link de YouTube los aporta el equipo (ver §4.5).
+
+  2. [Pagina /tdps -> Renombrar a "Publications & TDPs" (/tdps o /publications)
+     y actualizar con los 21 trabajos de la lista + sugerencias]
+     - Que hacer:
+       a) Corregir de inmediato el enlace cruzado de 2024:
+          * El titulo "De la Extension a la Investigacion: Como La Robotica
+            Estimula el Interes Academico en Estudiantes de Grado" debe apuntar
+            a https://arxiv.org/pdf/2411.05011 (y https://arxiv.org/abs/2411.05011).
+          * El titulo "Configuracao e Operacao da Plataforma Clearpath Husky
+            A200 e Manipulador Cobot UR5 2-Finger Gripper" debe apuntar a su PDF
+            real: https://arxiv.org/pdf/2410.17453.
+       b) Agregar los 10 trabajos unicos faltantes de PAPERS_PEDIDOS.txt (#6,
+          #9/#20, #10, #11, #12, #13, #14, #21, #22, #23) y las sugerencias
+          verificadas (arXiv:2406.08741, LARS 2024 arXiv:2409.15305, LINKS
+          10.65628/V2.N2.5).
+       c) Mostrar para cada trabajo: Titulo exacto, Autores, Anio, Sede/Revista,
+          Etiqueta de Tipo ("Conference Paper" / "Preprint" / "TDP"), Resumen de
+          1 linea y botones hacia el PDF, arXiv/DOI y BibTeX.
+       d) Separar visualmente o permitir filtrar entre "Scientific Papers" y
+          "Team Description Papers (TDPs)", reservando el primer lugar de 2026/
+          2027 para el TDP de RoboCup@Home OPL 2027.
+     - De donde sale el dato: Tabla completa y bloque BibTeX listos para copiar
+       en §4.2 y §4.3 de este documento.
+
+  3. [Pagina /team y /contact -> Roles obligatorios de RoboCup@Home]
+     - Que hacer:
+       a) Agregar en /team (y en la pagina /athome) un recuadro destacado en
+          ingles con los 3 roles exigidos por [CFP-2027]:
+          * Principal Investigator (PI): nombre completo + enlace clicable a su
+            sitio web / perfil Google Scholar / ORCID / CVUy ANII (ej. Prof. Dr.
+            Ricardo Bedin Grando / Prof. Andre Kelbouscas — POR CONFIRMAR por el
+            equipo).
+          * Team Leader: nombre completo (POR CONFIRMAR por el equipo).
+          * Contact Person: nombre completo + email urubots.itrn@utec.edu.uy
+            (POR CONFIRMAR por el equipo).
+       b) Corregir la errata "Gabriel da Silvia" -> "Gabriel da Silva" en /team,
+          y "Guido Machado Brun KM 496" -> "Guido Machado Brum KM 496, Rivera,
+          Uruguay" en /contact.
+       c) Actualizar la nomina de estudiantes/investigadores sumando a los
+          coautores de 2025-2026 e identificando quienes integran la division
+          RoboCup@Home OPL.
+     - De donde sale el dato: Estructura en §4.4; nombres definitivos de cada
+       rol los confirma el equipo (§4.5).
+
+  4. [Seccion de Open-Source Software & Enlace a RoboCup@Home]
+     - Que hacer:
+       a) Agregar en la pagina /athome (o en una nueva pestaña /projects) la
+          tabla de repositorios abiertos para la comunidad:
+          * Repositorio principal de RoboCup@Home OPL (Base@Home):
+            https://github.com/ShiiSuii/base_athome (licencia Apache-2.0,
+            paquetes propios marcados con asterisco (*): hoverboard_base*,
+            base_athome_bringup*, base_athome_perception*,
+            base_athome_moveit_config*, base_athome_skills*, base_athome_sim*,
+            jetson_head*, tools/urdf_editor*, tools/gpsr_parser*).
+          * Organizacion GitHub general del equipo:
+            https://github.com/UruBots
+       b) Agregar en el pie de pagina (footer) y en la seccion @Home el enlace
+          obligatorio al sitio oficial de la liga:
+            https://athome.robocup.org/
+     - De donde sale el dato: Texto e instrucciones de instalacion listos en
+       web_cualificacion/software.html#open-source-repos y §4.4 de este archivo.
+
+PRIORIDAD P1 — ACTUALIZACION DE PREMIOS, BLOG Y CORRECCION DE IDIOMA:
+
+  5. [Pagina /awards -> Actualizar con resultados 2025 y 2026]
+     - Que hacer: Incorporar los premios y participaciones de 2025 y 2026 que
+       hoy solo se mencionan en el blog:
+       * RoboCup 2025 (Salvador de Bahia, Brasil): Debut en ligas mayores
+         RoboCup Rescue y RoboCup@Work; 1.er puesto en subcategoria de movilidad
+         en Rescue.
+       * FIRA RoboWorld Cup 2025 (Daegu, Corea del Sur): 1.er puesto en el
+         Desafio Tecnico de Drones Autonomos y 3.er puesto en la categoria
+         general de Drones.
+       * FIRA RoboWorld Cup 2026 (Canada): 1.er puesto en el Desafio Tecnico
+         "United" de Autos Autonomos.
+       * RoboCup@Home OPL 2027 (Nuremberg, Alemania): Candidatura / debut en la
+         liga de robots de servicio domestico con la plataforma Base@Home.
+     - De donde sale el dato: Blog actual de urubots.uy y comunicados oficiales
+       de UTEC (confirmar redaccion exacta con el equipo).
+
+  6. [Pagina /blog y traduccion consistente EN/ES/PT]
+     - Que hacer:
+       a) Hacer que las tarjetas del blog abran un modal/vista completa o
+          enlacen a la nota oficial en utec.edu.uy sin generar rutas 404.
+       b) Unificar las etiquetas de interfaz para que en espanol diga
+          "Fundador / Docente / Programador / Estudiante" y "Tu nombre / Tu
+          correo / Tu mensaje", y en ingles todo el sitio (incluyendo los
+          titulos de secciones y descripciones) quede 100% en ingles.
+
+
+--------------------------------------------------------------------------------
+4.2 Bloque de datos listo para copiar: Tabla de Papers (21 de la lista + 7 sug.)
+--------------------------------------------------------------------------------
+Columnas separadas por " | ":
+ID_LISTA | ESTADO_EN_WEB | ANIO | TIPO | TITULO_EXACTO | AUTORES | SEDE_O_REVISTA | URL_O_DOI_VERIFICADO | RESUMEN_1_LINEA
+
+#09/#20 | NO | 2026 | Paper | Stress-Query and Temporal Reliability of Vision-Language Models as copilots in Autonomous UAV Navigation | Hiago Sodre, Sebastian Barcelona, Vincent Sandin, Pablo Moraes, Andre S. Kelbouscas, Ricardo B. Grando | Accepted at Latin American Robotics Symposium (LARS 2026) / arXiv:2610.23877 (DOI IEEE Xplore POR CONFIRMAR) | https://arxiv.org/abs/2610.23877 (PDF: https://arxiv.org/pdf/2610.23877) | Evalua mediante pruebas de estres los cuellos de botella temporales y la confiabilidad operativa de modelos VLM como copilotos en navegacion autonoma de drones.
+#10 | NO | 2026 | Paper | A Heterogeneous UAV UGV Methodology for Aerial Tracking of Mini Autonomous Cars | Santiago Fernandez, Angel Gabriel Da Silva, Hiago Sodre, Pablo Moraes, Bruna Guterres, Ricardo B. Grando | arXiv preprint arXiv:2610.23878 (conferencia destino POR CONFIRMAR) | https://arxiv.org/abs/2610.23878 (PDF: https://arxiv.org/pdf/2610.23878) | Propone una metodologia cooperativa UAV-UGV en ROS 2 y Gazebo que combina vision aerea y estado terrestre para mitigar oclusiones al seguir mini autos autonomos.
+#11 | NO | 2026 | Paper | Vision-Language Models as copilots for Autonomous UAV Navigation: Analysis of Latency and Reliability in Degraded Environments | Hiago Sodre, Sebastian Barcelona, Vincent Sandin, Pablo Ezequiel Moraes, Ahilen Mazondo, Igor Nunes, William Moraes, Andre L. S. da Kelbouscas, Ricardo B. Grando | arXiv preprint arXiv:2609.26084 (conferencia destino POR CONFIRMAR) | https://arxiv.org/abs/2609.26084 (PDF: https://arxiv.org/pdf/2609.26084) | Presenta una arquitectura hibrida FSM-VLM para drones sin GPS y analiza errores de formato frente a alucinaciones semanticas en entornos degradados.
+#12 | NO | 2026 | Paper | Situation Aware Locomotion for Dual Mobile Cobots in Shared Environments | William Moraes, Igor Nunes, Ahilen Mazondo, Sebastian Barcelona, Hiago Sodre, Pablo Ezequiel Moraes, Ricardo B. Grando | arXiv preprint arXiv:2609.26083 (conferencia destino POR CONFIRMAR) | https://arxiv.org/abs/2609.26083 (PDF: https://arxiv.org/pdf/2609.26083) | Coordina la locomocion de dos cobots moviles en espacios industriales compartidos mediante conciencia situacional, eliminando conflictos de zona en simulacion.
+#21 | NO | 2026 | Paper | Impact of Dataset Composition on Embedded Real-Time UAV Wildfire Detection Using Compact YOLO Models | Eduardo de los Santos, Andre S. Kelbouscas, Ricardo B. Grando, Bruna V. Guterres | Accepted at International Conference on Control, Automation and Systems (ICCAS 2026) / arXiv:2608.07554 (DOI ICCAS POR CONFIRMAR) | https://arxiv.org/abs/2608.07554 (PDF: https://arxiv.org/pdf/2608.07554) | Analiza el impacto de combinar imagenes reales, aumentadas y sinteticas al entrenar modelos YOLO compactos para deteccion de incendios forestales en drones.
+#13 | NO | 2026 | Paper | Situation Aware Frontier Prioritization for Quadruped Search and Rescue | Kevin Farias, Santiago Martin, Barbara Flores, Vinicio Melgar, Igor Nunes, Hiago Sodre, Pablo Moraes, Ricardo B. Grando | arXiv preprint arXiv:2608.02571 (conferencia destino POR CONFIRMAR) | https://arxiv.org/abs/2608.02571 (PDF: https://arxiv.org/pdf/2608.02571) | Prioriza fronteras de exploracion para robots cuadrupedos en rescate urbano integrando ganancia de informacion, relevancia de victimas y dificultad del terreno.
+#14 | NO | 2026 | Paper | Hybrid Attention Estimation Pipeline for Adaptive HRI Using an Expressive Robotic Head | Pablo Moraes, Monica Rodriguez, Christopher Peters, Hiago Sodre, Tobias Doernbach, Bruna Guterres, Ricardo Grando | arXiv preprint arXiv:2608.00284 (conferencia destino POR CONFIRMAR) | https://arxiv.org/abs/2608.00284 (PDF: https://arxiv.org/pdf/2608.00284) | Combina estimacion geometrica rapida de pose de cabeza y analisis semantico con VLM para regular la atencion visual en HRI con un cabezal robotico expresivo.
+#22 | NO | 2026 | Paper | Benchmarking ResNet Backbones in RT-DETR: Impact of Depth and Regularization under environmental conditions | Pamela Barboza, Victor Castelli, Belen Pereira, Ricardo Grando, Bruna de Vargas, Augusto Calfani, Gabriela Flores | Accepted at International Conference on Data Science, Technology and Applications (DATA 2026) / arXiv:2605.08136 (DOI SciTePress POR CONFIRMAR) | https://arxiv.org/abs/2605.08136 (PDF: https://arxiv.org/pdf/2605.08136) | Compara cuatro backbones ResNet y tasas de dropout en RT-DETR bajo cambios de iluminacion y contraste de fondo para deteccion de objetos en robotica.
+#06 | NO | 2025 | Paper | Remote vs. Presence Laboratories in Human-Robot Interaction with Social Robots: A Study on Task Performance | Christopher Peters, Kai M. Blum, Ibrahim Al Krad, Pablo Moraes, Ricardo Bedin Grando, Reinhard Gerndt, Tobias Doernbach | International Conference on Social Robotics (ICSR, Springer LNCS) | https://doi.org/10.1007/978-981-95-2379-5_7 | Compara experimentalmente el desempeno en tareas y la interaccion humano-robot con robots sociales en laboratorios remotos frente a laboratorios presenciales.
+#15 | SI | 2025 | Paper | Mini Autonomous Car Driving Based on 3D Convolutional Neural Networks | Pablo Ezequiel Moraes, Monica Rodriguez, Kristofer S. Kappel, Hiago Sodre, Santiago Fernandez, Igor Nunes, Bruna Guterres, Ricardo B. Grando | XVII Simposio Brasileiro de Robotica (SBR 2025 / WRE 2025, SBC, pp. 206-212) / arXiv:2508.21271 | https://arxiv.org/abs/2508.21271 (PDF: https://arxiv.org/pdf/2508.21271) | Evalua redes convolucionales 3D con datos RGB-D frente a redes recurrentes para conduccion autonoma en pistas simuladas de distinta complejidad visual.
+#16 | SI | 2025 | TDP | UruBots Autonomous Cars Challenge Pro Team Description Paper for FIRA 2025 | Pablo Moraes, Monica Rodriguez, Sebastian Barcelona, Angel Da Silva, Santiago Fernandez, Hiago Sodre, Igor Nunes, Bruna de Vargas Guterres, Ricardo Bedin Grando | FIRA RoboWorld Cup 2025 (Daegu, Corea del Sur) / arXiv:2506.07348 | https://arxiv.org/abs/2506.07348 (PDF: https://arxiv.org/pdf/2506.07348) | Describe el vehiculo autonomo a escala y la arquitectura de aprendizaje profundo de UruBots para la categoria Autonomous Cars Challenge Pro en FIRA 2025.
+#23 | NO | 2025 | Paper | Reducing Latency in LLM-Based Natural Language Commands Processing for Robot Navigation | Diego Pollini, Bruna V. Guterres, Rodrigo S. Guerra, Ricardo B. Grando | Accepted at 23rd IEEE International Conference on Industrial Informatics (INDIN 2025) / arXiv:2506.00075 (DOI IEEE POR CONFIRMAR) | https://arxiv.org/abs/2506.00075 (PDF: https://arxiv.org/pdf/2506.00075) | Integra un LLM directamente con ROS 2 en Gazebo sin middleware intermedio, reduciendo en un 7,01% la latencia de procesamiento de comandos de navegacion.
+#07 | SI | 2025 | TDP | RoboCup Rescue 2025 Team Description Paper UruBots | Kevin Farias, Pablo Moraes, Igor Nunes, Juan Deniz, Sebastian Barcelona, Hiago Sodre, William Moraes, Monica Rodriguez, Ahilen Mazondo, Vincent Sandin, Gabriel da Silva, Victoria Saravia, Vinicio Melgar, Santiago Fernandez, Ricardo Grando | RoboCup 2025 Rescue Robot League (Salvador, Brasil) / arXiv:2504.09778 | https://arxiv.org/abs/2504.09778 (PDF: https://arxiv.org/pdf/2504.09778) | Presenta el robot de rescate abierto de UruBots con ROS, SLAM, percepcion y HRI para deteccion de victimas en la RoboCup Rescue Robot League 2025.
+#17 | SI | 2025 | TDP | UruBots RoboCup Work Team Description Paper | Hiago Sodre, Juan Deniz, Pablo Moraes, William Moraes, Igor Nunes, Vincent Sandin, Ahilen Mazondo, Santiago Fernandez, Gabriel da Silva, Monica Rodriguez, Sebastian Barcelona, Ricardo Grando | RoboCup 2025 @Work League (Salvador, Brasil) / arXiv:2504.09755 | https://arxiv.org/abs/2504.09755 (PDF: https://arxiv.org/pdf/2504.09755) | Detalla el sistema basado en el robot hibrido LIMO con manipulador para navegacion autonoma y manipulacion industrial en la liga RoboCup@Work 2025.
+#05/#19 | PARCIAL | 2024 | Paper | De la Extension a la Investigacion: Como La Robotica Estimula el Interes Academico en Estudiantes de Grado | Gabriela Flores, Ahilen Mazondo, Pablo Moraes, Hiago Sodre, Christopher Peters, Victoria Saravia, Angel Da Silva, Santiago Fernandez, Bruna de Vargas, Andre Kelbouscas, Ricardo Grando, Nathalie Assuncao | arXiv preprint arXiv:2411.05011 (sede de evento POR CONFIRMAR) | https://arxiv.org/abs/2411.05011 (PDF: https://arxiv.org/pdf/2411.05011) | Analiza como la participacion en actividades de extension y competencias de robotica (UruBots) impulsa el interes por la investigacion en estudiantes de grado.
+#18 | SI | 2024 | Paper | Implementacion de Navegacion en Plataforma Robotica Movil Basada en ROS y Gazebo | Angel Da Silva, Santiago Fernandez, Braian Vidal, Hiago Sodre, Pablo Moraes, Christopher Peters, Sebastian Barcelona, Vincent Sandin, William Moraes, Ahilen Mazondo, Brandon Macedo, Nathalie Assuncao, Bruna de Vargas, Andre Kelbouscas, Ricardo Grando | arXiv preprint arXiv:2410.19972 (sede de evento POR CONFIRMAR) | https://arxiv.org/abs/2410.19972 (PDF: https://arxiv.org/pdf/2410.19972) | Implementa y evalua navegacion autonoma y mapeo para plataformas roboticas moviles diferenciales empleando ROS y Gazebo.
+#08 | SI | 2024 | Paper | Interacao entre robos humanoides: desenvolvendo a colaboracao e comunicacao autonoma | Pablo Moraes, Monica Rodriguez, Christopher Peters, Hiago Sodre, Ahilen Mazondo, Vincent Sandin, Sebastian Barcelona, William Moraes, Santiago Fernandez, Nathalie Assuncao, Bruna de Vargas, Tobias Dörnbach, Andre Kelbouscas, Ricardo Grando | arXiv preprint arXiv:2410.17450 (sede de evento POR CONFIRMAR) | https://arxiv.org/abs/2410.17450 (PDF: https://arxiv.org/pdf/2410.17450) | Desarrolla protocolos de colaboracion y comunicacion autonoma entre robots humanoides para tareas cooperativas.
+#01 | SI | 2024 | Paper | Behavior Cloning for Mini Autonomous Car Path Following | Pablo Moraes, Christopher Peters, Hiago Sodre, William Moraes, Sebastian Barcelona, Juan Deniz, Victor D. Castelli, Bruna de Vargas Guterres, Ricardo Bedin Grando | 2024 IEEE URUCON (Montevideo, pp. 1-5) / arXiv:2410.07209 | https://doi.org/10.1109/URUCON63440.2024.10850290 (PDF: https://arxiv.org/pdf/2410.07209) | Aplica aprendizaje por imitacion (behavior cloning) con redes convolucionales para el seguimiento autonomo de pista en mini vehiculos autonomos.
+#04 | SI | 2024 | TDP | UruBots UAV -- Air Emergency Service Indoor Team Description Paper for FIRA 2024 | Hiago Sodre, Sebastian Barcelona, Anthony Scirgalea, Brandon Macedo, Gabriel Sampson, Pablo Moraes, William Moraes, Victoria Saravia, Juan Deniz, Bruna Guterres, Andre Kelbouscas, Ricardo Grando | FIRA RoboWorld Cup 2024 / arXiv:2406.08753 | https://arxiv.org/abs/2406.08753 (PDF: https://arxiv.org/pdf/2406.08753) | Describe el dron autonomo guiado por vision artificial para misiones interiores en la categoria Air Emergency Service Indoor de FIRA 2024.
+#03 | SI | 2024 | TDP | UruBots Autonomous Cars Team One Description Paper for FIRA 2024 | Pablo Moraes, Christopher Peters, Any Da Rosa, Vinicio Melgar, Franco Nunez, Maximo Retamar, William Moraes, Victoria Saravia, Hiago Sodre, Sebastian Barcelona, Anthony Scirgalea, Juan Deniz, Bruna Guterres, Andre Kelbouscas, Ricardo Grando | FIRA RoboWorld Cup 2024 / arXiv:2406.08745 | https://arxiv.org/abs/2406.08745 (PDF: https://arxiv.org/pdf/2406.08745) | Presenta la arquitectura del Equipo 1 de vehiculos autonomos a escala de UruBots para la FIRA RoboWorld Cup 2024.
+#02 | SI | 2023 | Paper | Aplicacion de Robots Humanoides como Guias Interactivos en Museos: Una Simulacion con el Robot NAO | Hiago Sodre, Pablo Moraes, Monica Rodriguez, Victor Castelli, Pamela Barboza, Martin Mattos, Guillermo Vivas, Bruna de Vargas, Tobias Dörnbach, Ricardo Grando | FEBITEC 2023 / arXiv:2310.17060 | https://arxiv.org/abs/2310.17060 (PDF: https://arxiv.org/pdf/2310.17060) | Simula el despliegue del robot humanoide NAO como guia interactivo de museos para enriquecer visitas educativas.
+SUG-01 | PARCIAL (link roto a 2411.05011) | 2024 | Paper | Configuracao e operacao da plataforma Clearpath Husky A200 e manipulador Cobot UR5 2-finger gripper | Hiago Sodre, Sebastian Barcelona, Vincent Sandin, Pablo Moraes, Christopher Peters, Angel da Silva, Gabriela Flores, Ahilen Mazondo, Santiago Fernandez, Nathalie Assuncao, Bruna de Vargas, Ricardo Grando, Andre Kelbouscas | FEBITEC 2024 / arXiv:2410.17453 | https://arxiv.org/abs/2410.17453 (PDF: https://arxiv.org/pdf/2410.17453) | Guia tecnica de puesta en marcha e integracion en ROS de la base movil Clearpath Husky A200 con el brazo UR5 y pinza de dos dedos.
+SUG-02 | SI (fuera de lista) | 2023 | Paper | Diseno y Desarrollo de Prototipos Roboticos para Competencias de Futbol utilizando Motores Dynamixel | Pablo Moraes, Hiago Sodre, Monica Rodriguez, Andre Kelbouscas, Jean Schuster, Cristiano Schuster, Ricardo Grando | FEBITEC 2023 / arXiv:2310.17058 | https://arxiv.org/abs/2310.17058 (PDF: https://arxiv.org/pdf/2310.17058) | Detalla el diseno mecatronico de prototipos de robots de futbol basados en servomotores inteligentes Dynamixel.
+SUG-03 | SI (fuera de lista) | 2022 | Paper | Robotica Movel e Inteligencia Artificial para Investigacao, Competicao e Automatizacao de Sistemas Industriais | Hiago Jacobs Sodre Pereira, Pablo Ezequiel Moraes, Andre Da Silva Kelbouscas, Ricardo Grando | arXiv preprint arXiv:2210.11195 | https://arxiv.org/abs/2210.11195 (PDF: https://arxiv.org/pdf/2210.11195) | Presenta las lineas iniciales de investigacion, competencia y automatizacion industrial con robotica movil e IA en UTEC.
+SUG-04 | NO (sugerencia) | 2024 | TDP | UruBots Autonomous Car Team Two: Team Description Paper for FIRA 2024 | William Moraes, Juan Deniz, Pablo Moraes, Christopher Peters, Vincent Sandin, Gabriel da Silva, Franco Nunez, Maximo Retamar, Victoria Saravia, Hiago Sodre, Sebastian Barcelona, Anthony Scirgalea, Bruna Guterres, Andre Kelbouscas, Ricardo Grando | FIRA RoboWorld Cup 2024 / arXiv:2406.08741 | https://arxiv.org/abs/2406.08741 (PDF: https://arxiv.org/pdf/2406.08741) | Describe el vehiculo autonomo ultraliviano del Equipo 2 de UruBots basado en Raspberry Pi 4 y redes convolucionales para FIRA 2024.
+SUG-05 | NO (sugerencia) | 2024 | Paper | Real-time Robotics Situation Awareness for Accident Prevention in Industry | Juan M. Deniz, Andre S. Kelboucas, Ricardo Bedin Grando | 2024 Latin American Robotics Symposium (LARS, IEEE) / arXiv:2409.15305 | https://doi.org/10.1109/LARS64411.2024.10786413 (PDF: https://arxiv.org/pdf/2409.15305) | Emplea un robot movil LoCoBot con modelos YOLO y sintesis de voz para detectar la falta de elementos de seguridad personal en entornos industriales.
+SUG-06 | NO (sugerencia) | 2024 | Paper | Creacion del primer grupo universitario de competencias e investigacion en robotica de UTEC: Urubots | Andre Luiz da Silva Kelbouscas, Nathalie Assuncao Minuzi, Ricardo Bedin Grando, Marion Agustina de Freitas Vidal | LINKS Revista Internacional (UTEC), Vol. 2, N.º 2 | https://doi.org/10.65628/V2.N2.5 | Documenta la creacion institucional, estructura interdisciplinaria y proyeccion internacional del grupo UruBots en UTEC Rivera.
+SUG-07 | NO (sugerencia) | 2024 | Paper | Enhancing cattle farming management: A case study from Uruguay | Ernesto Dos Santos, Bruna de Vargas Guterres, Ricardo Bedin Grando, Je Nam Jun Junior | 2024 IEEE URUCON (Montevideo) | https://doi.org/10.1109/URUCON63440.2024.10850188 | Caso de estudio sobre tecnologias de monitoreo y ciencia de datos aplicadas a la gestion ganadera en Uruguay.
+
+
+--------------------------------------------------------------------------------
+4.3 Bloque de datos listo para copiar: BibTeX completo (21 de la lista + 7 sug.)
+--------------------------------------------------------------------------------
+
+```bibtex
+% ==============================================================================
+% 2026 PUBLICATIONS (URUBOTS / GIRIA - UTEC)
+% ==============================================================================
+
+% Lista #9 y #20 (Duplicado confirmado)
+@inproceedings{sodre2026stressquery,
+  author    = {Hiago Sodre and Sebastian Barcelona and Vincent Sandin and Pablo Moraes and Andr{\'e} S. Kelbouscas and Ricardo B. Grando},
+  title     = {Stress-Query and Temporal Reliability of Vision-Language Models as copilots in Autonomous {UAV} Navigation},
+  booktitle = {2026 Latin American Robotics Symposium (LARS)},
+  year      = {2026},
+  eprint    = {2610.23877},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.RO},
+  doi       = {10.48550/arXiv.2610.23877},
+  url       = {https://arxiv.org/abs/2610.23877},
+  note      = {Accepted at LARS 2026}
+}
+
+% Lista #10
+@article{fernandez2026heterogeneous,
+  author    = {Santiago Fern{\'a}ndez and Angel Gabriel Da Silva and Hiago Sodre and Pablo Moraes and Bruna Guterres and Ricardo B. Grando},
+  title     = {A Heterogeneous {UAV} {UGV} Methodology for Aerial Tracking of Mini Autonomous Cars},
+  journal   = {arXiv preprint arXiv:2610.23878},
+  year      = {2026},
+  eprint    = {2610.23878},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.RO},
+  doi       = {10.48550/arXiv.2610.23878},
+  url       = {https://arxiv.org/abs/2610.23878}
+}
+
+% Lista #11
+@article{sodre2026vlmcopilots,
+  author    = {Hiago Sodre and Sebastian Barcelona and Vincent Sandin and Pablo Ezequiel Moraes and Ahilen Mazondo and Igor Nunes and William Moraes and Andr{\'e} L. S. da Kelbouscas and Ricardo B. Grando},
+  title     = {Vision-Language Models as copilots for Autonomous {UAV} Navigation: Analysis of Latency and Reliability in Degraded Environments},
+  journal   = {arXiv preprint arXiv:2609.26084},
+  year      = {2026},
+  eprint    = {2609.26084},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.RO},
+  doi       = {10.48550/arXiv.2609.26084},
+  url       = {https://arxiv.org/abs/2609.26084}
+}
+
+% Lista #12
+@article{moraes2026dualcobots,
+  author    = {William Moraes and Igor Nunes and Ahilen Mazondo and Sebastian Barcelona and Hiago Sodre and Pablo Ezequiel Moraes and Ricardo B. Grando},
+  title     = {Situation Aware Locomotion for Dual Mobile Cobots in Shared Environments},
+  journal   = {arXiv preprint arXiv:2609.26083},
+  year      = {2026},
+  eprint    = {2609.26083},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.RO},
+  doi       = {10.48550/arXiv.2609.26083},
+  url       = {https://arxiv.org/abs/2609.26083}
+}
+
+% Lista #21
+@inproceedings{delossantos2026wildfire,
+  author    = {Eduardo de los Santos and Andre S. Kelbouscas and Ricardo B. Grando and Bruna V. Guterres},
+  title     = {Impact of Dataset Composition on Embedded Real-Time {UAV} Wildfire Detection Using Compact {YOLO} Models},
+  booktitle = {2026 International Conference on Control, Automation and Systems (ICCAS)},
+  year      = {2026},
+  eprint    = {2608.07554},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.CV},
+  doi       = {10.48550/arXiv.2608.07554},
+  url       = {https://arxiv.org/abs/2608.07554},
+  note      = {Accepted at ICCAS 2026}
+}
+
+% Lista #13
+@article{farias2026quadruped,
+  author    = {Kevin Farias and Santiago Martin and B{\'a}rbara Flores and Vinicio Melgar and Igor Nunes and Hiago Sodre and Pablo Moraes and Ricardo B. Grando},
+  title     = {Situation Aware Frontier Prioritization for Quadruped Search and Rescue},
+  journal   = {arXiv preprint arXiv:2608.02571},
+  year      = {2026},
+  eprint    = {2608.02571},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.RO},
+  doi       = {10.48550/arXiv.2608.02571},
+  url       = {https://arxiv.org/abs/2608.02571}
+}
+
+% Lista #14
+@article{moraes2026hybridattention,
+  author    = {Pablo Moraes and M{\'o}nica Rodr{\'i}guez and Christopher Peters and Hiago Sodre and Tobias Doernbach and Bruna Guterres and Ricardo Grando},
+  title     = {Hybrid Attention Estimation Pipeline for Adaptive {HRI} Using an Expressive Robotic Head},
+  journal   = {arXiv preprint arXiv:2608.00284},
+  year      = {2026},
+  eprint    = {2608.00284},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.RO},
+  doi       = {10.48550/arXiv.2608.00284},
+  url       = {https://arxiv.org/abs/2608.00284}
+}
+
+% Lista #22
+@inproceedings{barboza2026rtdetr,
+  author    = {Pamela Barboza and V{\'i}ctor Castelli and Bel{\'e}n Pereira and Ricardo Grando and Bruna de Vargas and Augusto Calfani and Gabriela Flores},
+  title     = {Benchmarking {ResNet} Backbones in {RT-DETR}: Impact of Depth and Regularization under environmental conditions},
+  booktitle = {Proceedings of the International Conference on Data Science, Technology and Applications (DATA 2026)},
+  year      = {2026},
+  eprint    = {2605.08136},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.CV},
+  doi       = {10.48550/arXiv.2605.08136},
+  url       = {https://arxiv.org/abs/2605.08136},
+  note      = {Accepted at DATA 2026}
+}
+
+% ==============================================================================
+% 2025 PUBLICATIONS & TDPs
+% ==============================================================================
+
+% Lista #6
+@inproceedings{peters2025remote,
+  author    = {Christopher Peters and Kai M. Blum and Ibrahim Al Krad and Pablo Moraes and Ricardo Bedin Grando and Reinhard Gerndt and Tobias Doernbach},
+  title     = {Remote vs. Presence Laboratories in Human-Robot Interaction with Social Robots: A Study on Task Performance},
+  booktitle = {Social Robotics (ICSR)},
+  series    = {Lecture Notes in Computer Science},
+  publisher = {Springer},
+  year      = {2025},
+  doi       = {10.1007/978-981-95-2379-5_7},
+  url       = {https://doi.org/10.1007/978-981-95-2379-5_7}
+}
+
+% Lista #15
+@inproceedings{moraes2025miniautonomous3dcnn,
+  author    = {Pablo Ezequiel Moraes and M{\'o}nica Rodr{\'i}guez and Kristofer S. Kappel and Hiago Sodre and Santiago Fern{\'a}ndez and Igor Nunes and Bruna Guterres and Ricardo B. Grando},
+  title     = {Mini Autonomous Car Driving Based on {3D} Convolutional Neural Networks},
+  booktitle = {Anais Estendidos do XVII Simp{\'o}sio Brasileiro de Rob{\'o}tica e XVI Workshop de Rob{\'o}tica na Educa{\c{c}}{\~a}o (SBR/WRE 2025)},
+  pages     = {206--212},
+  publisher = {Sociedade Brasileira de Computa{\c{c}}{\~a}o (SBC)},
+  year      = {2025},
+  eprint    = {2508.21271},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.RO},
+  doi       = {10.48550/arXiv.2508.21271},
+  url       = {https://arxiv.org/abs/2508.21271}
+}
+
+% Lista #16
+@techreport{moraes2025firapro,
+  author    = {Pablo Moraes and M{\'o}nica Rodr{\'i}guez and Sebastian Barcelona and Angel Da Silva and Santiago Fernandez and Hiago Sodre and Igor Nunes and Bruna de Vargas Guterres and Ricardo Bedin Grando},
+  title     = {{UruBots} Autonomous Cars Challenge Pro Team Description Paper for {FIRA} 2025},
+  institution = {Universidad Tecnol{\'o}gica del Uruguay (UTEC)},
+  type      = {Team Description Paper},
+  year      = {2025},
+  eprint    = {2506.07348},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.RO},
+  doi       = {10.48550/arXiv.2506.07348},
+  url       = {https://arxiv.org/abs/2506.07348}
+}
+
+% Lista #23
+@inproceedings{pollini2025reducinglatency,
+  author    = {Diego Pollini and Bruna V. Guterres and Rodrigo S. Guerra and Ricardo B. Grando},
+  title     = {Reducing Latency in {LLM}-Based Natural Language Commands Processing for Robot Navigation},
+  booktitle = {2025 IEEE 23rd International Conference on Industrial Informatics (INDIN)},
+  year      = {2025},
+  eprint    = {2506.00075},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.RO},
+  doi       = {10.48550/arXiv.2506.00075},
+  url       = {https://arxiv.org/abs/2506.00075},
+  note      = {Accepted at IEEE INDIN 2025}
+}
+
+% Lista #7
+@techreport{farias2025robocuprescue,
+  author    = {Kevin Farias and Pablo Moraes and Igor Nunes and Juan Deniz and Sebastian Barcelona and Hiago Sodre and William Moraes and Monica Rodriguez and Ahilen Mazondo and Vincent Sandin and Gabriel da Silva and Victoria Saravia and Vinicio Melgar and Santiago Fernandez and Ricardo Grando},
+  title     = {{RoboCup} Rescue 2025 Team Description Paper {UruBots}},
+  institution = {Universidad Tecnol{\'o}gica del Uruguay (UTEC)},
+  type      = {Team Description Paper},
+  year      = {2025},
+  eprint    = {2504.09778},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.RO},
+  doi       = {10.48550/arXiv.2504.09778},
+  url       = {https://arxiv.org/abs/2504.09778}
+}
+
+% Lista #17
+@techreport{sodre2025robocupwork,
+  author    = {Hiago Sodre and Juan Deniz and Pablo Moraes and William Moraes and Igor Nunes and Vincent Sandin and Ahilen Mazondo and Santiago Fernandez and Gabriel da Silva and Monica Rodriguez and Sebastian Barcelona and Ricardo Grando},
+  title     = {{UruBots} {RoboCup} Work Team Description Paper},
+  institution = {Universidad Tecnol{\'o}gica del Uruguay (UTEC)},
+  type      = {Team Description Paper},
+  year      = {2025},
+  eprint    = {2504.09755},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.RO},
+  doi       = {10.48550/arXiv.2504.09755},
+  url       = {https://arxiv.org/abs/2504.09755}
+}
+
+% ==============================================================================
+% 2024 PUBLICATIONS & TDPs
+% ==============================================================================
+
+% Lista #5 y #19 (Duplicado confirmado)
+@article{flores2024extension,
+  author    = {Gabriela Flores and Ahilen Mazondo and Pablo Moraes and Hiago Sodre and Christopher Peters and Victoria Saravia and Angel Da Silva and Santiago Fern{\'a}ndez and Bruna de Vargas and Andr{\'e} Kelbouscas and Ricardo Grando and Nathalie Assun{\c{c}}{\~a}o},
+  title     = {De la Extensi{\'o}n a la Investigaci{\'o}n: Como La Rob{\'o}tica Estimula el Inter{\'e}s Acad{\'e}mico en Estudiantes de Grado},
+  journal   = {arXiv preprint arXiv:2411.05011},
+  year      = {2024},
+  eprint    = {2411.05011},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.CY},
+  doi       = {10.48550/arXiv.2411.05011},
+  url       = {https://arxiv.org/abs/2411.05011}
+}
+
+% Lista #18
+@article{dasilva2024implementacion,
+  author    = {Angel Da Silva and Santiago Fern{\'a}ndez and Braian Vidal and Hiago Sodre and Pablo Moraes and Christopher Peters and Sebastian Barcelona and Vincent Sandin and William Moraes and Ahilen Mazondo and Brandon Macedo and Nathalie Assun{\c{c}}{\~a}o and Bruna de Vargas and Andr{\'e} Kelbouscas and Ricardo Grando},
+  title     = {Implementaci{\'o}n de Navegaci{\'o}n en Plataforma Rob{\'o}tica M{\'o}vil Basada en {ROS} y {Gazebo}},
+  journal   = {arXiv preprint arXiv:2410.19972},
+  year      = {2024},
+  eprint    = {2410.19972},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.RO},
+  doi       = {10.48550/arXiv.2410.19972},
+  url       = {https://arxiv.org/abs/2410.19972}
+}
+
+% Sugerencia #01 (Clearpath Husky A200 - corregir link en urubots.uy/tdps)
+@article{sodre2024huskyur5,
+  author    = {Hiago Sodre and Sebastian Barcelona and Vincent Sandin and Pablo Moraes and Christopher Peters and Ang{\'e}l da Silva and Gabriela Flores and Ahilen Mazondo and Santiago Fern{\'a}ndez and Nathalie Assun{\c{c}}{\~a}o and Bruna de Vargas and Ricardo Grando and Andr{\'e} Kelbouscas},
+  title     = {Configura{\c{c}}{\~a}o e Opera{\c{c}}{\~a}o da Plataforma {Clearpath Husky A200} e Manipulador {Cobot UR5} 2-Finger Gripper},
+  journal   = {arXiv preprint arXiv:2410.17453},
+  year      = {2024},
+  eprint    = {2410.17453},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.RO},
+  doi       = {10.48550/arXiv.2410.17453},
+  url       = {https://arxiv.org/abs/2410.17453},
+  note      = {Presented at FEBITEC 2024}
+}
+
+% Lista #8
+@article{moraes2024interacaohumanoides,
+  author    = {Pablo Moraes and M{\'o}nica Rodr{\'i}guez and Christopher Peters and Hiago Sodre and Ahilen Mazondo and Vincent Sandin and Sebastian Barcelona and William Moraes and Santiago Fern{\'a}ndez and Nathalie Assun{\c{c}}{\~a}o and Bruna de Vargas and Tobias D{\"o}rnbach and Andr{\'e} Kelbouscas and Ricardo Grando},
+  title     = {Intera{\c{c}}{\~a}o entre rob{\^o}s humanoides: desenvolvendo a colabora{\c{c}}{\~a}o e comunica{\c{c}}{\~a}o aut{\^o}noma},
+  journal   = {arXiv preprint arXiv:2410.17450},
+  year      = {2024},
+  eprint    = {2410.17450},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.RO},
+  doi       = {10.48550/arXiv.2410.17450},
+  url       = {https://arxiv.org/abs/2410.17450}
+}
+
+% Lista #1
+@inproceedings{moraes2024behaviorcloning,
+  author    = {Pablo Moraes and Christopher Peters and Hiago Sodre and William Moraes and Sebastian Barcelona and Juan Deniz and V{\'i}ctor D. Castelli and Bruna de Vargas Guterres and Ricardo Bedin Grando},
+  title     = {Behavior Cloning for Mini Autonomous Car Path Following},
+  booktitle = {2024 IEEE URUCON},
+  pages     = {1--5},
+  publisher = {IEEE},
+  year      = {2024},
+  eprint    = {2410.07209},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.RO},
+  doi       = {10.1109/URUCON63440.2024.10850290},
+  url       = {https://doi.org/10.1109/URUCON63440.2024.10850290}
+}
+
+% Sugerencia #05 (LARS 2024)
+@inproceedings{deniz2024situationawareness,
+  author    = {Juan M. Deniz and Andre S. Kelboucas and Ricardo Bedin Grando},
+  title     = {Real-time Robotics Situation Awareness for Accident Prevention in Industry},
+  booktitle = {2024 Latin American Robotics Symposium (LARS)},
+  publisher = {IEEE},
+  year      = {2024},
+  eprint    = {2409.15305},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.RO},
+  doi       = {10.1109/LARS64411.2024.10786413},
+  url       = {https://doi.org/10.1109/LARS64411.2024.10786413}
+}
+
+% Lista #4
+@techreport{sodre2024firauav,
+  author    = {Hiago Sodre and Sebastian Barcelona and Anthony Scirgalea and Brandon Macedo and Gabriel Sampson and Pablo Moraes and William Moraes and Victoria Saravia and Juan Deniz and Bruna Guterres and Andre Kelbouscas and Ricardo Grando},
+  title     = {{UruBots} {UAV} -- Air Emergency Service Indoor Team Description Paper for {FIRA} 2024},
+  institution = {Universidad Tecnol{\'o}gica del Uruguay (UTEC)},
+  type      = {Team Description Paper},
+  year      = {2024},
+  eprint    = {2406.08753},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.RO},
+  doi       = {10.48550/arXiv.2406.08753},
+  url       = {https://arxiv.org/abs/2406.08753}
+}
+
+% Lista #3
+@techreport{moraes2024firateamone,
+  author    = {Pablo Moraes and Christopher Peters and Any Da Rosa and Vinicio Melgar and Franco Nu{\~n}ez and Maximo Retamar and William Moraes and Victoria Saravia and Hiago Sodre and Sebastian Barcelona and Anthony Scirgalea and Juan Deniz and Bruna Guterres and Andr{\'e} Kelbouscas and Ricardo Grando},
+  title     = {{UruBots} Autonomous Cars Team One Description Paper for {FIRA} 2024},
+  institution = {Universidad Tecnol{\'o}gica del Uruguay (UTEC)},
+  type      = {Team Description Paper},
+  year      = {2024},
+  eprint    = {2406.08745},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.RO},
+  doi       = {10.48550/arXiv.2406.08745},
+  url       = {https://arxiv.org/abs/2406.08745}
+}
+
+% Sugerencia #04 (FIRA 2024 Team Two)
+@techreport{moraes2024firateamtwo,
+  author    = {William Moraes and Juan Deniz and Pablo Moraes and Christopher Peters and Vincent Sandin and Gabriel da Silva and Franco Nunez and Maximo Retamar and Victoria Saravia and Hiago Sodre and Sebastian Barcelona and Anthony Scirgalea and Bruna Guterres and Andre Kelbouscas and Ricardo Grando},
+  title     = {{UruBots} Autonomous Car Team Two: Team Description Paper for {FIRA} 2024},
+  institution = {Universidad Tecnol{\'o}gica del Uruguay (UTEC)},
+  type      = {Team Description Paper},
+  year      = {2024},
+  eprint    = {2406.08741},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.RO},
+  doi       = {10.48550/arXiv.2406.08741},
+  url       = {https://arxiv.org/abs/2406.08741}
+}
+
+% Sugerencia #06 (Revista LINKS UTEC)
+@article{kelbouscas2024creacionurubots,
+  author    = {Andr{\'e} Luiz da Silva Kelbouscas and Nathalie Assun{\c{c}}{\~a}o Minuzi and Ricardo Bedin Grando and Marion Agustina de Freitas Vidal},
+  title     = {Creaci{\'o}n del primer grupo universitario de competencias e investigaci{\'o}n en rob{\'o}tica de {UTEC}: {Urubots}},
+  journal   = {LINKS Revista Internacional},
+  volume    = {2},
+  number    = {2},
+  year      = {2024},
+  doi       = {10.65628/V2.N2.5},
+  url       = {https://doi.org/10.65628/V2.N2.5}
+}
+
+% Sugerencia #07 (IEEE URUCON 2024)
+@inproceedings{dossantos2024cattle,
+  author    = {Ernesto Dos Santos and Bruna de Vargas Guterres and Ricardo Bedin Grando and Je Nam Jun Junior},
+  title     = {Enhancing cattle farming management: A case study from Uruguay},
+  booktitle = {2024 IEEE URUCON},
+  publisher = {IEEE},
+  year      = {2024},
+  doi       = {10.1109/URUCON63440.2024.10850188},
+  url       = {https://doi.org/10.1109/URUCON63440.2024.10850188}
+}
+
+% ==============================================================================
+% 2023 & 2022 PUBLICATIONS
+% ==============================================================================
+
+% Lista #2
+@article{sodre2023nao,
+  author    = {Hiago Sodre and Pablo Moraes and Monica Rodriguez and Victor Castelli and Pamela Barboza and Martin Mattos and Guillermo Vivas and Bruna de Vargas and Tobias D{\"o}rnbach and Ricardo Grando},
+  title     = {Aplicaci{\'o}n de Robots Humanoides como Gu{\'i}as Interactivos en Museos: Una Simulaci{\'o}n con el Robot {NAO}},
+  journal   = {arXiv preprint arXiv:2310.17060},
+  year      = {2023},
+  eprint    = {2310.17060},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.RO},
+  doi       = {10.48550/arXiv.2310.17060},
+  url       = {https://arxiv.org/abs/2310.17060},
+  note      = {Presented at FEBITEC 2023}
+}
+
+% Sugerencia #02
+@article{moraes2023dynamixel,
+  author    = {Pablo Moraes and Hiago Sodre and Monica Rodriguez and Andre Kelbouscas and Jean Schuster and Cristiano Schuster and Ricardo Grando},
+  title     = {Dise{\~n}o y Desarrollo de Prototipos Rob{\'o}ticos para Competencias de F{\'u}tbol utilizando Motores {Dynamixel}},
+  journal   = {arXiv preprint arXiv:2310.17058},
+  year      = {2023},
+  eprint    = {2310.17058},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.RO},
+  doi       = {10.48550/arXiv.2310.17058},
+  url       = {https://arxiv.org/abs/2310.17058},
+  note      = {Presented at FEBITEC 2023}
+}
+
+% Sugerencia #03
+@article{sodre2022roboticamovel,
+  author    = {Hiago Jacobs Sodre Pereira and Pablo Ezequiel Moraes and Andr{\'e} Da Silva Kelbouscas and Ricardo Grando},
+  title     = {Rob{\'o}tica M{\'o}vel e Intelig{\^e}ncia Artificial para Investiga{\c{c}}{\~a}o, Competi{\c{c}}{\~a}o e Automatiza{\c{c}}{\~a}o de Sistemas Industriais},
+  journal   = {arXiv preprint arXiv:2210.11195},
+  year      = {2022},
+  eprint    = {2210.11195},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.RO},
+  doi       = {10.48550/arXiv.2210.11195},
+  url       = {https://arxiv.org/abs/2210.11195}
+}
+```
+
+--------------------------------------------------------------------------------
+4.4 Bloque de datos en ingles listo para copiar en la seccion RoboCup@Home OPL
+--------------------------------------------------------------------------------
+(Para insertar en https://urubots.uy/athome o en la portada/proyectos. Nota: el
+desarrollo completo con tablas detalladas y diagrama SVG inline esta disponible
+para el programador en la carpeta web_cualificacion/ de esta misma rama).
+
+```text
+TEAM & LEAGUE METADATA (ROBOCUP@HOME OPL 2027)
+- Team Name: UruBots
+- Robot Name: Base@Home (confirmar si se mantiene este nombre en el TDP/video)
+- League: RoboCup@Home Open Platform League (OPL)
+- Target Event: RoboCup 2027 (Nuremberg, Germany, June 15–21, 2027)
+- Institution: Universidad Tecnologica del Uruguay (UTEC) — ITR Norte, Rivera, Uruguay
+- Principal Investigator (PI): [POR CONFIRMAR por el equipo: p. ej. Prof. Dr. Ricardo Bedin Grando / Prof. Andre Kelbouscas + enlace directo a su sitio web o Google Scholar]
+- Team Leader: [POR CONFIRMAR por el equipo]
+- Contact Person: [POR CONFIRMAR nombre] — urubots.itrn@utec.edu.uy
+- Official League Website: https://athome.robocup.org/
+- Open-Source Repository (Base@Home): https://github.com/ShiiSuii/base_athome (Apache-2.0)
+- Team GitHub Organization: https://github.com/UruBots
+
+PLATFORM SUMMARY (BASE@HOME)
+Base@Home is a custom low-cost domestic service robot developed by UruBots for
+the RoboCup@Home Open Platform League:
+- Mobile Base & Navigation: Differential-drive base built with dual 6.5" BLDC
+  hoverboard hub motors (custom STM32F103 FOC firmware, 90 Hall ticks/rev,
+  track_width = 0.5620 m, wheel_radius = 0.0853 m) and a Hokuyo UST-05LX 2D
+  LiDAR (270 deg, 0.06–5 m, 40 Hz, beam height 38 cm), running Nav2 + AMCL +
+  SmacPlanner2D + RegulatedPurePursuit on ROS 2 Jazzy.
+- Torso & Manipulation: NEMA23 / ESP32-S3 vertical prismatic lift column and a
+  side-mounted 6-DOF AgileX Piper manipulator with parallel gripper and an
+  eye-in-hand Orbbec DaBai DC1 camera, planned with MoveIt 2 (TRAC-IK + OMPL)
+  and supervised via a FollowJointTrajectory action server.
+- Head & HRI: 2-DOF Dynamixel XL430-W250 pan-tilt head carrying an Intel
+  RealSense D435 RGB-D camera, a RODE VideoMic GO II directional shotgun
+  microphone, animated facial display, and TTS speaker.
+- Distributed Compute (Wired 1 Gb/s Ethernet, ROS 2 Jazzy + CycloneDDS unicast,
+  zero team Wi-Fi hotspots):
+  * Host 1 (Intel NUC i3-1220P, Ubuntu 24.04): Nav2, AMCL, RealSense D435 face/
+    pose perception (YuNet/SFace, YOLOv8-pose), Receptionist & Mission Executor,
+    deterministic bilingual NL/GPSR compiler, and local URDF/Xacro web editor.
+  * Host 2 (NVIDIA Jetson Orin Nano Super 8 GB, JetPack 7.2.1 / L4T R39.2.1,
+    Ubuntu 24.04): 50 Hz CAN Piper controller, U2D2 pan-tilt node, Orbbec DaBai
+    wrist stream + TensorRT FP16 YOLO detector (55 FPS end-to-end on GPU vs.
+    5.2 FPS on CPU, verified on hardware), and on-demand faster-whisper ASR with
+    Silero VAD.
+- Safety & Evidence Note: All actuator drivers boot disabled by default
+  (auto_enable=False on Piper, auto_torque=false on pan-tilt), reject motion
+  commands without fresh hardware feedback, and never publish synthetic zeros as
+  measured joint states. Capabilities validated only in simulation (SIM_PASS,
+  such as the natural-language Commander and trash-disposal sequence) validate
+  software logic and kinematics only and do not demonstrate physical safety on
+  real hardware.
+```
+
+
+--------------------------------------------------------------------------------
+4.5 Lista de lo que DEBE aportar el equipo (no obtenible de fuentes publicas)
+--------------------------------------------------------------------------------
+Estos elementos no pueden extraerse de Internet ni del repositorio actual y
+deben ser entregados por el equipo humano al programador antes del 06/12/2026:
+
+  1. [FOTOS REALES DEL ROBOT BASE@HOME]:
+     - Al menos 3 fotografias de buena resolucion del robot real ensamblado
+       (vista de cuerpo entero, detalle del brazo Piper con la camara DaBai en
+       la muneca, y detalle de la cabeza pan-tilt con RealSense D435 y pantalla
+       facial), verificando que no aparezcan rostros de personas sin permiso,
+       pantallas con claves/IPs ni marcas artificiales prohibidas.
+
+  2. [VIDEO DE CUALIFICACION 2027 (YOUTUBE)]:
+     - Enlace publico o no listado (sin restriccion de login) al video de
+       cualificacion en YouTube (<=10 min, formato horizontal 16:9, en ingles o
+       subtitulado en ingles, mostrando al menos 5 habilidades integradas en el
+       robot real).
+
+  3. [PDF FINAL DEL TDP 2027 (ROBOCUP@HOME OPL)]:
+     - Archivo PDF compilado en formato Springer LNAI (maximo 8 paginas + Annex)
+       para alojarlo en https://urubots.uy/tdps y en la seccion @Home.
+
+  4. [DESIGNACION OFICIAL DE ROLES Y PLANTEL @HOME]:
+     - Confirmar por escrito para la pagina /team y la seccion @Home:
+       * Quien figura como Principal Investigator (PI) y que URL personal/
+         academica se enlaza (p. ej. Google Scholar u ORCID de Ricardo Bedin
+         Grando y/o Andre Kelbouscas).
+       * Quien figura como Team Leader de la division RoboCup@Home.
+       * Quien figura como Contact Person junto al correo
+         urubots.itrn@utec.edu.uy.
+       * Lista actualizada de integrantes 2026/2027 (confirmando la inclusion de
+         coautores recientes como Monica Rodriguez, Christopher Peters, Kevin
+         Farias, Eduardo de los Santos, Angel Gabriel da Silva, Belen Pereira,
+         Augusto Calfani, Brandon Macedo, Barbara Flores, Santiago Martin).
+
+  5. [CONFIRMACION DE REPOSITORIO OPEN-SOURCE (MERGE A MAIN Y README EN INGLES)]:
+     - En https://github.com/ShiiSuii/base_athome el trabajo reciente vive en la
+       rama `claude/home-41-piper-mission`. Antes de enviar el formulario del
+       06/12/2026, el equipo debe decidir el merge a `main` (o indicar al
+       programador que enlace explicitamente la rama activa) y asegurar que el
+       README principal tenga instrucciones en ingles para otros equipos.
+
+  6. [CONFIRMACION DE METADATOS EDITORIALES PENDIENTES EN PAPERS 2024-2026]:
+     - Confirmar si ya existen DOIs publicados de IEEE Xplore / SciTePress /
+       SBC SOL para los articulos aceptados en 2025-2026 (#9/#20 en LARS 2026,
+       #15 URL directa en SBC SOL de SBR 2025, #21 en ICCAS 2026, #22 en DATA
+       2026, #23 en IEEE INDIN 2025) y en que evento o revista se presentaron
+       los preprints #5/#19, #8, #10, #11, #12, #13, #14 y #18.
+
+  7. [PERMISOS DE IMAGEN/VOZ Y LOGOS]:
+     - Consentimientos firmados de todas las personas que aparezcan en las fotos
+       o en el video de cualificacion (requerido por la convocatoria de RoboCup
+       para reutilizacion en canales de la liga).
+     - Confirmacion de que logos institucionales o de patrocinadores (UTEC,
+       Antel, UTE, BSE, MEC, etc.) cuentan con autorizacion para mostrarse en la
+       seccion de RoboCup@Home.
