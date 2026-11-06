@@ -1,0 +1,1100 @@
+================================================================================
+BORRADOR COMPLETO DEL TEAM DESCRIPTION PAPER (TDP) — BASE@HOME (URUBOTS)
+RoboCup@Home Open Platform League (OPL) — Cualificación 2027
+Archivo: docs/TDP_BORRADOR.txt
+Fecha de redacción: 2026-11-05
+================================================================================
+
+NOTA SOBRE REGLAS DE EVIDENCIA Y PRIVACIDAD APLICADAS EN ESTE BORRADOR:
+- Ningún resultado, medida, cita ni integrante ha sido inventado.
+- Todo dato que requiere definición del equipo o medición física pendiente está
+  marcado explícitamente como [POR CONFIRMAR: ...].
+- Todo resultado obtenido únicamente en simulación (`SIM_PASS`), pruebas
+  unitarias (`UNIT_PASS`) o banco sin actuadores (`NUC_VERIFIED` /
+  `JETSON_VERIFIED`) se declara como tal en el texto. La simulación valida la
+  lógica y la cinemática, pero NO demuestra seguridad física ni desempeño en el
+  robot real (`HARDWARE_VERIFIED`).
+- Por tratarse de un repositorio público, se omiten direcciones IP internas,
+  rutas personales del sistema de archivos, credenciales y datos personales.
+
+
+================================================================================
+PARTE 0. REQUISITOS OFICIALES VIGENTES DE ROBOCUP@HOME (VERIFICADOS)
+================================================================================
+
+0.1 Fuentes normativas consultadas y versión
+--------------------------------------------
+1. Convocatoria vigente (normativa para la entrega del 06/12/2026):
+   "First Call for Participation – RoboCup@Home 2027" (Nuremberg, Alemania,
+   15 al 21 de junio de 2027; publicada el 20 de septiembre de 2026).
+   URL: https://athome.robocup.org/call-for-participation-robocuphome-2027/
+2. Criterios oficiales de evaluación de entregas:
+   "Submission Review Criteria – RoboCup@Home".
+   URL: https://athome.robocup.org/rules/submission-review-criteria/
+3. Reglamento técnico de referencia:
+   "RoboCup@Home RuleBook", versión normativa Release 2026.2 (tag `2026.2`,
+   sección `pages/general_rules/TeamRegistration.tex`, §1.7.5 Skill
+   Certificates, §1.7.6 Open-Source Award, §3.2–3.7 reglas generales, §4.4
+   inspección, §5.1–5.5 pruebas regulares y §6 Final), comparado con la rama
+   `master` ("2027 Rev-1" al 2026-10-14, donde `TeamRegistration.tex` y
+   `HumanRobotInteractionChallenge.tex` permanecen idénticos a 2026.2).
+   URL: https://github.com/RoboCupAtHome/RuleBook/releases/tag/2026.2
+4. Plantilla oficial de formato LaTeX:
+   Repositorio `RoboCupAtHome/TDPTemplate` (formato Springer LNAI).
+   URL: https://github.com/RoboCupAtHome/TDPTemplate
+
+0.2 Formato, extensión y estructura exigidos
+--------------------------------------------
+- Fecha límite de entrega (Paso 2 — Qualification Materials):
+  Domingo 6 de diciembre de 2026, 23:59 GMT (20:59 UYT), vía formulario oficial,
+  junto con el video de cualificación (<= 10 min, formato panorámico 16:9,
+  integrando al menos 5 habilidades distintas en una tarea continua) y la web
+  del equipo en inglés.
+- Idioma:
+  100 % en inglés (incluyendo texto principal, figuras, diagramas, tablas y
+  anexo).
+- Formato tipográfico:
+  Springer LNAI (Lecture Notes in Artificial Intelligence), empleando la clase
+  `llncs` provista en `RoboCupAtHome/TDPTemplate`, sin modificar márgenes,
+  tamaños de fuente ni espaciado por defecto.
+- Extensión máxima (regla estricta de descalificación):
+  * Cuerpo principal + Referencias: máximo 8 páginas. La convocatoria 2027
+    establece textualmente: "Exceeding the number of pages will automatically
+    void your application."
+  * Anexo (Annex) posterior a las referencias: la convocatoria 2027 permite
+    hasta 2 páginas adicionales; el RuleBook 2026.2 especifica una novena
+    página (1 página). Aplicando la regla más estricta (`docs/VIDEO_CUALIFICACION.txt`
+    §A.3), el Anexo se redacta para ocupar exactamente 1 página (página 9),
+    cumpliendo simultáneamente ambas fuentes.
+- Contenido obligatorio del cuerpo principal (8 páginas):
+  * Enfoque de investigación, contribuciones científicas y tecnológicas,
+    reutilización por la comunidad de la liga y aplicabilidad en escenarios
+    domésticos reales.
+  * Descripción breve y general de la arquitectura de hardware y software del
+    sistema resolviendo tareas domésticas.
+- Contenido obligatorio del Anexo (1 página después de Referencias):
+  * Fotografía(s) del robot completo identificando sus componentes.
+  * Lista compacta de software (`Software`), marcando con un asterisco (`*`)
+    los paquetes desarrollados por el propio equipo y listando los paquetes de
+    terceros.
+  * Dispositivos de cómputo externos (`External Devices`), si se utilizan.
+  * Descripción compacta del hardware (`Robot's Description` / `Hardware`),
+    obligatoria para la liga Open Platform League (OPL).
+  * Datos del equipo: nombre oficial, institución, investigador principal,
+    líder del equipo, contacto, URL de la web y lista de integrantes.
+- Criterios de evaluación del TDP (CfP 2027):
+  Claridad de presentación, contribuciones científicas, reutilización por otros
+  equipos de la liga (repositorios documentados y activos) y aplicabilidad en el
+  mundo real, ponderando con mayor peso los desarrollos recientes.
+
+0.3 Presupuesto de páginas propuesto (8 páginas + 1 página de Anexo)
+--------------------------------------------------------------------
+- Página 1: Título, autores, afiliación, Abstract y Sección 1 (Introduction).
+- Página 2: Sección 2 (Robot Platform and Hardware Architecture: base
+  diferencial, elevador prismático, brazo Piper 6-DOF, cabezal pan-tilt y
+  cómputo distribuido NUC + Jetson).
+- Página 3: Sección 3 (Distributed ROS 2 Software Architecture, Safety
+  Interlocks, and Multi-Fidelity Simulation).
+- Páginas 4–5: Sección 4.1 (Deterministic Voice-to-Mission Compilation,
+  Supervised Execution, and Streaming VAD Speech Pipeline) y Sección 4.2
+  (Pointed-Bag 3D Perception, Prismatic Torso Coordination, and Side-Mounted
+  6-DOF Manipulation).
+- Página 6: Sección 4.3 (Protected Differential Navigation, Semantic Map Layer,
+  and WebXR Teleoperation).
+- Página 7: Sección 5 (Experimental Evaluation and Verification Status — tablas
+  con separación estricta entre mediciones en hardware, simulación y pruebas
+  unitarias).
+- Página 8: Sección 6 (Conclusions and Future Work) y Referencias verificadas.
+- Página 9 (Annex): Foto(s) del robot, Hardware Description, Software List (con
+  `*` en paquetes propios), External Devices y Team Information.
+
+
+================================================================================
+PARTE 1. BORRADOR COMPLETO DEL PAPER (TEXTO EN INGLÉS — FORMATO SPRINGER LNAI)
+================================================================================
+
+Title:
+Base@Home: A Low-Cost Distributed ROS 2 Service Robot with Deterministic
+Voice-to-Mission Compilation and Prismatic Torso-Arm Coordination for
+RoboCup@Home OPL
+
+Authors:
+[POR CONFIRMAR: Lista completa de autores, orden y ORCID si corresponde]
+
+Affiliation:
+UruBots Team, [POR CONFIRMAR: Nombre oficial de la Universidad / Facultad /
+Instituto, Ciudad, Uruguay]
+Contact: [POR CONFIRMAR: correo electrónico institucional de contacto]
+Web: [POR CONFIRMAR: URL pública de la web del equipo en inglés, sin IP]
+Repository: https://github.com/ShiiSuii/base_athome
+
+
+--------------------------------------------------------------------------------
+Abstract
+--------------------------------------------------------------------------------
+We present Base@Home [POR CONFIRMAR: confirmar si el nombre oficial del robot
+para 2027 es Base@Home u otro], the custom open-platform domestic service robot
+developed by team UruBots (Uruguay) for the RoboCup@Home Open Platform League
+(OPL). Built to maximize mechanical reach and reproducibility on a constrained
+budget, the platform combines a differential-drive base powered by repurposed
+6.5-inch brushless hub motors with custom Field-Oriented Control (FOC)
+firmware, a 0.60 m working-stroke NEMA 23 prismatic torso elevator, a
+side-mounted 6-DOF AgileX Piper manipulator with an eye-in-hand Orbbec DaBai
+DC1 camera, and a 2-DOF Dynamixel pan-tilt head carrying an Intel RealSense
+D435 RGB-D sensor and a directional shotgun microphone. Computation is
+distributed across an Intel Core i3-1220P mini-PC (NUC) and an NVIDIA Jetson
+Orin Nano 8 GB Super linked via point-to-point Gigabit Ethernet running ROS 2
+Jazzy and unicast CycloneDDS. This paper details three core engineering
+contributions: (1) a deterministic bilingual (English/Spanish) natural-language
+compiler and supervised mission executor (`commander` and `mission_executor`)
+paired with a streaming Silero VAD and Whisper ASR pipeline that eliminates
+unconstrained Large Language Model (LLM) hallucinations from the actuator
+control loop; (2) a coordinated floor-to-table manipulation architecture that
+combines human pointing-gesture raycasting, open-vocabulary YOLO-World bag
+detection, prismatic elevator positioning, and multi-orientation MoveIt 2
+inverse kinematics; and (3) a hardware-safety-first actuator control layer and
+lightweight multi-fidelity simulation stack (`base_athome_sim`) verified by
+over 300 automated unit and integration tests. We report on-device perceptual
+and acoustic benchmarks alongside simulation mission evaluations and explicitly
+delineate the physical hardware validations currently in progress.
+
+
+--------------------------------------------------------------------------------
+1. Introduction
+--------------------------------------------------------------------------------
+Domestic service robots operating in unstructured human environments must
+integrate safe indoor navigation, spoken language interaction, 3D scene
+understanding, and mobile manipulation across a wide vertical workspace ranging
+from floor level to tabletops and shelves. Within the RoboCup@Home Open
+Platform League (OPL) [1], teams face the dual challenge of achieving high
+system reliability under strict time and safety constraints while keeping custom
+hardware maintainable and reproducible.
+
+Team UruBots [POR CONFIRMAR: breve reseña de 2–3 líneas sobre la historia del
+equipo, institución y participaciones previas en competencias locales o
+internacionales] developed Base@Home as a modular, open-source ROS 2 Jazzy
+service robot designed around three guiding principles:
+1. Measure first, correct second, and demonstrate with explicit evidence:
+   Software modules enforce strict separation between measured sensor feedback
+   and commanded states. Actuator controllers start disabled by default,
+   reject motion commands when hardware feedback is stale or absent, and never
+   publish synthetic zero joint states when sensors are disconnected.
+2. Deterministic safety in the mission control loop: Rather than connecting
+   generative Large Language Models (LLMs) directly to robot actuators—which
+   risks unverified tool calls, unpredictable latency, or unsafe motion
+   sequences—we compile spoken or typed requests through a deterministic
+   grammar and semantic-map validator into structured execution plans with
+   explicit preconditions, per-step timeouts, bounded retries, and spoken
+   user confirmation before any physical motion occurs.
+3. Peripheral-local distributed computing: Every sensor and actuator driver
+   executes on the onboard computer physically attached to its hardware
+   interface, connected over a wired Gigabit Ethernet link with unicast DDS
+   discovery, ensuring compliance with RoboCup@Home wireless restrictions
+   (RuleBook §3.2.8) and avoiding raw RGB-D video streaming across the network.
+
+The main contributions described in this paper are:
+- A complete, low-cost OPL hardware and distributed ROS 2 Jazzy architecture
+  combining a hoverboard-based differential drive, a 0.60 m prismatic torso
+  column, a side-mounted 6-DOF Piper arm, and a pan-tilt RGB-D head (Sections 2
+  and 3).
+- A deterministic voice-to-mission pipeline (`commander`, `mission_executor`,
+  and request-indexed `whisper_node` with streaming Silero VAD) that translates
+  natural-language commands into verified plans with spoken confirmation and
+  cancellation (Section 4.1).
+- A floor-to-table perception and manipulation pipeline integrating 3D human
+  pointing-gesture raycasting, open-vocabulary YOLO-World bag detection,
+  measured prismatic lift control (`torso_state`), and multi-orientation
+  MoveIt 2 grasp planning with closed-loop `FollowJointTrajectory` execution
+  (Section 4.2).
+- A protected navigation stack with an offline-editable semantic object/zone
+  layer and a zero-WiFi WebXR teleoperation pipeline for demonstration
+  collection (Section 4.3).
+
+
+--------------------------------------------------------------------------------
+2. Robot Platform and Hardware Architecture
+--------------------------------------------------------------------------------
+[POR CONFIRMAR: Insertar Figura 1 — Fotografía anotada del robot Base@Home y
+diagrama de bloques del hardware distribuido NUC + Jetson].
+
+2.1 Mechanical Structure, Mobile Base, and Prismatic Elevator
+Base@Home is built on a square chassis measuring 0.48 m x 0.48 m in footprint
+and 0.22 m in height (measured from the bottom face to the top mounting plate,
+with 0.04 m ground clearance and `base_footprint` located 0.06 m below
+`base_link`). Differential traction is provided by two 6.5-inch brushless DC
+(BLDC) hub motors with integrated Hall-effect sensors (15 pole pairs x 6 states
+= 90 ticks per wheel revolution), calibrated to an effective wheel radius of
+0.0853 m under robot load and an effective kinematic track width of 0.5620 m
+(5.95 mm per Hall tick). Rear support is provided by a caster wheel of 0.04 m
+radius at x = -0.20 m. The motors are driven by an STM32F103 controller board
+running custom Field-Oriented Control (FOC) firmware over a 115200 baud UART
+link at 50 Hz.
+
+To enable manipulation both on the floor (e.g., picking up pointed garbage
+bags) and on standard domestic furniture without an excessively heavy arm, a
+1.30 m vertical structural column (0.06 m profile width) is mounted at the
+center of the base. A NEMA 23 stepper motor (200 steps/rev with 1/8
+microstepping = 1600 steps/rev) controlled by an ESP32-S3 microcontroller drives
+a vertical carriage (`torso_lift_link`) equipped with dual hardware limit
+switches: a top endstop (GPIO Pin 7) and a bottom endstop (GPIO Pin 8) featuring
+two-stage hardware debounce (500 us + 1 ms) and automatic safety cutoff. The
+calibrated working stroke between limit switches is 0.60 m (positioning the
+bottom of the torso prism between 1.00 m and 0.40 m above the floor, with a
+maximum mechanical stroke of ~0.75 m). Mounted on the elevator carriage is a
+0.25 m x 0.35 m x 0.35 m structural torso prism carrying a front-facing
+0.26 m x 0.18 m interactive facial expression display and speaker.
+
+2.2 Side-Mounted 6-DOF Manipulator and Eye-in-Hand Sensor
+An AgileX Piper 6-DOF robotic arm (1.5 kg payload, ~626 mm reach, parallel
+gripper) is mounted sideways on the left (+Y) vertical face of the moving torso
+prism (`cube_to_arm_joint` offset xyz = (-0.15, 0.175, -0.11) m, rpy =
+(-pi/2, 0, 0) rad), so that the base Z-axis of the arm points outward (+Y) and
+its Y-axis points downward (-Z) [POR CONFIRMAR: verificación con cinta métrica
+del offset físico exacto de la brida respecto a la columna]. With the elevator
+at its top endstop (`torso_lift_joint` = 0.0 m), the shoulder origin
+`arm_base_link` is located at (0.005, 0.175, 1.065) m in `base_link` (1.125 m
+above the floor) and descends linearly down to z = 0.465 m at -0.60 m stroke.
+This lateral mounting allows the arm to hang vertically alongside the torso in
+its natural gravity rest configuration (`[86.97, 172.87, -162.63, -99.89,
+-0.68, 44.98]` deg, measured via CAN bus with motors free) while keeping the
+front of the robot clear during navigation.
+
+An Orbbec DaBai DC1 camera is mounted in an eye-in-hand configuration on
+`gripper_base` (25 mm along +X, 56 mm above the approach axis, 80 mm behind the
+fingertips `tcp_link` at +0.1358 m from `link6`). Because the DaBai DC1 optical
+depth minimum is ~0.30 m (manufacturer specification), close-range wrist
+perception (< 0.30 m) relies on calibrated RGB monocular geometry and ray-plane
+intersection (Section 4.2) rather than raw wrist depth.
+
+2.3 Pan-Tilt Head, LiDAR, and Audio Hardware
+At the top of the torso assembly (`head_base_z` = 0.12 m above the prism), a
+2-DOF pan-tilt unit driven by two Robotis Dynamixel XL430-W250 servos over a
+1 Mbaud U2D2 interface (Protocol 2.0, IDs 1 and 2, multi-turn extended position
+mode with software turn-unwrapping) carries an Intel RealSense D435 RGB-D
+camera operating at 640x480 @ 15 Hz (firmware 5.17.0.10) for person pose
+estimation, biometric face recognition, seat occupancy analysis, and 3D floor
+pointing-gesture localization. Planar obstacle detection and localization are
+handled by a front-mounted Hokuyo UST-05LX 2D LiDAR (270 deg FOV, 0.06–5.0 m
+range, 40 Hz) mounted at x = 0.22 m, with its base 0.32 m above the floor and
+its scanning plane at 0.38 m height (measured on the physical robot). Voice
+capture uses a directional supercardioid RØDE VideoMic GO II USB shotgun
+microphone mounted on the head assembly.
+[POR CONFIRMAR: Especificación final verificada del sistema de alimentación
+eléctrica por baterías, BMS, fusibles por rama y corte unificado del botón de
+parada de emergencia (E-stop) sobre base, brazo, elevador y pan-tilt según
+RuleBook §3.3.2].
+
+2.4 Distributed Onboard Compute and Wired Networking
+Computation is partitioned across two onboard Ubuntu 24.04 LTS hosts running
+ROS 2 Jazzy Jalisco with `rmw_cyclonedds_cpp` (`ROS_DOMAIN_ID=10` in real
+operation):
+- Primary Host (CHUWI LarkBox S NUC): Intel Core i3-1220P (10 cores / 12
+  threads), 15 GiB RAM, 468 GB NVMe SSD, Ubuntu 24.04.3 (kernel 7.0). It hosts
+  the protected Nav2/AMCL navigation stack, Hokuyo LiDAR driver (via dedicated
+  USB-Ethernet interface), hoverboard UART driver, ESP32-S3 elevator controller,
+  RealSense D435 driver, HRI state machines, mission compiler/executor, MoveIt 2
+  planning server, and facial display/TTS.
+- Secondary Host (NVIDIA Jetson Orin Nano 8 GB Super Dev Kit): 6-core Arm
+  Cortex-A78AE CPU (25 W power mode, 1.344 GHz), Ampere GPU with CUDA 13.2 and
+  TensorRT 10.16.2, 7.4 GiB shared RAM, Ubuntu 24.04.4 / L4T R39.2.1 (JetPack
+  7.2.1, kernel 6.8.12-tegra). Managed by the `jetson-head.service` systemd
+  unit, it runs the 50 Hz SocketCAN (`gs_usb` @ 1 Mbps) Piper arm controller,
+  20 Hz Dynamixel pan-tilt node, Orbbec DaBai wrist stream (20–30 Hz), FP16
+  TensorRT YOLOv8 inference node, and streaming Whisper ASR node.
+
+The two computers communicate over a direct wired 1 Gbps Ethernet link (measured
+RTT 0.2 ms, throughput >= 660 Mbps, NTP clock offset -11.9 ms; historical
+measurement on hardware). CycloneDDS is configured in explicit unicast mode
+with multicast disabled, completely avoiding WiFi hotspots in compliance with
+RoboCup@Home RuleBook §3.2.8.
+
+
+--------------------------------------------------------------------------------
+3. Distributed ROS 2 Software Architecture, Safety, and Simulation
+--------------------------------------------------------------------------------
+3.1 Single-Owner Joint States and Hardware Safety Interlocks
+In multi-process robotic systems, publishing synthetic zero joint positions when
+an actuator is unpowered corrupts TF trees and motion planners. Base@Home
+enforces a strict single-owner `/joint_states` architecture (`hoverboard_base`
+URDF): `piper_arm_controller` publishes `/arm/joint_states` (50 Hz),
+`pan_tilt_node` publishes `/pan_tilt/joint_states` (20 Hz), and `torso_state`
+publishes `/torso/joint_states` (5 Hz), aggregated by `joint_state_publisher`,
+while commanded arm targets are separated onto `/arm/joint_states_cmd` for
+visualization only.
+
+All actuator drivers implement hardware-level safety guards:
+- `piper_arm_controller` (`jetson_head/scripts/piper_arm_controller.py`): Starts
+  with `auto_enable=False`. It refuses to enable motors unless fresh CAN
+  feedback frames have arrived within `feedback_timeout_s = 0.5` s, preventing
+  the SDK from snapping to a zero-radian setpoint when unpowered. Any trajectory
+  received while disabled is discarded, disabling the arm immediately flushes
+  active trajectories, and commands outside the URDF joint limits (`j1: +-154`,
+  `j2: 0..195`, `j3: -175..0`, `j4: +-110`, `j5: +-80`, `j6: +-180` deg) are
+  rejected in full rather than clipped. Closed-loop execution is exposed via a
+  `FollowJointTrajectory` action server (`/arm/follow_joint_trajectory`) that
+  aborts if tracking error exceeds `fjt_path_tolerance_deg = 15.0` deg and
+  confirms goal arrival against measured CAN feedback within
+  `fjt_goal_tolerance_deg = 2.0` deg (`JETSON_VERIFIED` for disabled-state goal
+  rejection; 32 unit tests).
+- `pan_tilt_node` (`jetson_head/src/pan_tilt_controller`): Starts with
+  `auto_torque=False`, applies multi-turn unwrapping on the tilt axis (`homing
+  offset -2212`, `pan_center_tick 2059`), and limits PWM (`pwm_limit = 600`,
+  `position_p_gain = 450`) to prevent mechanical overload against hard stops.
+- `torso_state` (`src/base_athome_bringup/base_athome_bringup/torso_state_node.py`):
+  Opens the ESP32-S3 serial port with `DTR=False` and `RTS=False` to prevent
+  microcontroller resets, polls telemetry (`?`) at 5 Hz, and refuses to publish
+  `/torso/joint_states` or execute `/torso/goal` motions unless the elevator is
+  calibrated (`calibrated=True` or referenced against the top limit switch with
+  persisted `max_steps` travel) and `allow_motion:=True` is explicitly set.
+
+3.2 Multi-Fidelity Simulation (`base_athome_sim`)
+To enable deterministic testing without risking hardware or interfering with
+the real robot (`ROS_DOMAIN_ID=10`), `base_athome_sim` (`src/base_athome_sim`)
+provides a complete interface-compatible simulation in `ROS_DOMAIN_ID=42` (or
+`77` for isolated unit tests) activated by `ATHOME_SIM=1`. It emulates the
+Piper arm (cosine-profile trajectory interpolation and `FollowJointTrajectory`
+server), pan-tilt head (90 deg/s), request-indexed Whisper ASR protocol (with
+mute-paused timers), RealSense RGB-D streams, synthetic wrist-camera projection
+of target objects using live arm forward kinematics, Hokuyo raycasting over the
+occupancy grid, and a mock `navigate_to_pose` action server (or optional Gazebo
+Harmonic physics via `ros_gz_bridge`). Simulation configurations and face
+databases are isolated under `~/.local/share/base_athome/sim/`.
+
+
+--------------------------------------------------------------------------------
+4. Key Technical Contributions
+--------------------------------------------------------------------------------
+
+4.1 Deterministic Voice-to-Mission Compilation, Supervised Execution, and
+    Streaming VAD Speech Pipeline
+A central design decision in Base@Home is that free-form outputs from
+probabilistic language models must never directly command robot actuators.
+Instead, spoken and textual user instructions are processed by a three-stage
+deterministic pipeline (`src/base_athome_skills/base_athome_skills/mission/`):
+
+1. Request-Indexed Streaming ASR (`jetson_head/src/audio_asr/` and
+   `src/base_athome_perception/base_athome_perception/voice_client.py`):
+   Earlier fixed-window (6 s) recording suffered from truncated sentences,
+   dropped low-volume speech, and cross-talk between consecutive dialog turns.
+   Our redesigned `whisper_node` continuously captures 48 kHz audio from the
+   RØDE shotgun microphone, downsamples to 16 kHz in 32 ms blocks, and runs
+   streaming Silero VAD (0.34 ms per block on the Orin Nano CPU) alongside a
+   continuous background noise floor estimator. Each listen request carries a
+   unique `id`, a context-specific `initial_prompt` (biasing Whisper toward
+   either official guest names/drinks or valid map places/objects), and
+   configurable endpointing parameters (`start_timeout = 8.0` s,
+   `end_silence = 1.1` s, `max_speech = 15.0` s, plus pre-roll buffering and a
+   weak-voice gate at Silero >= 0.12 with RMS >= 4x noise floor). While the
+   robot speaks (`/voice/mute = True`), incoming audio blocks are zeroed and
+   the `start_timeout` countdown is paused rather than resetting the request.
+   Transcription runs in a serialized queue using `faster-whisper` (`base.en`
+   int8 on CPU, beam size 3) with hallucination, prompt-echo, and repetition-loop
+   filters, always emitting an explicit terminal event (`ok`, `no_speech`,
+   `rejected`, `cancelled`, or `error`) on `/voice/result`.
+
+2. Bilingual Deterministic Command Compiler (`command_parser.py`):
+   The compiler (`compile_command`, 592 lines, pure Python) parses compound
+   natural-language requests in English and Spanish (e.g., *"Go to the kitchen,
+   find a bottle, and bring it to the table; if you cannot find it, go back
+   home"* or *"Take out the trash"*) into a structured `Plan` DAG. Rather than
+   guessing when faced with ambiguity, the compiler enforces strict semantic
+   rules against the live semantic map (`places.py`):
+   - It automatically injects required implicit preconditions: moving the arm
+     to `pre_grasp` before `detect_object`, requiring `detect_object` before
+     `pick_object`, and expanding `"take out the trash"` into the 10-step
+     pointed-bag pickup, elevator coordination, navigation to `trash_drop`, and
+     floor release sequence (`_fetch_pointed_bag` + `_drop_bag`).
+   - It supports conditional branches (`if: {step: <id>, state: FAILED |
+     SUCCEEDED}`) for `"if you cannot find it..."` clauses, setting the
+     preceding detection step to `on_failure: continue` and guarding subsequent
+     actions on `SUCCEEDED`.
+   - It resolves numbered map objects (`#1`, `#2`) and furniture approach poses
+     from `semantic_map.yaml`, explicitly rejecting unknown locations, multiple
+     ambiguous objects of the same class (asking the user to specify the object
+     number), objects whose approach point falls inside a furniture polygon, or
+     skills marked `UNAVAILABLE` (`find_person`, `follow_person`,
+     `guide_person`, `deliver_object`, `answer_question`).
+   - Every compiled plan automatically appends a safety recovery block (`speak`
+     failure notification, `set_torso` to 0.0 m if the elevator was used, and
+     `return_home`) and sets `success_if` to the final utility-producing step.
+
+3. Pre-Execution Validation, Spoken Confirmation, and Supervised Execution
+   (`plan.py`, `executor.py`, `node.py`, `commander_node.py`):
+   Before any motor moves, `validate_plan()` verifies step count (<= 50), unique
+   IDs, skill availability in `SkillRegistry` (`skills.py`), required/optional
+   arguments, retry bounds (0..5), timeout bounds, forward/backward jump targets,
+   and semantic place existence. In voice mode (`commander_node.py`), the robot
+   synthesizes a natural-language summary of the compiled plan (`plan_to_speech`
+   in `voice_dialog.py`) and asks *"Should I do it?"*; execution only starts if
+   `parse_yes_no()` confirms an affirmative response, while saying *"stop"* at
+   any time triggers `/mission/cancel`. During execution, `MissionExecutor`
+   runs each step in a monitored thread with a `SkillContext` cancellation
+   event (`CANCEL_GRACE_S = 6.0` s, `MAX_JUMPS = 20`), ensuring that canceling a
+   navigation step aborts the active Nav2 goal and waits up to 5.0 s for Nav2
+   confirmation before returning control. Furthermore, `mission_executor`
+   refuses to initialize on `ROS_DOMAIN_ID=10` in simulation mode (`preflight`
+   check before `rclpy.init`) and requires `supervised:=True` (plus
+   `allow_manipulation_real:=True` for arm/elevator actions) in real mode.
+
+4.2 Pointed-Bag 3D Perception, Prismatic Torso Coordination, and Side-Mounted
+    6-DOF Manipulation
+Domestic tasks such as taking out the trash or picking up dropped items require
+perceiving objects on the floor pointed at by a user and grasping them without
+colliding the robot chassis or arm with the ground. Base@Home addresses this
+through a tightly coupled head-torso-wrist pipeline (`bag_finder.py`,
+`bag_task.py`, `arm_manipulation.py`, `wrist_detector.py`, `wrist_geometry.py`):
+
+1. 3D Pointing-Gesture Raycasting and Open-Vocabulary Bag Detection
+   (`src/base_athome_perception/scripts/bag_finder.py` and `bag_task.py`):
+   When `mission_executor` invokes `approach_person`, `bag_finder` sweeps the
+   pan-tilt head across `(0, +30, -30, +60, -60)` deg, detects the user with
+   YOLOv8n-pose (`conf >= 0.45`), visually tracks the torso center using a
+   proportional deadband controller (`gain = 0.6`, `deadband = 3.0` deg,
+   `max_step = 8.0` deg), and computes the median 3D person position in the
+   `map` frame using aligned RealSense D435 depth (median over a 9x9 pixel
+   patch). If the user is farther than `PERSON_NEAR_M = 2.2` m, the robot
+   navigates to stop at `PERSON_STOP_M = 1.5` m facing the person.
+   Next, in `find_pointed_bag`, the robot asks *"Please point at the bag."* and
+   deprojects the 3D coordinates of the shoulder, wrist, and hip keypoints
+   (`MIN_KP_CONF = 0.4`) into `map`. A valid pointing gesture is recognized when
+   the arm vector separates from the torso downward vector by at least
+   `MIN_POINT_ANGLE_DEG = 35.0` deg (`is_pointing()`), and the 3D ray from
+   shoulder through wrist is intersected with the floor plane `z = 0` up to
+   `MAX_POINT_RANGE_M = 6.0` m (`pointed_floor_point()`). Once 3 coherent
+   pointing rays are accumulated, their median `(x, y)` floor intersection is
+   computed, the pan-tilt head turns to look directly at that floor spot, and
+   `BagDetector` (`wrist_detector.py`) runs open-vocabulary `YOLOv8s-worldv2`
+   detection. Crucially, configuring YOLO-World with explicit background
+   distractor classes (`["black garbage bag", "trash bag", "plastic bag", "bag",
+   "person", "chair", "table", "bottle", "box", "wall", "floor"]`) raised bag
+   detection recall on a 24-image offline test set from 4/24 (standard COCO) and
+   6/24 (bag-only classes) to 17/24 by preventing low-confidence suppression.
+   The bag closest to the pointed ray within `MAX_BAG_FROM_RAY_M = 1.0` m is
+   selected, recording both its `(x, y)` center and the 3D height `z` of its
+   upper handle edge (`top[2]`).
+
+2. Collision-Free Base Docking and Prismatic Elevator Lowering (`bag_task.py`,
+   `node.py`):
+   Because Nav2 enforces a `robot_radius` of 0.44 m (`xy_goal_tolerance = 0.18`
+   m) and the Hokuyo LiDAR beam is at 0.38 m height (unable to see low bags),
+   the robot cannot simply drive up to a bag with the arm hanging down. Instead,
+   with the elevator at the top (`torso_lift_joint = 0.0` m), the arm first
+   moves to a collision-checked floor pre-grasp configuration
+   (`FLOOR_PREGRASP_DEG = [-15.4, 161.1, -112.4, 83.9, 78.0, -50.9]` deg, or a
+   user-taught `pre_grasp_floor`), which places the grasp point at
+   `(REACH_X = 0.58, REACH_Y = 0.12, REF_OBJECT_Z = 0.933)` m in
+   `base_footprint`, leaving a verified clearance (`base_clearance()`) of at
+   least `MIN_BASE_CLEARANCE_M = 0.05` m ahead of the 0.24 m front chassis edge.
+   Nav2 then navigates to a stand-off pose delayed by `DOCK_DISTANCE_M = 0.40` m
+   along the approach line (`approach_bag`), after which `dock_bag` advances
+   straight at `DOCK_SPEED_MPS = 0.08` m/s using odometry while monitoring the
+   front +-20 deg LiDAR sector (`dock_verdict()`) to stop immediately if any
+   tall obstacle appears closer than `dock_stop_range()`. With the elevator
+   still at the top, `remember_bag` uses the wrist camera to refine the bag's
+   `(x, y, z)` coordinates in `base_link` by intersecting the optical ray
+   passing through the upper 15 % of the 2D bounding box (`grasp_box_fraction =
+   0.15`) with the horizontal plane `z = plane_z` measured by the head camera
+   (`ray_plane_point()` in `wrist_geometry.py`), while rejecting self-detections
+   of the robot's own gripper/chassis in the bottom 30 % of the image
+   (`OWN_ROBOT_BAND_FRAC = 0.70`) or detections farther than
+   `BAG_MEMORY_TOLERANCE_M = 0.25` m from the head estimate. Finally,
+   `set_torso` lowers the NEMA 23 elevator by `torso_for_object(z_object) =
+   max(-0.58, min(0.0, z_object - 0.933))` m so the open gripper descends
+   directly to the handle height.
+
+3. Side-Mounted Kinematics, Multi-Orientation MoveIt 2 Planning, and Grasp
+   Confirmation (`arm_manipulation.py`, `piper_kinematics.py`,
+   `base_athome_moveit_config`):
+   Analytical forward kinematics using the AgileX SDK Modified Denavit-Hartenberg
+   parameters (`dh_is_offset = 1`) was cross-validated against the expanded URDF
+   across 2,000 random configurations, yielding a maximum discrepancy of
+   0.15 mm in position and 0.004 deg in orientation. In MoveIt 2 (TRAC-IK with
+   `Distance` solve type, 0.5 s timeout, OMPL planner, velocity/acceleration
+   scaling 0.3, and a 2,000-sample Allowed Collision Matrix checking 117
+   arm-body and 18 internal arm pairs), straight-line Cartesian advances from
+   the taught `pre_grasp` pose with fixed orientation reach ~15–20 cm. To
+   extend the effective workspace, `_grasp_core()` evaluates 17 candidate tool
+   orientations (0 deg plus tilts of 8, 16, 24, and 30 deg around the lateral
+   and vertical axes perpendicular to the approach vector) using a fast
+   collision-free IK pre-filter at the grasp point before computing the 10 cm
+   approach IK, Cartesian approach line, and joint-space trajectory. This
+   reduces planning time on unreachable targets from 38 s to ~7 s and extends
+   reachable advance to 22–25 cm (~10 s planning time). Temporal flicker in
+   wrist detections is mitigated by `TargetTracker` (IoU continuity + 5-frame
+   median width smoothing) and an `object_hold_s = 8.0` s target latch in
+   `base_link` (validated in simulation under 80 % random frame dropout with
+   4/4 grasp completions). After closing the gripper to `GRIPPER_CLOSE_MM =
+   50.0` mm and lifting 3 cm, `pick_blocking()` verifies physical grasp capture
+   by checking that the measured CAN gripper width exceeds `GRIPPER_CLOSE_MM +
+   5.0` mm; if the fingers close completely (`<= 55 mm`), it reopens the
+   gripper and reports an explicit `grasp_empty` failure.
+
+4.3 Protected Differential Navigation, Semantic Map Layer, and WebXR
+    Teleoperation
+1. Differential-Drive Navigation (`hoverboard_base`,
+   `base_athome_navigation`):
+   The navigation stack uses `map_server`, AMCL (`DifferentialMotionModel`,
+   `likelihood_field`, 500–2,000 particles), `SmacPlanner2D` (0.05 m resolution
+   global/local costmaps, `robot_radius = 0.44` m, `inflation_radius = 0.59` m),
+   and a `RotationShimController` (`angular_dist_threshold = 0.785` rad,
+   `rotate_to_goal_heading = True`, `0.70` rad/s in-place rotation) wrapping
+   `RegulatedPurePursuitController` (`desired_linear_vel = 0.38` m/s,
+   `min_lookahead_dist = 0.58` m > `track_width = 0.5620` m to eliminate
+   lateral oscillation). The `hoverboard_driver` transmits `0xABCD` XOR-checked
+   serial frames at 50 Hz with a 0.5 s `cmd_vel` watchdog, anti-stiction floors
+   (`min_speed_raw = 75`, `min_steer_raw = 165`), and 22-byte closed-loop Hall
+   odometry integration.
+
+2. Semantic Map Layer and Live Map Synchronization (`map_zone_editor.py`,
+   `semantic_objects.py`, `nav_map_sync.sh`):
+   Without modifying the protected Nav2 parameters, an application-layer
+   semantic representation (`semantic_map.yaml` and `waypoints.yaml`) stores
+   named waypoints, polygonal furniture zones, numbered objects with automatic
+   stand-off approach poses outside furniture polygons, and virtual obstacles,
+   synchronized to `map_server` via `/map_server/load_map`.
+
+3. Zero-WiFi WebXR Teleoperation (`jetson_head/scripts/quest_teleop_node.py`,
+   `quest_cartesian_core.py`):
+   To collect manipulation demonstrations without violating the competition
+   no-hotspot rule, a Meta Quest 2 headset connects via USB to the Jetson using
+   an `adb reverse` tunnel (`localhost:8765`, IPv4/IPv6). A 60 Hz WebXR page
+   streams 6-DOF controller poses with a dead-man clutch (`X` button) to a 25 Hz
+   node implementing One Euro filtering and adaptive damped least-squares (DLS)
+   differential IK (`ik_damping` adapting from 5 far from singularities to 80
+   near the wrist singularity at HOME, reducing opposite `j4/j6` wrist flips
+   from 40 deg to 7 deg) with uniform joint velocity scaling (20 deg/s arm,
+   40 deg/s wrist, `max_lead_deg = 5.0` deg).
+
+
+--------------------------------------------------------------------------------
+5. Experimental Evaluation and Verification Status
+--------------------------------------------------------------------------------
+In accordance with our engineering policy, Table 1 reports only verified
+measurements and explicitly distinguishes between onboard hardware measurements
+(`NUC_VERIFIED` / `JETSON_VERIFIED`), multi-node simulation (`SIM_PASS`), and
+offline unit/synthetic benchmarks (`UNIT_PASS`). No physical actuator success
+rates are claimed where `HARDWARE_VERIFIED` trials remain pending.
+
+Table 1. Summary of Verified Subsystem Benchmarks and Test Suites (as of
+2026-11-05).
++-----------------------------------+-----------------------------------+----------------------+
+| Subsystem / Experiment            | Measured Result / Performance     | Verification Status  |
++-----------------------------------+-----------------------------------+----------------------+
+| Jetson YOLOv8n FP16 TensorRT      | 55.0 FPS end-to-end (~18 ms/f) vs | JETSON_VERIFIED      |
+| (`yolo_trt_node`, DaBai stream)   | 5.2 FPS on CPU; 29.9 Hz on NUC    | (2026-11-03)         |
++-----------------------------------+-----------------------------------+----------------------+
+| Whisper ASR Model Comparison      | `base.en` int8: 1.50 s/phrase,    | JETSON_VERIFIED      |
+| (17 synthetic phrases, Orin CPU)  | 15/17 exact (17/17 after dialog   | (2026-11-03)         |
+|                                   | parser); `small.en`: 4.50 s       |                      |
++-----------------------------------+-----------------------------------+----------------------+
+| Full ASR Pipeline w/ Real Mic     | 16/16 understood at 100%, 25%,    | JETSON_VERIFIED      |
+| Noise Floor (`asr_benchmark       | and 8% gain, and 5 s late start;  | (injected over real  |
+| --inject`, 16 phrases on RØDE)    | median 2.5 s latency after speech | RØDE noise floor)    |
++-----------------------------------+-----------------------------------+----------------------+
+| Live Human Speech to RØDE Mic     | 3 phrases transcribed (~1.4 s);   | Partial JETSON_      |
+| (`commander` voice trial)         | continuous-voice false trigger in | VERIFIED; [POR       |
+|                                   | ambient noise under investigation | CONFIRMAR: 10x trial]|
++-----------------------------------+-----------------------------------+----------------------+
+| YOLO-World Bag Detection          | 17/24 bags detected w/ distractor | UNIT_PASS / Offline  |
+| (`BagDetector` on 24 photos)      | classes vs 6/24 (bag-only) & 4/24 | dataset (2026-11-05) |
+|                                   | (COCO); ~125 ms/frame on NUC CPU  |                      |
++-----------------------------------+-----------------------------------+----------------------+
+| Piper FK vs URDF & Multi-Angle    | FK diff <= 0.15 mm / 0.004 deg    | UNIT_PASS & SIM_PASS |
+| MoveIt Grasp Reach (2,000 configs)| (2000 configs); reach 22–25 cm w/ | (4/4 grasps at 80%   |
+|                                   | 0–30 deg tilt; 4/4 at 80% dropout | frame dropout in sim)|
++-----------------------------------+-----------------------------------+----------------------+
+| Deterministic `commander` +       | Compound fetch & "take out the    | SIM_PASS (66–112 s)  |
+| `mission_executor` + `bag_finder` | trash" missions SUCCEEDED; cancel | & UNIT_PASS (76      |
+|                                   | & recovery verified               | skills tests pass)   |
++-----------------------------------+-----------------------------------+----------------------+
+| WebXR Quest 2 Teleop Chain        | 10 mm / 80 ms lag at 12 cm/s (vs  | SIM_PASS (`simcheck` |
+| (One Euro + Adaptive DLS IK)      | 47 mm / 460 ms prior); 39.7/40 mm | domain 42); real     |
+|                                   | step response                     | trial pending        |
++-----------------------------------+-----------------------------------+----------------------+
+| Automated Repository Test Suites  | Perception: 122, Skills: 76,      | UNIT_PASS            |
+| (pytest + xacro/check_urdf)       | URDF Editor: 45, Agent Guard: 40, | (2026-11-04/05)      |
+|                                   | GPSR: 34, Jetson: 32, Quest: 18,  |                      |
+|                                   | Nav Semantic: 9, Pan-Tilt: 8,     |                      |
+|                                   | Sim: 7, Torso Lift: 6             |                      |
++-----------------------------------+-----------------------------------+----------------------+
+| Full Physical Robot Trials        | [POR CONFIRMAR: Completar con las | PENDIENTE            |
+| (Receptionist, Trash Pickup,      | series reales N>=10 medidas antes | (`HARDWARE_VERIFIED` |
+| Tabletop Grasping)                | del 06/12/2026]                   | required)            |
++-----------------------------------+-----------------------------------+----------------------+
+
+
+--------------------------------------------------------------------------------
+6. Conclusions and Future Work
+--------------------------------------------------------------------------------
+We have presented the hardware and software architecture of Base@Home, a
+low-cost, open-source domestic service robot built on ROS 2 Jazzy for
+RoboCup@Home OPL. By combining a deterministic bilingual mission compiler and
+supervised executor with a streaming VAD speech interface, a 0.60 m prismatic
+torso column, a side-mounted 6-DOF manipulator, and hardware-level actuator
+safety guards, the platform provides a verifiable foundation for domestic
+service tasks without relying on unconstrained LLM outputs in the control loop.
+
+Immediate work prior to competition focuses on: (1) resolving the 12 V power
+delivery stability on the pan-tilt U2D2 bus under torque load; (2) completing
+supervised physical validation series (`HARDWARE_VERIFIED`) for the HRI
+Receptionist challenge, pointed-bag trash disposal with the calibrated ESP32-S3
+elevator, and tabletop object grasping following the 6-step OpenCV eye-in-hand
+calibration protocol (`handeye.py`); (3) exporting `YOLOv8s-worldv2` to FP16
+TensorRT on the Jetson Orin Nano; and (4) evaluating online SLAM for the
+unmapped Restaurant environment. All source code, CAD/URDF models, firmware,
+and test suites are publicly available at
+`https://github.com/ShiiSuii/base_athome`.
+
+
+--------------------------------------------------------------------------------
+References (Verified Official URLs and Publications)
+--------------------------------------------------------------------------------
+[1] RoboCup@Home Technical Committee: RoboCup@Home RuleBook, Release 2026.2.
+    https://github.com/RoboCupAtHome/RuleBook/releases/tag/2026.2 (2026)
+[2] RoboCup@Home Executive Committee: First Call for Participation –
+    RoboCup@Home 2027.
+    https://athome.robocup.org/call-for-participation-robocuphome-2027/ (2026)
+[3] Macenski, S., Foote, T., Gerkey, B., Lalancette, C., Woodall, W.: Robot
+    Operating System 2: Design, architecture, and uses in the wild. Science
+    Robotics 7(66), eabm6074 (2022). https://doi.org/10.1126/scirobotics.abm6074
+[4] Macenski, S., Martín, F., White, R., Clavero, J.G.: The Marathon 2: A
+    Navigation System. In: IEEE/RSJ International Conference on Intelligent
+    Robots and Systems (IROS), pp. 2718–2725 (2020).
+    https://docs.nav2.org/
+[5] Coleman, D., Sucan, I., Chitta, S., Correll, N.: Reducing the Barrier to
+    Entry of Complex Robotic Software: a MoveIt! Case Study. Journal of
+    Software Engineering for Robotics 5(1), 3–16 (2014).
+    https://moveit.picknik.ai/
+[6] Beeson, P., Ames, B.: TRAC-IK: An open-source library for improved solving
+    of generic inverse kinematics. In: IEEE-RAS 15th International Conference
+    on Humanoid Robots (Humanoids), pp. 928–935 (2015).
+[7] Radford, A., Kim, J.W., Xu, T., Brockman, G., McLeavey, C., Sutskever, I.:
+    Robust Speech Recognition via Large-Scale Weak Supervision. In:
+    International Conference on Machine Learning (ICML), PMLR 202,
+    pp. 28492–28518 (2023).
+[8] Casiez, G., Roussel, N., Vogel, D.: 1€ Filter: A Simple Speed-based
+    Low-pass Filter for Noisy Input in Interactive Systems. In: ACM SIGCHI
+    Conference on Human Factors in Computing Systems (CHI), pp. 2527–2530
+    (2012). https://cristal.univ-lille.fr/~casiez/1euro/
+[9] Jocher, G., Chaurasia, A., Qiu, J.: Ultralytics YOLOv8 (2023).
+    https://github.com/ultralytics/ultralytics
+[10] Cheng, T., Song, L., Ge, Y., Liu, W., Wang, X., Shan, Y.: YOLO-World:
+     Real-Time Open-Vocabulary Object Detection. In: IEEE/CVF Conference on
+     Computer Vision and Pattern Recognition (CVPR), pp. 16901–16911 (2024).
+
+
+--------------------------------------------------------------------------------
+ANNEX (1 Page — Appended After References per CfP 2027 & RuleBook 2026.2)
+--------------------------------------------------------------------------------
+Team Name:            UruBots
+League:               RoboCup@Home Open Platform League (OPL)
+Institution:          [POR CONFIRMAR: Institución / Universidad, País: Uruguay]
+Principal Investigator: [POR CONFIRMAR: Nombre, cargo y enlace institucional]
+Team Leader:          [POR CONFIRMAR: Nombre completo]
+Contact Person:       [POR CONFIRMAR: Nombre y correo de contacto]
+Team Website:         [POR CONFIRMAR: URL en inglés]
+Open-Source Repo:     https://github.com/ShiiSuii/base_athome
+Team Members:         [POR CONFIRMAR: Lista completa de integrantes y roles]
+
+1. Photo(s) of the Robot
+[POR CONFIRMAR: Insertar foto frontal y lateral del robot completo Base@Home
+sin personas o con consentimiento firmado, y sin marcadores ArUco visibles].
+
+2. Robot's Description / Hardware (OPL)
+- Footprint & Dimensions: 0.48 m (L) x 0.48 m (W); base height 0.22 m; column
+  height 1.30 m; total height [POR CONFIRMAR: altura total medida con cabezal,
+  debe ser <= 2.00 m y ancho <= 0.70 m según RuleBook §4.4]; total mass
+  [POR CONFIRMAR: masa total medida en kg].
+- Mobile Base: Differential drive with 2x 6.5" BLDC hoverboard hub motors (90
+  Hall ticks/rev, calibrated wheel radius 0.0853 m, track width 0.5620 m), rear
+  caster (0.04 m radius), STM32F103 FOC controller board (UART 115200 baud).
+- Torso Elevator: Prismatic vertical column (0.60 m working stroke between dual
+  debounced limit switches, ~0.75 m mechanical max) driven by a NEMA 23 stepper
+  motor (1600 microsteps/rev) and ESP32-S3 controller (USB CDC/CH343).
+- Manipulator: 6-DOF AgileX Piper arm (1.5 kg payload, 626 mm reach, parallel
+  gripper up to 105 mm software/URDF opening, 70 mm datasheet, 75 mm measured
+  CAN feedback), side-mounted on torso prism, SocketCAN (`gs_usb`) at 1 Mbps.
+- Head & Audio: 2-DOF pan-tilt (2x Dynamixel XL430-W250 via U2D2 at 1 Mbaud),
+  RØDE VideoMic GO II directional USB shotgun microphone, front 0.26 m x 0.18 m
+  HDMI facial expression screen and speaker.
+- Sensors: Hokuyo UST-05LX 2D LiDAR (270 deg, 0.06–5.0 m, 40 Hz, beam at 0.38 m
+  height); Intel RealSense D435 RGB-D on head (640x480 @ 15 Hz); Orbbec DaBai
+  DC1 eye-in-hand camera on wrist (20–30 Hz RGB, depth > 0.30 m).
+- Onboard Computers: (1) CHUWI LarkBox S NUC (Intel Core i3-1220P, 15 GiB RAM,
+  468 GB NVMe) and (2) NVIDIA Jetson Orin Nano 8 GB Super (6x Cortex-A78AE,
+  Ampere GPU, 25 W mode), connected via wired 1 Gbps Ethernet.
+
+3. Software (Custom packages developed by the team are marked with `*`)
+- Operating System & Middleware: Ubuntu 24.04 LTS (NUC kernel 7.0; Jetson L4T
+  R39.2.1 / JetPack 7.2.1 kernel 6.8.12-tegra), ROS 2 Jazzy Jalisco, Eclipse
+  CycloneDDS (unicast configuration).
+- Navigation & Mapping: `*hoverboard_base` (custom 50 Hz UART driver, Hall
+  odometry, Xacro/URDF), `*base_athome_navigation` (Nav2 configuration with
+  AMCL, SmacPlanner2D, RotationShim + RegulatedPurePursuit, and `*`semantic map
+  zone/object editor), `*base_athome_mapping` (`slam_toolbox`, `rtabmap_ros`),
+  `urg_node` (Hokuyo).
+- Mission Control & Skills: `*base_athome_skills` (`*commander` bilingual
+  deterministic natural-language compiler and web/voice UI, `*mission_executor`
+  supervised plan runner, `*bag_task` geometric solver, `*door_open_detector`),
+  `*tools/gpsr_parser` (deterministic offline GPSR parser).
+- Perception, Manipulation & HRI: `*base_athome_perception` (`*hri_receptionist`,
+  `*arm_manipulation`, `*bag_finder`, `*wrist_detector`, `*wrist_geometry`,
+  `*piper_kinematics`, `*handeye`, `*voice_client`, `*guest_vocabulary`,
+  `*animated_face`), `*base_athome_moveit_config` (MoveIt 2, TRAC-IK, OMPL),
+  `*jetson_head` (`*piper_arm_controller` with `FollowJointTrajectory` over
+  `piper_sdk`, `*yolo_trt_node` FP16 TensorRT 10.16, `*pan_tilt_controller` over
+  `DynamixelSDK`, `*audio_asr` with `faster-whisper` and Silero VAD,
+  `*quest_teleop_node` WebXR teleop), OpenCV (YuNet/SFace, ArUco), Ultralytics
+  (YOLOv8n, YOLOv8n-pose, YOLOv8s-worldv2), Piper TTS.
+- Simulation & Tooling: `*base_athome_sim` (lightweight ROS 2 emulator + Gazebo
+  Harmonic integration), `*tools/urdf_editor` (web Xacro/URDF preview editor).
+
+4. External Devices
+- None required during autonomous competition runs (all navigation, speech
+  recognition, vision inference, and manipulation planning execute onboard the
+  NUC and Jetson over wired Ethernet; zero cloud APIs or external WiFi).
+  Optional during offline development/demonstration recording: Meta Quest 2
+  headset connected via wired USB (`adb reverse`) for arm teleoperation.
+
+
+================================================================================
+PARTE 2. TRAZABILIDAD TÉCNICA: CADA DATO TÉCNICO CON SU ARCHIVO FUENTE
+================================================================================
+
+Cada cifra, parámetro, interfaz y resultado incluido en la Parte 1 proviene
+exclusivamente de los siguientes archivos del repositorio (sin suposiciones):
+
+2.1 Arquitectura General, Cómputo y Red Distribuida
+---------------------------------------------------
+- Topología NUC + Jetson Orin Nano por Ethernet directo 1 Gb/s, criterios de
+  reparto de cómputo y prohibición de hotspots WiFi (RuleBook §3.2.8):
+  * Fuente: `docs/ROBOT.md` (§1 líneas 15–56, §3 líneas 76–95) y
+    `docs/ROADMAP.md` (§2 línea 32).
+  * Etiqueta: `VERIFICADO 2026-11-03` / `HISTORICO 2026-10-30`.
+- Especificaciones de la NUC (CHUWI LarkBox S, Intel Core i3-1220P 10C/12T,
+  15 GiB RAM, NVMe 468 GB, Ubuntu 24.04.3, kernel 7.0, ROS 2 Jazzy):
+  * Fuente: `docs/ROBOT.md` (§2 líneas 59–67) y `docs/collab/STATUS.md` (§1
+    línea 12).
+  * Etiqueta: `VERIFICADO 2026-11-03` / `NUC_VERIFIED`.
+- Especificaciones de la Jetson Orin Nano Dev Kit Super 8 GB (Ubuntu 24.04.4,
+  L4T R39.2.1 / JetPack 7.2.1, kernel 6.8.12-tegra, 6x A78AE en modo 25 W a
+  1.344 GHz, 7.4 GiB RAM compartida, CUDA 13.2, TensorRT 10.16.2, servicio
+  `jetson-head.service`):
+  * Fuente: `docs/ROBOT.md` (§2 líneas 59–71, §11 líneas 426–430) y
+    `docs/collab/STATUS.md` (§1 línea 13).
+  * Etiqueta: `VERIFICADO 2026-11-03` / `JETSON_VERIFIED`.
+- Mediciones del enlace Gigabit Ethernet (RTT 0.2 ms, >= 660 Mb/s por SSH,
+  desfase NTP -11.9 ms, CycloneDDS unicast sin multicast, dominios ROS 10
+  real, 42 simulación, 77 pruebas):
+  * Fuente: `docs/ROBOT.md` (§3 líneas 85–92) y
+    `jetson_head/config/cyclonedds_jetson.xml`.
+  * Etiqueta: `HISTORICO 2026-10-30` / `CODIGO`.
+
+2.2 Hardware, URDF/Xacro y Dimensiones Físicas
+----------------------------------------------
+- Dimensiones del chasis (`chassis_length = 0.48` m, `chassis_width = 0.48` m,
+  `chassis_height = 0.22` m medido el 2026-11-05, `ground_clearance = 0.04` m),
+  `base_footprint` 0.06 m debajo de `base_link`, rueda loca (`caster_offset_x =
+  -0.20` m, `caster_radius = 0.04` m):
+  * Fuente: `src/hoverboard_base/urdf/xacro/properties.xacro` (líneas 7–22) y
+    `docs/ROBOT.md` (§5 líneas 123–126).
+  * Etiqueta: `CODIGO` y medición física del usuario (2026-11-05).
+- Posición del LiDAR Hokuyo UST-05LX (`laser_offset_x = 0.22` m,
+  `laser_offset_y = 0.00` m, `laser_offset_z = 0.32` m sobre el piso para la
+  base del sensor y haz a 0.38 m; 270 deg, 0.06–5.0 m, 40 Hz):
+  * Fuente: `src/hoverboard_base/urdf/xacro/properties.xacro` (líneas 24–27) y
+    `docs/ROBOT.md` (§4 línea 101, §5 línea 126).
+  * Etiqueta: `CODIGO` / `HISTORICO 2026-10-30` / medido 2026-11-05.
+- Geometría de la columna, elevador, prisma del torso, cabezal y pantalla
+  (`column_height = 1.30` m, `column_width = 0.06` m, `carriage_length = 0.22` m,
+  `carriage_width = 0.38` m, `torso_lift_top_z = 1.26` m, `torso_switch_stroke =
+  0.60` m, `torso_floor_stroke = 0.75` m, `prism_size_x/y/z = 0.25 / 0.35 /
+  0.35` m, `head_base_z = 0.12` m, `screen_width/height = 0.26 / 0.18` m;
+  30 joints totales y 11 móviles):
+  * Fuente: `src/hoverboard_base/urdf/xacro/properties.xacro` (líneas 29–74) y
+    `docs/ROBOT.md` (§5 líneas 121–124).
+  * Etiqueta: `CODIGO` (`xacro` + `check_urdf` OK).
+- Dueño único por joint en `/joint_states` (`/arm/joint_states`,
+  `/pan_tilt/joint_states`, `/torso/joint_states`, y poses comandadas en
+  `/arm/joint_states_cmd`):
+  * Fuente: `docs/ROBOT.md` (§5 línea 128).
+  * Etiqueta: `CODIGO`.
+
+2.3 Elevador Prismático (NEMA 23 + ESP32-S3 + `torso_state`)
+------------------------------------------------------------
+- Firmware del elevador (ESP32-S3 a 115200 baud, `PIN_STEP = 4`, `PIN_DIR = 5`,
+  `PIN_ENABLE = 6`, `PIN_LIMIT_TOP = 7`, `PIN_LIMIT_BOTTOM = 8`, `STEPS_PER_REV
+  = 200`, `microstepping = 8` -> 1600 pasos/vuelta, `PULSE_WIDTH_US = 4`,
+  `MIN_STEP_DELAY_US = 40`, `MAX_STEP_DELAY_US = 4000`, debounce de finales de
+  carrera de 500 us + 1 ms, rutina `CALIBRATE` en 3 pasos midiendo
+  `max_travel_steps` y retrocediendo `top_margin_steps = 250` pasos):
+  * Fuente: `firmware/nema23_esp32/nema23_esp32.ino` (líneas 15–452, 721–800) y
+    `scripts/stepper_controller.py` (líneas 24–169, 240–346).
+  * Etiqueta: `CODIGO`.
+- Nodo ROS 2 `torso_state` y parser `TorsoStatus` / `TorsoReference` (apertura
+  serial con `dtr = False` y `rts = False` para no resetear el ESP32, encuesta
+  `?` a `poll_hz = 5.0` Hz, `stroke_m = 0.60` m, `stale_s = 1.5` s, persistencia
+  de `max_steps` en `~/.config/base_athome/elevador.json`, publicación de
+  `/torso/joint_states` solo cuando `calibrated` es verdadero, guarda
+  `allow_motion = False` por defecto, servicios `/torso/calibrate` y
+  `/torso/go_top`, parada inmediata con `NaN` en `/torso/goal`):
+  * Fuente: `src/base_athome_bringup/base_athome_bringup/torso_state_node.py`
+    (líneas 1–198) y `src/base_athome_bringup/base_athome_bringup/torso_state.py`
+    (líneas 1–103).
+  * Etiqueta: `CODIGO` / `UNIT_PASS` (6 tests en `test_torso_state.py`) /
+    `SIM_PASS`; prueba física en robot real `PENDIENTE`.
+
+2.4 Misión Determinista con Voz (`commander`, `mission_executor` y ASR)
+-----------------------------------------------------------------------
+- Cadena de audio y ASR en la Jetson (`whisper_node.py` + `asr_core.py`: captura
+  RØDE 48 kHz -> 16 kHz en bloques de 32 ms, Silero VAD 0.34 ms/bloque,
+  `start_timeout = 8.0` s, `end_silence = 1.1` s, `max_speech = 15.0` s,
+  compuerta de voz débil Silero >= 0.12 y RMS >= 4x ruido, pausa por
+  `/voice/mute`, `faster-whisper` `base.en` int8 con beam 3, filtros de
+  alucinación/eco/bucle, eventos en `/voice/result`, benchmarks 1.50 s/frase y
+  16/16 frases inyectadas a 2.5 s de mediana):
+  * Fuente: `docs/MICROFONO_ASR.md` (§1–§3 líneas 17–150),
+    `docs/ROBOT.md` (§4 línea 107, §6 línea 291, §10 línea 406) y
+    `docs/collab/STATUS.md` (§1 línea 18).
+  * Etiqueta: `JETSON_VERIFIED` (voz inyectada sobre ruido real del RØDE; 3
+    frases con voz humana real en ~1.4 s) / `UNIT_PASS` (12 tests en
+    `test_asr_core.py`).
+- Registro de habilidades y contratos (`SkillSpec`, `SkillRegistry`,
+  habilidades `AVAILABLE`: `navigate_to`, `navigate_sequence`, `return_home`,
+  `speak`, `listen`, `wait`, `find_pointed_bag`, `approach_person`,
+  `approach_bag`, `dock_bag`, `remember_bag`, `set_torso`, `detect_object`,
+  `arm_pose`, `pick_object`, `place_object`; habilidades `UNAVAILABLE`
+  rechazadas en validación: `find_person`, `follow_person`, `guide_person`,
+  `deliver_object`, `answer_question`):
+  * Fuente: `src/base_athome_skills/base_athome_skills/mission/skills.py`
+    (líneas 1–157) y `src/base_athome_skills/README.md` (líneas 85–93).
+  * Etiqueta: `CODIGO` / `UNIT_PASS`.
+- Formato y validador de planes (`Plan`, `Step`, `parse_plan`, `validate_plan`,
+  `MAX_RETRIES = 5`, `MAX_STEPS = 50`, condiciones `if: {step, state}`, saltos
+  `on_failure`, mapeo `_GPSR_MAP` y `from_gpsr`):
+  * Fuente: `src/base_athome_skills/base_athome_skills/mission/plan.py`
+    (líneas 1–195).
+  * Etiqueta: `CODIGO` / `UNIT_PASS`.
+- Ejecutor supervisado (`MissionExecutor` en `executor.py` y
+  `MissionExecutorNode` en `node.py`: estados `IDLE/RUNNING/SUCCEEDED/FAILED/
+  CANCELED`, `CANCEL_GRACE_S = 6.0` s, `MAX_JUMPS = 20`, cancelación de goals de
+  Nav2 esperando hasta 5.0 s, `DOCK_SPEED_MPS = 0.08` m/s, `TORSO_TOLERANCE_M =
+  0.02` m, rechazo `preflight` en dominio 10 si `mode != real`, exigencia de
+  `supervised:=True` y `allow_manipulation_real:=True`):
+  * Fuente: `src/base_athome_skills/base_athome_skills/mission/executor.py`
+    (líneas 1–298) y `src/base_athome_skills/base_athome_skills/mission/node.py`
+    (líneas 1–583).
+  * Etiqueta: `CODIGO` / `UNIT_PASS` / `SIM_PASS`.
+- Compilador determinista bilingüe ES/EN y nodo `commander` (`compile_command`
+  en `command_parser.py`, resolución de lugares/objetos/muebles en `places.py`,
+  síntesis de plan y errores hablados `plan_to_speech` / `error_to_speech` /
+  `asr_prompt` en `voice_dialog.py`, servidor web local en `127.0.0.1:8770` y
+  bucle de confirmación por voz `"Should I do it?"` -> `"yes"` / `"stop"` en
+  `commander_node.py`):
+  * Fuente: `src/base_athome_skills/base_athome_skills/mission/command_parser.py`
+    (líneas 1–592), `src/base_athome_skills/base_athome_skills/mission/places.py`
+    (líneas 1–110), `src/base_athome_skills/base_athome_skills/mission/voice_dialog.py`
+    (líneas 1–95), y `src/base_athome_skills/base_athome_skills/mission/commander_node.py`
+    (líneas 1–277).
+  * Etiqueta: `CODIGO` / `UNIT_PASS` (76 tests en `base_athome_skills/test`) /
+    `SIM_PASS` (2026-11-04, misión compuesta en 66 s); ejecución de misión en
+    robot real `PENDIENTE`.
+
+2.5 Percepción de la Bolsa Señalada y Manipulación con Brazo Piper 6-DOF
+------------------------------------------------------------------------
+- Geometría y constantes de la tarea de bolsa señalada (`FLOOR_PREGRASP_DEG =
+  [-15.4, 161.1, -112.4, 83.9, 78.0, -50.9]`, `REACH_X = 0.58` m, `REACH_Y =
+  0.12` m, `GROUND_TO_BASE_LINK_M = 0.06` m, `REF_OBJECT_Z = 0.933` m,
+  `MIN_BASE_CLEARANCE_M = 0.05` m, `DEFAULT_BAG_RADIUS_M = 0.20` m,
+  `GRASP_GAP_M = 0.12` m, `STROKE_M = 0.60` m, `STROKE_MARGIN_M = 0.02` m,
+  `DOCK_DISTANCE_M = 0.40` m, `MIN_POINT_ANGLE_DEG = 35.0` deg,
+  `MAX_POINT_RANGE_M = 6.0` m, `MAX_BAG_FROM_RAY_M = 1.0` m, `PLACE_TORSO_M =
+  -0.45` m, `PERSON_NEAR_M = 2.2` m, `PERSON_STOP_M = 1.5` m):
+  * Fuente: `src/base_athome_skills/base_athome_skills/mission/bag_task.py`
+    (líneas 1–172).
+  * Etiqueta: `CODIGO` / `UNIT_PASS` / `SIM_PASS`.
+- Nodo `bag_finder` con RealSense D435 y pan-tilt (barrido `SEARCH_PANS = (0.0,
+  30.0, -30.0, 60.0, -60.0)` deg, `yolov8n-pose.pt` con `conf = 0.45` y
+  `MIN_KP_CONF = 0.4`, seguimiento de torso `gain = 0.6`, `deadband_deg = 3.0`,
+  `max_step_deg = 8.0`, mediana de 3 rayos de apunte al piso, orientación de la
+  cabeza `_look_at` y detección 3D de la bolsa y su borde superior `top[2]`):
+  * Fuente: `src/base_athome_perception/scripts/bag_finder.py` (líneas 1–291).
+  * Etiqueta: `CODIGO` / `SIM_PASS`.
+- Detector de bolsas y objetos en la muñeca (`BagDetector` con
+  `yolov8s-worldv2.pt`, `BAG_WORLD_CLASSES` con distractores logrando 17/24 en
+  fotos frente a 6/24 sin distractores y 4/24 con COCO, ~125 ms en CPU de la
+  NUC, `grasp_box_fraction = 0.15`, filtro del propio robot
+  `OWN_ROBOT_BAND_FRAC = 0.70`, `WRIST_BAG_MIN_CONF = 0.30`, `TargetTracker` con
+  ventana de 5 cuadros y `hold_s = 0.6` s):
+  * Fuente: `src/base_athome_perception/base_athome_perception/wrist_detector.py`
+    (líneas 1–207) y `docs/ROADMAP.md` (§4 HOME-63 línea 133).
+  * Etiqueta: `CODIGO` / `UNIT_PASS` (17/24 en dataset de 24 fotos, 2026-11-05);
+    prueba con cámara real `PENDIENTE`.
+- Geometría monocular de cámara de muñeca e intersección rayo-plano
+  (`WristCalib`: `focal_px = 485.0`, `object_diameter_m = 0.075`,
+  `grasp_center_back_m = 0.02` m, `b = 0.0235` m, `ray_plane_point`,
+  `object_center`, `alignment_offset`, tolerancias de alineación 0.8 cm lateral
+  y 1.2 cm vertical):
+  * Fuente: `src/base_athome_perception/base_athome_perception/wrist_geometry.py`
+    (líneas 1–139).
+  * Etiqueta: `CODIGO` / `UNIT_PASS`.
+- Controlador del brazo Piper (`piper_arm_controller.py`: `can_port = auto`
+  detectando `gs_usb`, `control_rate_hz = 50.0`, `auto_enable = False`,
+  `feedback_timeout_s = 0.5`, `stream_speed_pct = 60`, `JOINT_LIMITS_DEG`,
+  `DEFAULT_HOME_DEG = [86.97, 172.87, -162.63, -99.89, -0.68, 44.98]`,
+  `GRIPPER_MAX_MM = 105.0`, servidor `FollowJointTrajectory` con tolerancia de
+  llegada `2.0` deg y de camino `15.0` deg):
+  * Fuente: `jetson_head/scripts/piper_arm_controller.py` (líneas 1–120) y
+    `docs/ROBOT.md` (§5.1 líneas 132–214, §7 S-14 línea 323).
+  * Etiqueta: `CODIGO` / `UNIT_PASS` (32 tests en `jetson_head/scripts/tests`) /
+    `JETSON_VERIFIED` (desplegado md5 `2e347c49`, rechazo sin habilitar
+    verificado).
+- Planificación y agarre con MoveIt 2 (`arm_manipulation.py`: `SHOULDER_IN_BASE
+  = [0.005, 0.175, 1.065]` m, retención de objetivo `object_hold_s = 8.0` s,
+  `BAG_MEMORY_TOLERANCE_M = 0.25` m, 17 orientaciones candidatas de 0 a 30 deg
+  en `_approach_candidates`, alcance medido de 22–25 cm, confirmación de agarre
+  por ancho medido de la pinza `> GRIPPER_CLOSE_MM + 5.0` mm donde
+  `GRIPPER_CLOSE_MM = 50.0` mm y `GRIPPER_OPEN_MM = 105.0` mm):
+  * Fuente: `src/base_athome_perception/base_athome_perception/arm_manipulation.py`
+    (líneas 72–825) y `docs/ROBOT.md` (§5.1 y §5.1b líneas 149–210).
+  * Etiqueta: `CODIGO` / `UNIT_PASS` / `SIM_PASS` (4/4 con 80 % de pérdida de
+    cuadros).
+- Nodo `yolo_trt_node.py` en la Jetson (inferencia FP16 con TensorRT 10.16.2 y
+  CUDA 13.2 sobre `/arm_camera/image_raw` -> `/arm_camera/detections`, 55 FPS en
+  GPU vs 5.2 FPS en CPU, 29.9 Hz medidos en la NUC):
+  * Fuente: `jetson_head/scripts/yolo_trt_node.py` (líneas 1–116),
+    `docs/ROBOT.md` (§6 línea 292, §11 líneas 426–430) y `docs/ROADMAP.md` (§3
+    línea 49).
+  * Etiqueta: `JETSON_VERIFIED` / `NUC_VERIFIED` (2026-11-03).
+
+2.6 Navegación Diferencial, Capa Semántica y Teleoperación WebXR
+----------------------------------------------------------------
+- Driver de hoverboard (`hoverboard_driver.py` y `hoverboard_params.yaml`:
+  trama `0xABCD`, 22 bytes de telemetría con `ENABLE_ODOMETRY`, `wheel_radius_m
+  = 0.0853`, `track_width_m = 0.5620`, `ticks_per_rev = 90.0`, `max_speed_raw =
+  450`, `max_steer_raw = 400`, `min_speed_raw = 75`, `min_steer_raw = 165`,
+  `linear_scale = 280.0`, `angular_scale = 260.0`, `cmd_vel_timeout = 0.5` s,
+  `publish_tf = True` en `odom -> base_footprint` a 50 Hz):
+  * Fuente: `src/hoverboard_base/config/hoverboard_params.yaml` (líneas 1–20),
+    `src/hoverboard_base/hoverboard_base/hoverboard_driver.py` (líneas 1–120) y
+    `docs/ROBOT.md` (§8 líneas 333–344).
+  * Etiqueta: `CODIGO` (navegación funcional protegida).
+- Configuración de Nav2 (`nav2_params.yaml`: AMCL `DifferentialMotionModel` con
+  500–2000 partículas, `SmacPlanner2D`, `RotationShimController` con
+  `angular_dist_threshold = 0.785` rad y `rotate_to_goal_heading = True`
+  envolviendo a `RegulatedPurePursuitController` con `desired_linear_vel = 0.38`
+  m/s y `min_lookahead_dist = 0.58` m, `controller_frequency = 15.0` Hz,
+  `xy_goal_tolerance = 0.18` m, `yaw_goal_tolerance = 0.10` rad, `robot_radius =
+  0.44` m, `inflation_radius = 0.59` m):
+  * Fuente: `src/base_athome_navigation/config/nav2_params.yaml` (líneas 1–248)
+    y `docs/ROBOT.md` (§8 líneas 345–352).
+  * Etiqueta: `CODIGO` (navegación funcional protegida).
+- Teleoperación con Meta Quest 2 por WebXR (`quest_teleop_node.py` y
+  `quest_cartesian_core.py`: túnel USB `adb reverse` sin WiFi en puerto 8765,
+  página 60 Hz / nodo 25 Hz, filtro One Euro, IK DLS adaptativa con `ik_damping`
+  5..80, velocidades 20/40 deg/s, `max_lead_deg = 5.0` deg, error medido en
+  modelo de cadena de 10 mm / 80 ms a 12 cm/s y 39.7/40 mm en `simcheck`):
+  * Fuente: `docs/ROBOT.md` (§5.1c líneas 215–232) y `docs/collab/STATUS.md`
+    (§1 línea 16, §3 líneas 39–53, §6 líneas 92–94).
+  * Etiqueta: `SIM_PASS` / `UNIT_PASS` (18 tests); prueba completa en brazo real
+    `PENDIENTE`.
+
+
+================================================================================
+PARTE 3. LISTA DE LO QUE EL EQUIPO DEBE COMPLETAR O CONFIRMAR ANTES DEL 6/12/2026
+================================================================================
+
+Para pasar este borrador a la plantilla oficial `RoboCupAtHome/TDPTemplate` y
+enviar el formulario de cualificación (Paso 2, domingo 6 de diciembre de 2026,
+23:59 GMT), el equipo humano debe completar o confirmar los siguientes puntos:
+
+3.1 Datos Institucionales, Autores y Enlaces (Obligatorios para Header y Annex)
+-------------------------------------------------------------------------------
+1. [POR CONFIRMAR] Lista completa de autores del paper, orden de firma y
+   afiliación institucional exacta en inglés (Universidad / Facultad /
+   Laboratorio, Ciudad, Uruguay).
+2. [POR CONFIRMAR] Nombre y enlace web del Investigador Principal (Principal
+   Investigator), nombre del Team Leader y nombre + correo electrónico de la
+   Persona de Contacto (exigidos por el RuleBook y el Annex).
+3. [POR CONFIRMAR] Lista completa de integrantes del equipo UruBots para el
+   Annex.
+4. [POR CONFIRMAR] Nombre propio definitivo del robot (confirmar si en el TDP,
+   el video y la web se llamará `Base@Home` u otro nombre, y actualizar el
+   diálogo del receptionist donde hoy dice `"I am Robot"`).
+5. [POR CONFIRMAR] URL pública definitiva del sitio web del equipo en inglés
+   (sin dirección IP, enlazando el TDP, el video de cualificación, el
+   repositorio de GitHub y la web oficial de RoboCup@Home).
+6. [POR CONFIRMAR] Historia previa del equipo (participaciones o rankings en
+   competencias locales/internacionales previas y publicaciones de los últimos
+   5 años, o confirmar que 2027 es la primera postulación del equipo en
+   RoboCup@Home).
+7. [POR CONFIRMAR] Sección de agradecimientos y fuentes de financiación
+   (Acknowledgments / Funding), si corresponde.
+
+3.2 Fotografías y Figuras (Con Revisión de Privacidad y Reglamento)
+-------------------------------------------------------------------
+1. [POR CONFIRMAR] Fotografías reales de alta resolución del robot completo
+   (vista frontal y lateral) para la Figura 1 y el Annex:
+   - Sin marcadores ArUco visibles en el robot ni en el entorno (RuleBook
+     §3.3.2).
+   - Sin personas de fondo, o únicamente con integrantes/invitados que hayan
+     firmado el consentimiento escrito de cesión de imagen para publicación en
+     RoboCup (`docs/VIDEO_CUALIFICACION.txt` §C.7).
+   - Sin pantallas ni terminales visibles que muestren direcciones IP internas,
+     rutas personales, tokens o contraseñas.
+2. [POR CONFIRMAR] Secuencia de 4 cuadros extraída de una corrida real en el
+   robot (por ejemplo, recepción de invitado o agarre de bolsa señalada) para
+   que el TDP refuerce directamente al video de cualificación (`docs/VIDEO_CUALIFICACION.txt`
+   §D.4).
+
+3.3 Resultados Experimentales en el Robot Real (`HARDWARE_VERIFIED`)
+--------------------------------------------------------------------
+1. [POR CONFIRMAR] Serie de pruebas reales del Receptionist / HRI Challenge
+   (previo arreglo eléctrico de los 12 V / cable USB del U2D2 del pan-tilt,
+   `HOME-54`): registrar al menos N = 10 intentos documentando tasa de éxito de
+   reconocimiento de nombre/bebida con personas reales, reconocimiento facial
+   SFace, detección de asiento libre con YOLOv8-pose y presentación mirando a
+   cada invitado (`docs/VIDEO_CUALIFICACION.txt` §D.2).
+2. [POR CONFIRMAR] Validación con personas reales hablando al micrófono RØDE a
+   1 m y 2 m (`escuchar --n 10`, `HOME-VOZ`): reemplazar o complementar la
+   tabla de voz inyectada con la tasa de comprensión y latencia con hablantes
+   humanos reales, y resolver la detección de "voz continua" con ruido ambiente
+   observada el 2026-11-04 (`docs/collab/STATUS.md` §1).
+3. [POR CONFIRMAR] Validación en el robot real de la misión `"Take out the
+   trash"` (`HOME-63`, procedimiento de 6 pasos en `docs/collab/STATUS.md` §2b):
+   calibrar el elevador (`calibrar_elevador` -> `~/.config/base_athome/elevador.json`),
+   enseñar `pre_grasp_floor` (`ensenar_pregrasp`), verificar `calibrar_bolsa`
+   con cinta métrica y registrar éxitos sobre intentos reales.
+4. [POR CONFIRMAR] Serie de agarres reales sobre mesa (`HOME-50`): 10 intentos
+   por distancia (10, 15 y 20 cm) con `torso_state` activo, y ejecución de la
+   calibración intrínseca + eye-in-hand de 6 pasos (`ROBOT.md` §5.2, residual
+   <= 5 mm / 1 deg, validación independiente <= 10 mm).
+5. [POR CONFIRMAR] Métrica de exact-plan accuracy del parser GPSR sobre el
+   dataset oficial `RoboCupAtHome/CommandGenerator` (`HOME-15b`).
+6. [POR CONFIRMAR] Medición en el brazo Piper real del error de seguimiento de
+   teleoperación con Meta Quest 2 (`track_mm`, `track_deg` en
+   `/quest_teleop/status`, `HOME-52`) tras las mejoras del filtro One Euro e IK
+   DLS adaptativa (recordar NO citar el valor viejo de 102 mm previo a los
+   arreglos, `docs/TDP_INSTRUCTIVO.txt` §6).
+
+3.4 Datos Abiertos de Hardware y Seguridad Física (Inspección RuleBook §4.4)
+----------------------------------------------------------------------------
+1. [POR CONFIRMAR] Altura total máxima, ancho total máximo y peso total medidos
+   del robot armado (verificar cumplimiento de <= 200 cm de alto y <= 70 cm de
+   ancho del RuleBook §4.4).
+2. [POR CONFIRMAR] Esquema eléctrico real verificado: configuración final de
+   baterías, BMS, fusibles por rama, reguladores y confirmación física de que
+   el botón rojo de parada de emergencia (E-stop) corta simultáneamente la
+   potencia de la base, el brazo Piper, el elevador NEMA 23 y el pan-tilt
+   Dynamixel (`docs/ROBOT.md` §4 líneas 110–113).
+3. [POR CONFIRMAR] Medición física con cinta métrica en el robot del montaje
+   del brazo Piper respecto del eje de la columna, dimensiones reales del cubo
+   del torso para colisiones de MoveIt, carrera real en centímetros entre los
+   dos finales de carrera del elevador (el modelo asume 60 cm), lectura de los
+   límites internos del firmware del Piper y configuración de `installation_pos`
+   lateral (`docs/ROBOT.md` §5.1).
+4. [POR CONFIRMAR] Sincronizar la rama de trabajo con `main` en GitHub y
+   asegurar que el `README.md` principal esté documentado en inglés antes del
+   envío para cumplir el requisito de reutilización de código abierto de la
+   convocatoria (`docs/VIDEO_CUALIFICACION.txt` §D.1.f).
+================================================================================
