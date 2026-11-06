@@ -350,8 +350,16 @@ def _go(c: _Ctx, phrase: str, raw: str) -> None:
         c.add("navigate_to", {"place": place}, f"ir a '{place}'", retries=1, timeout=180)
 
 
+def _is_table(c: _Ctx, place: str) -> bool:
+    info = c.tables.get(place) or {}
+    return info.get("type") == "table" or bool(re.search(r"table|mesa|desk|counter", place))
+
+
 def _observe_and_detect(c: _Ctx, obj: str) -> None:
     if not c.observing:
+        if c.place and _is_table(c, c.place):
+            c.add("dock_table", {}, f"acercarse al borde de '{c.place}'", recover=False, timeout=40)
+            c.steps[-1]["on_failure"] = "continue"      # sin borde claro se intenta igual: el brazo avisa si no llega
         c.add("arm_pose", {"pose": "pre_grasp"}, "llevar el brazo a la pose de observacion", timeout=60)
         c.observing = True
     c.add("detect_object", {"object": obj}, f"buscar '{obj}' con la camara", retries=2)
@@ -610,11 +618,25 @@ def compile_command(text: str, places: Dict[str, Any], name: str = "pedido",
     if c.errors:
         return Compiled(False, errors=c.errors, steps_text=c.text)
     # objetivo: la ultima accion util que no sea la rama alternativa ("si no lo ves ...")
+    # Pegado a una mesa, Nav2 no planifica: separarse antes de la proxima navegacion y antes de volver a casa
+    steps, docked = [], False
+    for st in c.steps:
+        if st["skill"] == "dock_table":
+            docked = True
+        elif docked and st["skill"] in ("navigate_to", "navigate_sequence", "return_home"):
+            c.n += 1
+            steps.append({"id": f"s{c.n}_undock_table", "skill": "undock_table", "args": {}, "retries": 0, "on_failure": "avisar",
+                          "timeout_s": 30, **({"if": st["if"]} if "if" in st else {})})
+            docked = False
+        steps.append(st)
+    c.steps = steps
     goal = next((s["id"] for s in reversed(c.steps) if s["skill"] not in ("speak", "listen", "wait")
                  and s.get("if", {}).get("state") != "FAILED"), None)
     recovery = [{"id": "avisar", "skill": "speak", "args": {"text": "I could not complete the request."}}]
     if resolve(places, "home") is not None or resolve(places, "default") is not None:
         recovery.append({"id": "volver", "skill": "return_home", "timeout_s": 180})
+    if any(s["skill"] == "dock_table" for s in c.steps):
+        recovery.insert(1, {"id": "separarse", "skill": "undock_table", "timeout_s": 30})
     if any(s["skill"] == "set_torso" for s in c.steps):
         recovery.insert(1, {"id": "subir", "skill": "set_torso", "args": {"target_m": 0.0}, "timeout_s": 120})
     plan = {"name": name, "steps": c.steps, "recovery": recovery}

@@ -20,11 +20,12 @@ def names(res):
 def test_user_example_full_mission_spanish():
     r = compile_command("Andá a recepción, saludá a la persona, después dirigite a la mesa, buscá una botella y llevala a la cocina.", PLACES)
     assert r.ok, r.errors
-    assert names(r) == ["navigate_to", "speak", "navigate_to", "arm_pose", "detect_object", "pick_object", "navigate_to", "place_object"]
+    assert names(r) == ["navigate_to", "speak", "navigate_to", "dock_table", "arm_pose", "detect_object", "pick_object",
+                        "undock_table", "navigate_to", "place_object"]
     s = skills(r)
     assert s[0][1] == {"place": "reception"} and s[2][1] == {"place": "table"}
-    assert s[4][1] == {"object": "bottle"} and s[5][1] == {"object": "bottle"}
-    assert s[6][1] == {"place": "kitchen"} and s[7][1] == {"place": "kitchen"}
+    assert s[5][1] == {"object": "bottle"} and s[6][1] == {"object": "bottle"}
+    assert s[8][1] == {"place": "kitchen"} and s[9][1] == {"place": "kitchen"}
     assert validate_plan(parse_plan(r.plan), REG, PLACES) == []
     assert r.plan["success_if"] == r.plan["steps"][-1]["id"]
 
@@ -168,7 +169,7 @@ def test_cancel(t):
 def test_redetect_after_moving():
     r = compile_command("buscá una botella, andá a la mesa y agarrala", PLACES)
     assert r.ok, r.errors
-    assert names(r) == ["arm_pose", "detect_object", "navigate_to", "arm_pose", "detect_object", "pick_object"]
+    assert names(r) == ["arm_pose", "detect_object", "navigate_to", "dock_table", "arm_pose", "detect_object", "pick_object"]
 
 
 def test_follow_compiles_to_the_follow_skill():
@@ -424,3 +425,11 @@ def test_bring_me_hands_the_object_over():
     assert c.ok, c.errors
     skills = [s["skill"] for s in c.plan["steps"]]
     assert skills[-1] == "give_object" and "speak" == skills[-2]
+
+
+def test_dock_table_failure_does_not_stop_the_plan():
+    r = compile_command("go to the table and pick up the bottle", _sim_places())
+    assert r.ok, r.errors
+    dock = next(st for st in r.plan["steps"] if st["skill"] == "dock_table")
+    assert dock["on_failure"] == "continue"
+    assert [st["skill"] for st in r.plan["steps"]].index("dock_table") == 1

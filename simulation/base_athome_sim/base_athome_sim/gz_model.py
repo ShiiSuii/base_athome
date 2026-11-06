@@ -50,6 +50,19 @@ def bag_sdf(xy, top_z: float) -> str:
     <odom_publish_frequency>10</odom_publish_frequency><dimensions>3</dimensions></plugin></model></sdf>"""
 
 
+def table_object_sdf(xyz, length: float = 0.23, radius: float = 0.0375) -> str:
+    """Objeto rigido sobre una mesa, magenta como la bolsa. Usa el modelo y la union de la bolsa."""
+    return f"""<?xml version="1.0"?><sdf version="1.9"><model name="{BAG_MODEL}">
+  <pose>{xyz[0]} {xyz[1]} {xyz[2]} 0 0 0</pose><link name="l">
+  <inertial><mass>0.15</mass><inertia><ixx>0.0007</ixx><iyy>0.0007</iyy><izz>0.0001</izz></inertia></inertial>
+  <collision name="c"><geometry><cylinder><radius>{radius}</radius><length>{length}</length></cylinder></geometry></collision>
+  <visual name="v"><geometry><cylinder><radius>{radius}</radius><length>{length}</length></cylinder></geometry>
+    <material><diffuse>0.8 0.1 0.8 1</diffuse><ambient>0.8 0.1 0.8 1</ambient><emissive>0.78 0.12 0.78 1</emissive></material></visual>
+  </link><plugin filename="gz-sim-odometry-publisher-system" name="gz::sim::systems::OdometryPublisher">
+    <odom_topic>{BAG_ODOM_TOPIC}</odom_topic><odom_frame>map</odom_frame><robot_base_frame>{BAG_MODEL}</robot_base_frame>
+    <odom_publish_frequency>10</odom_publish_frequency><dimensions>3</dimensions></plugin></model></sdf>"""
+
+
 def person_sdf(xy) -> str:
     """Cuerpo de la persona: bloque visual, sin colision, de la altura que usa sim_scene.make_person."""
     return _static_box("persona", (xy[0], xy[1], 0.81), (0.52, 0.52, 1.62), (0.2, 0.35, 0.6))

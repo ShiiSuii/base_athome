@@ -35,7 +35,7 @@ from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool, Float64, String
 from std_srvs.srv import Trigger
 
-from . import bag_task, follow_logic
+from . import bag_task, follow_logic, table_dock
 from .executor import MissionExecutor, SkillContext
 from .places import home_place, load_places, resolve
 from .plan import PlanError, parse_plan, validate_plan
@@ -49,6 +49,8 @@ except ImportError:  # pragma: no cover
 
 NAV_SUCCEEDED, NAV_CANCELED, NAV_ABORTED = 4, 5, 6
 DOCK_TURN_RPS = 0.3
+TABLE_UNDOCK_MIN_M = 0.25   # lo que hace falta para salir del inflado de Nav2 aunque casi no se haya avanzado
+TABLE_DOCK_MAX_M = 0.60     # Nav2 deja lejos, pero no tanto: mas que esto es que no mira una mesa
 FOLLOW_SEARCH_S = 12.0      # buscando a la persona antes de darla por perdida: la cabeza tarda en barrer
 DOCK_SPEED_MPS = 0.08      # tramo final hasta la bolsa
 TORSO_TOLERANCE_M = 0.02
@@ -120,12 +122,14 @@ class MissionExecutorNode(Node):
         self.create_subscription(String, "/torso/status", self._torso_status, 10)
         self.create_subscription(String, "/bag_finder/result", self._bag_result, 10)
         self.seen_people = None        # ultimo mensaje de /bag_finder/people
+        self.last_scan = None
+        self.table_docked_m = 0.0
         self.create_subscription(String, "/bag_finder/people", lambda m: setattr(self, "seen_people", json.loads(m.data)), 5)
 
         self.registry = default_registry()
         handlers = dict(navigate_to=self.h_navigate_to, navigate_sequence=self.h_navigate_sequence,
                         return_home=self.h_return_home, speak=self.h_speak, listen=self.h_listen, wait=self.h_wait,
-                        detect_object=self.h_detect, pick_object=self.h_pick, follow_person=self.h_follow_person, receive_bag=self.h_receive_bag, give_object=self.h_give, place_object=self.h_place,
+                        detect_object=self.h_detect, pick_object=self.h_pick, follow_person=self.h_follow_person, dock_table=self.h_dock_table, undock_table=self.h_undock_table, receive_bag=self.h_receive_bag, give_object=self.h_give, place_object=self.h_place,
                         arm_pose=self.h_arm_pose, find_pointed_bag=self.h_find_pointed_bag, approach_person=self.h_approach_person,
                         approach_bag=self.h_approach_bag, dock_bag=self.h_dock_bag, remember_bag=self.h_remember_bag, set_torso=self.h_set_torso)
         self.executor_core = MissionExecutor(self.registry, handlers, mode=self.mode, on_update=self._publish)
@@ -361,6 +365,65 @@ class MissionExecutorNode(Node):
             r.error = "not_found"
         return r
 
+    def h_dock_table(self, ctx: SkillContext) -> SkillResult:
+        """Nav2 frena lejos de la mesa: acercarse mirando su borde con el lidar. Sin el, el brazo no llega."""
+        start = self.odom_xy
+        end = time.time() + 30.0
+        reason = "sin lidar"
+        try:
+            while time.time() < end:
+                if ctx.cancel.is_set():
+                    return SkillResult.failure(ERR_CANCELED, "acercamiento cancelado")
+                scan = self.last_scan
+                if scan is None or self.odom_xy is None or start is None:
+                    time.sleep(0.05)
+                    start = start or self.odom_xy
+                    continue
+                angles = [scan.angle_min + i * scan.angle_increment for i in range(len(scan.ranges))]
+                action, amount = table_dock.table_dock_step(angles, list(scan.ranges))
+                done = math.hypot(self.odom_xy[0] - start[0], self.odom_xy[1] - start[1])
+                self.table_docked_m = done
+                if action == "done":
+                    return SkillResult.success(f"frente a la mesa (avance {done:.2f} m)")
+                if action == "fail":
+                    reason = str(amount)
+                    self._stop_base()
+                    return SkillResult.failure("blocked", f"no me acerco a la mesa: {reason}")
+                if done > TABLE_DOCK_MAX_M:
+                    return SkillResult.failure("blocked", f"ya avance {done:.2f} m sin llegar al borde")
+                msg = Twist()
+                if action == "turn":
+                    msg.angular.z = max(-DOCK_TURN_RPS, min(DOCK_TURN_RPS, 1.5 * float(amount)))
+                else:
+                    msg.linear.x = min(DOCK_SPEED_MPS, max(0.03, float(amount)))
+                self.pub_cmd_vel.publish(msg)
+                time.sleep(0.05)
+            return SkillResult.failure("blocked", "el acercamiento a la mesa no termino a tiempo")
+        finally:
+            self._stop_base()
+
+    def h_undock_table(self, ctx: SkillContext) -> SkillResult:
+        """Volver atras lo que se avanzo hacia la mesa: pegado a ella, Nav2 cree estar dentro del obstaculo y no planifica."""
+        back = max(TABLE_UNDOCK_MIN_M, self.table_docked_m)
+        start = self.odom_xy
+        if start is None:
+            return SkillResult.failure("blocked", "sin odometria para separarme de la mesa")
+        end = time.time() + back / DOCK_SPEED_MPS * 2.0 + 3.0
+        try:
+            while time.time() < end:
+                if ctx.cancel.is_set():
+                    return SkillResult.failure(ERR_CANCELED, "cancelado")
+                if math.hypot(self.odom_xy[0] - start[0], self.odom_xy[1] - start[1]) >= back:
+                    self.table_docked_m = 0.0
+                    return SkillResult.success(f"separado de la mesa {back:.2f} m")
+                msg = Twist()
+                msg.linear.x = -DOCK_SPEED_MPS
+                self.pub_cmd_vel.publish(msg)
+                time.sleep(0.05)
+            return SkillResult.failure("blocked", "no termine de separarme de la mesa")
+        finally:
+            self._stop_base()
+
     def h_follow_person(self, ctx: SkillContext) -> SkillResult:
         """La cabeza y la deteccion las lleva bag_finder; aca se decide a donde ir y se le actualiza el objetivo a Nav2."""
         if self.pub_bag_req.get_subscription_count() == 0:
@@ -450,6 +513,7 @@ class MissionExecutorNode(Node):
 
     def _scan(self, msg):
         """Lo mas cercano adelante (+-20 grados) o None."""
+        self.last_scan = msg
         best = None
         for i, r in enumerate(msg.ranges):
             angle = msg.angle_min + i * msg.angle_increment

@@ -117,6 +117,11 @@ class SimRobot(Node):
         self.grasp_slips = os.environ.get("ATHOME_SIM_GRASP_SLIPS", "0") == "1"       # ningun agarre del piso sujeta la bolsa
         self.person_hands_over = os.environ.get("ATHOME_SIM_PERSON_HANDS", "1") == "1"  # 0: no se la da
         self.bag_in_hand = False
+        # ATHOME_SIM_TABLE_OBJECT="x,y,z": objeto rigido, z es su centro; se agarra por el centro, con su diametro
+        table_obj = os.environ.get("ATHOME_SIM_TABLE_OBJECT")
+        self.rigid_object = bool(table_obj)
+        if table_obj:
+            self.bag_map = [float(v) for v in table_obj.split(",")]
         walk = os.environ.get("ATHOME_SIM_PERSON_WALK", "")   # "x,y;x,y": camina al oir que el robot la va a seguir
         self.person_walk = [[float(v) for v in p.split(",")] for p in walk.split(";") if p]
         self.walk_start = None
@@ -542,7 +547,10 @@ class SimRobot(Node):
 
     def _gz_spawn_scene(self):
         """Crea la bolsa y la persona cuando el mundo ya corre."""
-        models = [gz_model.bag_sdf(self.bag_map[:2], self.bag_top), gz_model.person_sdf(self.person_xy)]
+        if self.rigid_object:
+            models = [gz_model.table_object_sdf(self.bag_map)]
+        else:
+            models = [gz_model.bag_sdf(self.bag_map[:2], self.bag_top), gz_model.person_sdf(self.person_xy)]
         if self.bag2 is not None:
             models.append(gz_model.bag_sdf(self.bag2[:2], self.bag2[2]).replace(f'name="{gz_model.BAG_MODEL}"', 'name="bolsa_2"')
                           .replace(gz_model.BAG_ODOM_TOPIC, "/sim/gz/bolsa_2/odometry"))
@@ -561,7 +569,7 @@ class SimRobot(Node):
             self.pub_bag_detach.publish(Empty())
         if not self.obj_attached:
             p = m.pose.pose.position
-            self.bag_map = [p.x, p.y, p.z + self.bag_top / 2.0]
+            self.bag_map = [p.x, p.y, p.z if self.rigid_object else p.z + self.bag_top / 2.0]
 
     def _gz_people(self):
         """Publica los puntos del cuerpo y muestra en Gazebo el brazo con el que senala."""
@@ -815,9 +823,10 @@ class SimRobot(Node):
         tcp = self._lookup("base_footprint", "tcp_link")
         if tcp is not None:
             # Una bolsa se toma por el nudo, debajo de su parte mas alta, y lo que queda entre los dedos es fino
-            target = np.array(self.obj) - ([0.0, 0.0, self.BAG_KNOT_BELOW_TOP_M] if self.bag_map is not None else 0.0)
+            bag_like = self.bag_map is not None and not self.rigid_object
+            target = np.array(self.obj) - ([0.0, 0.0, self.BAG_KNOT_BELOW_TOP_M] if bag_like else 0.0)
             d = float(np.linalg.norm(tcp[1] - target))
-            dia_mm = self.BAG_KNOT_MM if self.bag_map is not None else 1000.0 * float(self.get_parameter("object_diameter_m").value)
+            dia_mm = self.BAG_KNOT_MM if bag_like else 1000.0 * float(self.get_parameter("object_diameter_m").value)
             # Objeto entre los dedos (TCP a < 6 cm): la pinza no puede cerrar por debajo de su diametro
             holds = d < 0.06
             if self.grasp_slips and not self.bag_in_hand:
@@ -849,7 +858,7 @@ class SimRobot(Node):
                     self.bag_delivered = True
                     self.get_logger().info(f"Bolsa en el piso (sim): ({self.bag_map[0]:.2f}, {self.bag_map[1]:.2f})")
             if self.obj_attached:
-                self.obj = (tcp[1] + ([0.0, 0.0, self.BAG_KNOT_BELOW_TOP_M] if self.bag_map is not None else 0.0)).tolist()
+                self.obj = (tcp[1] + ([0.0, 0.0, self.BAG_KNOT_BELOW_TOP_M] if bag_like else 0.0)).tolist()
         if self.bag_map is not None and not self.obj_attached:
             c, s = math.cos(self.base.yaw), math.sin(self.base.yaw)
             dx, dy = self.bag_map[0] - self.base.x, self.bag_map[1] - self.base.y
