@@ -142,6 +142,13 @@ Antes de empezar: E-stop a mano, zona despejada y otra persona atenta. Bolsa liv
 - **Medido en la NUC:** 1.9 GiB, 0.4 s de mediana y 5 s de máximo. Frases de reserva: 14/16 correctas, 0/8 órdenes falsas. Son pocas frases.
 - **Sin probar:** sesión de voz completa con la LLM y Whisper real.
 
+## 2l. Tablero `debug` (2026-11-06)
+
+- `debug` abre `http://127.0.0.1:8780` (`tools/debug_dashboard/`). Solo lee: no da órdenes al robot. Corre con baja prioridad.
+- **Se actualiza solo:** rama y commit, procesos vivos, puntos de la matriz, skills del registro, comandos GPSR que compilan y resultados de `sim_escenarios.py`. Marca con ⚠ una capacidad si su código cambió después de la última prueba.
+- **A mano:** la etapa de cada capacidad en `capacidades.yaml`, al cerrar cada bloque. `test_estado.py` falla si un ítem de la matriz queda sin capacidad.
+- Restaurant y Final no están desglosados en la matriz. Pick and Place tiene 840 pts sin desglosar.
+
 ## 3. Cómo retomar la teleoperación con el Quest (pendiente: prueba completa en el brazo real)
 
 1. Quest por USB a la **Jetson**, depuración USB autorizada (`adb devices` → `device`).

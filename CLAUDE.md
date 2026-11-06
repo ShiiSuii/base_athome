@@ -22,8 +22,8 @@ junto con Google Antigravity dentro de Orca. Al empezar:
    como Nivel C (actuadores físicos, firmware, borrado irreversible, navegación funcional, `main`).
    Mantené a Antigravity trabajando en paralelo en tareas independientes.
 
-Al terminar cada bloque: actualizá `STATUS.md` (y el documento maestro que corresponda) en el mismo
-commit, y respondé con hechos verificados, pruebas reales, qué no se probó, rollback y siguiente paso.
+Al terminar cada bloque: actualizá `STATUS.md`, `tools/debug_dashboard/capacidades.yaml` (y el documento
+maestro que corresponda) en el mismo commit, y respondé con hechos verificados, pruebas reales, qué no se probó, rollback y siguiente paso.
 No crees archivos Markdown nuevos para registrar avances.
 
 ## graphify

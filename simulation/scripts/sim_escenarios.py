@@ -11,6 +11,7 @@ Uso:
 """
 from dataclasses import dataclass, field
 from pathlib import Path
+import json
 import os
 import re
 import signal
@@ -21,6 +22,7 @@ import time
 from typing import Dict, List, Optional, Sequence, Tuple
 
 COMMAND = "take out the trash"
+RESULTS_FILE = Path.home() / ".local" / "share" / "base_athome" / "sim_escenarios.json"
 DEFAULT_BAG = "1.5,1.2,0.30"
 DEFAULT_PERSON = "2.6,0.3"
 
@@ -292,6 +294,25 @@ def run_scenario(scenario: Scenario, script_path: Path, timeout_s: float = 360.0
     return evaluate(scenario, data)
 
 
+def save_results(results: Sequence[EvalResult], path: Path = RESULTS_FILE) -> None:
+    """Guarda la ultima corrida de cada escenario para el tablero `debug`."""
+    rows = {}
+    if path.exists():
+        try:
+            rows = {r["nombre"]: r for r in json.loads(path.read_text(encoding="utf-8"))["filas"]}
+        except (ValueError, KeyError, TypeError):
+            rows = {}
+    head = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=Path(__file__).resolve().parent,
+                          capture_output=True, text=True).stdout.strip()
+    when = time.strftime("%Y-%m-%d %H:%M")
+    mode = "Gazebo + Nav2" if os.environ.get("NAV2") == "1" else "Gazebo"
+    for r in results:
+        rows[r.scenario.name] = dict(nombre=r.scenario.name, ok=r.ok, cm=r.data.grip_cm, detalle=r.reason,
+                                     cuando=when, modo=mode, commit=head)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(dict(filas=sorted(rows.values(), key=lambda r: r["nombre"]))), encoding="utf-8")
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     try:
@@ -312,6 +333,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(f"    [{status_tag}] {sc.name}: estado={res.data.mission_state}{step_info}{cm_info} ({res.data.duration_s:.1f}s) -> {res.reason}", flush=True)
 
     print("\n" + format_table(results))
+    save_results(results)
     return 0 if all(r.ok for r in results) else 1
 
 

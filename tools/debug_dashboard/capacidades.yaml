@@ -1,0 +1,46 @@
+# Fuente unica del tablero 'debug'. Actualizar 'etapa' y 'probado_en' al cerrar cada bloque.
+# etapa: robot | gazebo | simulador | tests | parcial | falta
+#   robot: comprobado en el robot real. Nada pasa a robot sin esa prueba.
+# probado_en: commit de la ultima prueba. Si 'archivos' cambiaron despues, el tablero avisa solo.
+# items: items de docs/MATRIZ_REGLAS_HABILIDADES.txt que esta capacidad cubre.
+capacidades:
+  - {id: navegar, nombre: "Navegar por el mapa", area: Base, etapa: robot, probado_en: a9622e8, items: ["2.1", "4.1"], archivos: [src/base_athome_navigation/config/nav2_params.yaml], falta: "Lidar a 38 cm: no ve lo bajo."}
+  - {id: mapear, nombre: "Mapear y editar el mapa", area: Base, etapa: robot, probado_en: a9622e8, archivos: [src/base_athome_navigation/base_athome_navigation/map_zone_editor.py], falta: "Marcar instruction_point en el mapa real."}
+  - {id: obstaculos_bajos, nombre: "Ver obstáculos bajos con la RealSense", area: Base, etapa: tests, probado_en: a9622e8, archivos: [src/base_athome_perception/base_athome_perception/low_obstacles.py], falta: "Sin conectar a Nav2: decisión del usuario."}
+  - {id: voz, nombre: "Entender voz con Whisper", area: Voz, etapa: parcial, probado_en: a9622e8, items: ["3.1"], archivos: [jetson_head/src/audio_asr], falta: "Probado con pocas frases reales."}
+  - {id: gpsr_sesion, nombre: "Sesión GPSR: puerta, punto de instrucciones, 3 órdenes", area: Voz, etapa: simulador, probado_en: a9622e8, archivos: [src/base_athome_skills/base_athome_skills/mission/commander_node.py], falta: "Probar con puerta y Whisper reales."}
+  - {id: gpsr_plan, nombre: "Decir el plan y pedir confirmación", area: Voz, etapa: simulador, probado_en: a9622e8, items: ["3.2"], archivos: [src/base_athome_skills/base_athome_skills/mission/voice_dialog.py], falta: "Probar en el robot."}
+  - {id: gpsr_gramatica, nombre: "Gramática oficial de GPSR", area: Voz, etapa: tests, probado_en: a9622e8, items: ["3.3"], archivos: [src/base_athome_skills/base_athome_skills/mission/command_parser.py, tools/gpsr_parser/gpsr_parser/parser.py], falta: "Ver cobertura abajo: faltan personas y preguntas."}
+  - {id: llm, nombre: "LLM local para frases libres", area: Voz, etapa: tests, probado_en: 0c53c20, archivos: [src/base_athome_skills/base_athome_skills/mission/llm_intent.py, src/base_athome_skills/scripts/llm_server.py], falta: "Sesión de voz completa; pocas frases medidas."}
+  - {id: vlm, nombre: "VLM: describir lo que ve", area: Voz, etapa: falta, falta: "Sin empezar."}
+  - {id: responder, nombre: "Responder preguntas", area: Voz, etapa: falta, falta: "HOME-100 sin entrega confirmada."}
+  - {id: intercalar, nombre: "Intercalar tareas de varios comandos", area: Voz, etapa: falta, items: ["3.4"], falta: "Hoy hace las órdenes de a una."}
+  - {id: reconocer_personas, nombre: "Reconocer personas por nombre, gesto o ropa", area: Personas, etapa: falta, falta: "Es lo que más comandos oficiales bloquea."}
+  - {id: seguir, nombre: "Seguir a una persona", area: Personas, etapa: gazebo, probado_en: cab68b5, items: ["1.11"], archivos: [src/base_athome_skills/base_athome_skills/mission/follow_logic.py], falta: "Sin reidentificación; velocidades sin calibrar."}
+  - {id: guiar, nombre: "Guiar a un lugar", area: Personas, etapa: simulador, probado_en: 9d8c6a0, archivos: [src/base_athome_skills/base_athome_skills/mission/command_parser.py], falta: "No comprueba que lo sigan."}
+  - {id: receptionist, nombre: "Receptionist completo", area: Personas, etapa: parcial, probado_en: a9622e8, items: ["1.4", "1.8", "1.9"], archivos: [src/base_athome_perception/scripts/hri_receptionist_challenge.py], falta: "Correrlo entero en el robot tras los últimos cambios."}
+  - {id: sin_confirmar, nombre: "Receptionist sin pregunta de confirmación", area: Personas, etapa: tests, probado_en: 406f8fc, items: ["1.7"], archivos: [src/base_athome_perception/scripts/hri_receptionist_challenge.py], falta: "Si Whisper entiende mal, el dato queda mal."}
+  - {id: mirada, nombre: "Mirada con el pan-tilt", area: Personas, etapa: parcial, probado_en: a9622e8, items: ["1.3", "1.5"], falta: "Falla eléctrica abierta desde el 04/11."}
+  - {id: atributos, nombre: "Atributos visuales", area: Personas, etapa: tests, probado_en: a9622e8, items: ["1.6"], archivos: [src/base_athome_perception/base_athome_perception/person_attributes.py], falta: "Sin conectar al receptionist."}
+  - {id: timbre, nombre: "Detectar el timbre", area: Personas, etapa: tests, probado_en: a9622e8, items: ["1.1"], archivos: [src/base_athome_perception/base_athome_perception/doorbell_detector.py], falta: "Sin conectar; solo señales sintéticas."}
+  - {id: abrir_puerta, nombre: "Abrir la puerta", area: Personas, etapa: falta, items: ["1.2"], falta: "No priorizado."}
+  - {id: basura, nombre: "Sacar la basura", area: Manipulación, etapa: gazebo, probado_en: a9622e8, archivos: [src/base_athome_perception/base_athome_perception/bag_vision.py, src/base_athome_skills/base_athome_skills/mission/bag_task.py, src/base_athome_perception/scripts/bag_finder.py], falta: "Nunca corrió entera en el robot."}
+  - {id: plan_b, nombre: "Plan B: recibir la bolsa en mano", area: Manipulación, etapa: gazebo, probado_en: a9622e8, items: ["1.10"], archivos: [src/base_athome_perception/base_athome_perception/arm_manipulation.py], falta: "Cerrar la pinza cerca de una persona: probar con el usuario."}
+  - {id: soltar_bolsa, nombre: "Soltar la bolsa en un lugar", area: Manipulación, etapa: gazebo, probado_en: a9622e8, items: ["1.12"], falta: "Probar en el robot."}
+  - {id: reconocer_objetos, nombre: "Reconocer objetos", area: Manipulación, etapa: parcial, probado_en: a9622e8, items: ["2.2"], falta: "YOLO corre en la Jetson; faltan clases de competencia."}
+  - {id: agarrar_mesa, nombre: "Agarrar de la mesa", area: Manipulación, etapa: parcial, probado_en: dc2b260, items: ["2.4"], archivos: [src/base_athome_skills/base_athome_skills/mission/table_dock.py], falta: "Se acerca, pero no agarra: la muñeca mide mal la distancia."}
+  - {id: colocar, nombre: "Colocar en su lugar", area: Manipulación, etapa: simulador, probado_en: a9622e8, items: ["2.5"], falta: "Depende de agarrar de la mesa."}
+  - {id: estante, nombre: "Leer el estante", area: Manipulación, etapa: falta, items: ["2.3"], falta: "Sin hacer."}
+  - {id: extras_pp, nombre: "Extras de Pick and Place", area: Manipulación, etapa: falta, items: ["2.6"], falta: "Revisar cuáles convienen."}
+  - {id: agarre_esfuerzo, nombre: "Confirmar agarre por esfuerzo", area: Manipulación, etapa: falta, falta: "Hoy solo por ancho de pinza; cambia el nodo de la Jetson."}
+  - {id: laundry, nombre: "Doing Laundry", area: Manipulación, etapa: falta, items: ["4.2", "4.3", "4.4", "4.5", "4.6", "4.7", "4.8"], falta: "No priorizado: muy difícil con un brazo."}
+  - {id: estop, nombre: "E-stop común a todos los actuadores", area: Seguridad, etapa: falta, falta: "Exigido por el reglamento: falta comprobarlo."}
+pruebas:
+  HRI: "Human-Robot Interaction"
+  PP: "Pick and Place"
+  GPSR: "General Purpose Service Robot"
+  LAUNDRY: "Doing Laundry"
+# Estan en el reglamento, pero la matriz todavia no las desglosa por item.
+sin_desglose:
+  Restaurant: "Sin desglosar en la matriz. Usaría navegación, voz y agarre."
+  Final: "Sin desglosar en la matriz. Se define más cerca de la competencia."
