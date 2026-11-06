@@ -79,7 +79,7 @@ Each package under `src/` is built with `colcon` on ROS 2 Jazzy:
 - **[`base_athome_moveit_config`](src/base_athome_moveit_config)**: MoveIt 2 configuration for the full robot URDF (`arm` and `gripper` planning groups, TRAC-IK kinematics, OMPL planners, and sampled Allowed Collision Matrix).
 - **[`base_athome_navigation`](src/base_athome_navigation)**: Autonomous navigation stack (`nav2_bringup.launch.py`, AMCL, `SmacPlanner2D`, `RotationShimController` + `RegulatedPurePursuit`), PS4 teleop, waypoint navigation, and the offline semantic map & zone editor (`map_zone_editor.py`, `semantic_objects.py`).
 - **[`base_athome_perception`](src/base_athome_perception)**: Vision, audio client, HRI Receptionist state machine, YuNet/SFace face recognition, YOLOv8 human pose & seat detection, unified 3D garbage/bag perception (`bag_vision.py`, `bag_finder.py`), MoveIt manipulation bridge (`moveit_bridge.py`, `arm_manipulation.py`), and animated face/guest UI.
-- **[`base_athome_sim`](src/base_athome_sim)**: Lightweight kinematic/sensor simulator (`sim_robot`) and optional Gazebo Harmonic (`gz sim`) bridge that mock the Jetson nodes, cameras, ASR, and Nav2 under identical ROS 2 interfaces in `ROS_DOMAIN_ID=42`.
+- **[`base_athome_sim`](simulation/base_athome_sim)**: Lightweight kinematic/sensor simulator (`sim_robot`) and optional Gazebo Harmonic (`gz sim`) bridge that mock the Jetson nodes, cameras, ASR, and Nav2 under identical ROS 2 interfaces in `ROS_DOMAIN_ID=42`.
 - **[`base_athome_skills`](src/base_athome_skills)**: Competition skills and deterministic mission layer, including the LiDAR start-signal `door_open_detector` (RuleBook §3.6.8), validated `mission_executor`, and natural-language `commander` node with web UI (`:8770`). See [`src/base_athome_skills/README.md`](src/base_athome_skills/README.md).
 - **[`hoverboard_base`](src/hoverboard_base)**: Serial FOC protocol driver (`hoverboard_driver.py` with Hall odometry and `cmd_vel` watchdog) and the modular robot Xacro/URDF description (`urdf/robot.urdf.xacro`, 30 joints / 11 actuated).
 - **[`piper_description`](src/piper_description)**: URDF meshes and standalone visualization launch files for the AgileX Piper 6-DOF robotic arm and parallel gripper.
@@ -155,7 +155,7 @@ check_urdf /tmp/base_athome.urdf
 # Run unit tests across ROS 2 packages and Jetson scripts
 ROS_DOMAIN_ID=77 python3 -m pytest -q \
   src/base_athome_perception/test \
-  src/base_athome_sim/test \
+  simulation/base_athome_sim/test \
   src/base_athome_navigation/test \
   src/base_athome_bringup/test/test_torso_state.py \
   jetson_head/scripts/tests \
@@ -223,18 +223,18 @@ Self-contained scripts launch `base_athome_sim`, `mission_executor`, and `comman
 
 ```bash
 # Interactive web Commander at http://127.0.0.1:8770 (add RVIZ=1 to open RViz2)
-src/base_athome_skills/scripts/sim_commander.sh
+simulation/scripts/sim_commander.sh
 
 # Automated natural-language compound command execution in simulation
-src/base_athome_skills/scripts/sim_commander.sh "anda a la mesa, busca una botella y llevala a la cocina"
+simulation/scripts/sim_commander.sh "anda a la mesa, busca una botella y llevala a la cocina"
 
 # Execute a YAML mission plan in simulation
-src/base_athome_skills/scripts/sim_mission.sh \
+simulation/scripts/sim_mission.sh \
   src/base_athome_skills/missions/demo_fetch_bottle.yaml \
-  src/base_athome_sim/config/sim_semantic_map.yaml
+  simulation/base_athome_sim/config/sim_semantic_map.yaml
 
 # Visual closed-loop simulation demo of the "take out the trash" task (with RViz2)
-src/base_athome_skills/scripts/sim_basura.sh
+simulation/scripts/sim_basura.sh
 ```
 
 > **Note:** Simulation validates state machines, kinematics, TF, and ROS 2 interfaces (`SIM_PASS`), but does **not** demonstrate physical safety, real floor navigation obstacle avoidance, real audio acoustics, or physical grasping of deformable objects.

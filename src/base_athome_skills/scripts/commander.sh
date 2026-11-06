@@ -1,7 +1,7 @@
 #!/bin/bash
 # Alias `commander`: robot real, con microfono. Un solo comando: levanta Nav2 si no esta, el ejecutor y el commander.
 # El robot dice el plan y solo se mueve si le contestan "yes"; "stop" cancela. Ctrl-C cierra lo que abrio.
-# Solo para simulacion, sin microfono: scripts/sim_commander.sh
+# Solo para simulacion, sin microfono: simulation/scripts/sim_commander.sh
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 WS=$(cd "$HERE/../../.." && pwd)

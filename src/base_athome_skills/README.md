@@ -48,8 +48,8 @@ el ejecutor (con manipulación) y el commander. El pedido se dice en inglés por
 y solo actúa si le contestan "yes"; silencio o cualquier otra respuesta no ejecuta nada. "Stop" cancela una misión en curso.
 No corre junto al receptionist, que usa el mismo micrófono. Prueba del diálogo: `test/test_commander_voice.py` (dominio 77).
 ```bash
-src/base_athome_skills/scripts/sim_commander.sh      # sim + ejecutor + commander; abrir http://127.0.0.1:8770
-src/base_athome_skills/scripts/sim_commander.sh "anda a la mesa, busca una botella y llevala a la cocina"
+simulation/scripts/sim_commander.sh      # sim + ejecutor + commander; abrir http://127.0.0.1:8770
+simulation/scripts/sim_commander.sh "anda a la mesa, busca una botella y llevala a la cocina"
 ```
 La web muestra el plan antes de ejecutar y el avance en vivo. Por tópico (`/commander/command`) solo ejecuta con
 `auto_execute:=true`; "stop"/"cancelá" cancela siempre. En dominio 10 exige `real:=true`, y el ejecutor mantiene

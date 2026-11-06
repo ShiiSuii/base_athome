@@ -264,7 +264,7 @@ Requiere `LAB_SUPERVISADO` (mueve el brazo) y el controlador con S-14 desplegado
 | `src/base_athome_perception` | HRI receptionist, rostros (YuNet/SFace), pose (YOLOv8-pose), `voice_client`, vocabulario, secuenciador de misiones, manipulación (`manipulacion_simple`, `manipulacion_autonoma`, teach panel, `pose_store`, `moveit_bridge`), `guest_input_server` (111 tests) |
 | `src/base_athome_moveit_config` | SRDF, límites, kinematics, `move_group.launch.py` |
 | `src/base_athome_skills` | detector de puerta abierta desde `/scan` (señal de inicio, regla 3.6.8) (8 tests) |
-| `src/base_athome_sim` | simulador liviano + opción Gazebo Harmonic (6 tests) |
+| `simulation/base_athome_sim` | simulador liviano + Gazebo Harmonic; guía en `simulation/README.md` |
 | `src/piper_description`, `src/piper_msgs`, `src/urg_node` | descripción/mensajes del Piper; driver Hokuyo (externo) |
 | `jetson_head/` | fuente de lo que corre en la Jetson: `src/{audio_asr, pan_tilt_controller, robot_bringup_jetson}`, `scripts/` (Piper, Orbbec, YOLO TRT, `start_mapping_head.sh`, `jetson-head.service`, `deploy_to_jetson.sh`, `bootstrap_jazzy.sh`, `flash_jetson_r39.sh`, `build_yolo_trt.sh`) — `COLCON_IGNORE` en la NUC |
 | `tools/urdf_editor` | editor Xacro/URDF en `127.0.0.1:8765`, solo preview (45 tests; ver su README) |
@@ -395,12 +395,12 @@ no arranca la RealSense, detector por color (`SimColorDetector`).
 | Suite | Comando (desde la raíz, `ROS_DOMAIN_ID=42`) | Resultado 2026-11-03 |
 |---|---|---|
 | Percepción/HRI | `python3 -m pytest -q src/base_athome_perception/test` | 111 passed |
-| Simulación | `python3 -m pytest -q src/base_athome_sim/test` | 6 passed |
+| Simulación | `python3 -m pytest -q simulation/base_athome_sim/test` | 6 passed |
 | Skills (puerta + misiones + commander) | `env -u PYTHONPATH python3 -m pytest -q src/base_athome_skills/test` | ver `STATUS.md` |
 | Elevador | `ROS_DOMAIN_ID=77 python3 -m pytest -q src/base_athome_bringup/test/test_torso_state.py` | 6 passed |
 | Aprobación acotada Antigravity | `cd tools/agents && python3 -m pytest -q` | 40 passed |
-| Misiones en simulación | `[RVIZ=1] src/base_athome_skills/scripts/sim_mission.sh <plan.yaml> <mapa_sim>` | demo_fetch_bottle SUCCEEDED (72–112 s) |
-| Commander en simulación | `[RVIZ=1] src/base_athome_skills/scripts/sim_commander.sh ["pedido" ...]` (sin pedidos: web en `:8770`) | pedido compuesto SUCCEEDED en 66 s; cancelación, objeto no visto y lugar desconocido correctos (2026-11-04) |
+| Misiones en simulación | `[RVIZ=1] simulation/scripts/sim_mission.sh <plan.yaml> <mapa_sim>` | demo_fetch_bottle SUCCEEDED (72–112 s) |
+| Commander en simulación | `[RVIZ=1] simulation/scripts/sim_commander.sh ["pedido" ...]` (sin pedidos: web en `:8770`) | pedido compuesto SUCCEEDED en 66 s; cancelación, objeto no visto y lugar desconocido correctos (2026-11-04) |
 | Capa semántica | `python3 -m pytest -q src/base_athome_navigation/test` | 9 passed |
 | Scripts Jetson (Piper, FJT, Orbbec, YOLO, bench) | `ROS_DOMAIN_ID=77 python3 -m pytest -q jetson_head/scripts/tests` | 32 passed |
 | ASR | `cd jetson_head/src/audio_asr && python3 -m pytest -q test/test_asr_core.py` | 12 passed |

@@ -62,13 +62,13 @@ from base_athome_perception.piper_kinematics import PiperKinematicsSolver
 from base_athome_perception.teach_wizard import LABELS, POSES, TeachWizard
 from base_athome_perception.wrist_detector import TargetTracker, make_bag_detector, make_detector
 
-CONFIG = os.path.expanduser("~/base_athome_ws/src/base_athome_perception/config/arm_poses_and_limits.yaml")
+CONFIG = os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "config", "arm_poses_and_limits.yaml")
 if os.environ.get("ATHOME_SIM") == "1":  # en simulacion no pisar la calibracion del robot real
     _SIM_CONFIG = os.path.expanduser("~/.local/share/base_athome/sim/arm_poses_and_limits.yaml")
     if not os.path.exists(_SIM_CONFIG):
         import shutil
         os.makedirs(os.path.dirname(_SIM_CONFIG), exist_ok=True)
-        shutil.copy(CONFIG, _SIM_CONFIG)
+        shutil.copy(os.environ.get("ATHOME_SIM_POSES") or CONFIG, _SIM_CONFIG)
     CONFIG = _SIM_CONFIG
 FLOOR_POSE = "pre_grasp_floor"     # se ensena con ensenar_pregrasp; si no hay, la calculada
 FLOOR_PREGRASP_DEG = [-15.4, 161.1, -112.4, 83.9, 78.0, -50.9]

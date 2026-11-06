@@ -1,10 +1,11 @@
 #!/bin/bash
 # Levanta base_athome_sim + mission_executor en ROS_DOMAIN_ID=42, corre un plan y cierra TODO por PID.
-#   [RVIZ=1] [HOLD_S=60] src/base_athome_skills/scripts/sim_mission.sh <plan.yaml> [mapa_semantico.yaml] [args de mission_run]
+#   [RVIZ=1] [HOLD_S=60] simulation/scripts/sim_mission.sh <plan.yaml> [mapa_semantico.yaml] [args de mission_run]
 set -u
 PLAN=${1:?plan.yaml}; MAP=${2:-}; shift; [ $# -gt 0 ] && shift
-WS=$(cd "$(dirname "$0")/../../.." && pwd)
+WS=$(cd "$(dirname "$0")/../.." && pwd)
 set +u; source /opt/ros/jazzy/setup.bash; source "$WS/install/setup.bash"; set -u
+export ATHOME_SIM_POSES=${ATHOME_SIM_POSES:-$WS/simulation/config/arm_poses_sim.yaml}
 export SIM_MISSION_TAG=$$ ROS_DOMAIN_ID=42 ATHOME_SIM=1 ATHOME_SIM_OBJECT_LABEL=${ATHOME_SIM_OBJECT_LABEL:-bottle}
 [ -f "$HOME/cyclonedds_local.xml" ] && export CYCLONEDDS_URI=file://$HOME/cyclonedds_local.xml
 LOG=${SIM_LOG_DIR:-/tmp}/sim_mission_$$; mkdir -p "$LOG"

@@ -1,0 +1,124 @@
+# Poses y limites para simulacion: copia del robot con la pose de piso enseñada el 2026-11-05. No toca al robot real.
+named_poses:
+  home:
+    gripper_mm: 99.5
+    joints_deg:
+    - 84.74
+    - 172.79
+    - -160.31
+    - -20.99
+    - -10.47
+    - 1.49
+    timestamp: '2026-10-30 16:10:49'
+  home_legacy_2026_10_24:
+    gripper_mm: 105.0
+    joints_deg:
+    - 72.09
+    - 176.5
+    - -155.15
+    - 102.62
+    - -31.51
+    - -99.91
+    timestamp: '2026-10-24 20:05:10'
+  post_grasp:
+    gripper_mm: 75.2
+    joints_deg:
+    - 62.26
+    - 194.7
+    - -90.0
+    - 74.68
+    - -12.18
+    - -91.4
+    source: teach_wizard
+    timestamp: '2026-10-30T17:20:08'
+  post_grasp_previous:
+    gripper_mm: 75.5
+    joints_deg:
+    - 70.22
+    - 193.73
+    - -90.5
+    - 70.48
+    - -2.35
+    - -82.95
+    source: teach_wizard
+    timestamp: '2026-10-30T17:19:56'
+  pre_grasp:
+    gripper_mm: 105.0
+    joints_deg:
+    - 71.98
+    - 184.71
+    - -78.28
+    - 75.36
+    - -74.83
+    - -80.41
+    timestamp: '2026-10-30 16:12:49'
+  pre_grasp_floor:
+    gripper_mm: 105.0
+    joints_deg:
+    - 45.87
+    - 153.29
+    - -80.81
+    - 15.96
+    - -56.47
+    - -103.98
+    source: copia de la pose real, 2026-11-05
+safety_envelope:
+  advance_adjust_cm: -8.0
+  arm_speed_pct: 30
+  aruco_marker_size_mm: 30.0
+  aruco_target_grasp_cm:
+    x: -1.44
+    y: 0.34
+    z: 7.14
+  cartesian_limits_m:
+    x:
+    - 0.15
+    - 0.72
+    y:
+    - -0.48
+    - 0.35
+    z:
+    - -0.48
+    - 0.35
+  dabai_center_zone_px: 80
+  dabai_extra_advance_cm: 0.0
+  dabai_lateral_offset_mm: 14.4
+  grasp_forward_cm: 35.0
+  grasp_height_offset_cm: 7.7
+  head_to_arm_offset_m:
+  - -0.135
+  - -0.175
+  - 0.335
+  joint_limits_deg:
+    joint1:
+    - -154.0
+    - 154.0
+    joint2:
+    - 0.0
+    - 195.0
+    joint3:
+    - -175.0
+    - 0.0
+    joint4:
+    - -110.0
+    - 110.0
+    joint5:
+    - -80.0
+    - 80.0
+    joint6:
+    - -180.0
+    - 180.0
+  max_advance_cm: 30.0
+  wrist_camera_right_offset_m: 0.008
+wrist_camera_calibration:
+  a: 1.0
+  b: 0.0235
+  camera_above_axis_m: 0.0
+  cx_px: 320.0
+  cy_px: 240.0
+  focal_px: 485.0
+  grasp_center_back_m: 0.02
+  object_diameter_m: 0.075
+  samples:
+  - - 0.2544
+    - 0.2775
