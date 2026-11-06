@@ -137,12 +137,28 @@ Escala: **P0** desbloquea seguridad/progreso · **P1** valor demostrable · **P2
 | HOME-65 | Ideas de papers para AIM 2027 e IROS 2027: `docs/PAPERS_IDEAS.txt` (Antigravity, revisado). Falta elegir y confirmar novedad | Humano + Claude | documento listo 2026-11-05 |
 | HOME-66 | AnyDesk estable y reconexión: diagnóstico y script revisable `scripts/anydesk_estable.sh` en rama de Antigravity; lo aplica el usuario con sudo. Contraseña desatendida la define el usuario | Antigravity + humano | despachada 2026-11-05 |
 | HOME-68 | Profundizar papers para AIM e IROS 2027: `docs/PAPERS_REVISION.txt` (Antigravity, pendiente de entrega y de verificar referencias) | Antigravity | Pendiente |
-| HOME-69 | Investigación profunda de otros equipos sobre la bolsa: percepción (A) y agarre y tarea (B). Base para confirmar el agarre por esfuerzo, pose de observación, plan B y correcciones por voz | Antigravity, luego Claude | En curso |
+| HOME-69 | Investigación de otros equipos sobre la bolsa. Agarre (B) entregado: cita algunas funciones que no existen, verificar antes de usar. Percepción (A) pendiente | Antigravity, luego Claude | En curso |
 | HOME-70 | Borrador del TDP: `docs/TDP_BORRADOR.txt`, con 39 puntos POR CONFIRMAR. Falta actualizar percepción de la bolsa y completar autores, fotos y resultados reales | Antigravity, Equipo | En curso |
 | HOME-71 | Web: `docs/WEB_URUBOTS_FALTANTES.txt` con los cambios y datos para el programador de https://urubots.uy. Falta pasárselo y aportar fotos, roles y video | Equipo | Listo para entregar |
 | HOME-72 | Plan de filmación: `docs/VIDEO_PLAN_FILMACION.txt`. Falta filmar con el robot real y al menos 5 intentos completos | Equipo | Plan listo |
 | HOME-73 | Revisión adversaria del código de la bolsa | Antigravity | En curso |
 | HOME-55 | Receptionist en el robot: barrido de 2 filas (~16 s), seguimiento leve del rostro, revisión del pan-tilt al arrancar | humano + Claude | persona sentada detectada; revisión ✔ |
+
+### Próximas habilidades (orden propuesto, 2026-11-05)
+
+"Take Out the Garbage" está en `tasks/old` del RuleBook: ya no es prueba. Sirve para el video de cualificación, que pide una tarea con al menos 5 habilidades. Las pruebas vigentes son HRI, Pick and Place, GPSR, Doing Laundry y Finals.
+
+| # | Habilidad | Para qué | Estado | Prueba |
+|---|---|---|---|---|
+| 1 | Plan B: pedir la bolsa en mano si falla el agarre, y correcciones por voz ("estirá el brazo", "alejate") | Video y prueba real sin atascarse | No hecho | Simulación |
+| 2 | Confirmar agarre por esfuerzo: publicar en `/arm/status` corriente y esfuerzo del Piper | Evitar falsos vacíos con bolsas finas | No hecho; cambia el nodo de la Jetson | Telemetría real, sin mover |
+| 3 | HRI: quitar la pregunta "Is that correct?" (penaliza), atributo visual del primer invitado, timbre | HRI Challenge: 4×15, 4×20, 2×30 | Parcial | Simulación + robot |
+| 4 | HRI: recibir bolsa y seguir al anfitrión (`follow_person`) | 50 + 200 + 50 puntos; también GPSR | No hecho | Simulación + robot |
+| 5 | Pick and Place: docking a la mesa (HOME-58), detector de objetos (HOME-59), agarrar y colocar en lugar designado | Hasta 12×(10+50+40) puntos | Parcial | Simulación + robot |
+| 6 | Pick and Place: percibir el estante e indicar dónde va cada objeto | 2×30 puntos | No hecho | Simulación + robot |
+| 7 | GPSR: plan del parser al ejecutor (HOME-49), `guide_person` (HOME-60), `deliver_object`, `answer_question` | Tres comandos variados | Parcial | Simulación |
+| 8 | Obstáculos bajos con RealSense (HOME-67) | Seguridad con objetos bajo 38 cm | Prototipo; decisión del usuario | Cuadros reales |
+| — | Doing Laundry, abrir lavavajillas, servir | Muy difícil con un brazo | No priorizar por ahora | — |
 
 ### P2 — Manipulación y competencia
 

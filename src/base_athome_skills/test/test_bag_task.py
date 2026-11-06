@@ -105,3 +105,8 @@ def test_person_far_means_walk_to_a_distance_where_the_gesture_is_visible():
 
 def test_person_close_means_stay():
     assert bt.person_stand_pose((1.5, 0.5), (0.0, 0.0)) is None
+
+
+def test_grasp_height_takes_the_knot_and_stays_off_the_floor():
+    assert bt.grasp_height(0.30) == pytest.approx(0.26)
+    assert bt.grasp_height(0.05) == pytest.approx(bt.BAG_GRASP_MIN_Z_M)

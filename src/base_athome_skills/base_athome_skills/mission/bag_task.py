@@ -47,6 +47,8 @@ MIN_POINT_ANGLE_DEG = 25.0          # brazo separado del cuerpo: si no, esta col
                                     # Una persona con el hombro a 1.4 m apunta asi a una bolsa desde 0.65 m; con 35 ya no
                                     # leia el gesto hacia una bolsa a menos de 1 m (simulacion, escenario "lejos")
 MAX_POINT_RANGE_M = 6.0
+BAG_GRASP_BELOW_TOP_M = 0.04        # los dedos toman el nudo o el asa, no el aire sobre la bolsa
+BAG_GRASP_MIN_Z_M = 0.03            # nunca mas cerca del piso que esto
 BAG_RENAV_M = 0.03                  # mas corrida que esto, la base se vuelve a parar
 MAX_BAG_FROM_RAY_M = 1.0            # bolsa aceptada alrededor del punto senalado
 PLACE_TORSO_M = -0.45               # altura para soltar la bolsa en el piso
@@ -105,6 +107,11 @@ def pointed_floor_point(shoulder: Point3, wrist: Point3, floor_z: float = 0.0,
     if math.hypot(x - float(wrist[0]), y - float(wrist[1])) > max_range_m:
         return None
     return x, y
+
+
+def grasp_height(top_z: float) -> float:
+    """Altura de agarre (desde el piso) para una bolsa cuya parte mas alta esta en top_z."""
+    return max(BAG_GRASP_MIN_Z_M, float(top_z) - BAG_GRASP_BELOW_TOP_M)
 
 
 def stand_pose(bag_xy: Sequence[float], from_xy: Sequence[float], extra_back_m: float = 0.0,

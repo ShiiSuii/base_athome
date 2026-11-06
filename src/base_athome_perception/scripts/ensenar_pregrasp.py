@@ -41,12 +41,13 @@ def describe(joints_deg, kin, max_advance_m=0.26):
     grasp = bag_task.floor_grasp_from_tcp(tcp, axis)
     clearance = bag_task.base_clearance(grasp=grasp)
     tilt = math.degrees(math.acos(max(-1.0, min(1.0, -float(axis[2])))))
-    torso = bag_task.torso_for_object(0.30, grasp=grasp)
-    advance = bag_task.grasp_advance(tcp, axis, 0.30, grasp)
+    bag_z = bag_task.grasp_height(0.30)      # se agarra debajo de la parte mas alta de una bolsa de 30 cm
+    torso = bag_task.torso_for_object(bag_z, grasp=grasp)
+    advance = bag_task.grasp_advance(tcp, axis, bag_z, grasp)
     problems = []
     if advance > max_advance_m:
         problems.append(f"la pinza tendria que avanzar {advance * 100:.0f} cm y el tope es {max_advance_m * 100:.0f}: bajala")
-    if tcp[2] + torso < 0.30 - bag_task.GROUND_TO_BASE_LINK_M + 0.05:
+    if tcp[2] + torso < bag_z - bag_task.GROUND_TO_BASE_LINK_M + 0.05:
         problems.append("con el elevador abajo la pinza quedaria a la altura de la bolsa: subila")
     if clearance < bag_task.MIN_BASE_CLEARANCE_M:
         problems.append(f"la bolsa quedaria a {clearance * 100:.0f} cm del chasis: llevala mas adelante")

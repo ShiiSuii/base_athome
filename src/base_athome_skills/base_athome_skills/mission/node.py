@@ -535,7 +535,7 @@ class MissionExecutorNode(Node):
             grasp, why = self._floor_grasp()
             if grasp is None:
                 return SkillResult.failure("pose_too_close", why)
-            target = bag_task.torso_for_object(self.bag_target[2], grasp=grasp)
+            target = bag_task.torso_for_object(bag_task.grasp_height(self.bag_target[2]), grasp=grasp)
         else:
             target = float(ctx.args.get("target_m", 0.0))
         st = self.torso_status

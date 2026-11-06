@@ -55,6 +55,7 @@ except ImportError:  # pragma: no cover
     FollowJointTrajectory = None
 
 from base_athome_perception import bag_vision, pose_store
+from base_athome_skills.mission import bag_task
 from base_athome_perception import wrist_geometry as wg
 from base_athome_perception.moveit_bridge import MoveItBridge, decimate, pose_from, quat_from_matrix
 from base_athome_perception.piper_kinematics import PiperKinematicsSolver
@@ -75,6 +76,9 @@ SHOULDER_IN_BASE = np.array([0.005, 0.175, 1.065])  # arm_base_link en base_link
 # (torso_lift_joint=0). Con el elevador abajo z baja en |torso_lift_joint| (prismatico vertical): ver
 # shoulder_in_base(). La altura MEDIDA llega por /torso/joint_states (base_athome_bringup torso_state).
 GRIPPER_OPEN_MM, GRIPPER_CLOSE_MM = 105.0, 50.0
+# Una bolsa se toma por el nudo o el asa (2-15 mm comprimidos): con el cierre de 50 mm de los objetos rigidos se escapa.
+GRIPPER_CLOSE_BAG_MM = 0.0
+BAG_EMPTY_MAX_MM = 2.0      # cerro casi del todo: sin material entre los dedos. Falta confirmar con esfuerzo en el robot real
 WINDOW = "Manipulacion Base@Home"
 
 
@@ -453,7 +457,11 @@ class Manipulacion(Node):
                 self.plane_z, self.bag_vision, self.detection = None, False, None
                 self.target = dict(self.target or {}, obj=[float(v) for v in memory_xyz], t=time.time(), label="memoria")
                 data = dict(source="memoria", base_link_xyz=[round(float(v), 3) for v in memory_xyz])
-            ok, why = self._grasp_core()
+            if plane_z is None:
+                ok, why = self._grasp_core()
+            else:
+                offset = bag_task.GROUND_TO_BASE_LINK_M
+                ok, why = self._grasp_core(close_mm=GRIPPER_CLOSE_BAG_MM, grasp_z=bag_task.grasp_height(plane_z) - offset)
         finally:
             self.plane_z, self.bag_vision, self.bag_expected = None, False, None
         if not ok:
@@ -461,7 +469,7 @@ class Manipulacion(Node):
         time.sleep(0.3)
         width = float(self.gripper_mm)
         data["gripper_mm"] = round(width, 1)
-        if width <= GRIPPER_CLOSE_MM + 5.0:
+        if width <= (GRIPPER_CLOSE_MM + 5.0 if plane_z is None else BAG_EMPTY_MAX_MM):
             self.gripper(GRIPPER_OPEN_MM)
             return False, f"agarre vacio: la pinza cerro hasta {width:.0f} mm (sin objeto)", data
         if retreat and "post_grasp" in self.poses:
@@ -748,14 +756,17 @@ class Manipulacion(Node):
                 out.append((deg, self._axis_angle(ax, r)))
         return out
 
-    def _grasp_core(self):
-        """Aproximacion + avance + cierre + subida. (ok, motivo). No va a POST-GRASP."""
+    def _grasp_core(self, close_mm: float = GRIPPER_CLOSE_MM, grasp_z=None):
+        """Aproximacion + avance + cierre + subida. (ok, motivo). No va a POST-GRASP.
+        `grasp_z`: altura de agarre en base_link, si no es la del objeto detectado."""
         tg = self.held_target()
         if tg is None:
             return False, "Agarre: no veo el objeto (ni hay una posicion retenida reciente)."
         if not self.torso_known():
             self.get_logger().warn("Agarre: elevador sin medicion; se ASUME arriba (torso_lift_joint=0)")
-        obj = np.asarray(tg["obj"], dtype=float)   # el MISMO punto que muestra RViz
+        obj = np.array(tg["obj"], dtype=float)   # el MISMO punto que muestra RViz
+        if grasp_z is not None:
+            obj[2] = float(grasp_z)
         q_now = [math.radians(v) for v in self.joints_deg]
         tcp_mm, R = self.kin.forward_kinematics(np.array(q_now))
         approach = R[:, 2] / np.linalg.norm(R[:, 2])
@@ -815,7 +826,7 @@ class Manipulacion(Node):
         self.status = "Agarre: aproximando..."
         if not self._execute(plan) or not self._execute(line):
             return False, f"Agarre: movimiento fallido ({self.last_exec_msg})"
-        self.gripper(GRIPPER_CLOSE_MM)
+        self.gripper(close_mm)
         time.sleep(1.5)
         lift = self.moveit.cartesian_path(line[-1][0], [pose_from(grasp_tcp + np.array([0, 0, 0.03]), quat)],
                                           vel_scale=self.vel_scale() / 2)

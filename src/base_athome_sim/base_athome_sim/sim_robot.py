@@ -69,6 +69,8 @@ def to_image(arr, encoding, stamp, frame):
 
 
 class SimRobot(Node):
+    BAG_KNOT_BELOW_TOP_M, BAG_KNOT_MM = 0.04, 10.0
+
     def __init__(self):
         super().__init__("sim_robot")
         p = self.declare_parameter
@@ -690,8 +692,10 @@ class SimRobot(Node):
         """Agarre simulado: si la pinza se cierra con el TCP a <6 cm del objeto, el objeto la sigue."""
         tcp = self._lookup("base_footprint", "tcp_link")
         if tcp is not None:
-            d = float(np.linalg.norm(tcp[1] - np.array(self.obj)))
-            dia_mm = 1000.0 * float(self.get_parameter("object_diameter_m").value)
+            # Una bolsa se toma por el nudo, debajo de su parte mas alta, y lo que queda entre los dedos es fino
+            target = np.array(self.obj) - ([0.0, 0.0, self.BAG_KNOT_BELOW_TOP_M] if self.bag_map is not None else 0.0)
+            d = float(np.linalg.norm(tcp[1] - target))
+            dia_mm = self.BAG_KNOT_MM if self.bag_map is not None else 1000.0 * float(self.get_parameter("object_diameter_m").value)
             # Objeto entre los dedos (TCP a < 6 cm): la pinza no puede cerrar por debajo de su diametro
             self.arm.grip_block_mm = dia_mm if (d < 0.06 or self.obj_attached) else None
             closing = self.arm.gripper_mm <= dia_mm + 2.0
@@ -712,7 +716,7 @@ class SimRobot(Node):
                     self.bag_delivered = True
                     self.get_logger().info(f"Bolsa en el piso (sim): ({self.bag_map[0]:.2f}, {self.bag_map[1]:.2f})")
             if self.obj_attached:
-                self.obj = tcp[1].tolist()
+                self.obj = (tcp[1] + ([0.0, 0.0, self.BAG_KNOT_BELOW_TOP_M] if self.bag_map is not None else 0.0)).tolist()
         if self.bag_map is not None and not self.obj_attached:
             c, s = math.cos(self.base.yaw), math.sin(self.base.yaw)
             dx, dy = self.bag_map[0] - self.base.x, self.bag_map[1] - self.base.y

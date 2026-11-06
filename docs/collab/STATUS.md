@@ -40,15 +40,40 @@ recupera por commit (§8). Editado por el integrador (Claude).
 - **No probado:** nada en el robot real ni con bolsas reales. La simulación no demuestra seguridad física ni que la pinza sujete una bolsa deformable. Con la muñeca, la bolsa suele quedar cortada de cerca y se agarra con lo medido por la cabeza.
 - **Rollback:** revertir el commit de este bloque.
 
-## 2b. Validar "take out the trash" en el robot real (nunca corrió; supervisar con E-stop a mano)
+## 2b. Prueba real de "take out the trash": paso a paso (nunca corrió en el robot)
 
-1. Energizar. Comprobar `ros2 topic echo --once /arm/status`: `feedback_ok: true` (con energía apagada da false). `calibrar_pantilt`: `T`, `V`, `M`, sin caídas.
-2. Elevador arriba: `stepper`, comando `top`, salir.
-3. Pose: `ensenar_pregrasp`. `T` suelta el brazo (se cae: sostenerlo), llevarlo adelante y abajo, `ENTER` guarda y traba. Dejarlo ahí: **con el brazo colgando en HOME, el elevador no debe bajar**.
-4. Elevador solo: `calibrar_elevador`; después `ros2 run base_athome_bringup torso_state --ros-args -p allow_motion:=true` y en otra terminal `ros2 topic pub --once /torso/goal std_msgs/msg/Float64 "{data: -0.10}"`, -0.30, -0.58, 0.0. Medir con cinta el recorrido (el modelo asume 60 cm). `NaN` o E-stop para parar. Cerrar el nodo.
-4b. Cámaras: `calibrar_bolsa` (no mueve nada por sí solo; abre lo que necesita, Q o Ctrl-C para cerrar): bolsa frente al robot, comparar con cinta lo que dice cada cámara.
-5. Mapa: `editor_mapa`, sección de waypoints, "Punto de la Basura (Afuera)", clic y arrastrar hacia dónde mira, Guardar. Puerta abierta si queda afuera.
-6. Prueba: `calibrar_elevador` (la primera vez calibra completo y exige el brazo en la pose; guarda la carrera en `~/.config/base_athome/elevador.json`; después solo toca el sensor superior), luego `commander`, ver ubicación en RViz. Bolsa liviana en zona despejada, manija <7 cm, sin nada bajo en el camino (el lidar no ve por debajo de 38 cm). Decir en inglés "Take out the trash" → "Yes": busca a la persona con la cabeza, la centra y se acerca si está a más de 2,2 m → señalar con el brazo separado del cuerpo y sostener → se posiciona en `pre_grasp_floor`, se acerca, guarda la posición de la bolsa, baja y agarra. Apartarse cuando avance. "Stop" cancela. Logs: `/tmp/commander_<pid>/` (copiarlos: se borran al reiniciar).
+Antes de empezar: E-stop a mano, zona despejada y otra persona atenta. Bolsa liviana con nudo o asa arriba, sin nada bajo en el camino: el lidar no ve por debajo de 38 cm. Probar cada etapa antes de pasar a la siguiente. Si algo se mueve raro: E-stop.
+
+**A. Sin mover nada**
+1. Energizar, abrir una terminal y actualizar: `cd ~/base_athome_ws && colcon build --symlink-install --packages-select base_athome_perception base_athome_sim base_athome_skills && source install/setup.bash`.
+2. `commander` en esa terminal. No decirle nada todavía. Si falta algo, lo avisa. RViz: confirmar la ubicación en el mapa.
+3. En otra terminal, `revisar_basura`. Solo lee: arreglar cada `FALTA` con lo que indica y repetir hasta que diga `Todo listo`.
+4. Cerrar `commander` con Ctrl-C. `calibrar_bolsa` no mueve nada: poner la bolsa delante, medir con cinta y comparar con lo que dice cada cámara. Las coordenadas salen desde el piso, bajo el centro del robot. Anotar el error. Cerrar con Q.
+
+**B. Partes por separado, con actuadores**
+5. `calibrar_pantilt`: `T`, `V`, `M`, sin caídas.
+6. Brazo en `pre_grasp_floor`; `calibrar_elevador` solo sube hasta el sensor superior y confirma la ubicación.
+7. Brazo energizado y habilitado (si no, el controlador rechaza el comando: mirar su log). Pinza en el aire, con el nudo de la bolsa entre los dedos: `ros2 topic pub --once /arm/gripper_cmd std_msgs/msg/Float32 "{data: 0.0}"`. Mirar con `ros2 topic echo --once /arm/status` cuánto queda `gripper_mm`. Tiene que quedar **por encima de 2 mm**: si no, la misión lo daría por agarre vacío. Volver a abrir con `{data: 105.0}`. Fuerza del controlador: 1.5 N·m, sin medir sobre una bolsa real.
+
+**C. Misión completa**
+8. `commander`. Bolsa a 1-2 m del robot y persona a más de 65 cm de la bolsa. Decir en inglés "Take out the trash" y responder "Yes".
+9. Cuando diga "Please point at the bag", señalar con el brazo estirado y sostenerlo hasta que mire la bolsa. Después apartarse: se acerca, baja el elevador, agarra, sube y va a `trash_drop`, donde la deja. "Stop" cancela.
+10. Copiar `/tmp/commander_<pid>/`, porque se borra al reiniciar. Anotar: distancia real entre la pinza y la bolsa, lo que dijo cada paso y si la muñeca confirmó.
+
+**Qué mirar, según la simulación con la pose real**
+- Con la pose del 05/11 19:05 la cabeza no llegó a ver la bolsa entera de cerca, y la muñeca tampoco: el agarre usó la primera medición de la cabeza. Si el paso 4 da más de 3-4 cm de error, frenar y corregir eso antes de agarrar.
+- El agarre es 4 cm debajo de la parte más alta. Si la bolsa es baja o el nudo está a un costado, puede tomar aire.
+- `no vi a nadie señalando`: estirar más el brazo. Con menos de 25° respecto del cuerpo no cuenta como gesto.
+- `agarre vacío`: revisar el paso 7. Hoy no se confirma con esfuerzo.
+
+**Volver atrás:** `git revert` del commit de este bloque; la pose anterior está en `pre_grasp_floor_previous`.
+
+## 2c. Agarre de bolsa fina (2026-11-05)
+
+- Para bolsas la pinza cierra a 0 mm y agarra 4 cm debajo de la parte más alta. Antes cerraba a 50 mm y daba por vacío cualquier ancho de 55 mm o menos: en el robot una bolsa se habría escapado.
+- Simulación (distancia de la pinza al nudo, nudo de 10 mm): normal 2.5 cm, persona lejos 5.6 cm (límite 6, sin resolver), persona moviéndose 2.5, distractora 2.3, bolsa de 45 cm 1.9, muñeca desalineada 3° 3.4, pose real enseñada 1.2. Todas completaron la misión.
+- `revisar_basura`: verificación previa de solo lectura. Probada contra la simulación, no contra el robot; allí indicó la pose de piso como faltante porque el archivo de poses de simulación no la tenía.
+- **Sin probar:** nada en el robot. El nudo simulado es un punto rígido: no demuestra que una bolsa real no se escape.
 
 ## 3. Cómo retomar la teleoperación con el Quest (pendiente: prueba completa en el brazo real)
 
