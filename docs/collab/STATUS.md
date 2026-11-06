@@ -118,6 +118,7 @@ Antes de empezar: E-stop a mano, zona despejada y otra persona atenta. Bolsa liv
 - **Limitaciones:** sin re-identificación, puede pasarse a otra persona. En simulación el detector es de keypoints, no YOLO. Velocidades sin calibrar en el robot. **Riesgo real:** seguir con el lidar a 38 cm no ve lo bajo.
 - Atributos visuales (`person_attributes.py`) y timbre (`doorbell_detector.py`) están con tests y sin conectar. Mundo `casa_pick_place` con su mapa, sin misión de Pick and Place todavía.
 - `.gitignore` excluía los mapas `.pgm`: en un clon nuevo Nav2 no tenía mapa. Corregido.
+- **Clon limpio con Nav2 (`b8ca8e7`):** clon nuevo con `HOME` vacío, en esta NUC, que ya tiene ROS y Gazebo: compila y completa "take out the trash" con la pinza a 1.4 cm. Sin probar en otra máquina.
 - Durante el seguimiento, la cámara usa el TF del instante de la imagen; si los relojes de NUC y Jetson no coinciden, usa el último. Sincronizar con chrony sigue pendiente.
 
 ## 3. Cómo retomar la teleoperación con el Quest (pendiente: prueba completa en el brazo real)
