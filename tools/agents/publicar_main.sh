@@ -7,8 +7,9 @@ SRC=${1:-origin/development}
 HERE=$(cd "$(dirname "$0")" && pwd)
 cd "$(git rev-parse --show-toplevel)"
 git fetch -q origin
-export GIT_INDEX_FILE; GIT_INDEX_FILE=$(mktemp -u)
-trap 'rm -f "$GIT_INDEX_FILE"' EXIT
+IDX=$(mktemp -u)
+trap 'rm -f "$IDX"' EXIT
+export GIT_INDEX_FILE=$IDX
 git read-tree "$SRC"
 grep -vE '^(#|$)' "$HERE/main_excluir.txt" | while read -r p; do
   git rm -r -q --cached --ignore-unmatch -- "$p"
