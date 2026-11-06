@@ -1,0 +1,735 @@
+PLAN DE FILMACION DEL VIDEO DE CUALIFICACION (EJECUTABLE EN 1 DIA)
+Base@Home (UruBots) - RoboCup@Home Open Platform League (OPL) 2027
+Archivo: docs/VIDEO_PLAN_FILMACION.txt
+Fecha de elaboracion: 2026-11-05
+Fecha de entrega oficial: 06 de diciembre de 2026, 23:59 GMT (Paso 2: TDP + Video + Web)
+
+
+==========================================================================================
+1. REQUISITOS OFICIALES VIGENTES Y CITAS DE VERSION
+==========================================================================================
+Este plan cumple estrictamente las normas oficiales de cualificacion para RoboCup@Home 2027:
+
+1.1 FUENTES OFICIALES Y VERSIONES CITADAS:
+  - [CFP2027] Call for Participation RoboCup@Home 2027 (Nuremberg, Alemania, 15 al 21 de junio de 2027).
+    Publicado por el Comite Organizador (OC) y verificado el 2026-11-05.
+    URL: https://athome.robocup.org/call-for-participation-robocuphome-2027/
+    Hito de entrega: 06 de diciembre de 2026, 23:59 GMT (Paso 2: Formulario Google Form 2, obligatorio).
+  - [RB2026.2] RoboCup@Home RuleBook, Release 2026.2 (Seccion General Rules, pages/general_rules/TeamRegistration.tex).
+    Checksum sha256 del PDF: d35e93c7...0ce128.
+    URL: https://github.com/RoboCupAtHome/RuleBook/releases/tag/2026.2
+  - [MASTER2027] RuleBook master "2027 Rev-1" (commit al 2026-10-14). Se constata que el texto de registro y la
+    especificacion de la prueba Human-Robot Interaction (HRI) Challenge son identicos a RB2026.2.
+
+1.2 REGLAS DEL VIDEO DE CUALIFICACION (CFP2027 + RB2026.2):
+  - Duracion: Maximo 10 minutos ("must not be longer than 10 minutes").
+  - Formato: Formato panoramico ("must be shot in wide format", 16:9, resolucion 1080p minima recomendada).
+  - Estilo de toma: Toma continua preferida frente a cortes multiples ("A continuous shot is preferred to multiple cuts").
+  - Habilidades minimas integradas: Resolucion de una tarea que integre al menos 5 habilidades diferentes ("the robot(s)
+    successfully solving a task involving the integration of at least 5 different abilities").
+  - Calidad de ejecucion: La ejecucion debe ser continua, fluida y robusta ("continuous, smooth, and robust").
+  - Idioma: Todo el audio, voz del robot y carteles en pantalla deben estar en ingles ("English").
+  - Subtitulos: Altamente recomendados, obligatorios para acentos y para transcribir la sintesis de voz del robot ("clear and loud").
+  - Indicacion de velocidad: Si se acelera algun tramo (por ejemplo desplazamientos largos de navegacion), debe mostrarse
+    el factor en pantalla de forma explicita (ejemplo: "2x", "3x").
+  - Alojamiento y entrega: Subida a YouTube (enlace en Google Form 2).
+  - Evaluacion: Numero de habilidades demostradas, grado de integracion, dificultad de la tarea y aplicabilidad en el mundo real.
+
+1.3 PRINCIPIO ETICO Y REGLA DE ORO DEL PROYECTO:
+  NUNCA presentar simulacion como si fuera el robot real. Todo el material del video debe ser hardware real
+  funcionando de forma autonoma. Cualquier funcionalidad no lista en el hardware se sustituye por su alternativa
+  de contingencia real y documentada, indicando honestamente el alcance.
+
+
+==========================================================================================
+2. LISTA DE VERIFICACION DE SEGURIDAD PREVIA (PRE-FLIGHT SAFETY CHECKLIST)
+==========================================================================================
+La seguridad fisica del personal, del robot y de las instalaciones prima sobre la filmacion.
+Antes de energizar actuadores o iniciar cualquier toma, el equipo debe completar este checklist.
+
+2.1 ROLES Y ASIGNACION DE RESPONSABILIDADES:
+  - Safety Officer (Oficial de Seguridad): Persona dedicada EXCLUSIVAMENTE a vigilar la trayectoria del robot
+    con el pulsador de parada de emergencia (E-stop) fisico en la mano, a menos de 1,5 metros del robot, fuera
+    del campo visual de la camara principal. Si ocurre cualquier desvio o riesgo, presiona el E-stop de inmediato.
+  - Operador de Software (NUC/Jetson): Encargado del pre-flight de software, lanzamiento de scripts y monitoreo
+    de logs sin tocar el teclado ni el mouse durante la grabacion de la toma.
+  - Camarografo Principal: Opera la camara fija en tripode (toma continua wide 16:9).
+  - Camarografo Secundario / Audio: Opera planos de detalle y monitorea que los microfonos graben con claridad.
+  - Actores / Invitados (2 personas): Invitado 1 e Invitado 2, con consentimiento firmado de imagen, instruidos
+    para hablar ingles claro a volumen normal y respetar las marcas en el suelo.
+
+2.2 CHECKLIST DEL ENTORNO Y ARENA:
+  [ ] Zona de filmacion despejada: area de transito entre Entrada (door) y Sala (living_room) libre de cables y desniveles.
+  [ ] Obstaculos bajos retirados: ATENCION CRITICA: el LiDAR Hokuyo esta montado a 38 cm de altura del suelo
+      (laser_offset_z = 0.32 m sobre base). Todo objeto, cable, pata de mesa o caja menor a 38 cm de altura NO ES VISTO
+      por Nav2. Verificar que el suelo este 100% libre de obstaculos ciegos para el lidar.
+  [ ] Asientos visibles: dos sillas o sillon en el living_room ubicados dentro del campo de vision de la RealSense D435
+      (a 1,5 - 2,5 m del waypoint de observacion).
+  [ ] Iluminacion difusa y estable: evitar luz solar directa o contraluces fuertes que saturen la RealSense o confundan
+      el detector YuNet/YOLO.
+  [ ] Silencio acustico absoluto: las personas presentes (fuera de los dos actores) deben permanecer en silencio total.
+      El sistema ASR Whisper con Silero VAD es sensible al ruido ambiental continuo (podria abortar por "continuous voice").
+  [ ] Permisos firmados: consentimiento por escrito de todas las personas visibles (reglamento RoboCup permite distribucion publica).
+  [ ] Ausencia de menores y terceros sin autorizacion.
+
+2.3 CHECKLIST DE HARDWARE Y CONEXIONES ELECTRICAS:
+  [ ] E-stop fisico verificado: presionar el boton rojo de parada de emergencia y comprobar que corta la potencia de
+      motores de hoverboard, elevador y brazo Piper. Restablecer con confirmacion visual.
+  [ ] Bateria de la base: nivel de carga verificado en /hoverboard/battery (> 37,0 V; bateria nominal 36 V / 10s).
+  [ ] Linea de alimentacion de 12 V de la cabeza: voltaje estable en bornes del U2D2 bajo carga.
+  [ ] Conector USB del U2D2 (Dynamixel): cable asegurado mecanicamente con abrazadera / alivio de tension para prevenir
+      desconexiones por vibracion (falla HOME-54).
+  [ ] Bus CAN del brazo Piper: adaptador gs_usb detectado en can0 con terminador de 120 ohms firme.
+  [ ] Enlace Ethernet directo NUC <-> Jetson: cable fijado, carrier a 1 Gb/s (enp1s0 <-> enx00e04c68090c), ping RTT < 0.3 ms.
+  [ ] Camaras limpias: lentes de RealSense D435 (cabeza) y DaBai DC1 (muñeca) libres de polvo o huellas.
+  [ ] Microfono RØDE VideoMic GO II: montado en la cabeza apuntando hacia adelante, cable jack 3.5 mm / USB firme a la Jetson.
+
+2.4 CHECKLIST DE SOFTWARE Y RED ROS 2:
+  [ ] ROS_DOMAIN_ID=10 activo en NUC y Jetson. Sin simulacion ni nodos ajenos en ejecucion.
+  [ ] Sincronizacion horaria: desfase de reloj entre NUC y Jetson verificado (< 15 ms).
+  [ ] Servicio jetson-head activo en Jetson (pan_tilt_node, whisper_node, stream_orbbec).
+  [ ] Calibracion de pan-tilt: ejecutar "calibrar_pantilt":
+      - T (torque): motores responden sin caidas de bus.
+      - V (vision): sentido verificado (pan_direction = +1, paneo positivo mira a la izquierda).
+      - M (movimiento): barrido suave sin errores de sobrecarga HW 32.
+  [ ] Verificacion de brazo Piper: /arm/status reporta "feedback_ok: true". Brazo en pose HOME segura.
+  [ ] Nav2 operativo: AMCL ubicado en el mapa mediante 2D Pose Estimate inicial si es necesario.
+  [ ] Audio TTS: salida de audio del parlante probada con frase de prueba en ingles a volumen audible.
+  [ ] Captura de pantalla de la NUC: comando ffmpeg listo para iniciar sincronizado con la claqueta.
+
+
+==========================================================================================
+3. CRONOGRAMA DE RODAJE EN 1 DIA (EJECUTABLE EN 10 HORAS)
+==========================================================================================
+El plan esta diseñado para ser ejecutado integramente en una jornada de 08:30 a 18:30 h.
+
+HORARIO       FASE                     ACTIVIDADES Y METAS
+------------------------------------------------------------------------------------------
+08:30 - 09:15 Preparacion de Arena     - Delimitacion de espacios: Puerta de entrada (door),
+                                         pasillo de guiado, Living Room (living_room).
+                                         - Colocacion de sillas/sillones para los invitados.
+                                         - Medicion y marcado sutil en el piso de waypoints.
+                                         - Despeje total de objetos < 38 cm (zona ciega Hokuyo).
+                                         - Ajuste de iluminacion y tripode de camara fija 16:9.
+
+09:15 - 10:15 Pre-flight Tecnico       - Encendido ordenado: Jetson Orin Nano, luego NUC.
+                                         - Verificacion de enlaces Ethernet (10.42.0.1 <-> 10.42.0.12).
+                                         - Ejecucion de calibrar_pantilt (T, V, M).
+                                         - Verificacion de Nav2 y AMCL con mapa cargado.
+                                         - Prueba de microfono RØDE con ASR Whisper (lectura de 3 frases).
+                                         - Prueba de voz Piper TTS a volumen alto.
+                                         - Verificacion de seguridad fisica (E-stop funcional).
+
+10:15 - 11:15 Bloque 1: Tomas de Apoyo - Toma 1: Titulo y presentacion estatica del robot.
+              y Arquitectura           - Toma 2: Recorrido de componentes (base hoverboard,
+                                         LiDAR, RealSense, pan-tilt, microfono, brazo Piper, NUC+Jetson).
+                                         - Grabacion de pantalla NUC (RViz, topicos, mapa).
+
+11:15 - 13:00 Bloque 2: Ensayos Secos  - Ensayo seco 1 (sin grabar): Navegacion door -> living_room.
+              y Calibracion Final      - Ensayo seco 2: Deteccion de personas y barrido de sillas.
+                                         - Ensayo seco 3: Reconocimiento de nombres y bebidas en ingles.
+                                         - Ajuste de umbrales acusticos y distancia de parada Nav2.
+                                         - Recarga intermedia de bateria de hoverboard si cayo de 38 V.
+
+13:00 - 13:45 Receso y Carga Baterias  - Almuerzo del equipo. Carga rapida de baterias del robot.
+                                         - Revision de rushes matutinos en laptop de control.
+
+13:45 - 16:30 Bloque 3: Filmacion de   - OBJETIVO: Grabar al menos 5 intentos completos de la tarea
+              Corrida Principal         Receptionist continua (Tomas 3 a 9 y 11).
+              (Toma Continua)          - Metodo: Claqueta sonora (aplauso), inicio de grabacion de
+                                         camara wide y screencast NUC, lanzamiento de comando
+                                         receptionist, ESPACIO, manos fuera del teclado.
+                                         - El Safety Officer vigila con E-stop en todo momento.
+                                         - Se registra cada intento en la planilla (exito/fallo).
+
+16:30 - 17:30 Bloque 4: Toma Extra de  - Si el brazo y elevador estan listos fisicamente:
+              Manipulacion / Detalle   - Toma 10 (Manipulacion de objeto / residuo con DaBai y Piper).
+                                         - Si el brazo no esta listo: grabacion de alternativa de
+                                         contingencia (Evasion dinamica avanzada y detalles de HRI).
+                                         - Tomas de detalle (close-up) de pan-tilt y expresion facial.
+
+17:30 - 18:30 Cierre, Backup y Datos   - Respaldo inmediato de todo el material grabado en DOS
+                                         discos externos independientes (tarjetas SD + SSD).
+                                         - Llenado de la planilla de mediciones para el TDP.
+                                         - Seleccion de la mejor toma continua para el montaje final.
+                                         - Guardado seguro del robot y apagado ordenado.
+
+
+==========================================================================================
+4. LISTA DE TOMAS DETALLADA (SHOT LIST) CON DURACION Y ESTADOS ROADMAP
+==========================================================================================
+El corte final editado tendra una duracion de entre 7:15 min (version nucleo) y 8:05 min (con
+bloque de manipulacion), respetando el limite maximo oficial de 10:00 minutos de CFP2027.
+
+RESUMEN DE DURACIONES DEL CORTE FINAL:
+  Toma 1:  Intro y Titulo del Equipo                     0:25 (0:00 - 0:25)
+  Toma 2:  Arquitectura del Robot y Hardware             0:30 (0:25 - 0:55)
+  Toma 3:  Inicio de Mision y Senal de Partida           0:20 (0:55 - 1:15)
+  Toma 4:  Navegacion a la Entrada y Evasion Dinamica    0:40 (1:15 - 1:55)
+  Toma 5:  Llegada Invitado 1: Saludo, ASR y Mirada      1:00 (1:55 - 2:55)
+  Toma 6:  Guiado del Invitado 1 a la Sala               0:40 (2:55 - 3:35)
+  Toma 7:  Barrido de Asientos Libres y Asignacion       0:40 (3:35 - 4:15)
+  Toma 8:  Regreso a Entrada y Llegada Invitado 2        1:10 (4:15 - 5:25)
+  Toma 9:  Guiado de Invitado 2 y Presentacion Mutua     1:00 (5:25 - 6:25)
+  Toma 10: [Opcional] Manipulacion Movil de Objeto       0:50 (6:25 - 7:15)
+  Toma 11: Recuperacion Autonoma ante Falla de Voz       0:20 (7:15 - 7:35)
+  Toma 12: Resumen Tecnico, Repositorios y Cierre        0:30 (7:35 - 8:05)
+------------------------------------------------------------------------------------------
+DURACION TOTAL DEL CORTE FINAL: 8:05 min (485 s) [con Toma 10] / 7:15 min (435 s) [sin Toma 10].
+Ambas opciones cumplen con la exigencia <= 10:00 min de CFP2027 y RB2026.2.
+
+
+------------------------------------------------------------------------------------------
+DETALLE INDIVIDUAL DE CADA TOMA:
+------------------------------------------------------------------------------------------
+
+TOMA 1: INTRODUCCION Y TITULO DEL EQUIPO
+- Tiempo en video: 0:00 - 0:25 (Duracion: 25 s | Tiempo estimado de rodaje: 15 min).
+- Encuadre / Camaras:
+  * Camara 1 (Wide): Plano general del robot en la arena hogareña, estatico y energizado.
+  * Graficos sobreimpresos: Titulo "UruBots - Base@Home", "RoboCup@Home OPL 2027 Qualification",
+    pais/afiliacion institucional, y la declaracion formal obligatoria:
+    "All robot behavior shown in this video is fully autonomous and running on real onboard hardware."
+- Que debe funcionar en el robot real:
+  * Iluminacion encendida, pantalla facial mostrando ojos parpadeando neutralmente.
+  * Hardware energizado en reposo seguro.
+- Estado segun docs/ROADMAP.md y STATUS.md:
+  * Plataforma base y estructura: VERIFICADO (commit 5055d4d, ROBOT.md §1).
+  * Pantalla facial animated_face_node: CODIGO / VERIFICADO.
+- Alternativa si no esta lista la pantalla facial:
+  * Si la pantalla HDMI no estuviera disponible, colocar panel frontal con logo impreso y LED de estado.
+- Cartel en pantalla:
+  * "UruBots | Base@Home Service Robot | RoboCup@Home Open Platform League 2027"
+
+------------------------------------------------------------------------------------------
+TOMA 2: ARQUITECTURA DEL ROBOT Y HARDWARE A BORDO
+- Tiempo en video: 0:25 - 0:55 (Duracion: 30 s | Tiempo estimado de rodaje: 25 min).
+- Encuadre / Camaras:
+  * Camara 2 (Detalle en mano): Paneos lentos y continuos recorriendo los subsistemas:
+    1. Base diferencial de hoverboard con LiDAR Hokuyo UST-05LX.
+    2. Columna con elevador NEMA23 y brazo AgileX Piper 6-DOF con camara DaBai DC1.
+    3. Cabeza pan-tilt Dynamixel con RealSense D435 y microfono direccional RØDE.
+    4. Computo a bordo: NUC i3-1220P (Navegacion/HRI) + Jetson Orin Nano (Vision TensorRT/ASR).
+  * Recuadro Picture-in-Picture (PIP): Diagrama de arquitectura ROS 2 Jazzy NUC<->Jetson (CycloneDDS).
+- Que debe funcionar en el robot real:
+  * Todos los componentes fisicos montados firmemente en el robot.
+- Estado segun docs/ROADMAP.md y STATUS.md:
+  * NUC y Jetson en Jazzy: VERIFICADO 2026-11-03 (ROBOT.md §2).
+  * Sensores y actuadores instalados: VERIFICADO (ROBOT.md §4).
+- Alternativa de contingencia:
+  * Ninguna requerida: el hardware fisico existe y esta ensamblado en el chasis.
+- Cartel en pantalla:
+  * "Distributed Compute: NUC (Navigation, Dialog) + Jetson Orin Nano (TensorRT 55 FPS, Whisper ASR)"
+
+------------------------------------------------------------------------------------------
+TOMA 3: INICIO DE MISION Y SENAL DE PARTIDA
+- Tiempo en video: 0:55 - 1:15 (Duracion: 20 s | Tiempo estimado de rodaje: 20 min).
+- Encuadre / Camaras:
+  * Camara 1 (Wide): Plano abierto de la arena. El operador o juez de prueba se acerca, da la señal
+    de inicio (apertura de puerta o pulsador de arranque). El operador retira las manos inmediatamente.
+  * Camara de pantalla (NUC): Terminal mostrando el arranque de `receptionist`, verificacion inicial de
+    subsistemas y el mensaje "All systems online. Starting autonomous reception task...".
+- Que debe funcionar en el robot real:
+  * Nodo `receptionist` cargado con waypoints validos (`--door-wp door --living-room-wp living_room`).
+  * Señal de inicio detectada de forma autonoma (e37d199) o teclado liberado en el primer segundo.
+- Estado segun docs/ROADMAP.md y STATUS.md:
+  * Arranque de mision y deteccion de inicio: SIM_PASS / CODIGO (ROADMAP §3, commit e37d199).
+  * Pre-vuelo del receptionist con chequeo de pan-tilt: CODIGO / SIM_PASS (STATUS.md §6).
+- Alternativa si falla el detector automatico de puerta abierta:
+  * Presionar la tecla ESPACIO en la NUC para lanzar la mision (--no-wait) e indicar honestamente
+    en subtitulo: "Mission triggered via start key; 100% autonomous operation follows."
+- Cartel en pantalla:
+  * "Task: Human-Robot Interaction Challenge (Receptionist Mission)"
+  * "Ability 1: Autonomous Task Management & System Health Checking"
+
+------------------------------------------------------------------------------------------
+TOMA 4: NAVEGACION AUTONOMA A LA ENTRADA Y EVASION DINAMICA DE OBSTACULOS
+- Tiempo en video: 1:15 - 1:55 (Duracion: 40 s | Tiempo real de desplazamiento: ~75 s, acelerado 2x).
+- Encuadre / Camaras:
+  * Camara 1 (Wide): Toma continua del robot navegando suavemente desde la posicion inicial hasta la puerta.
+    A mitad del camino, un miembro del equipo se cruza a paso normal o se ubica un obstaculo estandar (silla).
+    El robot frena suavemente, recalcula localmente y esquiva con holgura.
+  * Recuadro PIP (superior derecha): Captura en tiempo real de RViz mostrando el mapa global, costmap local,
+    haz del laser Hokuyo y la trayectoria generada por el planner Nav2.
+- Que debe funcionar en el robot real:
+  * Nav2 stack completo con AMCL, costmap global y local, controller server y hoverboard driver.
+  * Evasion dinamica en tiempo real ante obstaculo imprevisto.
+- Estado segun docs/ROADMAP.md y STATUS.md:
+  * Navegacion Nav2 y LiDAR: VERIFICADO (Hokuyo 40 Hz en NUC, base funcional, ROADMAP §4).
+  * Evasion de obstaculos en arena: CODIGO / VERIFICADO (costmap local operativo a 5 Hz).
+- Alternativa de contingencia:
+  * Si el esquive lateral es estrecho, el robot desacelera a 0 m/s, espera a que el obstaculo se retire
+    (comportamiento stop-and-wait de Nav2) y reanuda la ruta. Se rotula: "Obstacle safety stop & path clearance".
+- Cartel en pantalla:
+  * "Speed: 2x (Navigation transit)"
+  * "Ability 2: Safe Indoor Navigation & Dynamic Obstacle Avoidance (Nav2 + 2D LiDAR)"
+
+------------------------------------------------------------------------------------------
+TOMA 5: LLEGADA DEL INVITADO 1: SALUDO, ASR Y SEGUIMIENTO DE ROSTRO
+- Tiempo en video: 1:55 - 2:55 (Duracion: 60 s | Tiempo estimado de rodaje: 45 min).
+- Encuadre / Camaras:
+  * Camara 1 (Wide): El robot llega al waypoint de la puerta, se detiene y orienta la cabeza hacia la entrada.
+    Llega el Invitado 1 (ej: "John"). El robot detecta la persona, centra la cabeza Dynamixel en su rostro.
+  * Camara 2 (Corte o PIP): Plano medio mostrando la cabeza pan-tilt siguiendo suavemente los movimientos
+    leves del invitado mientras hablan.
+- Que debe funcionar en el robot real:
+  * Pan-tilt Dynamixel centrado en rostro con YuNet + nodo pan_tilt_node.
+  * Escucha por microfono RØDE + ASR Whisper en Jetson (`/voice/result`).
+  * Sintesis de voz Piper TTS clara y audible pidiendo nombre y bebida favorita.
+- Estado segun docs/ROADMAP.md y STATUS.md:
+  * Whisper en Jetson: JETSON_VERIFIED (~1,4 s por frase en entorno controlado).
+  * Pan-tilt seguimiento suave de rostro: CODIGO / SIM_PASS (receptionist actualizado en STATUS.md §6).
+  * Falla electrica Dynamixel: POR CONFIRMAR con cable nuevo y torque en movimiento (STATUS.md §1).
+- Alternativa de contingencia (si el pan-tilt presenta caidas USB):
+  * Mantener la cabeza fija orientada al frente a la altura promedio de la cara de una persona (tilt +5°).
+    El robot interactua con la persona parada frente a el. Se subtitula: "Fixed head orientation mode".
+- Cartel en pantalla:
+  * "Ability 3: Speech Recognition (Whisper on Jetson Orin Nano)"
+  * "Ability 4: Natural Human-Robot Interaction & Active Gaze Tracking"
+
+------------------------------------------------------------------------------------------
+TOMA 6: GUIADO DEL INVITADO 1 A LA SALA (LIVING ROOM)
+- Tiempo en video: 2:55 - 3:35 (Duracion: 40 s | Tiempo real: ~65 s, tramo recto a 2x).
+- Encuadre / Camaras:
+  * Camara 1 (Wide): El robot dice "Please follow me to the living room", gira y navega liderando el camino.
+    El Invitado 1 camina 1,5 m detras del robot.
+  * Camara 2 (Plano medio de seguimiento): Muestra al robot desplazandose con postura erguida y estable.
+- Que debe funcionar en el robot real:
+  * Navegacion a waypoint `living_room` via action NavigateToPose.
+  * Anuncio por voz del destino.
+- Estado segun docs/ROADMAP.md y STATUS.md:
+  * Waypoint living_room y navegacion: VERIFICADO en mapa semantico (STATUS.md §2).
+  * Secuencia de guiado del receptionist: CODIGO / SIM_PASS (ROADMAP §3).
+- Alternativa de contingencia:
+  * Si la navegacion con persona detras experimenta reflejos en el lidar laser, ajustar el radio de despeje
+    trasero en costmap o pedir al invitado mantener 1,8 m de separacion.
+- Cartel en pantalla:
+  * "Speed: 2x (Guiding transit)"
+  * "Ability 2: Autonomous Person Guiding & Semantic Waypoint Navigation"
+
+------------------------------------------------------------------------------------------
+TOMA 7: BARRIDO DE ASIENTOS LIBRES, DETECCION Y OFRECIMIENTO DE LUGAR
+- Tiempo en video: 3:35 - 4:15 (Duracion: 40 s | Tiempo estimado de rodaje: 40 min).
+- Encuadre / Camaras:
+  * Camara 1 (Wide): El robot se detiene en living_room. Realiza el barrido de 2 filas con la cabeza
+    pan-tilt (~16 s en real, condensado a 8 s en video) inspeccionando las dos sillas (una vacia, una ocupada
+    o ambas vacias). Detecta el asiento libre, orienta su base o cabeza hacia el y dice:
+    "Please take a seat on the chair to my left". El Invitado 1 se sienta.
+  * Recuadro PIP: Vista de la camara RealSense D435 con cajas delimitadoras de YOLO-pose mostrando la
+    deteccion de "chair" y clasificacion de estado "free" / "occupied".
+- Que debe funcionar en el robot real:
+  * Barrido de 2 filas de la cabeza Dynamixel.
+  * Percepcion en RealSense: deteccion de muebles y estimacion de ocupacion por presencia humana.
+  * Sintesis de voz indicando la ubicacion del asiento libre.
+- Estado segun docs/ROADMAP.md y STATUS.md:
+  * Barrido de 2 filas optimizado (pre-carga de modelo para evitar freeze de 4 s): CODIGO / SIM_PASS (STATUS.md §6).
+  * Deteccion de sillas y personas: CODIGO / SIM_PASS (ROADMAP §3; validar en robot real PENDIENTE).
+- Alternativa si falla la asociacion de asiento libre por YOLO en tiempo real:
+  * El robot ejecuta el barrido visual completo y, por logica semantica por defecto del mapa semantico,
+    asigna la primera silla conocida (chair_1). Subtitulado: "Pre-mapped semantic seating designation".
+- Cartel en pantalla:
+  * "Ability 5: Computer Vision - Object Detection & Free Seat Recognition (RealSense D435)"
+  * "Ability 6: Clear & Loud Voice Synthesis (Piper TTS)"
+
+------------------------------------------------------------------------------------------
+TOMA 8: REGRESO A LA ENTRADA E INTERACCION CON INVITADO 2
+- Tiempo en video: 4:15 - 5:25 (Duracion: 70 s | Tiempo estimado de rodaje: 45 min).
+- Encuadre / Camaras:
+  * Camara 1 (Wide): El robot anuncia "I am returning to the door to welcome the next guest".
+    Navega de vuelta a la puerta (acelerado 2x). Llega el Invitado 2 (ej: "Mary").
+    El robot la saluda: "Welcome! What is your name and what would you like to drink?".
+    Mary responde: "My name is Mary and my favorite drink is iced tea".
+    El robot confirma: "Nice to meet you, Mary! I remember your favorite drink is iced tea. Please follow me."
+  * Recuadro PIP: HUD de voz mostrando los paquetes /voice/result y transcripcion ASR.
+- Que debe funcionar en el robot real:
+  * Navegacion de retorno a la puerta.
+  * Interaccion de voz con segundo perfil de invitado, actualizando la memoria de la maquina de estados.
+- Estado segun docs/ROADMAP.md y STATUS.md:
+  * Memoria de 2 invitados en maquina de estados del receptionist: CODIGO / SIM_PASS (STATUS.md §6).
+  * Navegacion ida y vuelta: VERIFICADO.
+- Alternativa de contingencia:
+  * Si el ASR requiere repeticion, el robot solicita de forma natural: "Could you please repeat your name?".
+    Esto demuestra robustez y recuperacion ante fallas en lugar de corte de video.
+- Cartel en pantalla:
+  * "Ability 1 & 3: Multi-Guest State Tracking & Continuous Speech Processing"
+
+------------------------------------------------------------------------------------------
+TOMA 9: GUIADO DE INVITADO 2 Y PRESENTACION MUTUA CRUZADA CON MIRADA COORDINADA
+- Tiempo en video: 5:25 - 6:25 (Duracion: 60 s | Tiempo estimado de rodaje: 50 min).
+- Encuadre / Camaras:
+  * Camara 1 (Wide): Plano principal donde se ven los dos invitados y el robot en la sala.
+  * Camara 2 (Plano medio): Enfoque en la cabeza del robot rotando con precision entre ambos invitados.
+  * Accion:
+    1. El robot entra a la sala con Mary y le indica la segunda silla disponible: "Mary, please take the other seat."
+    2. Mary se sienta. El robot se posiciona frente a ambos.
+    3. El robot gira la cabeza hacia John, lo mira directamente y dice:
+       "John, this is Mary. Her favorite drink is iced tea."
+    4. El robot gira la cabeza hacia Mary, la mira directamente y dice:
+       "Mary, this is John. His favorite drink is orange juice."
+    5. Ambos invitados sonrien y asienten.
+- Que debe funcionar en el robot real:
+  * Coordinacion cinematica entre la memoria de misiones, orientacion de la base/pan-tilt hacia las
+    coordenadas de cada persona sentada, y sintesis TTS perfectamente sincronizada con la mirada.
+- Estado segun docs/ROADMAP.md y STATUS.md:
+  * Presentacion mutua con mirada a cada invitado: CODIGO / SIM_PASS (commit f56238d; validacion en robot PENDIENTE).
+  * Audio limpio de TTS: NUC_VERIFIED.
+- Alternativa de contingencia:
+  * Si la orientacion de pan-tilt pierde la referencia angular exacta de una silla, orientar la cabeza
+    en dos angulos fijos precalibrados (+30° izquierda, -30° derecha).
+- Cartel en pantalla:
+  * "Ability 4: Coordinated Social HRI - Cross Introductions with Dynamic Gaze"
+  * "Complete 5-Ability Integration Achieved in a Single Domestic Mission"
+
+------------------------------------------------------------------------------------------
+TOMA 10: [BLOQUE OPCIONAL] MANIPULACION MOVIL DE OBJETO / SACAR LA BASURA
+- Tiempo en video: 6:25 - 7:15 (Duracion: 50 s | Tiempo estimado de rodaje: 60 min).
+- Encuadre / Camaras:
+  * Camara 1 (Wide): Plano general del robot ejecutando una tarea de servicio domestico complementaria
+    ("Take out the trash" o agarre de botella en mesa con el brazo Piper).
+  * Camara 2 (Detalle pinza): Vista cercana de la pinza del brazo Piper aproximandose al objeto/bolsa,
+    cerrando los dedos y levantandolo con el elevador vertical.
+  * Recuadro PIP: Vista de la camara de muñeca Orbbec DaBai DC1 con deteccion de YOLO TensorRT a 55 FPS.
+- Que debe funcionar en el robot real:
+  * Controlador del brazo Piper FollowJointTrajectory en Jetson (gs_usb en can0).
+  * Camara DaBai DC1 y YOLO TensorRT publicando detecciones a 55 FPS.
+  * Homing y descenso del elevador NEMA23 con torso_state.
+- Estado segun docs/ROADMAP.md y STATUS.md:
+  * YOLO TensorRT a 55 FPS en Jetson: VERIFICADO 2026-11-03 (STATUS.md §1).
+  * Controlador FJT desplegado: JETSON_VERIFIED (STATUS.md §1).
+  * Movimiento del elevador y agarre real de basura: PENDIENTE / SIM_PASS (STATUS.md §1, HOME-63).
+- REGLA CRITICA DE CONTINGENCIA (SI EL AGARRE REAL NO ESTA LISTO EL DIA DEL RODAJE):
+  * NO MOSTRAR SIMULACION EN LUGAR DEL ROBOT.
+  * Si el agarre fisico en hardware no esta validado con seguridad ese dia:
+    ALTERNATIVA A: Sustituir la Toma 10 por una demostracion de "Teleoperacion Inmersiva por WebXR con Meta Quest 2"
+    (validada en hardware real, con cartel claro "Human Teleoperation & Imitation Learning Baseline - 15 s").
+    ALTERNATIVA B: Omitir completamente la Toma 10. La duracion del video pasa a 7:15 min, lo cual
+    satisface plenamente el reglamento (> 5 min, < 10 min) y mantiene 6 habilidades integradas en el Receptionist.
+- Cartel en pantalla (si se incluye):
+  * "Ability 7: Mobile Manipulation & Vision-Guided Grasping (AgileX Piper 6-DOF + Wrist Camera)"
+
+------------------------------------------------------------------------------------------
+TOMA 11: RECUPERACION AUTONOMA ANTE FALLA DE AUDIO / RUIDO AMBIENTAL
+- Tiempo en video: 7:15 - 7:35 (Duracion: 20 s | Tiempo estimado de rodaje: 20 min).
+- Encuadre / Camaras:
+  * Camara 1 (Plano medio): Durante la llegada de un invitado, ocurre un ruido subito o el invitado
+    habla en voz demasiado baja. El robot procesa el silencio/baja confianza y formula una solicitud
+    autonoma de recuperacion: "Excuse me, I didn't catch that. Could you please repeat your name?".
+    El invitado repite y el robot continua exitosamente sin intervencion humana.
+- Que debe funcionar en el robot real:
+  * Logica de reintento de ASR integrada en VoiceClient y la maquina de estados del receptionist.
+- Estado segun docs/ROADMAP.md y STATUS.md:
+  * Manejo de reintentos en VoiceClient y mission_executor: CODIGO / SIM_PASS (STATUS.md §6).
+- Alternativa de contingencia:
+  * Si la toma continua principal salio 100% limpia a la primera sin fallas de audio, esta toma se
+    omite o se incluye un fragmento real de 15 s de un intento previo donde ocurrio la recuperacion.
+- Cartel en pantalla:
+  * "Ability 8: Autonomous Failure Recovery & Dialog Disambiguation"
+
+------------------------------------------------------------------------------------------
+TOMA 12: RESUMEN TECNICO, REPOSITORIOS OPEN-SOURCE Y CIERRE
+- Tiempo en video: 7:35 - 8:05 (Duracion: 30 s | Tiempo estimado de rodaje: 15 min).
+- Encuadre / Camaras:
+  * Camara 1 (Wide): Plano general del robot con los invitados en la sala interactuando cordialmente.
+    El robot mira a camara y despide al publico: "Thank you for visiting Base@Home. See you in Nuremberg 2027!"
+  * Graficos finales en pantalla completa:
+    1. Resumen de habilidades RoboCup demostradas (checklist con tildes verdes):
+       [✔] Safe Indoor Navigation & Obstacle Avoidance (Nav2)
+       [✔] Human-Robot Interaction & Active Gaze Tracking
+       [✔] Speech Recognition (Whisper on Jetson)
+       [✔] Speech Synthesis (Piper TTS)
+       [✔] Computer Vision & Free Seat Detection (YOLO + RealSense D435)
+       [✔] Coordinated Multi-Guest Social Mission Integration
+    2. Datos institucionales del equipo UruBots.
+    3. Enlaces a repositorios de codigo abierto (GitHub base_athome), sitio web oficial y TDP.
+- Que debe funcionar en el robot real:
+  * Pose final del robot, parpadeo en pantalla facial y voz TTS de despedida.
+- Estado segun docs/ROADMAP.md y STATUS.md:
+  * Toda la informacion documental y enlaces de software: VERIFICADO (STATUS.md §2).
+- Cartel en pantalla:
+  * "UruBots - Base@Home | RoboCup@Home Open Platform League 2027"
+  * "Open Source Software & Hardware: https://github.com/ShiiSuii/base_athome"
+
+
+==========================================================================================
+5. GUION DE NARRACION, DIALOGO Y SUBTITULOS EN INGLES (ENGLISH SCRIPT & SUBTITLES)
+==========================================================================================
+Todo el audio del video estara en idioma ingles, con subtitulos precisos para garantizar una
+evaluacion transparente por parte del Comite Organizador.
+
+[0:00 - 0:25] SCENE 1: OPENING TITLE & SYSTEM DECLARATION
+(Background: Clean laboratory/home arena, robot standing in initial pose with animated face)
+Voiceover (English, clear & confident):
+  "Welcome to the qualification video of UruBots for RoboCup at Home Open Platform League 2027
+  in Nuremberg, Germany. This is Base at Home, an open-source, low-cost service robot developed
+  for domestic assistance. All robot behaviors demonstrated in this video operate fully
+  autonomously on onboard compute."
+On-screen Text:
+  "UruBots - Base@Home | RoboCup@Home OPL 2027 Qualification"
+  "All robot behavior shown is 100% autonomous on real hardware."
+
+[0:25 - 0:55] SCENE 2: SYSTEM ARCHITECTURE & ONBOARD HARDWARE
+(Camera walks smoothly around the physical hardware, highlighting components)
+Voiceover:
+  "Base at Home features a custom differential hoverboard base driven by an STM32 microcontroller
+  and a 2D Hokuyo LiDAR for navigation. Our torso incorporates a vertical linear lift and a
+  6-DOF AgileX Piper arm equipped with an eye-in-hand Orbbec DaBai RGB-D camera. On the head,
+  a 2-DOF Dynamixel pan-tilt unit carries an Intel RealSense D435 and a directional RODE microphone.
+  All intelligence runs locally on a distributed architecture: an Intel NUC for high-level
+  navigation and reasoning, and an NVIDIA Jetson Orin Nano for accelerated TensorRT vision
+  at 55 frames per second and Whisper speech recognition."
+On-screen Badges:
+  "Sensors: Hokuyo UST-05LX 2D LiDAR (40 Hz) | Intel RealSense D435 | Orbbec DaBai DC1"
+  "Actuators: 6.5'' Hoverboard Hub Motors | NEMA23 Prismatic Lift | AgileX Piper 6-DOF Arm"
+  "Compute: Intel NUC i3-1220P + NVIDIA Jetson Orin Nano (JetPack 7.2.1 / ROS 2 Jazzy)"
+
+[0:55 - 1:15] SCENE 3: MISSION START
+(Wide shot of the home arena. A judge opens the door or initiates the run)
+Voiceover:
+  "We present the Human-Robot Interaction Receptionist Challenge. The robot initializes all
+  onboard devices, verifies kinematic limits, and starts the domestic welcoming routine
+  without any further human intervention."
+Robot (Piper TTS):
+  "All systems online. Starting receptionist mission. Moving to entrance door."
+On-screen Subtitle:
+  Robot: "All systems online. Starting receptionist mission. Moving to entrance door."
+On-screen Banner:
+  "Ability: Autonomous Task Coordination & Pre-flight Diagnostics"
+
+[1:15 - 1:55] SCENE 4: SAFE NAVIGATION & DYNAMIC OBSTACLE AVOIDANCE
+(Continuous wide shot: Robot moves towards door. An obstacle appears and is smoothly circumnavigated)
+Voiceover:
+  "Navigating towards the door, the robot encounters a dynamic obstacle. Utilizing Nav2 and
+  real-time laser scans, it calculates a smooth local detour, ensuring strict obstacle clearance
+  at all times."
+On-screen Subtitle & Graphic:
+  [Speed: 2x during straight navigation transit]
+  PIP Window: "Live Nav2 Global & Local Costmap | 40 Hz LiDAR Scan"
+On-screen Banner:
+  "Ability: Safe Indoor Navigation & Real-time Obstacle Avoidance (Nav2)"
+
+[1:55 - 2:55] SCENE 5: GUEST 1 ARRIVAL, VOICE INTERVIEW & ACTIVE GAZE
+(Robot reaches entrance. Guest 1, John, walks in)
+Robot (Piper TTS):
+  "Hello! Welcome to our home. I am your host robot. May I please know your name and your favorite drink?"
+On-screen Subtitle:
+  Robot: "Hello! Welcome to our home. I am your host robot. May I please know your name and your favorite drink?"
+Guest 1 (John):
+  "Hello! My name is John, and my favorite drink is orange juice."
+On-screen Subtitle:
+  John: "Hello! My name is John, and my favorite drink is orange juice."
+Voiceover:
+  "Using onboard Whisper ASR with Silero Voice Activity Detection on the Jetson Orin Nano, the robot
+  extracts names and beverages in under 1.5 seconds. Meanwhile, the pan-tilt head actively tracks John's
+  face using lightweight neural facial detection."
+Robot:
+  "Pleased to meet you, John! I have recorded that your favorite drink is orange juice. Please follow me to the living room."
+On-screen Subtitle:
+  Robot: "Pleased to meet you, John! I have recorded that your favorite drink is orange juice. Please follow me to the living room."
+On-screen Banner:
+  "Ability: Real-time Speech Recognition (Whisper ASR on Jetson)"
+  "Ability: Natural Social HRI & Active Facial Gaze Tracking"
+
+[2:55 - 3:35] SCENE 6: GUIDING GUEST 1 TO THE LIVING ROOM
+(Robot leads John smoothly through the hallway)
+Voiceover:
+  "The robot leads the guest towards the living room at a comfortable walking pace, coordinating
+  orientation and speed."
+On-screen Subtitle:
+  [Speed: 2x]
+On-screen Banner:
+  "Ability: Person Guiding & Autonomous Path Following"
+
+[3:35 - 4:15] SCENE 7: SEAT SCAN, VACANCY DETECTION & SEATING OFFER
+(Living room. Robot stops and scans the seating area)
+Voiceover:
+  "Upon arriving in the living room, the robot performs an active two-row visual sweep using its
+  pan-tilt head. By coupling YOLO object detection with pose estimation on the RealSense camera,
+  it identifies available seats versus occupied ones."
+Robot:
+  "John, I found a free seat for you. Please take a seat on the armchair on my left."
+On-screen Subtitle:
+  Robot: "John, I found a free seat for you. Please take a seat on the armchair on my left."
+(John sits down comfortably on the indicated seat)
+PIP Window:
+  "YOLO-pose Furniture & Person Detection: Seat 1 [FREE] | Seat 2 [EMPTY]"
+On-screen Banner:
+  "Ability: Visual Perception - Free Seat Classification & Spatial Reasoning"
+  "Ability: Clear & Loud Voice Synthesis (Piper TTS)"
+
+[4:15 - 5:25] SCENE 8: RETURNING TO ENTRANCE & WELCOMING GUEST 2
+(Robot returns to door and meets Guest 2, Mary)
+Robot:
+  "I am now returning to the entrance to receive our next guest."
+On-screen Subtitle:
+  Robot: "I am now returning to the entrance to receive our next guest."
+[Speed: 2x transit back to door]
+(Door entrance: Mary arrives)
+Robot:
+  "Welcome! What is your name and what drink would you like?"
+Mary:
+  "Hi! My name is Mary, and I would love an iced tea."
+On-screen Subtitle:
+  Mary: "Hi! My name is Mary, and I would love an iced tea."
+Robot:
+  "Wonderful to meet you, Mary! I remember your favorite drink is iced tea. Please follow me to the living room."
+On-screen Subtitle:
+  Robot: "Wonderful to meet you, Mary! I remember your favorite drink is iced tea. Please follow me to the living room."
+On-screen Banner:
+  "Ability: Multi-entity Memory Retention & Dialog State Management"
+
+[5:25 - 6:25] SCENE 9: CROSS INTRODUCTIONS WITH COORDINATED GAZE
+(Living room: Mary enters with the robot. John is already seated)
+Robot:
+  "Mary, please take a seat on the chair next to John."
+(Mary sits down. The robot positions itself facing both guests)
+Voiceover:
+  "Now comes the core social interaction: the mutual introduction. The robot accesses its episodic
+  memory, turns its gaze directly towards John to introduce Mary, and then turns to Mary to introduce John."
+(Robot pans head towards John):
+Robot:
+  "John, this is Mary. Her favorite drink is iced tea."
+On-screen Subtitle:
+  Robot (looking at John): "John, this is Mary. Her favorite drink is iced tea."
+(Robot pans head smoothly towards Mary):
+Robot:
+  "Mary, this is John. His favorite drink is orange juice."
+On-screen Subtitle:
+  Robot (looking at Mary): "Mary, this is John. His favorite drink is orange juice."
+Voiceover:
+  "Both guests are accurately introduced with coordinated gaze, flawless speech synthesis, and
+  zero human intervention."
+On-screen Banner:
+  "Ability: Coordinated Multi-Human Social HRI & Dynamic Gaze Pointing"
+  "Task Benchmark: Receptionist Mission Successfully Completed"
+
+[6:25 - 7:15] SCENE 10: [OPTIONAL CAPABILITY] MOBILE MANIPULATION
+(Optional sequence: Domestic manipulation task, such as fetching or disposing of an item)
+Voiceover:
+  "To demonstrate physical manipulation capabilities, the robot executes an autonomous pick
+  routine. Using our 6-DOF Piper arm and wrist-mounted RGB-D camera with YOLO-World detection,
+  it aligns the gripper, adjusts the vertical prismatic lift, and grasps the target object."
+On-screen Banner:
+  "Ability: Object Detection & Mobile Manipulation (AgileX Piper + MoveIt 2)"
+
+[7:15 - 7:35] SCENE 11: AUTONOMOUS ERROR RECOVERY (DIALOG CLARIFICATION)
+(Demonstration of real recovery logic during speech interaction)
+Voiceover:
+  "Domestic environments are dynamic and noisy. When auditory confidence is low, the robot
+  gracefully engages in dialog clarification rather than failing the mission."
+Guest:
+  [Speaks softly amidst ambient acoustic noise]
+Robot:
+  "I am sorry, I did not catch that clearly. Could you please repeat your name?"
+Guest:
+  "My name is John."
+Robot:
+  "Thank you, John! Let us proceed."
+On-screen Banner:
+  "Ability: Robust Error Recovery & Dialog Disambiguation"
+
+[7:35 - 8:05] SCENE 12: TECHNICAL SUMMARY & OPEN-SOURCE REPOSITORIES
+(Wide view of the living room with robot and guests chatting comfortably)
+Voiceover:
+  "In this qualification video, Base at Home has integrated eight core abilities within a continuous,
+  robust domestic task. Our entire codebase, including ROS 2 Jazzy drivers, MoveIt 2 configurations,
+  and perception nodes, is fully documented and publicly available on GitHub to support the RoboCup@Home
+  community. Thank you, and we look forward to competing in Nuremberg 2027!"
+Robot:
+  "Thank you for watching Base at Home. See you in Germany!"
+On-screen Full-Screen Plate:
+  "SUMMARY OF DEMONSTRATED ABILITIES (CFP2027 COMPLIANT):"
+  "  [✔] 1. Safe Indoor Navigation & Local Obstacle Avoidance (Nav2)"
+  "  [✔] 2. Autonomous Person Guiding & Waypoint Tracking"
+  "  [✔] 3. Human Detection & Free Seat Recognition (YOLO + RealSense D435)"
+  "  [✔] 4. Accurate Speech Recognition (Whisper on Jetson Orin Nano)"
+  "  [✔] 5. Clear & Audible Speech Synthesis (Piper TTS)"
+  "  [✔] 6. Coordinated Social HRI with Active Gaze Tracking (Dynamixel 2-DOF)"
+  "  [✔] 7. Multi-Guest Memory & Context-Aware Mutual Introductions"
+  "  [✔] 8. Autonomous Failure Recovery & Dialog Clarification"
+  ""
+  "Team UruBots | RoboCup@Home Open Platform League 2027"
+  "Public Code Repository: https://github.com/ShiiSuii/base_athome"
+  "Team Website: [Official Team Web Link]"
+
+
+==========================================================================================
+6. PROTOCOLO DE REGISTRO Y MEDICIONES DURANTE EL RODAJE (METRICS LOGGING SHEET)
+==========================================================================================
+Para garantizar el principio cientifico exigido en el Team Description Paper (TDP Seccion D)
+y evitar publicar solo "la mejor toma sin estadisticas", durante el dia de rodaje se completara
+la siguiente planilla para CADA intento de la mision continua (minimo 5 corridas completas):
+
+PLANILLA DE ENSAYOS DEL DIA DE RODAJE:
+------------------------------------------------------------------------------------------
+Intento #: [ 1 / 2 / 3 / 4 / 5 ]
+Hora de inicio: [ HH:MM ]  |  Voltaje bateria inicio: [ __._ V ]
+Nivel de ruido acustico en sala: [ Bajo / Medio / Alto ]
+
+FASE                    METRICA A REGISTRAR                          RESULTADO / NOTAS
+------------------------------------------------------------------------------------------
+1. Navegacion a puerta   - Tiempo de transito (s)                     [ _____ s ]
+                         - Colisiones o roces (Si/No)                 [ _____ ]
+                         - Evasion de obstaculo suave (Si/No)         [ _____ ]
+2. Invitado 1 (Entrada)  - Centrado de rostro con pan-tilt (Si/No)    [ _____ ]
+                         - Caidas de enlace USB U2D2 reportadas       [ _____ caidas ]
+                         - Nombre reconocido correctamente (Si/No)    [ _____ ]
+                         - Bebida reconocida correctamente (Si/No)    [ _____ ]
+                         - Latencia de respuesta ASR Whisper          [ _____ s ]
+                         - Reintentos de voz requeridos               [ _____ ]
+3. Guiado a Living       - Invitado seguido sin perderse (Si/No)      [ _____ ]
+                         - Tiempo de guiado                           [ _____ s ]
+4. Asiento en Living     - Barrido visual de 2 filas completado       [ _____ s ]
+                         - Deteccion de silla libre correcta (Si/No)  [ _____ ]
+                         - Invitado sentado en el lugar indicado      [ _____ ]
+5. Invitado 2 (Entrada)  - Nombre 2 reconocido correctamente (Si/No)  [ _____ ]
+                         - Bebida 2 reconocida correctamente (Si/No)  [ _____ ]
+                         - Latencia ASR                               [ _____ s ]
+6. Presentacion mutua    - Orientacion de mirada a Invitado 1         [ Correcta / Desviada ]
+                         - Datos de Invitado 2 dichos a Invitado 1    [ Correctos / Errados ]
+                         - Orientacion de mirada a Invitado 2         [ Correcta / Desviada ]
+                         - Datos de Invitado 1 dichos a Invitado 2    [ Correctos / Errados ]
+                         - Audio claro y comprensible en grabacion    [ Si / No ]
+7. Global de la Mision   - Tarea terminada completamente (Si/No)      [ _____ ]
+                         - Intervencion humana manual requerida       [ CERO / Explicar ]
+                         - Tiempo total de ejecucion real             [ __ min __ s ]
+------------------------------------------------------------------------------------------
+Comando para grabar telemetria sin saturar CPU ni registrar datos privados de personas:
+  ros2 bag record /voice/result /pan_tilt/joint_states /pan_tilt/connected /amcl_pose /cmd_vel /tf_static
+
+
+==========================================================================================
+7. DIRECTIVAS DE EDICION, MONTAJE Y CONTROL DE CALIDAD POST-RODAJE
+==========================================================================================
+7.1 PARAMETROS TECNICOS DE EXPORTACION DE VIDEO:
+  - Contenedor y codec: MP4 (H.264 / AVC), perfil High @ L4.1.
+  - Resolucion: 1920x1080 (Full HD) progresivo a 30 fps (wide format obligatorio).
+  - Audio: Stereo AAC a 192 kbps, 48 kHz.
+  - Normalizacion de volumen: Audio integrado a -14 LUFS con picos maximos a -1 dBTP (estandar YouTube).
+    Garantizar que la voz del robot y la voz humana esten perfectamente balanceadas sin musica que tape los dialogos.
+
+7.2 REGLAS DE MONTAJE TRANSPARENTE:
+  - Prioridad a la toma continua: La mision del Receptionist (Tomas 3 a 9) se presenta como una
+    secuencia continua sin cortes espurios que oculten fallas.
+  - Transiciones transparentes: Si se corta entre escenas de preparacion y mision, usar fundidos simples o cortes directos.
+  - Factores de velocidad explicitos: Todo tramo largo acelerado debe llevar en una esquina un cartel
+    claramente legible con la leyenda "Speed: 2x" (o el factor exacto utilizado).
+  - Recuadros de telemetria (PIP): Los recuadros de RViz y de deteccion de camara deben estar sincronizados
+    al fotograma exacto con el video exterior mediante el golpe de claqueta inicial.
+  - Subtitulado embebido: Exportar archivo `.srt` independiente en ingles para subir a YouTube y, ademas,
+    quemar subtitulos discretos en la parte inferior para asegurar legibilidad en cualquier reproductor.
+
+7.3 CHECKLIST FINAL DE REVISION ANTES DE SUBIR A YOUTUBE:
+  [ ] ¿El video dura estrictamente MENOS de 10:00 minutos? (Verificado: corte previsto 7:15 - 8:05 min).
+  [ ] ¿El formato es 16:9 panoramico horizontal en toda su duracion?
+  [ ] ¿Todo lo hablado, escrito y rotulado esta en idioma ingles?
+  [ ] ¿Se muestran e integran al menos 5 habilidades diferentes en una misma tarea continua?
+  [ ] ¿Cada aceleracion tiene su cartel de velocidad correspondiente ("2x")?
+  [ ] ¿Se escucha la voz sintetizada del robot de forma clara y con buen volumen ("clear and loud")?
+  [ ] ¿No aparece ninguna direccion IP interna, correo personal, clave o credencial en pantalla?
+  [ ] ¿Todas las personas que aparecen firmaron su consentimiento para difusion publica?
+  [ ] ¿La descripcion del video en YouTube incluye: Nombre del equipo (UruBots), Liga (RoboCup@Home OPL),
+      Pais (Uruguay), Institucion, enlaces al repositorio GitHub y sitio web oficial?
+
+==========================================================================================
+FIN DEL DOCUMENTO - docs/VIDEO_PLAN_FILMACION.txt
+==========================================================================================
