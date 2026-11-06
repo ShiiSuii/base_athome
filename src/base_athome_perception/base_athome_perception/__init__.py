@@ -22,6 +22,7 @@ def check_and_fix_cyclonedds():
 # Ejecutar automáticamente al importar el paquete
 check_and_fix_cyclonedds()
 
+from .doorbell_detector import DoorbellDetector, DoorbellResult
 from .face_recognizer import FaceRecognizer
 from .speaker import RoboCupSpeaker
 from .person_attributes import (
@@ -38,4 +39,5 @@ __all__ = [
     "PersonAttributes",
     "PersonAttributesExtractor",
 ]
+__all__ = ["DoorbellDetector", "DoorbellResult", "FaceRecognizer", "RoboCupSpeaker", "check_and_fix_cyclonedds"]
 
