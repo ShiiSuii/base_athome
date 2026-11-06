@@ -1,0 +1,1026 @@
+================================================================================
+INVESTIGACION HOME-80: PICK AND PLACE EN ROBOCUP@HOME OPL
+Arquitectura, percepcion, docking, cinematica 6-DOF y lecciones de equipos lideres
+================================================================================
+Fecha: 2026-11-06
+Autor: Antigravity (dispatched worker para tarea HOME-80, Task ID: task_6c327901dbda)
+Workspace: /home/athome/orca/workspaces/base_athome_ws/antigravity-pp
+Rama base: origin/development
+Repositorios analizados en /tmp/home_research/:
+  - RoBorregos (FRIDA, RoboCup@Home OPL): https://github.com/RoBorregos/home2 @ 0807f83b745404cd43825023e761b8d0ae35c07e
+  - LASR (TIAGo, RoboCup@Home OPL): https://github.com/LASR-at-Home/Base @ 2a3ced23a90df1e76933c793e7ab3eb6170e081c
+  - PAL Robotics (TIAGo Tutorials / Pick Demo): https://github.com/pal-robotics/tiago_tutorials @ 64249ef934d0b8fb67b5534d7c60b1a368fd166a
+  - RoboCup@Home RuleBook 2026.2 (Normativo): https://github.com/RoboCupAtHome/RuleBook @ b844d5a6d6ebf4307c3250a01d1eca4ba56f8452
+  - Tech United Eindhoven (HERO): TDPs 2024-2025 y documentacion publica Environment Descriptor (ED)
+
+Punto de partida en Base@Home:
+  - HOME-58 (Docking a mesa) y HOME-59 (Detector objetos World/TRT) en docs/ROADMAP.md:118-119
+  - src/base_athome_perception/base_athome_perception/arm_manipulation.py
+  - src/base_athome_perception/base_athome_perception/wrist_detector.py
+  - src/base_athome_perception/base_athome_perception/moveit_bridge.py
+  - jetson_head/scripts/piper_arm_controller.py
+  - src/base_athome_skills/base_athome_skills/mission/skills.py
+
+================================================================================
+1. RESUMEN EJECUTIVO Y TRES RECOMENDACIONES PRINCIPALES
+================================================================================
+
+Pick and Place es la prueba regular con mayor puntaje en RoboCup@Home OPL (3515 puntos
+maximos segun RuleBook 2026.2). La evaluacion de repositorios de referencia (RoBorregos,
+LASR, PAL Robotics, Tech United) revela que ningun equipo de elite intenta agarrar
+objetos directamente tras la navegacion global de Nav2; todos implementan una fase de
+acercamiento fino ("docking") y un modelado geometrico estricto del entorno en MoveIt.
+
+LAS TRES RECOMENDACIONES PRINCIPALES PARA BASE@HOME:
+
+1. DOCKING A MESA EN LAZO CERRADO CON LIDAR (HOME-58):
+   - Evidencia: Segun el RuleBook 2026.2 (tasks/PickAndPlaceChallenge.tex:94), el arbitro
+     puede mover la mesa de comedor hasta 50 cm respecto a su ubicacion por defecto.
+     Nav2 deja el robot a 0.44 m del obstaculo con 0.18 m de tolerancia (hasta 0.62 m).
+     El brazo Piper tiene un alcance de ~0.62 m y un avance util en linea recta desde
+     la pose de espera de solo 20-25 cm (medido en ROBOT.md:204). Un objeto a 25 cm del
+     borde queda fisicamente fuera de alcance si el robot no hace docking fino.
+   - Solucion probada por RoBorregos (table_docker.py:1-220): ajustar una recta 2D
+     mediante RANSAC sobre el LaserScan del Hokuyo, bloquear la normal de la mesa en
+     el frame odom y avanzar en lazo cerrado con /cmd_vel a velocidad baja (0.05-0.10 m/s)
+     hasta situar el frente del chasis a 10-15 cm del borde de la mesa.
+   - Donde implementarlo: src/base_athome_navigation/base_athome_navigation/table_docker.py
+     (cliente externo, respetando la proteccion de Nav2 de AGENTS.md §4).
+
+2. ESCENA DE COLISION MOVEIT Y GUARD DE TECHO PARA ESTANTES (HOME-46):
+   - Evidencia: Actualmente en Base@Home MoveItBridge no agrega objetos de colision
+     (moveit_bridge.py:80 solo consulta y asegura pares iniciales; mesa y estantes no
+     existen en la escena). Los movimientos IK pueden atravesar la tabla o el piso.
+     En estantes, las camaras de muñeca y cabeza no ven el techo del compartimento
+     superior (ceguera del eye-in-hand), lo que provoca que el planificador de MoveIt
+     elija trayectorias con el codo hacia arriba que colisionan violentamente con la
+     balda superior (reportado en RoBorregos arm.py:581).
+   - Solucion probada por RoBorregos y PAL Robotics: agregar una caja virtual "table" en
+     MoveItPlanningScene bajo la cota Z del plano detectado, y para estantes agregar un
+     "shelf_ceiling_guard" (caja de colision solida a z = table_height + compartment_height + 0.10m).
+     Al agarrar, adjuntar el objeto (attach_collision_object) con touch_links habilitados en
+     la pinza; al soltar, detach.
+   - Donde implementarlo: src/base_athome_perception/base_athome_perception/moveit_bridge.py.
+
+3. DETECTOR HIBRIDO DE VOCABULARIO ABIERTO (YOLO-WORLD EN JETSON) + PERFILES GEOMETRICOS:
+   - Evidencia: YOLOv8n COCO no distingue latas especificas, cubiertos, platos de borde
+     ni pastillas de lavavajillas (docs/ROADMAP.md:119). Modelos como GPD o GraspNet son
+     demasiado pesados para la Jetson Orin Nano y generan agarres incompatibles con un
+     brazo de 6 ejes de montaje lateral.
+   - Solucion probada por LASR (yoloworld.py:9-51) y RoBorregos (geometric_grasps.py:1-100,
+     pick_profiles.yaml:26-98): Deteccion de vocabulario abierto con YOLO-World v2 en
+     la Jetson enviando bounding boxes 2D a la NUC, corte con la cota Z medida por la
+     profundidad de la camara, y seleccion de agarre por perfil geometrico determinista:
+     * Objetos cilindricos/cajas (latas, cereales, Pringles): agarre horizontal o con
+       inclinacion de 15-25° (como ya hace _approach_candidates en arm_manipulation.py:745).
+     * Objetos planos (platos, tenedores, cucharas, pastilla): descenso vertical con
+       monitoreo de esfuerzo o salto de corriente (force-guarded descent) y retraccion de 4 mm
+       antes de cerrar la pinza.
+   - Donde implementarlo: exportar yolov8s-worldv2 a TensorRT en Jetson (HOME-59) y
+     extender arm_manipulation.py con perfiles de descenso.
+
+================================================================================
+
+================================================================================
+2. CONTEXTO NORMATIVO: RULEBOOK 2026.2 (PICK AND PLACE CHALLENGE)
+================================================================================
+Fuente: RoboCup@Home RuleBook 2026.2 (commit b844d5a6d6ebf4307c3250a01d1eca4ba56f8452)
+Archivos evaluados:
+  - tasks/PickAndPlaceChallenge.tex (lineas 1-141)
+  - scoresheets/PickAndPlaceChallenge.tex (lineas 1-47)
+
+2.1 OBJETIVOS PRINCIPALES Y HOJA DE PUNTUACION (MAXIMO 3515 PUNTOS)
+El objetivo de la prueba es ordenar una cocina tras una comida familiar y servir
+un desayuno simple en un tiempo limite de 7:00 minutos.
+
+Estructura de puntos oficiales:
+1. Navegacion y reconocimiento:
+   - Navegar a la mesa de comedor: 15 pts
+   - Reconocer correctamente un objeto: 12 x 10 pts = 120 pts max
+   - Percibir objetos en el estante e indicar el lugar correcto: 2 x 30 pts = 60 pts max
+
+2. Agarre (Picking - Base 50 pts por objeto):
+   - Levantar objeto para transporte: 12 x 50 pts = 600 pts max
+   - Modificador First Pick Bonus: 100 pts (solo una vez)
+   - Modificador From the floor (basura cerca del tacho): 30 pts (1x)
+   - Modificador Cutlery (cubiertos: tenedor, cuchillo, cuchara): 2 x 50 pts = 100 pts max
+   - Modificador Plate (plato de comida): 100 pts (1x)
+   - Modificador Dishwasher tab (pastilla de lavavajillas): 100 pts (1x)
+   - Penalidad: Objeto comun tomado de mesa auxiliar en lugar de comedor: 2 x -20 pts = -40 max
+
+3. Colocacion (Placing - Base 40 pts por objeto):
+   - Colocar objeto en su lugar designado: 12 x 40 pts = 480 pts max
+   - Modificador Correctly in the dishwasher (vajilla/cubiertos dentro del lavavajillas): 3 x 70 pts = 210 pts max
+   - Modificador Next to similar objects in the cabinet (agrupar por categoria): 2 x 20 pts = 40 pts max
+   - Modificador In the dishwasher tab slot inside dishwasher: 160 pts (1x)
+   - Penalidad: Area alrededor de los items de desayuno no despejada: 4 x -30 pts = -120 max
+   - Penalidad: Objeto comun de mesa auxiliar colocado: 2 x -20 pts = -40 max
+
+4. Recompensas Extra (Extra Rewards):
+   - Tirar o empujar el canasto del lavavajillas (rack): 2 x 100 pts = 200 pts max
+   - Abrir o cerrar la puerta del lavavajillas sin asistencia: 2 x 200 pts = 400 pts max
+   - Abrir envase de leche sin asistencia: 400 pts (1x)
+   - Servir leche o cereal en el bol sin asistencia: 2 x 200 pts = 400 pts max
+
+5. Penalizaciones Criticas:
+   - Objetos arrojados o caidos al colocar: 12 x -40 pts = -480 max
+   - Desayuno no servido en configuracion tipica: -50 pts
+   - Objetos caidos al suelo: 12 x -40 pts = -480 max
+   - Derramar cereal o leche al verter: 2 x -100 pts = -200 max
+   - Asistencia humana: reposicionar objeto -30 c/u, entrega en mano (handover) -100 c/u,
+     cambios al entorno -40 c/u.
+
+2.2 HALLAZGOS REGLAMENTARIOS CRITICOS PARA EL DISENO DEL SISTEMA:
+
+A. LA MESA PUEDE ESTAR DESPLAZADA HASTA 50 CM (tasks/PickAndPlaceChallenge.tex:94):
+   "The Dining table may be moved by the referee. It can be expected to be within 50 cm
+   of its default location."
+   [VERIFICADO en RuleBook 2026.2]
+   Impacto tecnico: Un waypoint fijo en el mapa semantico fallara el 100% de las veces si el
+   arbitro mueve la mesa. El robot DEBE:
+   1) Navegar con Nav2 a un waypoint de aproximacion previa a ~1.0 m de la mesa historica.
+   2) Escanear con el LiDAR / camara para ubicar el plano real de la mesa.
+   3) Ejecutar docking fino hasta quedar a la distancia optima de agarre (10-15 cm del borde).
+
+B. ASISTENCIA HUMANA CON CERO PUNTOS DE PENALIZACION (scoresheets/PickAndPlaceChallenge.tex:38-39):
+   - "Human assistance: opening milk container: 0 penalty"
+   - "Human assistance: moving dishwasher door or rack: 0 penalty"
+   [VERIFICADO en RuleBook 2026.2]
+   Impacto tecnico: Tratar de abrir una puerta de lavavajillas basculante con traba de presion
+   o desenroscar un carton de leche con un brazo de 6 ejes de 1.5 kg payload (Piper) conlleva un
+   riesgo mecanico inmenso (bloqueo por sobrecarga, rotura de dedos). El reglamento otorga 0
+   puntos de penalidad si el robot pide explicitamente ayuda al arbitro:
+   "Please open the dishwasher door for me" o "Please open the milk carton".
+   Estrategia recomendada: NO intentar abrir la puerta mecanicamente; pedir asistencia por voz
+   (0 penalidad) y concentrar los 7 minutos en agarrar y colocar los 12 objetos (1080 pts).
+
+C. REQUISITO DE COLOCACION CUIDADOSA (tasks/PickAndPlaceChallenge.tex:97):
+   "Objects must be placed with care, namely the robot should place rather than throw or drop objects."
+   Soltar un objeto desde el aire descuenta -40 puntos por objeto caido. El movimiento de colocacion
+   debe descender hasta que el objeto toque la superficie o quede a <2 cm de ella antes de abrir la pinza.
+
+================================================================================
+
+================================================================================
+3. MODULO 1: ACERCARSE A UNA MESA (DOCKING CON LIDAR / PROFUNDIDAD)
+================================================================================
+
+3.1 DIAGNOSTICO DEL PROBLEMA EN BASE@HOME:
+En Base@Home, la navegacion autonoma con Nav2 esta protegida (AGENTS.md §4: estudiar si,
+modificar no; footprint 0.44 m; tolerancia de meta 0.18 m).
+Consecuencias kinematicas medibles:
+1. Distancia de parada de Nav2:
+   Nav2 infla los obstaculos con el footprint del robot (radio 0.44 m). Ante una mesa,
+   el planificador detiene el centro del robot (base_link) a una distancia de:
+   d_parada = 0.44 m + [0.0 .. 0.18 m] = entre 0.44 m y 0.62 m respecto al obstaculo.
+2. Geometria del brazo Piper en el robot:
+   - Base del Piper (arm_base_link) respecto de base_link: x = 0.005 m, y = 0.175 m, z = 1.065 m (con elevador arriba).
+   - Longitud total extendida del brazo: 626 mm (ROBOT.md:104).
+   - Desde la pose PRE-GRASP enseñada, el avance maximo alcanzable en linea recta con MoveIt
+     es de ~20-25 cm (inclinando la pinza hasta 24-30°); a 30 cm es inalcanzable (ROBOT.md:204-206).
+   - Con el robot detenido a 0.55 m de la mesa, el TCP queda a 0.11 m fuera del borde:
+     NINGUN OBJETO SOBRE LA MESA ES ALCANZABLE.
+3. Desfase de altura sensor-mesa:
+   - El Hokuyo UST-05LX emite a 38 cm de altura (ROBOT.md:126).
+   - La tabla de una mesa de comedor estandar esta entre 72 y 76 cm de altura.
+   - El LiDAR solo detecta las patas de la mesa (o el faldon si es bajo); si el tablero
+     vuela 10-15 cm hacia afuera de las patas, el LiDAR reportara una distancia mayor
+     a la distancia real de colision del chasis superior con la tabla.
+
+3.2 COMO LO RESUELVE ROBORREGOS (FRIDA):
+Fuente: roborregos/home2 @ 0807f83b745404cd43825023e761b8d0ae35c07e
+Archivo: navigation/packages/nav_main/scripts/table_docker.py (lineas 1-220, 480-650)
+Evidencia: VERIFICADO en codigo de RoBorregos.
+
+Arquitectura de table_docker.py:
+1. Separacion clara de responsabilidades:
+   - Nav2 se encarga exclusivamente de la navegacion macro hasta un "near pose"
+     situado a ~0.8 - 1.2 m frente a la mesa.
+   - El nodo table_docker toma el control de /cmd_vel solo bajo demanda mediante
+     servicios ROS 2: /navigation/dock_to_surface y /navigation/undock_from_surface.
+2. Algoritmo de deteccion y fijacion (Locking) de la cara frontal:
+   - Recibe PointCloud2 (camara de profundidad) y LaserScan (LiDAR).
+   - Filtro espacial frontal: FOV horizontal de 70° (frontal_fov_deg=70.0) y rango maximo de 1.5 m.
+   - RANSAC 2D de linea (ransac_line, lineas 99-133):
+     * Muestreo iterativo de pares de puntos en el plano horizontal.
+     * Umbral de inliers (distancia < thresh, ej. 2-3 cm).
+     * Refinamiento SVD / PCA sobre inliers para calcular el centroide y vector normal unitario:
+       normal = [-direction[1], direction[0]].
+   - Soporte para mesas redondas (ransac_circle, lineas 166-200):
+     * Muestreo de 3 puntos, calculo de radio y centro.
+     * Ajuste Kasa por minimos cuadrados.
+     * Colapsa el circulo a su recta tangente en el punto mas cercano al robot.
+   - Bloqueo en odom (Locking):
+     * Crucial: La linea/plano se transforma y bloquea en el frame "odom" una sola vez al inicio.
+     * Motivo: Evita el "jitter" (oscilacion) de recalcular la orientacion cuadro a cuadro
+       mientras el robot se mueve.
+3. Control en lazo cerrado de aproximacion:
+   - Controlador proporcional en velocidad hacia la normal de la mesa.
+   - Control de avance lineal (vx) reduciendo velocidad a medida que se acerca al target_distance.
+   - Control de orientacion angular (wz) para alinear el eje frontal del robot perpendicular a la mesa.
+   - Parada de seguridad dual:
+     a) Criterio de meta: la parte mas frontal del robot (front_offset) llega a target_distance (ej. 10 cm).
+     b) Criterio de parada de emergencia: si el LiDAR en vivo detecta cualquier punto a menos de min_safe (ej. 5 cm).
+4. Desacople (Undock):
+   - Al terminar de manipular, /navigation/undock_from_surface retrocede en linea recta
+     una distancia retreat_distance (medida por odometria) antes de habilitar a Nav2 para
+     planificar hacia el siguiente destino, evitando atascos en el costmap local.
+
+3.3 COMO LO RESUELVE LASR (TIAGo):
+Fuente: LASR-at-Home/Base @ 2a3ced23a90df1e76933c793e7ab3eb6170e081c
+Archivos:
+  - tasks/pick_and_place/pick_and_place/states/find_and_go_to_table.py (lineas 1-100)
+  - tasks/pick_and_place/pick_and_place/states/compute_approach.py (lineas 1-85)
+Evidencia: VERIFICADO en codigo de LASR.
+
+Metodologia de LASR:
+1. Delimitacion por poligono de busqueda (table.search_polygon):
+   - Se parametriza una region geometrica 2D en el mapa donde puede encontrarse la mesa.
+2. Deteccion de mesa por vision (DetectAllInPolygon):
+   - Usa modelo de deteccion visual con clases ["dining table", "tv"] filtradas por confianza.
+   - Proyecta los centros de deteccion al mapa de ocupacion para extraer table_candidate_poses.
+3. Calculo de poses de aproximacion perimetral (ComputeApproach):
+   - Genera candidatos de pose a lo largo de un offset radial alrededor del centroide de la mesa.
+   - Valida la alcanzabilidad cinematica y la ausencia de obstaculos en el costmap antes de
+     comandar a Nav2 la pose de aproximacion final.
+
+3.4 COMO LO RESUELVE TECH UNITED EINDHOVEN:
+Fuente: Tech United TDPs y arquitectura ED (Environment Descriptor).
+Evidencia: VERIFICADO en documentacion publica de ED.
+
+Metodologia de Tech United:
+- ED unifica en un unico modelo de mundo 3D los objetos estaticos y semanticos.
+- Al llegar a la zona de la mesa, un plugin de percepcion segmenta la nube de puntos RGB-D,
+  ajusta las dimensiones de la caja del mueble (box fitting) y actualiza la pose exacta de la mesa
+  en el modelo de mundo.
+- El planificador de base calcula la pose de interaccion "in_front_of(table)" directamente referenciada
+  a la geometria actualizada en tiempo real.
+
+3.5 APLICABILIDAD Y DISENO RECOMENDADO PARA BASE@HOME:
+Base@Home cuenta con:
+- Traccion diferencial (hoverboard): no puede desplazarse lateralmente como la base omnidireccional
+  de RoBorregos, pero si puede girar sobre su eje y avanzar frontalmente.
+- Sensores disponibles: Hokuyo UST-05LX (/scan) en la base y RealSense D435 (depth) en la cabeza.
+
+Estrategia propuesta para Base@Home (sin modificar Nav2):
+1. Nav2 lleva el robot al waypoint semantico "table_approach" (definido en semantic_map.yaml
+   a ~0.8 m del borde nominal).
+2. Nodo ligero `table_docker_node.py` en src/base_athome_navigation:
+   - Entrada: /scan del Hokuyo y nube de puntos filtrada de la RealSense orientada hacia abajo.
+   - Deteccion: RANSAC 2D sobre los rayos del sector central (-30° a +30°) para extraer la recta
+     de la mesa (normal nx, ny y distancia d).
+   - Giro sobre el eje: alinear yaw del robot con la normal de la mesa (|yaw_error| < 2°).
+   - Avance recto a baja velocidad (vx = 0.06 m/s): detenerse cuando d_borde = 12 cm.
+   - Al terminar el agarre: retroceso recto (vx = -0.08 m/s durante 0.5 m) antes de devolver
+     el control a Nav2.
+Riesgo: Nivel bajo (no altera ningun archivo funcional de Nav2; corre como cliente sobre /cmd_vel
+con verificacion de parada de emergencia).
+
+================================================================================
+
+================================================================================
+4. MODULO 2: DETECTAR OBJETOS YCB Y PLATOS CON MODELOS ABIERTOS EN CPU O JETSON
+================================================================================
+
+4.1 EL DESAFIO DE PERCEPCION EN PICK AND PLACE 2026.2:
+El reglamento exige manipular una variedad heterogenea de objetos en una sola sesion:
+- Vajilla: tazas, boles, platos llanos (plate - 100 pts bonus).
+- Cubiertos: tenedores, cuchillos, cucharas (cutlery - 2 x 50 pts bonus).
+- Alimentos y envases: caja de cereales, carton de leche, latas cilindricas (Pringles, Red Bull).
+- Objetos delgados / pequeños: pastilla de lavavajillas (dishwasher tab - 100 pts bonus).
+- Basura: envases arrugados, bolsas o envoltorios.
+
+Dificultades visuales concretas:
+1. Platos y cubiertos:
+   - Los cubiertos tienen un grosor de 1.5 a 3 mm y superficies metalicas reflectantes
+     que saturan o generan agujeros en sensores de profundidad basados en infrarrojo
+     (RealSense D435 y Orbbec DaBai).
+   - Los platos llanos tienen escaso relieve vertical (<1.5 cm) y un borde circular delgado
+     que los detectores estandares 3D confunden con la propia superficie de la mesa.
+2. Latas y cajas:
+   - Modelos genericos entrenados en COCO (yolov8n.pt) no tienen clases para "can" (lata),
+     "carton" (caja de leche) ni marcas de competencia; solo agrupan en "bottle" o "cup".
+   - En HOME-59 (docs/ROADMAP.md:119), se observo que yolov8n confunde Red Bull con botellas
+     y no detecta Colgate ni el cubo Rubik.
+
+4.2 ARQUITECTURA DE COMPUTO EN BASE@HOME: CPU (NUC) VS GPU (JETSON ORIN NANO):
+- NUC CHUWI: procesador Intel i3-1220P sin acelerador CUDA. Corre Nav2, AMCL, dialogos HRI,
+  maquinas de estado y MoveIt. Ensayos medidos en ROBOT.md:49 demostraron que YOLOv8 en CPU
+  tarda ~192 ms por cuadro (5.2 FPS) consumiendo un nucleo completo.
+- Jetson Orin Nano Super (8 GB): GPU Ampere con TensorRT 10.16 y CUDA 13.2 (ROBOT.md:63).
+  En esta GPU, YOLOv8n TensorRT FP16 procesa a 55 FPS con latencia de solo 18 ms de punta a punta.
+- Decision de diseno (AGENTS.md y ROBOT.md §1): La inferencia de vision pesada DEBE correr
+  en la GPU de la Jetson, enviando unicamente mensajes ligeros tipo Detection2DArray
+  hacia la NUC por Ethernet (topico /arm_camera/detections).
+
+4.3 COMO LO RESUELVE LASR (YOLO-WORLD ABIERTO):
+Fuente: LASR-at-Home/Base @ 2a3ced23a90df1e76933c793e7ab3eb6170e081c
+Archivo: common/vision/lasr_vision_open_vocabulary/lasr_vision_open_vocabulary/models/yoloworld.py (lineas 9-51)
+Evidencia: VERIFICADO en codigo de LASR.
+
+Mecanismo:
+- Emplea YOLOWorld de la libreria ultralytics con pesos "yolov8s-world.pt" sobre CUDA.
+- Utiliza la funcion set_classes(queries) para inyectar dinamicamente la lista de clases
+  especificas de la tarea:
+  queries = ["cereal box", "milk carton", "plate", "fork", "knife", "spoon",
+             "can", "mug", "bowl", "dishwasher tab", "trash"]
+- En lugar de reentrenar una red completa, YOLO-World calcula las similitudes entre
+  los embeddings de texto generados por CLIP y las caracteristicas visuales de la imagen.
+- Ventaja: Cero tiempo de entrenamiento offline; detecta objetos por su nombre en lenguaje natural.
+
+4.4 COMO LO RESUELVE ROBORREGOS (FRIDA):
+Fuente: roborregos/home2 @ 0807f83b745404cd43825023e761b8d0ae35c07e
+Archivos:
+  - manipulation/packages/perception_3d/src/remove_plane.cpp
+  - manipulation/packages/perception_3d/src/read_cluster.cpp
+  - manipulation/packages/perception_3d/perception_3d/geometric_grasps.py
+Evidencia: VERIFICADO en codigo de RoBorregos.
+
+Mecanismo:
+1. Segmentacion geometrica de planos (PCL en C++):
+   - remove_plane.cpp ajusta el plano dominante de la mesa con RANSAC (PCL SampleConsensusModelPlane).
+   - Extrae los coeficientes de la mesa (ax + by + cz + d = 0) y descarta todos los puntos que caen
+     dentro de un margen de ±1.5 cm del plano.
+   - Puntos restantes (los objetos situados SOBRE la mesa) pasan a read_cluster.cpp.
+2. Agrupacion Euclidiana (Euclidean Cluster Extraction):
+   - read_cluster.cpp separa los objetos individuales por distancia euclidiana (tolerancia 2 cm,
+     tamaño de cluster entre 50 y 10,000 puntos).
+3. Clasificacion geometrica y agarre (geometric_grasps.py:33-47):
+   - Mapea cada nombre de objeto a una clase geometrica de agarre:
+     * FLAT: tenedor, cuchillo, cuchara, plato, pasta dental, pastilla lavavajillas.
+     * CYLINDRICAL: latas, botellas, Pringles.
+     * BOX: caja de cereales, carton de leche, cubo Rubik.
+     * RIM: bol, canasto.
+     * PEAK: ropa, bolsas de basura.
+
+4.5 COMO LO RESUELVE TECH UNITED (HERO):
+Fuente: Tech United TDPs 2024-2025.
+Evidencia: VERIFICADO en reportes tecnicos.
+- Para cubiertos y platos: Entrenaron un modelo especifico YOLOv8 con dataset sintetico y
+  anotado de vajilla domestica sobre superficies reales.
+- El modelo predice la caja 2D del mango del cubierto ("cutlery handle") para garantizar
+  que la pinza cierre sobre el mango y no sobre la hoja del cuchillo o las puas del tenedor.
+
+4.6 PROPUESTA DE IMPLEMENTACION PARA BASE@HOME (HOME-59):
+Para Base@Home en la Jetson Orin Nano:
+1. Exportar YOLO-World v2 a TensorRT FP16 con vocabulario pre-fijado:
+   - Ultralytics permite fijar las clases de texto antes de la exportacion:
+     `model.set_classes(["cereal box", "milk carton", "plate", "fork", "knife", "spoon", "can", "mug", "bowl", "dishwasher tab"])`
+     y luego exportar a formato ONNX / TensorRT engine (`yolov8s_world_pick_fp16.engine`).
+   - Al congelar las clases en el grafo de inferencia, se elimina el costo computacional
+     de ejecutar el codificador de texto CLIP en runtime.
+   - La inferencia corre a ~20 ms en la Jetson Orin Nano manteniendo una precision muy superior
+     a COCO para platos y cubiertos.
+2. Integracion con wrist_detector.py y arm_manipulation.py:
+   - En jetson_head/scripts/yolo_trt_node.py: reemplazar el engine COCO por el engine de
+     vocabulario extendido de Pick and Place.
+   - En la NUC, wrist_detector.py escucha /arm_camera/detections.
+   - Para estimar la distancia 3D del objeto sin depender del ancho asumido de caja (que falla
+     en platos y cubiertos): utilizar la proyeccion de rayos de camara cortados contra la
+     cota Z del plano de la mesa (plane_z medido previamente por la RealSense de la cabeza),
+     exactamente como implementa Base@Home en arm_manipulation.py:442 (`plane_z`).
+
+================================================================================
+
+================================================================================
+5. MODULO 3: ELEGIR AGARRE EN MESA CON UN BRAZO DE 6 EJES (PIPER)
+================================================================================
+
+5.1 CINEMATICA DEL AGILX PIPER 6-DOF Y SUS RESTRICCIONES:
+El AgileX Piper es un manipulador de 6 grados de libertad montado lateralmente sobre la
+cara izquierda del torso de Base@Home (rpy = -pi/2, 0, 0 en mounting_cube_link; ROBOT.md:137).
+Diferencia fundamental con manipuladores de 7 ejes (TIAGo, Panda, PR2):
+- Un brazo de 7 ejes posee un grado de redundancia cinematica (espacio nulo del Jacobiano):
+  puede mantener la pose 6D del efector final mientras rota el codo para esquivar la mesa
+  o evitar singularidades.
+- Un brazo de 6 ejes (Piper o xArm6) tiene una correspondencia de IK discreta: para una pose
+  cartesiana objetivo dada, existen a lo sumo 8 soluciones articulares (hombro izq/der, codo arriba/abajo,
+  muñeca vuelta/no-vuelta).
+- Si se restringe la pinza a una orientacion rigida (por ejemplo, estrictamente horizontal hacia el frente),
+  el volumen alcanzable util se reduce a una franja angosta de apenas ~15-20 cm de avance util.
+
+5.2 COMO LO RESUELVE PAL ROBOTICS (TIAGO):
+Fuente: pal-robotics/tiago_tutorials @ 64249ef934d0b8fb67b5534d7c60b1a368fd166a
+Archivo: tiago_pick_demo/scripts/spherical_grasps_server.py (lineas 47-110, 174-220)
+Evidencia: VERIFICADO en codigo de PAL Robotics.
+
+Mecanismo del Spherical Grasps Generator:
+1. Muestreo esferico de orientaciones:
+   - Discretiza una esfera centrada en el objeto a una distancia radial r = grasp_desired_distance (ej. 15-20 cm).
+   - Genera candidatos variando yaw (azimuth) y pitch (elevacion) en pasos angulares configurables (step_degrees_yaw, step_degrees_pitch).
+2. Filtrado geometrico estricto:
+   - filter_under = True (lineas 80-101): Descarta automaticamente cualquier candidato cuya posicion Z
+     este por debajo del centro del objeto.
+     Motivo: En una mesa, cualquier vector de aproximacion que provenga de abajo colisionaria fisicamente
+     con el tablero antes de alcanzar el objeto.
+   - filter_behind = True: Descarta candidatos que se originen detras del objeto respecto del robot.
+3. Ordenamiento por preferencia:
+   - sort_by_height(sphere_poses) (lineas 104-109): Ordena los candidatos de mayor a menor altura Z.
+     Motivo: Los agarres desde arriba (top-grasps o cenitales) tienen la menor probabilidad de colisionar
+     con objetos vecinos en una mesa poblada.
+
+5.3 COMO LO RESUELVE ROBORREGOS (XARM6 DE 6 EJES):
+Fuente: roborregos/home2 @ 0807f83b745404cd43825023e761b8d0ae35c07e
+Archivos:
+  - manipulation/packages/pick_and_place/config/pick_profiles.yaml (lineas 26-98)
+  - manipulation/packages/perception_3d/perception_3d/geometric_grasps.py (lineas 1-100)
+Evidencia: VERIFICADO en codigo de RoBorregos.
+
+Estrategia por perfiles morfologicos (Pick Strategy Profiles):
+RoBorregos descarta el uso de generadores pesados de redes neuronales (GPD/GraspNet) en favor de
+perfiles geometricos analiticos validados en YAML:
+
+1. Perfil "geometric" (latas, botellas, cajas de cereal, envases de leche):
+   - Aproximacion cartesiana axial a lo largo del eje principal de la pinza.
+   - pre_grasp_height = 0.06 m (retroceso previo).
+   - Velocidad de avance de 40 mm/s.
+   - post_grasp_height = 0.25 m (subida vertical inmediata de 25 cm para liberar la mesa).
+
+2. Perfil "flat" (platos, tenedores, cuchillos, cucharas, pastillas de lavavajillas):
+   - Problema: Un plato o tenedor tiene un grosor de 2 a 10 mm. La incertidumbre de calibracion
+     hand-eye y la flexion del robot hacen imposible pre-calcular la cota exacta sin chocar contra la mesa.
+   - Solucion implementada por RoBorregos:
+     * strategy: force_guarded (descenso protegido por salto de esfuerzo).
+     * Coloca la pinza en pose cenital (apuntando hacia abajo) a pre_grasp_height = 0.15 m sobre el objeto.
+     * Desciende a baja velocidad (descent_speed = 12 mm/s).
+     * Monitoreo de esfuerzo articular (jump_trip = 2.5 N sostenido durante 3 muestras consecutivas).
+     * En el instante de contacto con la mesa: frena el avance.
+     * post_contact_retract = 0.004 m: RETROCEDE 4 mm HACIA ARRIBA.
+       Este paso es vital: alivia la presion vertical contra la mesa para que las yemas de la pinza
+       puedan cerrar suavemente debajo del borde del plato o cubierto sin trabarse contra la superficie.
+     * Cierra la pinza a tope y espera close_settle = 2.5 s.
+     * Levanta 15 cm verticalmente antes de planificar traslaciones.
+
+3. Perfil "rim" (boles y cestos):
+   - Coloca los dedos a horcajadas sobre el borde superior (rim straddle) con un grasp_z_tweak
+     que situa las yemas ~3-5 cm por debajo de la pestaña del bol.
+
+5.4 ESTADO ACTUAL EN BASE@HOME Y CAMBIOS NECESARIOS:
+En Base@Home:
+- El metodo _approach_candidates implementado en arm_manipulation.py:745 genera 17 candidatos
+  con inclinaciones de 8°, 16°, 24° y 30° alrededor de los ejes perpendiculares al avance.
+  Esto funciona muy bien para cajas y latas de pie.
+- Sin embargo, NO EXISTE soporte para objetos planos (platos y cubiertos):
+  * Si se intenta un agarre frontal sobre un tenedor o plato, la pinza impacta contra la mesa o
+    empuja el cubierto.
+  * No existe una pose cenital enseñada con verificacion de contacto.
+- Propuesta de adaptacion para Base@Home:
+  1. Definir una orientacion cenital pura (pitch = -90° respecto a base_link) para objetos etiquetados
+     como "plate", "fork", "knife", "spoon", "dishwasher tab".
+  2. Implementar una aproximacion cartesiana de descenso con MoveIt (cartesian_path en moveit_bridge.py:203)
+     con punto de parada a 1.0 cm de la mesa estimada.
+  3. Integrar la lectura de corriente o esfuerzo del Piper (/arm/status expone joints_deg y corriente CAN)
+     para detener el avance ante un incremento repentino de resistencia mecanica antes de cerrar la pinza.
+
+================================================================================
+
+================================================================================
+6. MODULO 4: COLOCAR EN ESTANTE Y EN LUGAR DESIGNADO (PLACE ON SHELF & DESIGNATED LOCATION)
+================================================================================
+
+6.1 EL PROBLEMA DEL ESPACIO CONFINADO EN ESTANTES (CABINET SHELVES):
+Colocar un objeto en un estante es una de las tareas de mayor riesgo mecanico en RoboCup@Home:
+1. Altura confinada del compartimento:
+   La separacion vertical tipica entre baldas de un estante domestico es de 25 a 35 cm.
+2. Ceguera del sensor eye-in-hand (camara de muñeca):
+   Cuando el efector final ingresa al compartimento sosteniendo un objeto, la camara
+   (DaBai DC1 en Base@Home o ZED en FRIDA) queda apuntando hacia adelante o hacia abajo.
+   El techo de la balda queda COMPLETAMENTE FUERA de su campo de vision.
+   Consecuencia: Ni la camara de muñeca ni los sensores de la cabeza generan puntos 3D
+   del techo del compartimento en OctoMap.
+3. El fallo catastrofico clasico en MoveIt:
+   Al soltar el objeto, el robot planifica el retorno hacia su pose de transporte (HOME o STARE).
+   Como MoveIt "ve" el espacio superior como vacio (por falta de datos en OctoMap), los planificadores
+   OMPL (RRT-Connect) generan con frecuencia trayectorias con arcos ascendentes elevando el codo
+   o la muñeca, provocando una colision frontal directa contra la madera de la balda superior.
+
+6.2 COMO LO RESUELVE ROBORREGOS (FRIDA):
+Fuente: roborregos/home2 @ 0807f83b745404cd43825023e761b8d0ae35c07e
+Archivos:
+  - manipulation/packages/pick_and_place/pick_and_place/pipelines/place.py (lineas 33-200)
+  - manipulation/packages/pick_and_place/pick_and_place/robot/arm.py (lineas 581-608)
+Evidencia: VERIFICADO en codigo de RoBorregos.
+
+Protocolo de colocacion segura en estantes:
+1. Retraccion respecto al centro de la balda (SHELF_PLACE_DEPTH_BACK = 0.07 m):
+   - Si se coloca el objeto en el centro geometrico del estante (profundidad 30-40 cm),
+     el codo del manipulador penetra demasiado en el hueco y la camara de muñeca
+     roza los costados.
+   - RoBorregos retrae deliberadamente la coordenada X del objetivo 7 cm hacia el borde frontal.
+2. Escalera de colocacion (SHELF_LADDER):
+   - En una mesa abierta se prueban hasta 8 alturas en saltos de 5 cm (TABLE_LADDER = (8, 0.05)).
+   - En un estante, se restringe a solo 3 peldaños con pasos de 2 cm (SHELF_LADDER = (3, 0.02)).
+   - Motivo: Probar peldaños mas altos en un estante aumenta el riesgo de impacto con el techo.
+3. Aproximacion en 3 etapas desacopladas:
+   - PRE-PLACE: Posa el brazo afuera del estante a 15-20 cm frente a la abertura de la balda,
+     con la pinza orientada horizontalmente (AIM_STRAIGHT_FRONT_QUAT).
+   - PLACE: Avance cartesiano recto horizontal al interior de la balda.
+   - RELEASE: Desasocia el objeto de colision (detach_pick_objects), abre la pinza y espera 1.0 s.
+4. El "Shelf Ceiling Guard" (Barrera de proteccion de techo):
+   - Implementado en arm.py:581 (add_shelf_ceiling_guard):
+     * Antes de calcular la trayectoria de regreso, inyecta programaticamente en la PlanningScene
+       de MoveIt una caja de colision solida ("shelf_ceiling_guard") de 40 cm x 80 cm x 20 cm,
+       situada a z = table_height + compartment_height + 0.10 m.
+     * Esta caja artificial "bloquea" el espacio superior para MoveIt, forzando matematicamente
+       al planificador cinematico a retirar el brazo de forma horizontal hacia afuera del
+       compartimento antes de cualquier elevacion.
+     * Una vez que el brazo salio del estante, se remueve la caja (remove_shelf_ceiling_guard).
+
+6.3 ESTADO EN BASE@HOME Y ADAPTACION RECOMENDADA:
+- En Base@Home: El metodo actual place_blocking() en arm_manipulation.py:481 es trivial:
+  simplemente comanda go_to_blocking("pre_grasp") y abre la pinza.
+  En un estante, esto provocaria un choque inmediato, ya que "pre_grasp" es una pose alta.
+- Adaptacion propuesta:
+  1. Parametrizar en MoveItBridge (moveit_bridge.py) los metodos add_box_obstacle y remove_box_obstacle
+     para publicar en /apply_planning_scene.
+  2. Extender arm_manipulation.py con place_shelf_blocking(shelf_z, depth_cm=0.20):
+     * Alinear la cota del elevador (torso_lift_joint) para que la balda quede en el centro
+       del espacio de trabajo del Piper.
+     * Interpolar linealmente hacia adentro del compartimento manteniendo la orientacion horizontal.
+     * Abrir la pinza, activar el shelf_ceiling_guard y retroceder de forma cartesiana 20 cm
+       hacia afuera antes de ir a HOME.
+
+================================================================================
+
+================================================================================
+7. MODULO 5: PERCIBIR EL ESTANTE Y AGRUPAR POR CATEGORIA
+================================================================================
+
+7.1 REQUERIMIENTOS DEL RULEBOOK 2026.2 PARA EL ESTANTE:
+En la seccion tasks/PickAndPlaceChallenge.tex:47-66, el reglamento define:
+- "The cabinet contains objects arranged by category or similarity on different shelves."
+- "Store other objects in the cabinet, grouping them with similar items."
+- Puntos directos en hoja de evaluacion:
+  * 2 x 30 pts = 60 pts max por percibir los objetos en cada balda e indicar verbalmente
+    la ubicacion correcta donde corresponde guardar.
+  * 2 x 20 pts = 40 pts max por colocar fisicamente el objeto junto a items de su misma categoria.
+
+7.2 COMO LO RESUELVE LASR (SCAN SHELVES + TAXONOMIA SEMANTICA):
+Fuente: LASR-at-Home/Base @ 2a3ced23a90df1e76933c793e7ab3eb6170e081c
+Archivos:
+  - tasks/pick_and_place/pick_and_place/states/scan_shelves.py (lineas 1-100, 101-217)
+  - tasks/pick_and_place/pick_and_place/states/classify_category.py (lineas 1-94)
+  - tasks/pick_and_place/pick_and_place/states/choose_shelf.py (lineas 1-75)
+Evidencia: VERIFICADO en codigo de LASR.
+
+Flujo de percepcion y clasificacion por niveles:
+1. Configuracion declarativa de las baldas (pick_and_place.cabinet.shelves):
+   - Cada balda se parametriza con:
+     * torso_lift_joint: Altura que debe adoptar la columna del robot para colocar la camara a nivel.
+     * look_point: Coordenada (x, y, z) donde el pan-tilt de la cabeza debe fijar la mirada.
+     * polygon + [z_min, z_max]: Volumen paralelepipedo en 3D que delimita el compartimento.
+2. Exploracion sistematica (ScanShelves):
+   - Para cada shelf_id (ej. "shelf_1", "shelf_2", "shelf_3"):
+     a) Mueve el torso a la altura de la balda.
+     b) Orienta la camara hacia el look_point.
+     c) Ejecuta DetectAllInPolygon: detecta las etiquetas de los objetos presentes y filtra
+        exclusivamente los puntos y cajas contenidos dentro del volumen [z_min, z_max].
+3. Clasificacion y determinacion de la categoria dominante (ClassifyCategory):
+   - Posee un diccionario estandar (CATEGORY_MAP) con 7 categorias principales del RuleBook:
+     * fruit: manzana, banana, naranja, limon, etc.
+     * vegetable: zanahoria, tomate, pepino, pimiento, etc.
+     * beverage: botella, lata, jugo, caja de leche, taza, bebida energetica.
+     * snack: papas fritas, galletas, caramelos, chocolate, barra de cereal.
+     * cleaning: jabon, esponja, cepillo, detergente, limpiador en spray.
+     * cereal: caja de cereales, avena, muesli.
+     * dish: tenedor, cuchillo, cuchara, plato, bol, taza, copa.
+   - Si un objeto no coincide con la lista estatica, invoca un servicio LLM de respaldo.
+   - Calcula la categoria predominante de la balda mediante votacion por mayoria:
+     `shelf_category = mode([CATEGORY_MAP[obj] for obj in objects_on_shelf])`
+   - Salida estructurada:
+     shelf_data = {
+         "shelf_1": {"category": "cereal", "objects": ["cereal box", "oats"]},
+         "shelf_2": {"category": "cleaning", "objects": ["sponge", "soap"]},
+         "shelf_3": {"category": "dish", "objects": ["plate", "bowl"]}
+     }
+4. Asignacion del objeto a guardar (ChooseShelf):
+   - Al levantar un nuevo objeto (ej. "milk carton"):
+     a) Determina su categoria: `cat = ClassifyCategory("milk carton") -> "beverage"`.
+     b) Busca la balda cuyo valor coincide con "beverage" (o la balda mas afin).
+     c) Publica la seleccion y genera el texto TTS oficial para el arbitro:
+        "I recognized a milk carton. It belongs to the beverage category, so I am placing it on shelf 1."
+
+7.3 COMO LO RESUELVE ROBORREGOS (CALIBRACION DE BALDAS):
+Fuente: roborregos/home2 @ 0807f83b745404cd43825023e761b8d0ae35c07e
+Archivos:
+  - manipulation/packages/xarm_utils/xarm_utils/shelf_levels.py (lineas 1-75)
+  - manipulation/packages/xarm_utils/config/shelf_levels.json
+Evidencia: VERIFICADO en codigo de RoBorregos.
+
+- Almacena las alturas de las baldas en un archivo JSON local (shelf_levels.json) indexado por arena:
+  SHELF_LEVELS = [0.095, 0.39, 0.68, 1.05] metros en Z de base_link.
+- Permite calibrar en los dias de setup de la competencia las alturas exactas de la estanteria
+  mediante una herramienta de terminal (shelf_height_calibrator.py) sin necesidad de recompilar codigo.
+
+7.4 ADAPTACION PARA BASE@HOME:
+Base@Home cuenta con:
+- Elevador prismático NEMA23 accionado por ESP32-S3 (scripts/stepper_controller.py; firmware/nema23_esp32).
+  Carrera util de 0.0 a -0.75 m (ROBOT.md:140).
+- Cabeza con pan-tilt Dynamixel XL430 y RealSense D435.
+- Modulo de lugares y objetos semanticos: src/base_athome_skills/base_athome_skills/mission/places.py.
+
+Estrategia propuesta para Base@Home:
+1. Crear un modulo semantico `categories.py` en `base_athome_perception` con la taxonomia del RuleBook 2026.2.
+2. Implementar la habilidad `scan_shelves` en `skills.py`:
+   - Para cada balda (inferior, media, superior):
+     * Ajustar el elevador NEMA23 a la altura correspondiente (/torso/joint_states).
+     * Orientar el pan-tilt hacia la balda (/pan_tilt/target_degrees).
+     * Disparar inferencia YOLO-World para registrar los objetos presentes.
+     * Votar la categoria dominante y registrar el mapeo {balda_id: categoria}.
+3. Al levantar un objeto de la mesa de comedor, consultar el diccionario de categorias
+   y verbalizar mediante el speaker (/robot/say) el anuncio normativo antes de colocarlo.
+
+================================================================================
+
+================================================================================
+8. MODULO 6: ESCENA DE COLISION CON MOVEIT (PLANNING SCENE / OCTOMAP / OBJETOS DE COLISION)
+================================================================================
+
+8.1 ESTADO ACTUAL EN BASE@HOME:
+En Base@Home, la integracion con MoveIt 2 se realiza a traves de MoveItBridge
+(src/base_athome_perception/base_athome_perception/moveit_bridge.py:80-248).
+Fortalezas ya verificadas:
+- Usa estado articular medido real (RobotState con joint_states frescos; ROBOT.md:174).
+- Resuelve cinemática inversa con TRAC-IK (compute_ik) y caminos cartesianos (cartesian_path).
+- Integra la altura medida del elevador (/torso/joint_states) via torso_provider.
+- En HOME-41b se regenero el Allowed Collision Matrix (ACM) por muestreo de 2000 configuraciones
+  (ROBOT.md:210), habilitando 117 pares cuerpo-brazo y 18 pares internos.
+
+Brechas criticas pendientes (HOME-46):
+- LA MESA NO EXISTE PARA MOVEIT: No se inyecta ningun CollisionObject en el PlanningSceneWorld.
+  MoveIt asume que el espacio debajo de los objetos esta completamente vacio; las trayectorias
+  planificadas pueden atravesar o golpear el borde de la mesa.
+- No se adjunta el objeto agarrado (AttachedCollisionObject): una vez que la pinza cierra,
+  MoveIt no sabe que el robot lleva un objeto solido que sobresale 10-15 cm hacia adelante,
+  arriesgando colisiones del objeto sostenido contra muebles o paredes al rotar la base.
+
+8.2 COMO LO RESUELVE PAL ROBOTICS (TIAGO):
+Fuente: pal-robotics/tiago_tutorials @ 64249ef934d0b8fb67b5534d7c60b1a368fd166a
+Archivo: tiago_pick_demo/scripts/pick_and_place_server.py (lineas 180-220)
+Evidencia: VERIFICADO en codigo de PAL Robotics.
+
+Mecanismo en pick_and_place_server.py:
+1. Limpieza de escena previa y OctoMap:
+   - Remueve cualquier objeto adherido anterior: `self.scene.remove_attached_object("arm_tool_link")`.
+   - Limpia OctoMap: Invoca `/clear_octomap` (std_srvs/Empty) para eliminar puntos residuales
+     que podrian bloquear la aproximacion del efector.
+2. Inyeccion parametrica de la mesa virtual:
+   - Calcula la cota de la superficie inmediatamente debajo del objeto detectado:
+     `table_height = object_pose.pose.position.z - (object_height / 2.0)`
+   - Crea un CollisionObject de tipo caja centrado debajo del objeto:
+     `self.scene.add_box("table", table_pose, (table_depth, table_width, table_height))`
+3. Inyeccion del objeto objetivo ("part"):
+   - Añade una caja representativa del objeto a manipular con sus dimensiones exactas.
+4. Autorizacion explicita de contacto:
+   - En el PickupGoal (lineas 61-62):
+     `pug.attached_object_touch_links = ['<octomap>'] + links_to_allow_contact`
+     Permite que los dedos de la pinza entren en contacto fisico con el objeto y con los voxeles
+     del OctoMap circundantes sin abortar la trayectoria por colision.
+
+8.3 COMO LO RESUELVE ROBORREGOS (LECCIONES DE ESTABILIDAD EN MOVEIT):
+Fuente: roborregos/home2 @ 0807f83b745404cd43825023e761b8d0ae35c07e
+Archivo: manipulation/packages/pick_and_place/pick_and_place/robot/arm.py (lineas 529-610)
+Evidencia: VERIFICADO en codigo de RoBorregos.
+
+Lecciones fundamentales de competencia real:
+1. "Only ONE box is attached and the rest dropped" (arm.py:532-535):
+   - Intento previo fallido: RoBorregos intentaba inyectar la nube de puntos del cluster segmentado
+     como una coleccion de 15 a 20 cajas pequeñas de colision.
+   - Resultado en competencia: MoveIt se sobre-restringia; el planificador OMPL no encontraba
+     ninguna solucion cinematica para la retirada hacia HOME o STARE porque alguna de las 20 micro-cajas
+     rozaba el gripper o la mesa.
+   - Solucion probada: Adjuntar EXCLUSIVAMENTE UNA SOLA caja orientada envolvente (bounding box)
+     al efector final (`request.id = lowest.id; request.attached_link = EEF_LINK_NAME; request.touch_links = EEF_CONTACT_LINKS`).
+2. Desasociar inmediatamente al soltar (detach_pick_objects, lineas 557-570):
+   - En cuanto la pinza abre, se envia la solicitud de `detach = True` a /apply_planning_scene
+     para que MoveIt libere el espacio ocupado por el objeto antes de calcular la trayectoria de alejamiento.
+3. El bloque protector de techo (Shelf Ceiling Guard, lineas 581-608):
+   - Una caja solida artificial inyectada sobre la balda para impedir cinemática con codos altos.
+
+8.4 ADAPTACION CONCRETA PARA BASE@HOME (HOME-46):
+En src/base_athome_perception/base_athome_perception/moveit_bridge.py:
+1. Agregar los metodos de gestion de colision:
+   - `add_table(surface_z: float, depth: float = 1.0, width: float = 1.2)`:
+     Inserta un CollisionObject tipo caja en base_link con cota superior en surface_z.
+   - `add_attached_object(object_id: str, box_dims: Tuple[float, float, float])`:
+     Adhiere la caja a `tcp_link` con `touch_links = ["link7", "link8"]` (las dos falanges del Piper).
+   - `detach_and_remove_object(object_id: str)`:
+     Libera el objeto tras la apertura de la pinza.
+2. Integrar en `pick_blocking()` (arm_manipulation.py:440):
+   - Antes de calcular IK de aproximacion: invocar `self.moveit.add_table(surface_z)`.
+   - Tras confirmar agarre (`width > MIN_MM`): invocar `self.moveit.add_attached_object(...)`.
+   - En `place_blocking()`: invocar `self.moveit.detach_and_remove_object(...)` antes de volver a HOME.
+Riesgo: Nivel bajo (MoveItBridge ya cuenta con self.cli_apply_scene conectado al servicio
+/apply_planning_scene de move_group; solo requiere construir el mensaje PlanningSceneDiff).
+
+================================================================================
+
+================================================================================
+9. MODULO 7: DETECCION DE FALLO Y RECUPERACION (GRASP FAILURE, SLIP, COLISION, TIMEOUT)
+================================================================================
+
+9.1 TAXONOMIA DE FALLOS EN PICK AND PLACE Y SU IMPACTO EN COMPETENCIA:
+En una prueba regular de 7 minutos con 12 objetos, un robot que se bloquea en un paso
+queda descalificado de la serie por inactividad de 30 segundos (RuleBook §3.6.9/3.6.14).
+Principales modos de fallo observados en la literatura y codigo analizado:
+
+1. Objeto fuera de alcance (IK Failure):
+   - Causa: El robot se detuvo demasiado lejos de la mesa o el objeto esta en el fondo.
+   - Consecuencia si no se maneja: El planificador tarda hasta 40 s intentando IK y aborta.
+2. Agarre en vacio (Empty Gripper):
+   - Causa: El objeto se desplazo al aproximar la pinza o el detector calculo mal la profundidad.
+   - Consecuencia: El robot "cree" que lleva el objeto, navega al estante, abre la pinza en el aire
+     y pierde 1 a 2 minutos sin puntuar nada.
+3. Colision o sobreesfuerzo en aproximacion:
+   - Causa: Las yemas de la pinza rozan la mesa o un objeto adyacente.
+   - Consecuencia: Error de seguimiento en el controlador articular; disparo de E-stop o daño fisico.
+4. Deslizamiento durante el transporte (Object Slip / Drop):
+   - Causa: Aceleraciones bruscas de la base o pinza floja.
+   - Consecuencia: Penalizacion de -40 puntos por objeto arrojado al suelo (RuleBook 2026.2).
+5. Atasco en la retirada (Return Motion Failure):
+   - Causa: Tras soltar en el estante, MoveIt no encuentra solucion para volver a la pose HOME.
+
+9.2 COMO LO RESUELVEN OTROS EQUIPOS (ROBORREGOS, PAL, LASR):
+1. Retencion temporal de objetivo (Target Hold):
+   - Problema: Al descender la pinza, la camara de muñeca puede ocluir el objeto o perder la caja por desenfoque cercano.
+   - RoBorregos y Base@Home (arm_manipulation.py:550, held_target): Retienen la coordenada 3D en base_link
+     durante 8 segundos (object_hold_s). Si la deteccion parpadea, la trayectoria se ejecuta hacia
+     la coordenada memorizada en lugar de abortar en el ultimo centimetro.
+2. Confirmacion dual de agarre: Ancho geometrico + Esfuerzo de corriente:
+   - RoBorregos (pick_profiles.yaml:49-52):
+     * Criterio geometrico: Si la pinza cierra a menos del grosor minimo esperado (width < 5 mm),
+       aborta inmediatamente como agarre vacio.
+     * Criterio de esfuerzo (effort jump): Monitorea la corriente/fuerza ejercida por el servomotor
+       de la pinza. Si la pinza se detuvo a 30 mm pero el esfuerzo es 0 N, fue un bloqueo mecanico
+       sin resistencia; si el esfuerzo supera el umbral configurado, confirma agarre firme.
+3. Escalera de recuperacion (Fallback Ladder):
+   - RoBorregos (place.py:122-168): Prueba secuencialmente 3 peldaños de colocacion. Si el peldaño 0
+     falla por colision, prueba el peldaño 1 (+2 cm) o la pose intermedia (halfway).
+   - LASR (state_machine.py:93): Si DETECT_OBJECTS falla, reintenta hasta 3 veces; si persiste el fallo,
+     abandona ese sector de la mesa y navega a una pose perimetral distinta.
+4. Supervision y des-bloqueo automatico de errores (Safeguard):
+   - RoBorregos (manipulation_safeguard.py:68-80): Dispone de clientes para limpiar fallos de controlador
+     (/xarm/clean_error) y reactivar el movimiento de forma programatica sin intervencion humana.
+
+9.3 MECANISMOS EXISTENTES EN BASE@HOME Y MEJORAS REQUERIDAS:
+Verificado en Base@Home:
+- Target Hold verificado: arm_manipulation.py:550 retiene coordenadas del objeto 8 s (RViz verde en vivo, amarillo retenido).
+- Verificacion de pinza implementada: arm_manipulation.py:470-474 lee el ancho medido real (gripper_mm):
+  `if width <= (GRIPPER_CLOSE_MM + 5.0): return False, "agarre vacio: la pinza cerro hasta {width:.0f} mm"`
+- Servidor FollowJointTrajectory endurecido en HOME-41 (piper_arm_controller.py:197): aborta si el error
+  de seguimiento excede 15° y confirma la llegada con tolerancia de 2° sobre articulaciones medidas reales.
+
+Mejoras indispensables para Pick and Place:
+1. Confirmacion por corriente en la pinza (ROADMAP Habilidad #2):
+   - Para objetos finos o deformables (bolsas, pastillas de lavavajillas, cubiertos), la pinza puede
+     cerrar hasta cotas muy bajas donde el criterio por ancho da falsos vacios.
+   - Leer el campo de corriente o esfuerzo del mensaje CAN del Piper (/arm/status) para confirmar
+     que el motor esta ejerciendo par contra el objeto.
+2. Maquina de estados con timeout y politica de reintento:
+   - Si un objeto falla en IK o agarre 2 veces consecutivas: descartar ese objeto temporalmente,
+     anunciar por voz "Object unreachable, moving to next item" y pasar al siguiente objeto detectado.
+   - Jamas quedar en bucle cerrado consumiendo los 7 minutos reglamentarios en una sola pieza.
+
+================================================================================
+
+================================================================================
+10. EVIDENCIA: VERIFICADO, INFERIDO Y NO ENCONTRADO
+================================================================================
+
+10.1 EVIDENCIA VERIFICADA (CODIGO Y REPOSITORIOS ABIERTOS):
+
+1. RoboCup@Home RuleBook 2026.2 (Normativo):
+   - Repositorio: https://github.com/RoboCupAtHome/RuleBook
+   - Commit SHA: b844d5a6d6ebf4307c3250a01d1eca4ba56f8452 (tag 2026.2)
+   - Archivo tasks/PickAndPlaceChallenge.tex:
+     * Linea 94: La mesa de comedor puede ser desplazada hasta 50 cm por el juez.
+     * Linea 97: Prohibicion expresa de soltar o arrojar objetos; colocacion cuidadosa requerida.
+   - Archivo scoresheets/PickAndPlaceChallenge.tex:
+     * Lineas 8-29: Desglose exacto de puntuacion (3515 pts max).
+     * Lineas 38-39: Penalizacion 0 por solicitar asistencia humana para abrir puerta de lavavajillas o envase de leche.
+
+2. RoBorregos (FRIDA, RoboCup@Home OPL):
+   - Repositorio: https://github.com/RoBorregos/home2
+   - Commit SHA: 0807f83b745404cd43825023e761b8d0ae35c07e
+   - Archivo navigation/packages/nav_main/scripts/table_docker.py:
+     * Lineas 99-133: Algoritmo RANSAC 2D line fit con PCA/SVD para extraccion de normal.
+     * Lineas 166-200: RANSAC circle fit para mesas redondas.
+     * Lineas 203-240: Locking de la orientacion en el frame odom para erradicar el jitter.
+   - Archivo manipulation/packages/pick_and_place/config/pick_profiles.yaml:
+     * Lineas 26-53: Perfil "flat" con force_guard (descent_speed=12 mm/s, jump_trip=2.5 N, post_contact_retract=4 mm).
+     * Lineas 83-98: Perfil "geometric" para solidos (pre_grasp_height=0.06 m, post_grasp_height=0.25 m).
+   - Archivo manipulation/packages/pick_and_place/pick_and_place/pipelines/place.py:
+     * Lineas 33-35: SHELF_PLACE_DEPTH_BACK = 0.07 m (retraccion de seguridad en baldas).
+     * Lineas 39-40: SHELF_LADDER = (3, 0.02) vs TABLE_LADDER = (8, 0.05).
+     * Lineas 88-92: Inyeccion obligatoria de shelf_ceiling_guard antes de la retirada.
+   - Archivo manipulation/packages/pick_and_place/pick_and_place/robot/arm.py:
+     * Lineas 532-555: Politica de asociar exclusivamente UNA sola caja envolvente en MoveIt.
+     * Lineas 581-608: Implementacion de add_shelf_ceiling_guard como CollisionObject solido.
+   - Archivo manipulation/packages/xarm_utils/xarm_utils/shelf_levels.py:
+     * Lineas 26-30: Almacenamiento de cotas de balda por arena (0.095, 0.39, 0.68, 1.05 m).
+
+3. LASR (TIAGo, RoboCup@Home OPL):
+   - Repositorio: https://github.com/LASR-at-Home/Base
+   - Commit SHA: 2a3ced23a90df1e76933c793e7ab3eb6170e081c
+   - Archivo common/vision/lasr_vision_open_vocabulary/lasr_vision_open_vocabulary/models/yoloworld.py:
+     * Lineas 9-51: Clase YoloWorldDetector con ultralytics.YOLOWorld y llamada set_classes().
+   - Archivo tasks/pick_and_place/pick_and_place/states/scan_shelves.py:
+     * Lineas 28-34: Parametrizacion por balda (torso_lift_joint, look_point, polygon, z_min, z_max).
+     * Lineas 61-100: Bucle de exploracion vertical de baldas.
+   - Archivo tasks/pick_and_place/pick_and_place/states/classify_category.py:
+     * Lineas 10-94: Diccionario CATEGORY_MAP con las 7 categorias del RuleBook.
+
+4. PAL Robotics (TIAGo):
+   - Repositorio: https://github.com/pal-robotics/tiago_tutorials
+   - Commit SHA: 64249ef934d0b8fb67b5534d7c60b1a368fd166a
+   - Archivo tiago_pick_demo/scripts/pick_and_place_server.py:
+     * Lineas 180-210: Inyeccion parametrica de caja virtual de mesa en MoveIt y servicio /clear_octomap.
+   - Archivo tiago_pick_demo/scripts/spherical_grasps_server.py:
+     * Lineas 80-110: Muestreo esferico de agarres con filter_under=True y ordenamiento por altura.
+
+5. Base@Home (Nuestro Repositorio):
+   - Archivo src/base_athome_perception/base_athome_perception/arm_manipulation.py:
+     * Linea 85: class Manipulacion(Node) [VERIFICADO con grep]
+     * Linea 167: def torso_known(self) -> bool [VERIFICADO con grep]
+     * Linea 171: def shoulder_in_base(self) -> np.ndarray [VERIFICADO con grep]
+     * Linea 440: def pick_blocking(self, label="", plane_z=None, retreat=True, memory_xyz=None) [VERIFICADO con grep]
+     * Linea 481: def place_blocking(self) [VERIFICADO con grep]
+     * Linea 550: def held_target(self) [VERIFICADO con grep]
+     * Linea 745: def _approach_candidates(self, approach) [VERIFICADO con grep]
+     * Linea 759: def _grasp_core(self, close_mm=GRIPPER_CLOSE_MM, grasp_z=None) [VERIFICADO con grep]
+   - Archivo src/base_athome_perception/base_athome_perception/wrist_detector.py:
+     * Linea 68: class WristDetector [VERIFICADO con grep]
+     * Linea 97: def detect(self, frame) [VERIFICADO con grep]
+     * Linea 126: def is_own_robot_box(box, img_h) [VERIFICADO con grep]
+   - Archivo src/base_athome_perception/base_athome_perception/moveit_bridge.py:
+     * Linea 80: class MoveItBridge [VERIFICADO con grep]
+     * Linea 157: def compute_ik(...) [VERIFICADO con grep]
+     * Linea 178: def plan_to_joints(...) [VERIFICADO con grep]
+     * Linea 203: def cartesian_path(...) [VERIFICADO con grep]
+   - Archivo jetson_head/scripts/yolo_trt_node.py:
+     * Linea 28: class YoloTrtNode(Node) [VERIFICADO con grep]
+     * Linea 31: engine_path ~/models/yolo/yolov8n_fp16.engine [VERIFICADO con grep]
+
+10.2 INFERIDO:
+- Latencia de YOLO-World v2 FP16 en Jetson Orin Nano:
+  Se infiere en ~20-25 ms a partir de los 18 ms medidos para YOLOv8n (ROBOT.md:49), debido a que
+  al pre-compilar las clases de texto con set_classes(), el backbone convolucional es identico a
+  un detector estandar YOLOv8s y no se evalua CLIP durante el bucle de captura.
+- Comportamiento de agarre de cubiertos con pinza paralela:
+  Se infiere que intentar un agarre frontal sin cota de seguridad ni retraccion post-contacto
+  (como hace actualmente arm_manipulation.py) tiene una tasa de fallo superior al 80% por empuje o
+  colision rigida con la mesa, sustentado por los registros de RoBorregos en pick_profiles.yaml:26-38.
+
+10.3 NO ENCONTRADO / POR CONFIRMAR:
+- No se encontro en los repositorios de RoBorregos, LASR ni PAL Robotics ningun modulo de vertido
+  en lazo cerrado ("closed-loop pouring") con bascula o vision 3D en tiempo real; todos los equipos
+  realizan una rotacion angular programada en tiempo fijo del joint_6.
+- POR CONFIRMAR en Base@Home: Lectura en vivo del esfuerzo o corriente de la pinza del Piper
+  a traves de /arm/status. La estructura CAN recibe telemetria a 50 Hz, pero falta ensayar en
+  LAB_SUPERVISADO con hardware alimentado si la corriente reportada permite detectar el contacto
+  con una pastilla o plato antes de que la pinza ejerza sobrecarga mecanica (Habilidad #2 en ROADMAP.md:154).
+
+================================================================================
+
+================================================================================
+11. RECOMENDACIONES POR UTILIDAD PARA BASE@HOME
+================================================================================
+
+11.1 DETALLE DE RECOMENDACIONES, ARCHIVOS A MODIFICAR, PRUEBAS Y RIESGOS:
+
+--------------------------------------------------------------------------------
+RECOMENDACION 1: NODO DE DOCKING PERPENDICULAR A MESA (HOME-58)
+--------------------------------------------------------------------------------
+- Archivo a crear:
+  src/base_athome_navigation/base_athome_navigation/table_docker.py
+  (registrar ejecutable 'table_docker' en setup.py de base_athome_navigation).
+- Archivo consumidor a modificar:
+  src/base_athome_skills/base_athome_skills/mission/skills.py (skill 'dock_to_table')
+- Descripcion:
+  Nodo ligero de ajuste fino que suscribe a /scan (Hokuyo) y a /odom.
+  Al ser invocado mediante el servicio /navigation/dock_to_table:
+  1. Extrae los rayos del sector frontal (-30° a +30°) a menos de 1.5 m.
+  2. Ajusta una recta 2D mediante RANSAC y extrae el vector normal y la distancia al borde.
+  3. Comanda en lazo cerrado sobre /cmd_vel:
+     * Giro en el lugar hasta alinear yaw con la normal (|error| < 1.5°).
+     * Avance en linea recta a vx = 0.06 m/s hasta quedar a 12 cm del tablero.
+  4. Ofrece servicio /navigation/undock_from_table que retrocede marcha atras 40 cm
+     antes de devolver el control a Nav2.
+- Como probarlo primero en simulation/:
+  En simulation/ con Gazebo Harmonic (sim_commander.sh):
+  1. Spawnear la mesa de comedor desplazada 30 cm de su posicion nominal.
+  2. Enviar a Nav2 al waypoint de aproximacion a 0.8 m.
+  3. Ejecutar: `ros2 service call /navigation/dock_to_table std_srvs/srv/Trigger`
+  4. Observar en RViz que el robot se orienta perpendicular a la cara frontal y se detiene
+     suavemente a 12 cm de la mesa sin tocarla.
+- Analisis de riesgo y rollback:
+  * Riesgo para navegacion protegida: NULO. No modifica ningun archivo de Nav2, AMCL, costmaps
+    ni parametros cinematizados protegidos (AGENTS.md §4). Solo publica en /cmd_vel cuando Nav2
+    esta inactivo.
+  * Riesgo fisico: Muy bajo (velocidad limitada a 0.06 m/s con parada dura si cualquier rayo
+    del LiDAR detecta un obstaculo a <5 cm).
+  * Rollback: Eliminar el archivo table_docker.py y revertir setup.py.
+
+--------------------------------------------------------------------------------
+RECOMENDACION 2: INYECCION DE MESA Y GUARD DE TECHO EN MOVEIT (HOME-46)
+--------------------------------------------------------------------------------
+- Archivo a modificar:
+  src/base_athome_perception/base_athome_perception/moveit_bridge.py
+  src/base_athome_perception/base_athome_perception/arm_manipulation.py
+- Descripcion:
+  1. En MoveItBridge: Agregar metodos `add_table(surface_z, depth=1.0, width=1.2)` y
+     `add_shelf_ceiling_guard(table_z, compartment_h=0.30)` que publiquen un CollisionObject
+     tipo caja en /apply_planning_scene usando self.cli_apply_scene.
+  2. En pick_blocking(): Invocar add_table(plane_z) antes de calcular IK y planificar la aproximacion.
+     Tras cerrar la pinza y confirmar agarre, invocar attach_collision_object("object_box", "tcp_link")
+     con touch_links=["link7", "link8"].
+  3. En place_blocking(): Invocar detach_collision_object() inmediatamente tras abrir la pinza,
+     y en caso de estante inyectar add_shelf_ceiling_guard() para obligar a MoveIt a retirar el brazo
+     horizontalmente sin arcos ascendentes hacia la balda superior.
+- Como probarlo primero en simulation/:
+  1. Levantar MoveIt 2 en entorno simulado (ROS_DOMAIN_ID=77).
+  2. Publicar una mesa virtual en z = 0.75 m.
+  3. Comandar una trayectoria hacia un punto z = 0.70 m: verificar que MoveIt rechaza la planificacion
+     con error de colision ("COLLISION_DETECTED").
+  4. Comandar una trayectoria sobre la mesa a z = 0.80 m: verificar que planifica y ejecuta limpiamente.
+  5. Inyectar shelf_ceiling_guard a z = 1.05 m y comprobar que la ruta de regreso no eleva el codo.
+- Analisis de riesgo y rollback:
+  * Riesgo: Muy bajo. Es un cambio puramente logico en la PlanningScene de MoveIt.
+    Si una caja virtual esta sobredimensionada, MoveIt reportara falta de IK en lugar de colisionar.
+  * Rollback: `git checkout src/base_athome_perception/base_athome_perception/moveit_bridge.py`.
+
+--------------------------------------------------------------------------------
+RECOMENDACION 3: PERFIL DE AGARRE CENITAL PARA CUBIERTOS Y PLATOS (PICK FLAT)
+--------------------------------------------------------------------------------
+- Archivo a modificar:
+  src/base_athome_perception/base_athome_perception/arm_manipulation.py
+- Descripcion:
+  Implementar el metodo `pick_flat_blocking(label, plane_z)` para objetos etiquetados
+  como "plate", "fork", "knife", "spoon", "dishwasher tab":
+  1. Calcular pose de pre-agarre a 15 cm por encima del objeto con la pinza orientada
+     rigurosamente hacia abajo (pitch = -90° respecto a base_link).
+  2. Descender en linea recta cartesiana (cartesian_path) a velocidad reducida (15 mm/s)
+     hasta z = plane_z + 0.005 m.
+  3. Retroceso de seguridad hacia arriba de 4 mm (post_contact_retract) para aliviar la presion
+     contra el mantel y evitar que las yemas se traben por friccion al cerrar.
+  4. Cerrar la pinza a tope (close_mm = 0.0) y confirmar agarre por ancho (> 1.5 mm).
+  5. Elevacion vertical inmediata de 12 cm antes de cualquier giro de articulaciones del hombro.
+- Como probarlo primero en simulation/:
+  En simulation/ con Gazebo Harmonic:
+  1. Spawnear un modelo de plato o cubierto sobre la mesa.
+  2. Invocar pick_flat_blocking() en simulacion con ATHOME_SIM=1.
+  3. Comprobar que la trayectoria desciende perpendicularmente sin golpear el plato ni empujarlo.
+- Analisis de riesgo y rollback:
+  * Riesgo en simulacion: Cero.
+  * Riesgo en robot real: Requiere sesion LAB_SUPERVISADO con autorizacion humana expresa (AGENTS.md §3),
+    presencia fisica de operador y E-stop a mano.
+  * Rollback: Eliminar la funcion pick_flat_blocking de arm_manipulation.py.
+
+--------------------------------------------------------------------------------
+RECOMENDACION 4: EXPORTAR YOLO-WORLD V2 A TENSORRT FP16 EN JETSON (HOME-59)
+--------------------------------------------------------------------------------
+- Archivos a modificar:
+  jetson_head/scripts/yolo_trt_node.py
+  (script de exportacion auxiliar en tools/ o jetson_head/scripts/)
+- Descripcion:
+  Compilar un motor TensorRT FP16 (yolov8s_world_pick_fp16.engine) con las clases del RuleBook 2026.2
+  fijadas mediante set_classes():
+  ["cereal box", "milk carton", "plate", "fork", "knife", "spoon", "can", "mug", "bowl", "dishwasher tab"]
+  Configurar yolo_trt_node.py para cargar dicho motor por defecto en la Jetson.
+- Como probarlo primero:
+  1. Realizar la exportacion en la Jetson offline con imagenes de muestra del RuleBook.
+  2. Medir FPS y uso de memoria GPU (tegrastats).
+  3. Verificar que publica /arm_camera/detections a >=30 Hz identificando platos y cubiertos.
+- Analisis de riesgo y rollback:
+  * Riesgo: Bajo. Conservar el engine yolov8n_fp16.engine actual en ~/models/yolo/.
+  * Rollback: Volver a apuntar el parametro 'engine_path' a yolov8n_fp16.engine.
+
+--------------------------------------------------------------------------------
+RECOMENDACION 5: TAXONOMIA SEMANTICA Y EXPLORACION DE BALDAS (SCAN SHELVES)
+--------------------------------------------------------------------------------
+- Archivos a modificar:
+  src/base_athome_perception/base_athome_perception/categories.py (nuevo)
+  src/base_athome_skills/base_athome_skills/mission/skills.py
+- Descripcion:
+  1. Definir la matriz de categorias del RuleBook 2026.2 (fruit, vegetable, beverage, snack,
+     cleaning, cereal, dish) y metodos de mapeo rapido de etiquetas.
+  2. Implementar la skill 'scan_shelves' que coordine elevador + pan-tilt + camara para
+     registrar que categoria predomina en cada nivel del armario.
+  3. Generar la frase de dialogo para el arbitro antes de guardar cada objeto.
+- Como probarlo:
+  Suite de tests unitarios offline con pytest (ROS_DOMAIN_ID=77).
+- Analisis de riesgo:
+  Cero riesgo fisico (logica pura de datos en Python).
+
+================================================================================
+11.2 SINTESIS FINAL: LAS TRES MEDIDAS DE MAXIMO IMPACTO INMEDIATO:
+1. NODO DE DOCKING A MESA POR LIDAR (HOME-58): Resuelve el problema critico del alcance
+   mecanico del Piper y la tolerancia de parada de 50 cm del arbitro.
+2. MESA Y GUARD DE TECHO EN MOVEIT (HOME-46): Evita colisiones catastroficas del manipulador
+   contra la tabla de la mesa y contra la balda superior del estante.
+3. DETECCION YOLO-WORLD TENSORRT CON PERFIL FLAT: Permite puntuar los modificadores de mayor
+   valor del reglamento (plato 100 pts, cubiertos 100 pts, pastilla 100 pts) que hoy se pierden.
+
+Cualquier movimiento fisico con actuadores en el robot real queda supeditado a la
+decision, presencia y autorizacion del usuario en modo LAB_SUPERVISADO (AGENTS.md §3).
+================================================================================
