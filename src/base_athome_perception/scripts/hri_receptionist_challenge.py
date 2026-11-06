@@ -327,6 +327,7 @@ class HriReceptionistChallengeNode(Node):
         self.listen_id: Optional[str] = None
         self.voice_failures = 0         # escuchas seguidas sin entender nada
         self.confirm_tries = 0
+        self.ask_confirmation = os.environ.get("ATHOME_HRI_CONFIRM") == "1"
         self.from_screen = False
         self.last_heard_text = ""
         # Boton/servicio para vaciar la memoria temporal de personas
@@ -1708,7 +1709,9 @@ class HriReceptionistChallengeNode(Node):
 
                 if self.current_name and self.current_drink:
                     self.voice_failures = 0
-                    self.state = self.STATE_ASK_CONFIRM
+                    # RuleBook: entender nombre y bebida sin preguntas de confirmacion suma puntos. La frase siguiente
+                    # es una afirmacion, permitida. ATHOME_HRI_CONFIRM=1 vuelve a preguntar, a costa de esos puntos.
+                    self.state = self.STATE_ASK_CONFIRM if self.ask_confirmation else self.STATE_CONFIRM_DETAILS
                     self.state_start_time = time.time()
                 elif self.current_name or self.current_drink:
                     self.voice_failures = 0

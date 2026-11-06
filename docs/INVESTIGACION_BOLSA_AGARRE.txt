@@ -1,0 +1,719 @@
+RESUMEN EJECUTIVO (MAX 15 LINEAS)
+1. Reglas 2026 (RuleBook@ebdf34d, OPL unificada): cualificacion (6/12/2026) exige video <=10 min resolviendo >=1 prueba.
+2. En TakeOutGarbage la bolsa atada da +300 pts; pedirla en mano (Deus ex Machina) resta -250 pts (neto +50 pts/bolsa).
+3. En PickAndPlace el handover resta -100 pts (pick piso da +50 +100 bonus 1er pick +30 piso = +180 pts); caerla -40 pts.
+4. BUG CRITICO EN NUESTRO CODIGO: arm_manipulation.py:77,464,818 cierra pinza a 50 mm y rechaza <=55 mm como agarre vacio.
+5. Una bolsa plastica/asa/nudo comprimido mide 2-15 mm: con cierre a 50 mm se escapa, y si cierra a 0 mm da falso vacio.
+6. Piper SDK (piper_sdk@b847e53) publica a 200 Hz corriente (0.001 A), esfuerzo articular (0.001 Nm) y pinza (0.001 mm/Nm).
+7. En arm_manipulation.py:146 _status_cb solo lee joints_deg y gripper_mm; ignora esfuerzos de J2/J3 y grippers_effort.
+8. Tech United (tue_robocup@5bbf7bb) baja hasta contacto/35 cm, cierra a 1.0 Nm, sube con torso y pesa (umbral 0.1 kg).
+9. RoBorregos (home2@1a0caeb) usa geometric_grasps.py:343 (peak Z en grilla 5 cm) y descenso guiado por salto de esfuerzo.
+10. En el piso con 1 brazo, conviene agarrar el pico superior (nudo/asa rigida) con pinza inclinada 24 deg (FLOOR_PREGRASP).
+11. Confirmar agarre de bolsa combinando: grippers_effort >=0.35 Nm o delta de esfuerzo en J2/J3 al izar + camara muneca.
+12. Si falla tras 1 reintento, command_parser.py ya soporta pasos condicionales ("if": FAILED) para activar Plan B handover.
+13. Antes de medir el gesto, validar distancia (1.5-3.0 m) y angulo de brazo (>=25 deg), corrigiendo al operador por voz.
+14. Seguridad base: el lidar a 38 cm no ve bolsas bajas; en h_dock_bag verificar con RealSense que la bolsa siga a >=34 cm.
+
+================================================================================
+RECOMENDACIONES ORDENADAS POR UTILIDAD PARA NUESTRO ROBOT
+================================================================================
+
+R1. CORREGIR CIERRE Y VERIFICACION DE PINZA PARA OBJETOS FINOS/DEFORMABLES ("bag")
+- Que cambiar:
+  Hoy GRIPPER_CLOSE_MM = 50.0 (arm_manipulation.py:77) y pick_blocking (arm_manipulation.py:461-467) declara "agarre vacio"
+  si width <= GRIPPER_CLOSE_MM + 5.0 (<= 55.0 mm). Eso sirve para objetos rigidos de 65-75 mm (ej. lata Pringles), pero una
+  bolsa de basura atada por el cuello/nudo o una bolsa con asas tiene un espesor comprimido de 2 a 15 mm. Con 50 mm la pinza
+  queda abierta 5 cm y la bolsa resbala; y si se cierra a 0-10 mm, la condicion width <= 55 mm abre la pinza creyendo que
+  agarro aire.
+  1) Agregar GRIPPER_CLOSE_BAG_MM = 0.0 (o 5.0 mm) y GRIPPER_BAG_EFFORT_NM = 1.0 en arm_manipulation.py:77.
+  2) En _grasp_core (arm_manipulation.py:818), recibir close_mm (50.0 por defecto, 0.0 cuando label == "bag").
+  3) En pick_blocking (arm_manipulation.py:461-467), separar la condicion de exito cuando label == "bag": no rechazar por
+     width <= 55 mm; usar la rutina multimodal de confirmacion (R2: esfuerzo de pinza + delta de par en J2/J3 al levantar +
+     deteccion visual en muneca).
+- Archivo y funcion:
+  src/base_athome_perception/base_athome_perception/arm_manipulation.py -> constantes L77, pick_blocking (L436-471),
+  _grasp_core (L751-824).
+- Como probarlo en simulacion primero:
+  Pruebas unitarias sin mover robot inyectando mensajes JSON simulados en _status_cb("/arm/status") con distintos valores de
+  gripper_mm (ej. 4.0 mm para bolsa vs 0.5 mm sin esfuerzo para aire) y verificando que pick_blocking clasifique bien bolsa
+  agarrada vs agarre vacio.
+- Riesgo y Nivel:
+  Riesgo bajo en logica; NIVEL C al cambiar el cierre real de la pinza de 50 mm a 0 mm (requiere decision del usuario y
+  verificar en el aire que la pinza de Piper cierre a 0 mm con torque limitado sin sobrecorriente).
+
+R2. EXPONER Y LEER CORRIENTE/ESFUERZO DEL PIPER EN /arm/status PARA CONFIRMAR AGARRE SIN SENSOR F/T
+- Que cambiar:
+  El SDK del Piper (piper_sdk@b847e53, arm_feedback_high_spd.py:11-96 y arm_feedback_gripper.py:4-125) ya entrega a 200 Hz:
+  - current de J1..J6 en mA (0.001 A, int16 con signo) y effort en mN*m (J1-J3: current*1.18125; J4-J6: current*0.95844).
+  - grippers_angle en 0.001 mm y grippers_effort en 0.001 N*m (CAN ID 0x2A8).
+  Nuestro _status_cb (arm_manipulation.py:146-156) hoy solo parsea joints_deg y gripper_mm.
+  1) En el nodo que publica /arm/status (en la Jetson, solo lectura por ahora; documentado para cuando el usuario autorice)
+     incluir "joints_effort_nm" (o "joints_current_a") y "gripper_effort_nm" tomados de GetArmHighSpdInfoMsgs() y
+     GetArmGripperMsgs() (como hace piper_ros/src/piper/scripts/piper_ctrl_single_node.py:217-263).
+  2) En arm_manipulation.py:110-156, guardar self.joints_effort_nm (6 floats) y self.gripper_effort_nm (float).
+  3) En _grasp_core (arm_manipulation.py:809-823), medir baseline de esfuerzo de J2 y J3 en grasp_tcp antes de cerrar (mediana
+     de 10 muestras en 0.2 s), cerrar pinza, levantar los 3 cm (L821) o medir tras subir torso, y calcular
+     delta_tau = hypot(tau_J2_post - tau_J2_pre, tau_J3_post - tau_J3_pre).
+- Archivo y funcion:
+  src/base_athome_perception/base_athome_perception/arm_manipulation.py -> __init__ (L109-116), _status_cb (L146-156),
+  pick_blocking (L436-471), _grasp_core (L809-824).
+- Como probarlo en simulacion primero:
+  Reproducir un rosbag o publicar por script mensajes /arm/status sinteticos con curvas de esfuerzo con y sin carga (0 kg,
+  0.15 kg, 0.5 kg) y verificar la logica del detector antes de tocar el brazo.
+- Riesgo y Nivel:
+  NIVEL A/B (solo lectura de telemetria existente en el bus CAN; no cambia movimientos).
+
+R3. APUNTAR AL PICO SUPERIOR (NUDO/ASA) EN VEZ DEL CENTROIDE BAJO DE LA BOLSA
+- Que cambiar:
+  Hoy bag_finder.py:106-119 calcula z_m como la mediana de todos los pixeles validos de la caja (erosionada 15%) y top_z como
+  el percentil 90 de Z (L121). Luego node.py:348 pasa plane_z = self.bag_target[2] (que es top_z, ver node.py:422 y
+  bag_vision.py:49), pero locate_bag_blocking (arm_manipulation.py:381-395) intersecta el rayo del pixel (cx, y1 + 15% alto)
+  de la camara de muneca contra plane_z.
+  Tanto Tech United (pick_up.py:146,243) como RoBorregos (geometric_grasps.py:343-367 funcion peak()) y la literatura de
+  bolsas deformables (Gao et al. CoRL 2022; Chen et al. AutoBag ICRA 2023) muestran que una bolsa en el piso con un solo
+  brazo debe agarrarse por su PICO SUPERIOR (el nudo en bolsas de basura o las asas rigidas verticales en bolsas de compras,
+  Scenario.tex:125), descendiendo unos centimetros por debajo del borde superior para que los dedos muerdan material firme.
+  1) En bag_finder.py:_ measure_box (L99-136), ademas del centroide global (x_m, y_m), calcular el punto 3D (peak_x, peak_y,
+     peak_z) de la franja superior de la bolsa (pixeles con Z entre percentil 80 y 95 dentro de la caja, igual a la idea de
+     peak() / rim() en RoBorregos geometric_grasps.py:330-336, 350-360).
+  2) Para el agarre (arm_manipulation.py:766), fijar z de agarre en max(GROUND_Z + 0.03, top_z - 0.04) (4 cm debajo del pico
+     superior de la bolsa, nunca debajo de 3 cm sobre el piso) en lugar de usar directamente plane_z sin descuento, para que
+     los dedos de la pinza rodeen el nudo/asa en vez de rozar el apice en el aire.
+- Archivo y funcion:
+  src/base_athome_perception/scripts/bag_finder.py -> _measure_box (L99-136).
+  src/base_athome_perception/base_athome_perception/arm_manipulation.py -> _grasp_core (L751-775).
+- Como probarlo en simulacion primero:
+  Pasar cuadros RGB-D grabados (o nubes sinteticas de una bolsa de 25 cm de alto con nudo arriba) a _measure_box y verificar
+  que el punto objetivo quede 4 cm debajo del nudo y a >=3 cm del suelo.
+- Riesgo y Nivel:
+  Logica de calculo 3D es Nivel B; ejecutar el agarre 4 cm bajo el pico es NIVEL C (probar primero con bolsa de espuma/vacia).
+
+R4. PLAN B (HANDOVER HUMANO) Y REINTENTO ESCALONADO EN command_parser.py Y node.py
+- Que cambiar:
+  Hoy _fetch_pointed_bag (command_parser.py:178-195) no usa las compuertas condicionales que YA existen en nuestro ejecutor
+  (node.py:124-137 soporta st["if"] = {"step": id, "state": "FAILED"} y st["on_failure"] = "continue"). Si find_pointed_bag o
+  pick_object falla tras 1 reintento, toda la mision aborta a recovery ("I could not complete the request" y vuelve a home),
+  perdiendo los 300 pts de llevar la bolsa (cuando recibirla por handover en TakeOutGarbage da +300 - 250 = +50 pts netos y
+  permite completar toda la navegacion al punto de descarte, y en cualificacion demuestra recuperacion autonoma conforme a
+  ContinueRules.tex:21-35).
+  1) En command_parser.py:_fetch_pointed_bag (L178-195), marcar pick_object con on_failure="continue".
+  2) Si pick_object queda en estado FAILED, insertar pasos condicionales ("if": {"step": pick_id, "state": "FAILED"}):
+     - set_torso a 0.0 m (altura comoda para el operador).
+     - arm_pose "handover" (o "Carry" con pinza abierta frente al robot, manteniendo el brazo quieto a >=10-20 cm de la
+       persona como exige HumanRobotInteractionChallenge.tex:102-108 y GiveMeAHand.tex:42-49).
+     - speak: "I could not pick up the bag from the floor. Please place the bag handle between my gripper fingers. I will
+       close my gripper in five seconds, please be careful." (frase explicita permitida por HRIC.tex:107 y ContinueRules.tex:24).
+     - handover_bag (nuevo skill o modo de arm_pose que espera 5 s o detecta pulso de esfuerzo en pinza/muneca y cierra pinza).
+  3) En _drop_bag (command_parser.py:198-204), tras abrir la pinza en pre_grasp_floor, agregar una pequena sacudida o espera
+     de 1.5 s antes de subir el torso (inspirado en Tech United drop_down.py:49-58) para evitar que el asa quede enganchada
+     al subir.
+- Archivo y funcion:
+  src/base_athome_skills/base_athome_skills/mission/command_parser.py -> _fetch_pointed_bag (L178-195), _drop_bag (L198-204).
+  src/base_athome_skills/base_athome_skills/mission/node.py -> agregar handler h_handover_bag junto a h_pick (L342-355).
+- Como probarlo en simulacion primero:
+  Ejecutar el test de compilacion de command_parser.py y correr MissionNode con --dry-run (node.py:575) forzando fallo en
+  pick_object para verificar que la maquina de estados salta al bloque condicional de handover y luego continua con
+  navigate_to_location(destination) y _drop_bag.
+- Riesgo y Nivel:
+  Compilador y dry-run son Nivel A; el cierre de pinza en handover real es NIVEL C (probar primero con aviso de 5 s).
+
+R5. VALIDAR DISTANCIA Y GESTO DEL OPERADOR CON CORRECCION POR VOZ ANTES DE FIJAR LA BOLSA
+- Que cambiar:
+  En h_find_bag (node.py:398-433) hoy se llama /perception/find_pointed_bag y si falla dice genericamente "Please point
+  closer to the bag". En bag_finder.py:249-280 ya se calculan razones especificas de rechazo:
+  - persona fuera de distancia (PERSON_NEAR_M=2.2, PERSON_STOP_M=1.5 en bag_task.py:37-38),
+  - "brazo casi horizontal ({angle:.0f} deg < 25 deg)" (bag_finder.py:272),
+  - "no veo el brazo completo" (L259),
+  - "no veo ninguna bolsa" (L264).
+  Inspirado en Tech United (get_furniture_from_operator_pose.py:99-112), hacer que h_find_bag lea el motivo devuelto en
+  r.message y diga la frase correctiva exacta:
+  - Si falta esqueleto completo / muy cerca (<1.2 m): "Please step back a little so I can see your full arm."
+  - Si muy lejos (>3.0 m): "Please stand closer to me."
+  - Si angulo < 25 deg: "Please point clearly downward at the bag with your arm stretched."
+  - Si hay varias bolsas o lejos del rayo: "I see a bag, please point closer to the bag you want."
+- Archivo y funcion:
+  src/base_athome_skills/base_athome_skills/mission/node.py -> h_find_bag (L398-433).
+  src/base_athome_perception/scripts/bag_finder.py -> _locate (L249-288).
+- Como probarlo en simulacion primero:
+  En dry-run o test unitario de h_find_bag simulando respuestas Trigger con distintos resp.message y verificando que say()
+  emite la frase correspondiente.
+- Riesgo y Nivel:
+  Nivel A/B (solo voz y parseo de string; no mueve actuadores).
+
+R6. COMPUERTA DE SEGURIDAD CON REALSENSE EN h_dock_bag PARA NO PISAR LA BOLSA (LIDAR CIEGO A <38 CM)
+- Que cambiar:
+  Nuestro lidar esta a 38 cm del piso (bag_task.py:18) y dock_stop_range() (bag_task.py:93-95) solo frena si /scan ve algo
+  a <=7 cm del frente del chasis. Una bolsa de basura en el suelo suele medir 15-30 cm de alto: el lidar pasa por encima sin
+  verla. Hoy h_dock_bag (node.py:493-515) avanza 0.40 m a ciegas por odometria luego de h_approach_bag. Si en
+  h_approach_bag Nav2 paro 15 cm mas adelante que el stand_pose teorico (dentro de la tolerancia XY de Nav2) o si
+  refine_bag fallo y se uso el target viejo, el avance fijo de 0.40 m en h_dock_bag puede hacer que el chasis (x=0.24 m)
+  empuje o pise la bolsa!
+  Sin tocar la navegacion funcional protegida:
+  1) En h_approach_bag (node.py:471-491) o al inicio de h_dock_bag (node.py:493), transformar self.bag_target (en map)
+     al marco base_link actual usando TF (_bag_in_base()).
+  2) Calcular la distancia frontal real desde el frente del chasis (CHASSIS_FRONT_M = 0.24 m) hasta el borde estimado de la
+     bolsa (bag_x_base - DEFAULT_BAG_RADIUS_M (0.20) - CHASSIS_FRONT_M (0.24)).
+  3) En vez de avanzar siempre DOCK_DISTANCE_M = 0.40 m fijos, acotar el avance de h_dock_bag a:
+     advance_m = clamp(bag_x_base - REACH_X (0.58), 0.0, DOCK_DISTANCE_M (0.40)), y NUNCA permitir que bag_x_base -
+     advance_m baje de CHASSIS_FRONT_M + DEFAULT_BAG_RADIUS_M + MIN_BASE_CLEARANCE_M = 0.24 + 0.20 + 0.05 = 0.49 m!
+- Archivo y funcion:
+  src/base_athome_skills/base_athome_skills/mission/node.py -> h_dock_bag (L493-515) y bag_task.py (L85-95).
+- Como probarlo en simulacion primero:
+  Test unitario de la formula de advance_m con distintas posiciones TF de base_link respecto de bag_target (ej. cuando
+  Nav2 para a 0.98 m, a 0.80 m o a 0.55 m de la bolsa), comprobando que advance_m se reduce a 0.22 m o 0.0 m y nunca deja
+  la bolsa a menos de 0.58 m (o 0.49 m de limite duro) de base_link.
+- Riesgo y Nivel:
+  Acotar la distancia de avance (reducir movimiento para no chocar) disminuye el riesgo fisico; igual se marca NIVEL C porque
+  modifica la consigna de movimiento de base en h_dock_bag (requiere aprobacion del usuario).
+
+================================================================================
+SECCION 1: QUE PIDE DE VERDAD LA PRUEBA (RULEBOOK Y CUALIFICACION)
+================================================================================
+Fuente verificada: RoboCupAtHome/RuleBook@ebdf34d (clon local en /tmp/home_research/rulebook).
+Version del documento: 2026 Current Draft (posterior a 2026.2 del 2026-06-15, ver CHANGELOG.md L8-45 y pages/rulebook/about.tex).
+
+1.1 LIGA UNIFICADA (OPL) Y CUALIFICACION (entrega 6/12/2026)
+- VERIFICADO (pages/introduction/Leagues.tex L9-20; CHANGELOG.md L15, L42):
+  En 2026 se disolvieron las sub-ligas DSPL y SSPL (#887, #987) y se elimino la division Stage I / Stage II (#990). Todos los
+  equipos compiten en una unica liga: Open Platform League (OPL).
+- VERIFICADO (pages/general_rules/TeamRegistration.tex L46-70):
+  Para cualificar se exige (1) Team Description Paper (TDP), (2) sitio web con codigo open-source/documentacion, y (3) video de
+  cualificacion de hasta 10 minutos (sin cortes dentro de una demostracion ni aceleracion >1x) que muestre al menos 2
+  habilidades minimas (HRI, navegacion interior segura con esquiva de obstaculos dinamicos, deteccion y manipulacion de
+  objetos, deteccion de personas, ASR, TTS) y que OBLIGATORIAMENTE resuelva al menos un test completo del rulebook vigente o
+  del ano anterior ("The video has to successfully solve at least one test from the current or previous year's rulebook", L69).
+- VERIFICADO (pages/appendices/LeagueRequirements.tex L61-82):
+  Dimensiones maximas del robot en OPL: huella <= 80x80 cm, altura 100-190 cm, paso por puertas de 80 cm; boton de parada de
+  emergencia fisico obligatorio.
+
+1.2 PRUEBA "TAKE OUT THE GARBAGE" (tasks/old/TakeOutGarbage.tex y scoresheets/old/TakeOutGarbage.tex)
+- Nota de vigencia (VERIFICADO): En el repositorio 2026 TakeOutGarbage.tex esta en pages/tasks/old/TakeOutGarbage.tex (fue
+  prueba oficial del rulebook anterior, por lo que es 100% valida para el video de cualificacion segun TeamRegistration.tex L69,
+  y sus primitivas de basura/piso se integraron en PickAndPlaceChallenge, DoingLaundry, GPSR y Finals).
+- Objetivo y tiempo (TakeOutGarbage.tex L11-16): Sacar todas las bolsas de basura de los tachos hacia la zona de recoleccion
+  designada en un tiempo maximo de 5 minutos (300 s).
+- Entorno y bolsas (TakeOutGarbage.tex L19-28; LeagueRequirements.tex L171-177):
+  * 2 tachos cilindricos estandar en distintas habitaciones, abiertos arriba (uno puede tener tapa removible para bonus).
+  * Bolsas: "Common household garbage bags, tied, with light contents inside" (LeagueRequirements.tex L175). Es decir, bolsas
+    de basura domesticas ATADAS arriba, con contenido liviano (no vacias aplastadas, sino con volumen liviano).
+- Puntaje (scoresheets/old/TakeOutGarbage.tex L8-23):
+  * Accion principal: Mover una bolsa de basura dentro de la zona de recoleccion: +300 pts (x2 bolsas = +600 pts).
+  * Bonus:
+    - Quitar la tapa del tacho y dejarla al lado: +100 pts (x2).
+    - Llevar ambas bolsas al mismo tiempo a la zona de recoleccion: +200 pts.
+  * Penalizaciones regulares:
+    - Dejar una bolsa fuera de la zona de recoleccion: -100 pts (x2).
+    - Volcar el tacho o romper/rasgar la bolsa ("Tipping over the trash bin or tearing the trash bag"): -50 pts (x2).
+  * Penalizacion Deus ex Machina (pedir ayuda humana):
+    - Recibir la bolsa de basura por handover humano ("Receiving the trash bag via handover"): -250 pts (x2).
+    - DATO CLAVE: Como llevar la bolsa a la zona da +300 pts y el handover resta -250 pts, activar el Plan B (pedir handover y
+      llevarla autonomamente a la zona de descarte) deja un saldo POSITIVO de +50 pts por bolsa (ademas de demostrar exito de
+      mision fin a fin en vez de abortar con 0 pts).
+
+1.3 TAREAS EQUIVALENTES EN EL RULEBOOK 2026 QUE USAN AGARRE DE BOLSA / PISO / BASURA
+- Help Me Carry / Carry My Luggage (pages/tasks/old/HelpMeCarry.tex L1-105; scoresheets/old/HelpMeCarry.tex L1-35; Scenario.tex L125):
+  * El operador apunta a una bolsa en el piso ("the operator points to a bag on the floor", HelpMeCarry.tex L35).
+  * Tipo de bolsa reglamentaria (Scenario.tex L125): "Shopping bags (carry my luggage): Lightweight and with stiff, vertical
+    handles." (bolsas livianas con asas rigidas verticales).
+  * Puntaje: Percibir la bolsa correcta apuntada: +15 pts; levantar la bolsa del piso ("Pick up the bag from the floor"):
+    +100 pts; penalizacion por soltar/caer la bolsa ("Dropping the bag"): -50 pts.
+- Human-Robot Interaction Challenge 2026 (pages/tasks/HumanRobotInteractionChallenge.tex L47, L70-73, L101-108):
+  * Subtarea 3 ("Follow & Carry"): el operador camina con el robot fuera de la arena y le entrega un objeto pequeno para
+    llevar de regreso (+150 pts por recibir el objeto y regresar a la habitacion inicial, scoresheets/HRIC.tex L27).
+  * Regla estricta de seguridad en Handover (HRIC.tex L101-108; GiveMeAHand.tex L42-49):
+    El robot debe (1) senalizar que esta listo para recibir, (2) mantener el brazo COMPLETAMENTE QUIETO a <=10 cm (10-20 cm en
+    GiveMeAHand) de la mano del operador SIN avanzar hacia el humano, y (3) cerrar la pinza sin pellizcar la mano. Se permite
+    explicitamente decir: "I detect the object in my hand. I will close my gripper in 3 seconds, please be careful." (L107).
+- Pick and Place Challenge 2026 (pages/tasks/PickAndPlaceChallenge.tex L18, L68, L107-110; scoresheets/PickAndPlaceChallenge.tex):
+  * Incluye objetos de basura (trash) que van al tacho y objetos en el piso (2 objetos en el piso en preliminares, 4 en rondas
+    finales, L68).
+  * Puntaje por objeto: Reconocer +15 pts; Pick +50 pts (+100 pts bonus al primer pick exitoso; +30 pts extra si se levanta del
+    piso, L18-24); Place en ubicacion designada +40 pts.
+  * Penalizaciones: Soltar/tirar objeto ("Object dropped or thrown"): -40 pts; humano reposiciona objeto en superficie: -30 pts;
+    objeto entregado al robot por humano (handover): -100 pts; cambio de entorno por item: -40 pts.
+- Doing Laundry 2026 (pages/tasks/DoingLaundry.tex y scoresheets/DoingLaundry.tex):
+  * Manipulacion de objetos deformables (ropa en el piso, en canasto y en lavarropas). Levantar prenda del piso: +150 pts;
+    sacar del canasto: +100 pts.
+
+1.4 REGLAS GENERALES DE AYUDA HUMANA, INACTIVIDAD Y COMUNICACION CON EL OPERADOR
+- Protocolo de Asistencia de 3 Pasos (pages/general_rules/ContinueRules.tex L21-35, L62, L72-79):
+  1) Request Help: el robot debe pedir ayuda verbalmente especificando QUE accion necesita y QUE resultado espera (ej. "Please
+     put the bag handle inside my gripper"). Prohibido usar codigos preacordados.
+  2) Supervise: el robot debe esperar de forma segura sin mover el brazo bruscamente hacia la persona.
+  3) Verify: el robot debe verificar por percepcion o dialogo que la ayuda termino antes de moverse.
+  * Costo en puntos (ContinueRules.tex L62): si la hoja de puntaje no fija una penalizacion especifica (como -250 en
+    TakeOutGarbage o -100 en PickAndPlace), la subtarea asistida suma 0 pts pero permite ganar todos los puntos siguientes.
+  * Regla critica de terminacion (ContinueRules.tex L78): Si el robot pide que un humano le ponga el objeto en la pinza Y
+    ADEMAS pide que un humano lo coloque en el destino, el arbitro puede dar por terminado el intento inmediatamente. Por lo
+    tanto, si se usa Plan B en el agarre, la descarga (drop) en la zona de descarte DEBE ser 100% autonoma.
+- Interaccion y Limite de 30 s de Inactividad (pages/general_rules/Procedure.tex L147-148, L175-180; PenaltiesBonuses.tex L13-35):
+  * Solo el robot (nunca el equipo humano) puede dar instrucciones al operador (ej. pedirle que se acerque o repita el gesto,
+    Procedure.tex L147-148).
+  * Si el robot no muestra progreso visible durante 30 segundos, se descalifica la corrida (Procedure.tex L175-180). El robot
+    puede pedir por voz al arbitro UNA extension de inactividad de hasta 3 minutos diciendo que esta procesando.
+
+================================================================================
+SECCION 2: AGARRE DE BOLSAS DEFORMABLES EN EL PISO CON UN BRAZO
+================================================================================
+
+2.1 ANALISIS EN PROFUNDIDAD DE TECH UNITED (tue-robotics/tue_robocup@5bbf7bb, sin LICENSE = solo estudio)
+Archivos leidos completos:
+- challenge_take_out_the_garbage/src/challenge_take_out_the_garbage/pick_up.py (L1-381)
+- challenge_take_out_the_garbage/src/challenge_take_out_the_garbage/take_out_the_garbage.py (L1-168)
+- challenge_take_out_the_garbage/src/challenge_take_out_the_garbage/control_to_trash_bin.py (L1-65)
+- challenge_take_out_the_garbage/src/challenge_take_out_the_garbage/drop_down.py (L1-152)
+- robot_skills/src/robot_skills/functionalities/arm/guarded_motion.py (L1-91)
+- robot_smach_states/src/robot_smach_states/manipulation/manipulation.py (L95-260)
+
+Como resuelve Tech United (robot HERO / Toyota HSR, 1 brazo con torso prismatico arm_lift_joint) el agarre de la bolsa:
+1) Posicionamiento previo del brazo ANTES de acercarse al tacho/bolsa (pick_up.py L297-319):
+   En PickUpTrash, tras actualizar la posicion del tacho con la camara (GetTrashBin, L49-75), ejecuta _joint_path (L306-314)
+   enviando 4 waypoints articulares ([0.01, 0, -1.57, -1.57, 0] -> ... -> [0.55, -2.2, 0.0, -0.85, 0.]) que dejan el torso
+   alto (0.55 m) y la muneca apuntando hacia abajo/adelante, ANTES de acercar la base. Asi el brazo no choca con el borde del
+   tacho al desplegarse.
+2) Acercamiento final en lazo cerrado sin costmap (control_to_trash_bin.py L22-54; pick_up.py L321-324):
+   ControlToTrashBin posiciona la base a radius = 0.40 m del centro del tacho/bolsa con un yaw_offset = -0.2 rad (-11.5 deg)
+   para alinear el brazo (que esta desplazado lateralmente respecto del centro del robot) directamente con el centro de la bolsa.
+3) Estrategia de agarre por el nudo/cuello superior (pick_up.py L77-203, GrabTrash):
+   - NO intenta detectar visualmente el asa ni segmentar el nudo en 3D fino: asume que el nudo/exceso superior de la bolsa esta
+     centrado y sobresale arriba.
+   - Mide el vector de fuerza 3D inicial con el brazo vacio (arm_weight = measure_force.get_force(), L111, L137) leyendo
+     /<robot>/wrist_wrench/compensated (WrenchStamped, L38-46).
+   - Abre la pinza (arm.gripper.send_goal('open'), L141-142).
+   - Descenso guardado por fuerza (arm.move_down_until_force_sensor_edge_up(timeout=5, distance_move_down=0.35), L146):
+     En guarded_motion.py L31-91 se ve que este descenso mueve UNICAMENTE la articulacion prismatica vertical arm_lift_joint
+     hacia abajo hasta 0.35 m en 5 s (70 mm/s), hasta que force_sensor.wait_for_edge_up(timeout) detecta contacto hacia
+     arriba, tras lo cual cancela la trayectoria y retrae retract_distance = 0.01 m (1 cm hacia arriba, L31, L59-60, L72-78).
+     Si no siente fuerza en los 35 cm (TimeOutException), igual captura la excepcion (pass, pick_up.py L147-149) y cierra la
+     pinza en el fondo del recorrido!
+   - Cierra la pinza por control de torque: arm.gripper.send_goal('close', max_torque=1.0) (L151-152).
+   - Iza primero con el torso: self._robot.torso.send_goal("grab_trash_up") (L155-156) y vuelve a medir la fuerza
+     (arm_with_object_weight = measure_force.get_force(), L159), estimando la masa como:
+     weight_object = norm(arm_weight - arm_with_object_weight) / 9.81 (L161).
+   - Si weight_object < minimal_weight (0.1 kg) y quedan intentos (try_num), dice "I failed to pick up the trash, let me
+     try again" y repite el ciclo abrir -> bajar 35 cm -> cerrar -> subir torso (L117-163).
+   - Detalle verificado en codigo (pick_up.py L195-196): las lineas if weight_object < self._minimal_weight: return "failed"
+     estan comentadas en ese commit (5bbf7bb), aunque la maquina de estados PickUpTrash (L326-362) tiene todo el flujo
+     conectado desde "failed" hacia ANNOUNCE_PICKUP_FAIL -> ASK_HANDOVER (HandoverFromHumanFigure).
+   - Para bolsas grandes/pesadas (L166-192): levanta el brazo ([0.85, -2.2, 0.0, -0.85, 0.0], L166), retrocede la base en
+     lazo abierto (force_drive(-0.25, 0, 0, 0.5), es decir 12.5 cm hacia atras, L187) y lleva el brazo a handover y reset.
+4) Descarga con sacudida anti-enganche (drop_down.py L40-62):
+   En DropTrash, mueve el brazo hacia adelante ([0.4, -1.0, 0.0, -1.0, 0.0], L45), abre la pinza (L47), espera 3 s (L49),
+   oscila la muneca a +-0.5 rad (L51-55) y ejecuta NavigateWiggle(self._robot, 4) (L57-58) para desprender bolsas pegadas.
+
+2.2 ANALISIS DE LO NO LEIDO DE ROBORREGOS (RoBorregos/home2@1a0caeb, sin LICENSE = solo estudio)
+Archivos leidos completos que figuraban como NO LEIDOS / NO UBICADOS en equipos_bolsa.txt (L145, L159-160):
+- task_manager/scripts/test/test_basket_pick.py (L1-66)
+- manipulation/packages/perception_3d/perception_3d/geometric_grasps.py (L1-690)
+- manipulation/packages/pick_and_place/pick_and_place/pipelines/strategies.py (L1-298)
+- manipulation/packages/pick_and_place/pick_and_place/pipelines/pick.py (L1-581)
+- manipulation/packages/pick_and_place/pick_and_place/pipelines/place.py (L1-515)
+- manipulation/packages/pick_and_place/pick_and_place/robot/arm.py (L1-1079)
+- manipulation/packages/pick_and_place/config/pick_profiles.yaml (L1-106)
+- manipulation/packages/arm_pkg/src/gpd_service.cpp (L1-472)
+- task_manager/scripts/misc/help_me_carry.py (L1-314) y docs/ai/hric_vision_architecture.md (L149-180)
+
+Hallazgos verificados en RoBorregos (robot FRIDA, brazo xArm6 + cámara ZED2 eye-in-hand):
+1) Correccion a equipos_bolsa.txt L159 sobre help_me_carry.py y get_pointing_bag:
+   - get_pointing_bag se invoca en task_manager/scripts/misc/help_me_carry.py:197, pero NO existe en vision_tasks.py.
+   - docs/ai/hric_vision_architecture.md:173-177 documenta que help_me_carry.py es un script inactivo de 2025. En ese
+     script, GRASP_THE_BAG (L249-256) era un mock (open_gripper -> sleep(3) -> close_gripper), y en la linea 218 la maquina
+     de estados saltaba directamente de DETECT_THE_BAG a RECEIVE_THE_BAG (L222-247), donde pedia al operador:
+     "Please hang the bag in the white hook that is in the back of my gripper" (L230) y confirmaba por voz ("say yes").
+2) Como agarra RoBorregos objetos en el piso y deformables en 2026 (test_basket_pick.py, geometric_grasps.py, strategies.py):
+   En 2026 RoBorregos reemplazo GPD para objetos dificiles por un generador geometrico determinista (geometric_grasps.py) y 4
+   estrategias de descenso en modo velocidad cartesiana (modo 5 del xArm, arm.py:642-664), porque:
+   - En gpd_service.cpp:396-401 el propio autor deja un comentario explicando que las TFs de GPD eran inestables, aplica un
+     parche de rotacion de 90 deg en Y (L403) y re-puntua los grasps por cercania al centroide (1 - d/d_max, L418-444).
+   - En geometric_grasps.py definen 4 recetas especificas sin redes neuronales:
+     a) peak(scene) (L343-367) para objetos deformables (PEAK_NAMES = ["clothes"], manipulation_constants.py:99):
+        Quita el piso (FLOOR_PERCENTILE = 5, FLOOR_MARGIN = 0.05 m, L57-58, L215-218), proyecta la nube 3D a una grilla de
+        elevacion XY de PEAK_GRID_RES = 0.05 m (celdas de 5x5 cm, L115, L269-274) guardando el Z maximo por celda, aplica un
+        filtro de maximo local 3x3 (PEAK_NBR = 3, L116, L350-354) para hallar todos los picos que superen floor_z + 0.05 m,
+        y elige el pico local mas cercano a la mediana XY del objeto (L358-360), con orientacion vertical TOP_DOWN = [0, 0, -1]
+        y eje de cierre lateral [0, -1, 0] (L364-366).
+     b) rim(scene) (L328-340) probado en test_basket_pick.py para canastos en el piso (laundry_basket):
+        Toma la banda de 3 cm debajo del percentil 90 de Z (TOP_PERCENTILE = 90, RIM_TOP_BAND = 0.03 m, L59-61, L330-331),
+        selecciona el 5% de puntos mas cercanos al robot en XY (RIM_NEAR_FRACTION = 0.05, min 10 puntos, L62, L334-336), saca
+        la mediana 3D near_rim y orienta la pinza TOP_DOWN con eje de cierre radial radial = [near_rim_x, near_rim_y, 0]
+        (L338-340) para que un dedo baje por dentro y otro por fuera de la pared.
+     c) FixedDistanceDescentPick (strategies.py:84-126, pick_profiles.yaml:55-82):
+        Va a pre_grasp = target_z + pre_grasp_height (0.10 m en rim, 0.15 m en peak), limpia el octomap (arm.clear_octomap(),
+        porque el ruido del octomap en objetos huecos/deformables bloquea MoveIt, pick_and_place/README.md:43-44), y baja en
+        velocidad cartesiana cerrada por posicion TCP Z una distancia pre_grasp_height - grasp_z_tweak (0.15 m a 20 mm/s),
+        cerrando la pinza con close_settle = 1.5 s. Para objetos grandes de piso (rim), NO vuelve a table_stare: mantiene
+        el brazo en la pose de agarre durante el transporte (pick.py:566-569).
+     d) solid(scene) (L514-648): prueba inclinaciones TILT_NAMES = {0: "top", 45: "diagonal", 90: "front"} (L121, L479-497),
+        verifica que los dedos (GRIPPER_MAX_APERTURE = 0.095 m, GRIPPER_FINGER_LENGTH = 0.085 m, manipulation_constants.py:69-73)
+        no choquen contra el soporte (lowest < support_z, L598, L612) ni que la palma toque el objeto antes que las yemas
+        (np.count_nonzero(palm) >= 10, L593-597, L616).
+
+2.3 PAPERS DE DEFORMABLE GRASPING APLICABLES SIN RL (CON URL VERIFICADA POR BUSQUEDA WEB)
+(Nota: el hook del entorno bloquea curl directo; metadatos y URLs verificados mediante search_web sobre arXiv/PMLR):
+1) Seita, D., Kerr, J., Canny, J., & Goldberg, K. (2021). "Initial Results on Grasping and Lifting Physical Deformable Bags
+   with a Bimanual Robot". IROS 2021 Workshop on Robotic Manipulation of Deformable Objects in Real-world Applications.
+   URL: https://sites.google.com/view/physical-bags/home
+   - Aporte sin RL: Evalua heuristicas geometricas directas sobre nubes de puntos de bolsas fisicas (como agarrar extremos o
+     puntos prominentes superiores) y demuestra que para levantar bolsas con contenido liviano el agarre en la zona superior de
+     mayor altura/tension evita que el fondo se abra o vuelque.
+2) Chen, L. Y., Shi, B., Seita, D., Cheng, R., Kollar, T., Held, D., & Goldberg, K. (2023). "AutoBag: Learning to Open Plastic
+   Bags and Insert Objects". IEEE International Conference on Robotics and Automation (ICRA 2023) / arXiv:2210.17217.
+   URL: https://arxiv.org/abs/2210.17217
+   - Aporte aplicable sin RL: Demuestra que la profundidad RGB-D sobre bolsas plasticas delgadas tiene ruido/huecos por
+     especularidad, por lo que para agarrar una bolsa desde arriba conviene fijar una altura de descenso acotada por el plano de
+     trabajo y apuntar a las zonas estructurales (asas/borde superior) en vez del cuerpo liso.
+3) Gao, C., Li, Z., Gao, H., & Chen, F. (2022). "Iterative Interactive Modeling for Knotting Plastic Bags". Proceedings of the
+   6th Conference on Robot Learning (CoRL 2022), PMLR Vol. 205, pp. 1712-1722.
+   URL: https://proceedings.mlr.press/v205/gao23a.html (y https://openreview.net/forum?id=vH4q5w5ZgU)
+   - Aporte aplicable sin RL: Modela la bolsa plastica mediante keypoints estructurales (asas/cuello superior vs base) y muestra
+     que un agarre de un solo efector para izar la bolsa en postura vertical requiere sujetar el cuello/asa superior.
+4) Seo, J., Wagner, J., Raicura, A., & Kim, J. (2023). "Vision and Control for Grasping Clear Plastic Bags". arXiv:2305.07631.
+   URL: https://arxiv.org/abs/2305.07631
+   - Aporte sin RL: En un robot de 1 brazo con pinza paralela (Sawyer), compara un metodo clasico sin aprendizaje (bordes Canny
+     + contornos de altura en imagen de profundidad + filtrado por clustering) contra una red supervisada, logrando agarres
+     descendentes alineando el angulo en planta de la pinza con el pliegue/cresta mas alta de la bolsa.
+
+2.4 SINTESIS PARA NUESTRO ROBOT (PIPER 6-DOF + ELEVADOR): ASA vs NUDO vs CUERPO, ORIENTACION Y APERTURA
+- Donde agarrar (Asa vs Nudo vs Cuerpo):
+  * En bolsas de basura atadas (TakeOutGarbage, LeagueRequirements.tex:175) y bolsas de compras con asas verticales rigidas
+    (HelpMeCarry, Scenario.tex:125), el punto optimo para un solo brazo es el PICO SUPERIOR (nudo/cuello o asa vertical), unos
+    3 a 5 cm por debajo de top_z.
+  * Por que NO por el cuerpo lateral/medio: el cuerpo de una bolsa inflada o con objetos suele superar los 105 mm de apertura
+    maxima de nuestra pinza (GRIPPER_OPEN_MM = 105.0, arm_manipulation.py:77); los dedos empujan el plastico sin lograr
+    cierre de forma (form-closure) o lo perforan/rasgan (penalizado con -50 pts en TakeOutGarbage.tex). En cambio, el cuello
+    atado o las asas miden 5-30 mm de ancho y ofrecen bloqueo mecanico al cerrar la pinza por debajo del nudo.
+- Aproximacion (Desde arriba vs Inclinada) y orientacion de la pinza:
+  * Nuestra pose actual FLOOR_PREGRASP_DEG = [-15.4, 161.1, -112.4, 83.9, 78.0, -50.9] (bag_task.py:13,
+    arm_manipulation.py:67) deja la pinza a 24 grados de la vertical, inclinada hacia adelante/afuera, y _grasp_core
+    (arm_manipulation.py:782-807) prueba inclinaciones adicionales de (0, 8, 16, 24, 30) grados alrededor del vector de
+    aproximacion.
+  * Mantener la aproximacion cuasi-vertical inclinada (~20-25 deg respecto de la vertical) es MEJOR para nuestro robot que 0 deg
+    puro porque: (a) extiende el alcance en X a REACH_X = 0.58 m alejando la bolsa 0.14 m del chasis (bag_task.py:16,80),
+    y (b) permite que la camara de muneca DaBai vea hacia abajo antes del descenso sin que el eslabon J5 choque con el cuerpo
+    de la bolsa.
+  * Para la rotacion de muneca (J6, yaw del cierre de dedos): si la nube de puntos del tercio superior (z > top_z - 0.06 m)
+    muestra elongacion en XY (eigenvalues[1]/eigenvalues[0] >= 1.8, como en geometric_grasps.py:301-308), orientar el eje de
+    cierre de los dedos PERPENDICULAR al eje largo de la cresta/asa; si es isotropica (nudo redondo), mantener la orientacion de
+    FLOOR_PREGRASP_DEG para minimizar rotacion de J6.
+- Cuanto abrir y cuanto cerrar:
+  * Abrir al maximo: GRIPPER_OPEN_MM = 105.0 mm (arm_manipulation.py:77) para maximizar el margen de captura (~+-5 cm) ante
+    errores de posicionamiento de la bolsa.
+  * Cerrar a 0.0 mm (con limite de esfuerzo 1.0 - 1.5 N*m) cuando object == "bag" (R1), NUNCA a 50.0 mm.
+
+================================================================================
+SECCION 3: CONFIRMACION DEL AGARRE SIN SENSOR DE FUERZA (PIPER SDK Y RUTINA)
+================================================================================
+
+3.1 QUE PUBLICA REALMENTE EL BRAZO PIPER (VERIFICADO EN piper_sdk@b847e53 y piper_ros@ac41fcb, LICENCIA MIT)
+Archivos leidos completos:
+- /tmp/home_research/piper_sdk/README.MD (L400-415) y assets/Q&A.MD (L52-75)
+- /tmp/home_research/piper_sdk/assets/V2/INTERFACE_V2.MD (L570-690)
+- /tmp/home_research/piper_sdk/piper_sdk/interface/piper_interface_v2.py (L960-1080)
+- /tmp/home_research/piper_sdk/piper_sdk/protocol/protocol_v2/piper_protocol_v2.py (L110-165)
+- /tmp/home_research/piper_sdk/piper_sdk/piper_msgs/msg_v2/feedback/arm_feedback_high_spd.py (L1-96)
+- /tmp/home_research/piper_sdk/piper_sdk/piper_msgs/msg_v2/feedback/arm_feedback_low_spd.py (L1-140)
+- /tmp/home_research/piper_sdk/piper_sdk/piper_msgs/msg_v2/feedback/arm_feedback_gripper.py (L1-125)
+- /tmp/home_research/piper_ros/src/piper/scripts/piper_ctrl_single_node.py (L130-335)
+
+Datos exactos verificados en el codigo fuente del SDK y nodo ROS de AgileX Piper:
+1) Frecuencia de publicacion:
+   - Bus CAN a 1,000,000 bps (1 Mbps), tasa total de tramas ~3040 fps por brazo (Q&A.MD:71).
+   - Cada mensaje individual de feedback se publica a 200 Hz (README.MD:407; piper_ctrl_single_node.py:132 corre a 200 Hz).
+2) Feedback de alta velocidad de articulaciones (CAN ID 0x251..0x256, GetArmHighSpdInfoMsgs(), arm_feedback_high_spd.py:11-96):
+   - motor_speed: int16, resolucion 0.001 rad/s.
+   - current: int16 con signo (ConvertToNegative_16bit en piper_protocol_v2.py:130), resolucion 0.001 A (1 mA).
+   - pos: int32, resolucion 0.001 rad (INTERFACE_V2.MD:590).
+   - effort: calculado en cal_effort() (arm_feedback_high_spd.py:76-96) linealmente desde current:
+     * Articulaciones J1, J2, J3 (0x251..0x253): COEFF_1_3 = 1.18125 -> effort = current * 1.18125 en 0.001 N*m
+       (resolucion 1.18 mN*m).
+       ADVERTENCIA DE FIRMWARE (Q&A.MD:52-55): en versiones de firmware S-V1.8-2 y anteriores, el par real en J1-J3 es
+       4 * effort (4.725 N*m/A), mientras que en J4-J6 es 1 * effort. Como nuestra confirmacion usa DIFERENCIAS de par
+       (delta_tau = tau_con_bolsa - tau_vacio), el factor constante no afecta si el umbral se calibra sobre la misma lectura.
+     * Articulaciones J4, J5, J6 (0x254..0x256): COEFF_4_6 = 0.95844 -> effort = current * 0.95844 en 0.001 N*m
+       (resolucion 0.96 mN*m).
+3) Feedback de baja velocidad de drivers (CAN ID 0x261..0x266, GetArmLowSpdInfoMsgs(), arm_feedback_low_spd.py:7-140):
+   - vol (0.1 V), foc_temp (1 C), motor_temp (1 C), bus_current (0.001 A; ojo: en J4-J6 los motores de 1.5 kg
+     no muestrean corriente de bus y envian 0, arm_feedback_low_spd.py:24,80 - usar siempre high_spd.current / effort!).
+   - foc_status: incluye bits de collision_status (bit 4) y stall_status (bit 7) (arm_feedback_low_spd.py:67-75).
+4) Feedback de la pinza (CAN ID 0x2A8, GetArmGripperMsgs(), arm_feedback_gripper.py:4-125):
+   - grippers_angle: int32, apertura lineal en 0.001 mm (en piper_ctrl_single_node.py:258 se divide por 1000000
+     para pasar a metros).
+   - grippers_effort: int16 con signo (piper_protocol_v2.py:121), par de apriete en 0.001 N*m (1 mN*m). El comando
+     GripperCtrl acepta 0..5000 (0..5.0 N*m), y piper_ctrl_single_node.py:153,324 usa 1.0 N*m (1000) por defecto.
+   - foc_status: bits driver_overcurrent (bit 2), sensor_status (bit 4), driver_error_status (bit 5), homing_status (bit 7).
+
+3.2 LECCION DE ROBORREGOS Y TECH UNITED SOBRE ESFUERZOS ARTICULARES
+- En RoBorregos (pick_profiles.yaml:44-52, arm.py:680-793), documentan que durante un descenso el par gravitatorio de J2
+  deriva varios N*m por el cambio de geometria, por lo que comparar contra una linea base estatica previa al movimiento genera
+  falsos positivos. En cambio:
+  * Para detectar CONTACTO al bajar (ForceGuardedDescentPick), ignoran J1, J2 y J6 (ignore_joints: [0, 1, 5]) y miran un
+    salto brusco (jump > 2.5) en una ventana movil corta (jump_window = 0.3 s) sostenido por 3 muestras a 50 Hz.
+  * Para detectar PESO DEL OBJETO al subir (como hace Tech United en pick_up.py:137-162), la comparacion debe hacerse EN LA
+    MISMA CONFIGURACION ARTICULAR (o entre dos poses casi identicas en reposo: ej. en grasp_tcp justo antes de cerrar la
+    pinza vs en grasp_tcp + 3 cm en Z con el brazo quieto tras 0.4 s de asentamiento), donde el par gravitatorio del propio
+    brazo es prácticamente constante y toda diferencia en J2 y J3 proviene del peso m * g * L_horiz de la bolsa!
+- En bag_task.py:16, el brazo en FLOOR_PREGRASP_DEG tiene un alcance horizontal REACH_X = 0.58 m desde base_link (~0.45 m
+  desde el hombro J2). Una bolsa liviana de m = 0.15 kg (1.47 N, apenas por encima del umbral minimal_weight = 0.10 kg de
+  Tech United pick_up.py:82) genera un par adicional en el hombro de ~1.47 N * 0.45 m = 0.66 N*m (que con el factor 4x de
+  firmware en J2/J3 de Piper equivale a ~0.165 N*m en la lectura cruda effort o ~140 mA en current, muy por encima de la
+  resolucion de 1 mA!).
+
+3.3 RUTINA CONCRETA PROPUESTA PARA NUESTRO ROBOT (CON UMBRALES INICIALES MARCADOS COMO HIPOTESIS)
+En arm_manipulation.py (_grasp_core y pick_blocking), cuando label == "bag":
+- Paso 1 (Baseline en el fondo antes de cerrar):
+  Al llegar a grasp_tcp con la pinza abierta (105 mm), esperar 0.2 s y tomar N = 10 muestras (durante 0.2 s) de
+  joints_effort_nm[1] (J2) y joints_effort_nm[2] (J3). Calcular las medianas tau2_pre, tau3_pre.
+- Paso 2 (Cierre de pinza a 0 mm con torque controlado):
+  Enviar cierre a GRIPPER_CLOSE_BAG_MM = 0.0 mm (con esfuerzo de comando 1.0 - 1.5 N*m). Esperar 1.5 s (arm_manipulation.py:819).
+  Leer width_mm = self.gripper_mm y grip_tau = abs(self.gripper_effort_nm).
+- Paso 3 (Izado corto de 5 cm y medicion post-lift):
+  Ejecutar el lift vertical cartesiano de 0.05 m (grasp_tcp + [0, 0, 0.05]), esperar 0.4 s para que decaiga el transitorio
+  inercial, y tomar N = 10 muestras de joints_effort_nm[1..2], gripper_mm y gripper_effort_nm. Calcular tau2_post,
+  tau3_post, y delta_tau_j23 = hypot(tau2_post - tau2_pre, tau3_post - tau3_pre).
+- Paso 4 (Regla de decision multimodal - UMBRALES MARCADOS COMO HIPOTESIS A CALIBRAR EN EL ROBOT):
+  * Criterio A (Pinza mordiendo espesor con par):
+    width_mm >= 1.5 mm (HIPOTESIS) Y width_mm <= 95.0 mm Y grip_tau >= 0.35 N*m (HIPOTESIS).
+    (Si la pinza cerro a < 1.5 mm con grip_tau < 0.15 N*m, cerro en el aire sin morder siquiera dos capas de plastico).
+  * Criterio B (Carga gravitatoria en hombro/codo al despegar la bolsa del suelo):
+    delta_tau_j23 >= 0.12 N*m (HIPOTESIS en unidades de cal_effort() de Piper; equivale a ~100 mA de cambio en J2/J3,
+    correspondiente a ~100-150 g de carga suspendida a 0.45 m de brazo de palanca).
+  * Criterio C (Confirmacion visual en camara de muneca DaBai al subir el torso):
+    Como la DaBai es RGB funcional a cualquier distancia (solo su profundidad falla a <30 cm), tras izar la bolsa 5 cm (o al
+    subir el torso a 0.0 m), verificar si wrist_detector ve una caja "bag" ocupando la parte inferior central de la imagen
+    (cy > 0.55 * H, area > 8% de la imagen - HIPOTESIS) o si al mirar con la camara de cabeza la bolsa ya no esta en el piso
+    (patron _confirm_pick_by_vision de RoBorregos pickandplace_task_manager.py:469-483).
+  * Regla combinada:
+    Declarar EXITO si se cumple (Criterio A y Criterio B) o (Criterio A y Criterio C) o (width_mm > 8.0 mm).
+    Declarar AGARRE VACIO (r.error = "grasp_empty") si width_mm < 1.5 mm Y grip_tau < 0.20 N*m Y delta_tau_j23 < 0.08 N*m.
+
+================================================================================
+SECCION 4: RECUPERACION CUANDO FALLA Y ARQUITECTURA DE MISION
+================================================================================
+
+4.1 COMO ESTRUCTURAN LA RECUPERACION Y EL HANDOVER OTROS EQUIPOS (VERIFICADO)
+1) Tech United (tue-robotics/tue_robocup@5bbf7bb, SMACH en pick_up.py y get_furniture_from_operator_pose.py):
+   - Correccion del operador por voz en bucle de 30 s (get_furniture_from_operator_pose.py:99-146, 211-216):
+     * Si person.position.z > 3.5 m: "Please stand CLOSER to me, so I can see your full body" (L100-102).
+     * Si person.position.z < 1.5 m: "Please stand FURTHER away from me, so I can see your full body" (L104-106).
+     * Si "is_pointing" not in person.tags: "Please point with your arm stretched" (L108-110).
+   - Reintento local de agarre (GrabTrash, pick_up.py:117-163):
+     * Reintenta en el lugar mientras weight_object < 0.1 kg y try_current < try_num, anunciando "I failed to pick up the
+       trash, let me try again" (L122).
+   - Plan B de Handover (PickUpTrash -> ANNOUNCE_PICKUP_FAIL -> ASK_HANDOVER, pick_up.py:205-269, 326-362):
+     * Anuncia: "Unfortunately I could not pick up the trash myself, let's go to plan B!" (L332-333).
+     * Pone el brazo en handover_to_human (L215, L233), abre la pinza (L236), dice: "Please hand over the trash by putting
+       the top of the bag between my grippers and push firmly into my camera as will be shown on my screen." (L243-245),
+       muestra imagen instructiva en pantalla (beun_picture.png, L248-256), espera hasta timeout = 15 s el detector de
+       handover por fuerza (CloseGripperOnHandoverToRobot, manipulation.py:198-245), y aun si expira el timeout cierra la
+       pinza (manipulation.py:241-244), baja el brazo a reset y dice: "I received the thrash bag. I will throw it away,
+       please move away." (pick_up.py:347-356).
+2) RoBorregos (RoBorregos/home2@1a0caeb, FSM en Python + subtask_managers):
+   - Reintentos por contadores independientes en la FSM (doing_laundry_task_manager.py:54-57, 173-186, 207-215):
+     * Separa basket_scan_attempts y basket_pick_attempts (ATTEMPT_LIMIT = 3, L19). Si pick_object falla, no aborta:
+       incrementa basket_pick_attempts y vuelve a escanear/intentar hasta 3 veces.
+   - Reintentos internos del pipeline de pick (pick.py:164-174, 486-536):
+     * Para cada pose genera alternativas desplazadas a lo largo del eje de aproximacion (num_alternatives, alternative_step,
+       pick.py:528-535), y si falla la estrategia geometrica cae en cascada a GPD (_fall_back_or_fail, pick.py:194-210).
+   - Guardia anti-caida antes de reintentar (_ensure_gripper_empty, pickandplace_task_manager.py:791-830):
+     * Nunca abre la pinza para un nuevo pick si un intento previo dejo algo a medias sin antes hacer un place controlado.
+3) LASR (LASR-at-Home/Base@2a3ced2, GPL-3.0, citado en equipos_bolsa.txt:90):
+   - En HRI/state_machine.py:179 usa un estado explicito ReceiveObject(object_name="bag") como fallback.
+
+4.2 COMO ENCAJA EN NUESTRO PLAN DE command_parser.py Y node.py (LISTA DE PASOS PROPUESTA)
+En nuestro codigo (command_parser.py y node.py):
+- MissionNode.run_plan (node.py:92-160) YA implementa:
+  1) retries por paso (node.py:140: attempts = int(st.get("retries", 0)) + 1).
+  2) on_failure: "abort" (default, salta a recovery), "continue" (sigue al paso siguiente guardando step_states[sid] =
+     "FAILED"), y "avisar" (dice "I could not complete that step, continuing." y sigue, node.py:162-177).
+  3) Ejecucion condicional st["if"] = {"step": ref_id, "state": "FAILED" | "SUCCEEDED"} (node.py:124-137, _should_run L262-269):
+     si la condicion no se cumple, el paso queda "SKIPPED".
+- Hoy _fetch_pointed_bag (command_parser.py:178-195) genera 10 pasos lineales sin usar on_failure="continue" ni st["if"].
+- Ademas, hoy cuando pick_object falla en el intento 1 y hace su retry=1 (command_parser.py:193), repite h_pick con EL
+  MISMO self.bag_memory y con el torso ya abajo en for_bag, sin volver a medir con la muneca (remember_bag)!
+
+LISTA DE PASOS PROPUESTA PARA _fetch_pointed_bag + _drop_bag EN command_parser.py:
+  Paso 1: approach_person {} (timeout=120)
+  Paso 2: speak {"text": "Please stand in front of me and point at the bag with your arm stretched."} (recover=False)
+  Paso 3: find_pointed_bag {} (retries=2, timeout=45)
+          -> En node.py:h_find_bag, si el intento 1 o 2 falla, emitir por voz la correccion especifica segun el motivo de
+             bag_finder.py (acercarse si >3.0 m, alejarse si <1.2 m, estirar el brazo hacia abajo si angulo <25 deg).
+  Paso 4: arm_pose {"pose": "pre_grasp_floor"} (timeout=60)
+  Paso 5: approach_bag {} (retries=1, timeout=240)
+          -> Navega a stand_pose(..., extra_back_m=0.40), refina con camara de cabeza (refine_bag) y re-navega si se movio
+             >= 0.03 m.
+  Paso 6: dock_bag {} (timeout=30)
+          -> Avanza hasta dejar la bolsa a REACH_X = 0.58 m, con la compuerta de seguridad R6 (min clearance >= 0.49 m desde
+             base_link, o >= 0.25 m desde el frente del chasis).
+  Paso 7: remember_bag {} (timeout=30)
+          -> Mide con la muneca (con las compuertas R1-R3 de bag_vision.py) o conserva self.bag_target de la cabeza.
+  Paso 8: set_torso {"for_bag": True} (timeout=120)
+  Paso 9 (id = pick_1): pick_object {"object": "bag", "use_bag_target": True} (retries=0, timeout=90, on_failure="continue")
+          -> Intento 1 de agarre autonomo con confirmacion multimodal (R1+R2).
+  Paso 10 (CONDICIONAL if: {"step": pick_1, "state": "FAILED"}):
+          set_torso {"target_m": 0.0} (timeout=120, on_failure="continue")
+          -> Sube el torso para volver a ver la bolsa desde arriba si el primer intento la movio.
+  Paso 11 (CONDICIONAL if: {"step": pick_1, "state": "FAILED"}):
+          remember_bag {"re_refine_head": True} (timeout=30, on_failure="continue")
+          -> Re-mide la posicion de la bolsa con cabeza/muneca antes del segundo intento.
+  Paso 12 (CONDICIONAL if: {"step": pick_1, "state": "FAILED"}):
+          set_torso {"for_bag": True} (timeout=120, on_failure="continue")
+  Paso 13 (id = pick_2, CONDICIONAL if: {"step": pick_1, "state": "FAILED"}):
+          pick_object {"object": "bag", "use_bag_target": True} (retries=0, timeout=90, on_failure="continue")
+          -> Intento 2 de agarre autonomo con nueva medicion.
+  Paso 14 ( subida normal): set_torso {"target_m": 0.0} (timeout=120)
+  Paso 15 (PLAN B HANDOVER, CONDICIONAL if: {"step": pick_2, "state": "FAILED"}):
+          speak {"text": "I could not pick up the bag from the floor. Please place the bag handle between my gripper fingers. I will close my gripper in five seconds, please be careful."} (recover=False)
+  Paso 16 (PLAN B HANDOVER, CONDICIONAL if: {"step": pick_2, "state": "FAILED"}):
+          handover_bag {"wait_s": 5.0} (timeout=30)
+          -> En node.py:h_handover_bag: pone el brazo quieto en pose Carry (o pre_grasp_floor con torso en 0.0 m) con
+             pinza abierta a 105 mm, espera 5.0 s (o cierre anticipado si gripper_effort_nm detecta empuje suave manteniendo
+             el brazo inmovil, cumpliendo HRIC.tex:102-108), cierra la pinza a 0.0 mm y anuncia "Thank you, I have the bag.
+             Please step back.".
+  Paso 17+: Navegacion al destino (navigate_to_location / approach_object) y _drop_bag autonomo (set_torso(-0.45) ->
+            arm_pose("pre_grasp_floor") que abre la pinza -> espera 1.5 s -> set_torso(0.0) -> arm_pose("home")).
+
+================================================================================
+SECCION 5: BASE Y SEGURIDAD (DONDE PARAR Y OBSTACULOS BAJOS CON LIDAR A 38 CM)
+================================================================================
+
+5.1 ANALISIS GEOMETRICO DE NUESTRO ROBOT EN bag_task.py Y node.py (VERIFICADO)
+Archivo leido completo: _contexto_bolsa/bag_task.py (L1-164) y _contexto_bolsa/node.py (L471-515).
+Geometria verificada de nuestro robot:
+- CHASSIS_FRONT_M = 0.24 m (chassis_length = 0.48 / 2, bag_task.py:17): el frente fisico de la base esta a +24 cm de base_link.
+- LASER_X_M = 0.22 m (bag_task.py:18): el lidar 2D esta a +22 cm de base_link (2 cm detras del frente del chasis) y a 38 cm
+  del piso (bag_task.py:18).
+- REACH_X = 0.58 m, REACH_Y = 0.12 m (bag_task.py:16): en FLOOR_PREGRASP_DEG, el centro de la pinza (TCP) queda a +58 cm
+  adelante y +12 cm a la izquierda de base_link.
+- DEFAULT_BAG_RADIUS_M = 0.20 m (bag_task.py:20).
+- DOCK_DISTANCE_M = 0.40 m, DOCK_SPEED_MPS = 0.08 m/s (bag_task.py:30, node.py:55).
+- Donde para hoy el robot:
+  1) h_approach_bag (node.py:471-491): llama stand_pose(robot_xy, bag_xy, extra_back_m=0.40) (bag_task.py:49-74).
+     Como grasp.reach_x = 0.58 m y extra_back_m = 0.40 m, la distancia radial objetivo desde base_link al centro de la
+     bolsa es R = hypot(0.58 + 0.40, 0.12) = hypot(0.98, 0.12) = 0.987 m, con un angulo de guiñada yaw = atan2(dy, dx) -
+     atan2(0.12, 0.98) (~ -7.0 deg) para alinear el brazo izquierdo (+12 cm en Y) con la bolsa!
+     En esa posicion (x = 0.98 m), el frente del chasis (0.24 m) queda a 0.98 - 0.20 - 0.24 = 0.54 m del borde de la bolsa,
+     donde la RealSense D435 de la cabeza la ve completa sin recorte inferior (allow_clipped=False, node.py:482) para
+     ejecutar refine_bag. Si refine_bag mueve la estimacion >= BAG_RENAV_M (0.03 m), re-navega una vez al nuevo stand_pose.
+  2) h_dock_bag (node.py:493-515): avanza en linea recta por odometria DOCK_DISTANCE_M = 0.40 m a 0.08 m/s.
+     Al terminar h_dock_bag, base_link queda teoricamente a 0.58 m del centro de la bolsa (reach_x = 0.58 m), por lo que
+     la holgura entre el frente del chasis (0.24 m) y el borde de una bolsa de 0.20 m de radio es:
+     base_clearance() = 0.58 - 0.20 - 0.24 = 0.14 m (14 cm, bag_task.py:77-82).
+
+5.2 EL RIESGO REAL CON EL LIDAR A 38 CM Y COMO EVITAR PISAR LA BOLSA
+- En h_dock_bag (node.py:500-508), el unico freno de emergencia durante los 0.40 m de avance es:
+  if self.nav.front_range() <= stop_at: donde stop_at = dock_stop_range() = CHASSIS_FRONT_M (0.24) - LASER_X_M (0.22) +
+  MIN_BASE_CLEARANCE_M (0.05) = 0.07 m (bag_task.py:93-95).
+- Pero front_range() lee /scan (el lidar a 38 cm de altura). Una bolsa de basura o de compras en el suelo suele tener
+  15 a 35 cm de altura: es 100% invisible para /scan.
+- Cuando ocurre el choque/pisada:
+  a) Si en h_approach_bag Nav2 da por alcanzado el goal unos 15-20 cm mas cerca de la bolsa (o si el operador apunto al borde
+     trasero de la bolsa o refine_bag fallo y devolvio None), y luego h_dock_bag suma SIEMPRE 0.40 m fijos de avance, el
+     frente del chasis (0.24 m) avanza hasta 0.38 m del centro de la bolsa, metiendose dentro del radio de 0.20 m de la
+     bolsa y empujandola debajo del chasis (GROUND_TO_BASE_LINK_M = 0.06 m).
+  b) Si hay otra bolsa u obstaculo bajo (<38 cm) entre 0.98 m y 0.58 m frente al robot.
+
+5.3 QUE HACEN OTROS EQUIPOS PARA OBSTACULOS BAJOS Y DOCKING (VERIFICADO)
+1) RoBorregos (RoBorregos/home2@1a0caeb):
+   - En navegacion general (navigation/packages/nav_main/config/omni_config/nav2_omni.yaml:174, 195-243): agregan una capa 3D
+     SpatioTemporalVoxelLayer (rgbd_obstacle_layer) alimentada por la nube de puntos de la camara de profundidad (/point_cloud),
+     con voxel_decay: 2.0 s (para que marcas fantasma se limpien solas aunque el robot este quieto) y min_obstacle_height
+     ajustado sobre el piso (0.15 m en la base anterior, 0.30 m en omni_config L223).
+   - En manipulacion (manipulation/packages/pick_and_place/pick_and_place/robot/arm.py:440-450): la camara de muneca alimenta
+     el octomap 3D de MoveIt, con clear_octomap() antes de cada fase.
+   - En docking (navigation/packages/nav_main/scripts/table_docker.py:218-259): detect_source = "both" combina /scan y
+     /point_cloud (det_min_height = 0.20 m), mide todas las distancias desde la parte mas adelantada del robot
+     (front_offset = 0.27 m, L251), fija target_distance = 0.10 m y un piso duro min_safe = 0.19 m (L254-255).
+2) Tech United (tue-robotics/tue_robocup@5bbf7bb):
+   - En control_to_trash_bin.py:23-54 y pick_up.py:321-324: NO avanza una distancia fija incremental a ciegas; calcula en
+     marco map el vector unitario desde el objetivo (trash_bin_position) hacia la posicion actual real de la base
+     (base_position) y comanda la pose objetivo a radius = 0.40 m del centro del objetivo con yaw_offset = -0.2 rad
+     usando ControlToPose cerrado en posicion.
+
+5.4 RECOMENDACION DE SEGURIDAD PARA NUESTRO ROBOT SIN TOCAR LA NAVEGACION PROTEGIDA
+- No tocar la configuracion de Nav2 ni los costmaps protegidos (cualquier cambio a Nav2/costmaps queda marcado como DECISION
+  DEL USUARIO / NIVEL C).
+- Lo que SI podemos hacer limpiamente en node.py (h_dock_bag, L493-515) y bag_task.py:
+  1) Antes de iniciar el bucle while self.nav.odom_distance_from(x0, y0) < ... en h_dock_bag (node.py:505), consultar
+     bag_base = self._bag_in_base() (que ya existe en node.py:453-469 y transforma self.bag_target de map a base_link).
+  2) Si bag_base es valido, la distancia longitudinal actual del centro de la bolsa a base_link es bx = bag_base[0].
+     En vez de avanzar DOCK_DISTANCE_M = 0.40 m fijos, calcular el avance necesario para dejar la bolsa exactamente en
+     REACH_X = 0.58 m:
+     needed_m = bx - bag_task.FLOOR_GRASP.reach_x (bx - 0.58), acotado a [0.0, DOCK_DISTANCE_M (0.40)].
+     Esto imita la propiedad de Tech United (ControlToTrashBin): si Nav2 paro 12 cm mas adelante en h_approach_bag,
+     h_dock_bag solo avanza 0.28 m en vez de 0.40 m, dejando la bolsa exactamente a 0.58 m de base_link (0.14 m de
+     holgura respecto del frente del chasis en 0.24 m)!
+  3) Opcionalmente (Nivel B/C), antes de empezar a mover en h_dock_bag, pedir un cuadro rapido a la RealSense D435 de la cabeza
+     (que ya mira a la bolsa tras h_approach_bag) o verificar que en el sector frontal bajo (z entre 0.05 m y 0.38 m en
+     base_link, invisible al lidar) no exista ningun obstaculo a menos de bx - 0.25 m.
+
+================================================================================
+EVIDENCIA Y ESTADO DE VERIFICACION (VERIFICADO / INFERIDO / NO ENCONTRADO)
+================================================================================
+
+A. VERIFICADO (LEIDO DIRECTAMENTE EN CODIGO O DOCUMENTACION OFICIAL)
+- Nuestro codigo (_contexto_bolsa/, lectura 100% completa):
+  * bag_task.py:13-95: FLOOR_PREGRASP_DEG (pinza a 24 deg de la vertical), REACH_X=0.58, REACH_Y=0.12,
+    CHASSIS_FRONT_M=0.24, LASER_X_M=0.22 (lidar a 38 cm de altura), DEFAULT_BAG_RADIUS_M=0.20, DOCK_DISTANCE_M=0.40,
+    base_clearance() = 0.14 m, dock_stop_range() = 0.07 m.
+  * arm_manipulation.py:77, 146-156, 436-471, 751-824: GRIPPER_OPEN_MM = 105.0, GRIPPER_CLOSE_MM = 50.0; _status_cb solo
+    lee joints_deg y gripper_mm; pick_blocking rechaza cualquier agarre con width <= 55.0 mm como "agarre vacio";
+    _grasp_core baja con candidatos de tilt (0, 8, 16, 24, 30 deg), cierra a 50.0 mm, espera 1.5 s y sube 3 cm.
+  * command_parser.py:178-204, 433-449, 564-592: _fetch_pointed_bag y _drop_bag compilados como 10 pasos lineales;
+    soporte ya implementado para pasos condicionales st["if"] y on_failure.
+  * node.py:92-177, 342-355, 398-515: run_plan, h_pick, h_find_bag, h_remember_bag, h_approach_bag, h_dock_bag.
+  * bag_vision.py:1-281, bag_finder.py:1-300, wrist_detector.py:1-215.
+- Rulebook RoboCup@Home (RoboCupAtHome/RuleBook@ebdf34d en /tmp/home_research/rulebook, lectura directa):
+  * CHANGELOG.md:8-45, pages/introduction/Leagues.tex:9-20: liga unica OPL en 2026.
+  * pages/general_rules/TeamRegistration.tex:46-70: requisitos de video de cualificacion (<=10 min, resolver >=1 test del
+    rulebook actual o anterior).
+  * pages/tasks/old/TakeOutGarbage.tex:1-78 y scoresheets/old/TakeOutGarbage.tex:1-23: +300 pts por bolsa en zona de
+    recoleccion (x2), +100 pts tapa, +200 pts ambas juntas, -100 pts fuera de zona, -50 pts volcar tacho/romper bolsa, -250 pts
+    Deus ex Machina por recibir bolsa via handover.
+  * pages/appendices/LeagueRequirements.tex:175 y pages/general_rules/Scenario.tex:125: bolsas de basura atadas con contenido
+    liviano; bolsas de compras livianas con asas verticales rigidas.
+  * pages/tasks/old/HelpMeCarry.tex:1-105, pages/tasks/HumanRobotInteractionChallenge.tex:47, 70-73, 101-108,
+    pages/tasks/PickAndPlaceChallenge.tex:18, 68, 107-110, pages/general_rules/ContinueRules.tex:21-79,
+    pages/general_rules/Procedure.tex:147-180.
+- AgileX Piper SDK y ROS (agilexrobotics/piper_sdk@b847e53 y agilexrobotics/piper_ros@ac41fcb en /tmp/home_research/, MIT):
+  * README.MD:407, assets/Q&A.MD:52-75, assets/V2/INTERFACE_V2.MD:570-690.
+  * arm_feedback_high_spd.py:11-96, arm_feedback_low_spd.py:7-140, arm_feedback_gripper.py:4-125,
+    piper_protocol_v2.py:118-165, piper_ctrl_single_node.py:132, 217-263, 324.
+- Tech United (tue-robotics/tue_robocup@5bbf7bb en /tmp/home_research/tue_robocup, sin LICENSE = solo estudio):
+  * challenge_take_out_the_garbage/src/challenge_take_out_the_garbage/pick_up.py:1-381, take_out_the_garbage.py:1-168,
+    control_to_trash_bin.py:1-65, drop_down.py:1-152.
+  * challenge_hand_me_that/src/challenge_hand_me_that/get_furniture_from_operator_pose.py:1-228.
+  * robot_skills/src/robot_skills/functionalities/arm/guarded_motion.py:1-91.
+  * robot_smach_states/src/robot_smach_states/manipulation/manipulation.py:95-260.
+- RoBorregos (RoBorregos/home2@1a0caeb en /tmp/home_research/home2, sin LICENSE = solo estudio):
+  * task_manager/scripts/test/test_basket_pick.py:1-66.
+  * manipulation/packages/perception_3d/perception_3d/geometric_grasps.py:1-690.
+  * manipulation/packages/pick_and_place/pick_and_place/pipelines/strategies.py:1-298, pick.py:1-581, place.py:1-515.
+  * manipulation/packages/pick_and_place/pick_and_place/robot/arm.py:1-1079.
+  * manipulation/packages/pick_and_place/config/pick_profiles.yaml:1-106.
+  * manipulation/packages/arm_pkg/src/gpd_service.cpp:1-472.
+  * manipulation/packages/xarm_utils/xarm_utils/grasp_detector.py:1-52.
+  * task_manager/task_manager/utils/grasp_confirmation.py:1-24, task_manager/scripts/pickandplace_task_manager.py:80-550, 660-850,
+    task_manager/scripts/doing_laundry_task_manager.py:1-360, task_manager/scripts/misc/help_me_carry.py:1-300.
+  * navigation/packages/nav_main/config/omni_config/nav2_omni.yaml:170-295, scripts/table_docker.py:1-400.
+  * docs/ai/hric_vision_architecture.md:149-180, docs/task_manager/ppc/time_strategy_2026.md:150-290.
+
+B. INFERIDO (DEDUCCIONES TECNICAS Y PROPUESTAS PARA NUESTRO ROBOT)
+- Que pick_blocking (arm_manipulation.py:464) fallara sistematicamente al agarrar el cuello/asa de una bolsa plastica porque
+  GRIPPER_CLOSE_MM = 50.0 deja una abertura de 5 cm y rechaza <= 55.0 mm como vacio (inferido directamente de las constantes
+  del codigo y del espesor fisico de una bolsa de 2-15 mm; aun no ejecutado con una bolsa en el Piper).
+- Los umbrales iniciales propuestos para la rutina de confirmacion en el Piper (width_mm >= 1.5 mm, grip_tau >= 0.35 N*m,
+  delta_tau_j23 >= 0.12 N*m, area_muneca > 8%): son HIPOTESIS fisicamente fundamentadas en la geometria de REACH_X = 0.58 m
+  y los coeficientes de arm_feedback_high_spd.py:85-86, que requieren calibracion en seco/con bolsas de 100-500 g en el robot.
+- El descuento de 4 cm debajo de top_z (max(GROUND_Z + 0.03, top_z - 0.04)) para morder el nudo/asa de la bolsa (inferido de
+  grasp_z_tweak = -0.05 m en RoBorregos pick_profiles.yaml:60 y del descenso de Tech United pick_up.py:146).
+
+C. NO ENCONTRADO / NO VERIFICADO
+- Ningun equipo revisado (RoBorregos/home2, tue_robocup, LASR, MERLIN2, FOODE, tiago_ws) implementa un detector 2D/3D
+  especifico del "asa" o "nudo" de una bolsa de basura; Tech United baja por contacto/altura fija sobre el tacho y RoBorregos
+  toma el pico Z (peak) o el borde cercano (rim) de la nube de puntos.
+- No pude verificar que publica hoy el nodo piper_arm_controller en la Jetson dentro del JSON de /arm/status porque el codigo
+  de la Jetson no esta en _contexto_bolsa/ y las reglas prohiben conectarse o explorar fuera de las rutas permitidas; solo
+  verifique lo que _status_cb lee en arm_manipulation.py:146-156 y lo que piper_sdk / piper_ros proveen en el bus CAN.
+- El acceso directo con curl a sitios externos esta bloqueado por hook del entorno; los 4 papers de deformable grasping sin RL
+  (Seita et al. 2021, Chen et al. AutoBag 2023 arXiv:2210.17217, Gao et al. CoRL 2022 PMLR v205, Seo et al. 2023
+  arXiv:2305.07631) se verificaron a traves de la herramienta search_web sobre sus entradas en arXiv y PMLR.

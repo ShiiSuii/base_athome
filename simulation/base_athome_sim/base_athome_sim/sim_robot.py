@@ -517,6 +517,7 @@ class SimRobot(Node):
             self.pub_bag_detach = self.create_publisher(Empty, gz_model.BAG_DETACH_TOPIC, 10)
             self.bag_top = float(self.bag_map[2])
             self.gz_arm_shown, self.gz_arm_ready = None, False
+            self.gz_moving = False
             self.gz_ready_t = time.time() + 15.0     # la union nace atada al crear la bolsa: soltarla hasta entonces
             sub(Odometry, gz_model.BAG_ODOM_TOPIC, self._gz_bag_odom)
             self.create_timer(0.2, self._gz_people)
@@ -569,6 +570,21 @@ class SimRobot(Node):
             target = (self.bag_map[0] + self.point_err, self.bag_map[1] - self.point_err)
             kp = sim_scene.make_person(person["xy"], (self.base.x, self.base.y), target)["keypoints"]
             threading.Thread(target=self._gz_show_arm, args=(kp[6], kp[10], pointing), daemon=True).start()
+        if self.person_sway and not self.gz_moving:
+            self.gz_moving = True
+            threading.Thread(target=self._gz_move_person, args=(person, pointing and self.gz_arm_ready), daemon=True).start()
+
+    def _gz_move_person(self, person, with_arm):
+        """Lleva el cuerpo visible, y el brazo, a donde estan sus puntos."""
+        try:
+            self._gz_run(gz_model.set_pose_command(GZ_WORLD, "persona", (person["xy"][0], person["xy"][1], 0.81)))
+            if with_arm:
+                kp = person["keypoints"]
+                center, _, pitch, yaw = gz_model.arm_with_hand(kp[6], kp[10])
+                self._gz_run(gz_model.set_pose_command(GZ_WORLD, "brazo_persona", center, pitch, yaw))
+            time.sleep(0.3)
+        finally:
+            self.gz_moving = False
 
     def _gz_show_arm(self, shoulder, wrist, pointing):
         self.gz_arm_ready = False
@@ -779,17 +795,18 @@ class SimRobot(Node):
             d = float(np.linalg.norm(tcp[1] - target))
             dia_mm = self.BAG_KNOT_MM if self.bag_map is not None else 1000.0 * float(self.get_parameter("object_diameter_m").value)
             # Objeto entre los dedos (TCP a < 6 cm): la pinza no puede cerrar por debajo de su diametro
+            holds = d < 0.06
             if self.grasp_slips and not self.bag_in_hand:
-                d = 1.0                # el nudo se escapa: la pinza cierra vacia
+                holds = False          # el nudo se escapa: la pinza cierra vacia
             if self.bag_in_hand and not self.obj_attached:
-                d = 0.0
-            self.arm.grip_block_mm = dia_mm if (d < 0.06 or self.obj_attached) else None
+                holds = True
+            self.arm.grip_block_mm = dia_mm if (holds or self.obj_attached) else None
             closing = self.arm.gripper_mm <= dia_mm + 2.0
             if closing and not self.gripper_was_closed and self.bag_map is not None:     # la verdad, para medir el error
                 self.get_logger().info(f"Pinza cerrada: TCP {np.round(tcp[1], 3).tolist()}, objeto "
                                        f"{np.round(self.obj, 3).tolist()}, a {d * 100:.1f} cm")
             self.gripper_was_closed = closing
-            if not self.obj_attached and self.arm.gripper_mm <= dia_mm + 2.0 and d < 0.06:
+            if not self.obj_attached and self.arm.gripper_mm <= dia_mm + 2.0 and holds:
                 self.obj_attached = True
                 self.get_logger().info("Objeto AGARRADO (sim)")
                 if self.gz and self.bag_map is not None:

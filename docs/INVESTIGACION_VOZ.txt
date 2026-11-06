@@ -1,0 +1,678 @@
+================================================================================
+INVESTIGACION: ARQUITECTURA DE AUDIO, ASR Y TTS ROBUSTO EN ARENA DE COMPETENCIA
+RoboCup@Home Open Platform League (OPL) — Proyecto Base@Home (UruBots)
+Tarea: HOME-86 | Archivo de entrega: docs/INVESTIGACION_VOZ.txt
+Fecha: 2026-11-06 | Autor: Antigravity (dispatched worker, task_0c72d9b4701b)
+Rama de trabajo: ShiiSuii/antigravity-voz | SHA base: a119f61
+================================================================================
+
+RESUMEN EJECUTIVO PRELIMINAR (HALLAZGOS Y 3 RECOMENDACIONES CLAVE)
+--------------------------------------------------------------------------------
+1. RECOMENDACION 1: MIGRAR DE AUDIO BLUETOOTH/HDMI A SALIDA CABLEADA ANALOGICA/USB
+   - Situacion actual: Base@Home utiliza en src/base_athome_perception/speaker.py
+     el metodo `ensure_bluetooth_sink()` que conmuta a sinks BlueZ/Bluetooth, o
+     falla hacia el audio HDMI de la pantalla. En status y mediciones previas
+     (docs/MICROFONO_ASR.md l.161-164) se comprobo que el parlante HDMI se suspende,
+     cortando el comienzo del audio, y Bluetooth sufre latencias erráticas y cortes
+     por congestion RF (2.4 GHz) con cientos de dispositivos en la arena.
+   - Solución de otros equipos: NimbRo y CHARMIE emplean audio cableado directo
+     con fijación forzada de volumen por ALSA/pactl (CHARMIE aplica 150% de ganancia
+     en altavoz de competencia mediante `pactl set-sink-volume @DEFAULT_SINK@ 150%`).
+   - Impacto: Cero latencia de inicio de frase, eliminacion de cortes de turn-taking
+     y reproducibilidad garantizada sin interferencias de radio.
+
+2. RECOMENDACION 2: EXPANDIR LA MATRIZ DE VARIANTES FONETICAS Y DIALOGO ESTRATEGICO
+   - Situacion actual: Base@Home cuenta con `guest_vocabulary.py` y `guest_dialog.py`
+     con fonetica simple tipo metaphone y alias comunes. En `hri_receptionist_challenge.py`
+     se pregunta "Is that correct?" para evitar la penalidad de -40 pts, pero esto
+     sacrifica el bonus de 4x15 = 60 pts por "Not asking non-essential questions"
+     definido en el RuleBook 2026.2 (scoresheets/HumanRobotInteractionChallenge.tex).
+   - Solución de otros equipos: CHARMIE (words_dict.py) sistematizo una tabla exhaustiva
+     de transcripciones corruptas de Whisper bajo ruido (ej. "drip spec", "juspek" ->
+     Juice Pack; "anasti", "oysti" -> Iced Tea). Si la similitud fonetica o n-grama
+     supera un umbral de alta confianza (>0.85), se omite la confirmacion ganando los
+     +15 pts. Si la confianza es media o baja, pedir que repita la frase ("I could not
+     hear you, please repeat") es GRATIS según el reglamento (no penaliza como pregunta
+     no esencial). Tras 2 fallos consecutivos, derivar a pantalla alternativa (-20 pts)
+     es mucho mejor que arriesgar los -40 pts de dato incorrecto.
+
+3. RECOMENDACION 3: INCORPORAR 'HOTWORDS' NATIVOS Y ACOTAR VOCABULARIO EN JETSON
+   - Situacion actual: En `whisper_node.py` (l.462-468) se invoca `model.transcribe()`
+     pasando solo `initial_prompt`. Whisper tiende a alucinar o ignorar el prompt
+     largo cuando hay ruido de fondo continuo o silencio (problema documentado en
+     STATUS.md 2026-11-05: Commander no recibia resultado en 14 s por ruido continuo).
+   - Solución de otros equipos: RoBorregos FRIDA (home2, scripts/hear_streaming.py)
+     utiliza el parametro nativo `hotwords` de faster-whisper ademas del prompt,
+     fbotathome (fbot_speech) usa `AudioToTextRecorder` con prompts compactos por tarea
+     (fbot_stt_recepcionist.yaml), y NimbRo mantiene Faster Whisper con VAD acoplado.
+     En faster-whisper, pasar `hotwords="Robin, Adel, Simone, iced tea, cola"` aplica
+     un sesgo en el prefix-tree de decodificacion sin los riesgos de eco de texto largo
+     del `initial_prompt`.
+
+--------------------------------------------------------------------------------
+REPOSITORIOS Y FUENTES EXAMINADAS (EVIDENCIA PRIMARIA)
+--------------------------------------------------------------------------------
+1. RoboCupAtHome/RuleBook
+   - SHA: ebdf34d223ddc3ae89ac3f16a23ad28024adfdf6 (Release 2026.2 / master)
+   - Archivos revisados:
+     * pages/general_rules/ExternalDevices.tex (regla de no dispositivos inalambricos)
+     * tasks/HumanRobotInteractionChallenge.tex (reglamento HRI Challenge)
+     * scoresheets/HumanRobotInteractionChallenge.tex (puntuaciones y penalidades HRI)
+     * tasks/GPSR.tex (reglamento General Purpose Service Robot)
+     * scoresheets/GPSR.tex (puntuaciones y penalidades GPSR)
+2. fbotathome/fbot_hri
+   - SHA: 1b1f6d1081b3e1cd5b91cde46b2d42c919cae5c6
+   - Archivos: fbot_speech/speech_recognizer.py, config/fbot_stt_recepcionist.yaml
+3. RoBorregos/home2 (FRIDA)
+   - SHA: 1a0caeb563546328e64b758811dd3078db8fa81f
+   - Archivos: hri/packages/speech/scripts/{voice_detection.py, noise_cancellation.py,
+     say.py, hear_streaming.py, kws_oww.py}
+4. charmie_ws (CHARMIE, Universidade de Aveiro)
+   - SHA: 461577d6534c96a1832341fe789f2d83eb2e6ecb
+   - Archivos: src/charmie_audio/charmie_audio/{audio.py, words_dict.py},
+     src/charmie_speakers/charmie_speakers/speakers.py
+5. NimbRo (University of Bonn — Ganador OPL 2024 en Eindhoven)
+   - Paper arXiv:2412.14989 ("RoboCup@Home 2024 OPL Winner NimbRo: Anthropomorphic
+     Service Robots using Foundation Models for Perception and Planning", Dic 2024).
+6. CATIE Robotics (TDP 2024)
+   - Pipeline de audio offline con micrófono Røde VideoMic Pro + Whisper + Snips NLU.
+7. UTBots@Home (TDP 2024)
+   - Paquete `whisper_cpp_ros` con Silero VAD y whisper.cpp.
+8. Base@Home (repositorio actual, SHA a119f61)
+   - Archivos propios verificados por grep:
+     * jetson_head/src/audio_asr/audio_asr/asr_core.py (SileroStream, EnergyVAD, Endpointer, clean_transcript)
+     * jetson_head/src/audio_asr/audio_asr/whisper_node.py (WhisperASRNode, audio_loop, process_chunk, transcribe)
+     * src/base_athome_perception/base_athome_perception/voice_client.py (VoiceClient, VoiceResult)
+     * src/base_athome_perception/base_athome_perception/speaker.py (RoboCupSpeaker)
+     * src/base_athome_perception/base_athome_perception/guest_vocabulary.py (GuestVocabulary)
+     * src/base_athome_perception/base_athome_perception/guest_dialog.py (extract_name_and_drink, parse_yes_no)
+     * src/base_athome_skills/base_athome_skills/mission/voice_dialog.py (plan_to_speech, asr_prompt)
+     * src/base_athome_perception/scripts/asr_benchmark.py (banco de pruebas con inyeccion de audio)
+     * simulation/base_athome_sim/base_athome_sim/sim_robot.py (mock de ROS 2 de la cadena de voz)
+
+
+================================================================================
+1. MARCO NORMATIVO ROBOCUP@HOME (RULEBOOK 2026.2)
+================================================================================
+Fuente normativa analizada:
+- Repositorio oficial: https://github.com/RoboCupAtHome/RuleBook
+- Commit SHA verificado: ebdf34d223ddc3ae89ac3f16a23ad28024adfdf6 (Release 2026.2 / master)
+
+1.1. RESTRICCIONES DE DISPOSITIVOS EXTERNOS Y RED
+[VERIFICADO: RuleBook pages/general_rules/ExternalDevices.tex, lineas 15-20 y 38-42]
+El reglamento oficial estipula de forma taxativa:
+"The use of wireless devices, such as hand microphones and headsets, is not allowed,
+with the exception of ExternalComputing as specified below. The competition organizers
+do not guarantee or take any responsibility for the availability or reliability of the
+network or the internet connection in the Arena. Teams can thus use ExternalComputing
+resources at their own risk."
+
+Implicancias de ingeniería para la cadena de voz:
+1. Microfonía embarcada obligatoria: Prohibido entregarle un micrófono de mano, corbatero
+   o headset inalámbrico al interlocutor humano. El micrófono DEBE estar mecánicamente
+   montado en el robot (chasis o cabezal).
+2. Procesamiento de audio 100% local y offline: Depender de APIs en la nube (OpenAI Whisper API,
+   Google Cloud Speech, Azure Speech) es inviable en la arena debido a la inestabilidad
+   severa y no garantizada de la red WiFi/Internet en pabellones con miles de personas.
+   Todo el pipeline (VAD, ASR, NLU y TTS) debe correr a bordo (en la NUC o en la Jetson Orin Nano).
+
+1.2. DESGLOSE DE PUNTOS Y REGLAS DE DIALOGO EN HRI CHALLENGE
+[VERIFICADO: RuleBook tasks/HumanRobotInteractionChallenge.tex y scoresheets/HumanRobotInteractionChallenge.tex]
+El HRI Challenge evalúa la interacción persona-robot en un escenario de fiesta (recepcionista).
+Puntuaciones y penalidades normativas clave de audio y voz:
+- Detect the doorbell sound as a signal that a guest has arrived: 60 pts max (2 x 30 pts).
+- Look at the person talking, when receiving a guest: 100 pts max (2 x 50 pts).
+- Understand each guest's name and favorite drink without asking non-essential questions:
+  60 pts max (4 items x 15 pts: nombre y bebida de dos invitados).
+- Say name and favorite drink of each guest (during introduction): 120 pts max (4 x 30 pts).
+- While introducing guests, look to the correct guest while talking about the other guest:
+  100 pts max (2 x 50 pts).
+- Penalidades críticas:
+  * Wrong guest information was memorized: -40 pts por cada dato erróneo (hasta -160 pts).
+  * Alternative HRI (pantalla táctil / teclado): -20 pts por cada dato (hasta -120 pts).
+  * Not acknowledging people: -200 pts por no responder u orientarse hacia la persona.
+
+Regla explícita sobre preguntas de confirmación vs repetición:
+[VERIFICADO: tasks/HumanRobotInteractionChallenge.tex, lineas 84-88]
+"If the robot does not ask any non-essential questions to help understand, confirm, or
+correct information, bonus points are awarded. Questions such as 'Did you say your name is
+James?' or 'Is your favorite drink milk?' are considered non-essential questions.
+However, asking a guest to repeat an answer because the robot could not hear is not
+considered a non-essential question."
+"Misunderstanding: Not understanding the guests and asking them again is fine. Continuing
+with a wrong name or favorite drink causes a score reduction."
+
+ANALISIS ESTRATEGICO DEL ARBOL DE DECISION DE DIALOGO (HRI):
+- Si el robot pregunta "¿Tu nombre es X?": Pierde el bonus de +15 pts por dato.
+- Si el robot no pregunta y memorizó mal: Recibe una penalidad neta de -40 pts (pérdida de 55 pts frente al caso perfecto).
+- Si el robot no entendió o tiene baja confianza y pide repetir ("I could not hear you, could you please repeat?"):
+  El reglamento aclara que NO es una pregunta no esencial, por lo que NO penaliza y conserva el derecho al bonus de +15 pts.
+- Si tras 2 repeticiones el ASR no logra identificar el nombre o la bebida: Activar la pantalla táctil alternativa
+  conlleva una penalidad de -20 pts. Esto es matemáticamente superior a memorizar un dato al azar con riesgo de -40 pts
+  (diferencia neta de +20 pts a favor de la pantalla).
+
+1.3. DESGLOSE DE PUNTOS Y REGLAS DE DIALOGO EN GPSR (GENERAL PURPOSE SERVICE ROBOT)
+[VERIFICADO: RuleBook tasks/GPSR.tex y scoresheets/GPSR.tex]
+En GPSR el robot recibe 3 comandos complejos de servicio en lenguaje natural:
+- Understand the spoken command: 240 pts max (3 comandos x 80 pts).
+- Demonstrate a plan has been generated: 300 pts max (3 comandos x 100 pts), habitualmente
+  confirmando verbalmente el plan antes de actuar ("I will go to the kitchen, find the bottle...").
+- Penalidades:
+  * Request a rephrasing: -30 pts por pedido de reformulación (hasta 6 veces).
+  * Using a custom operator: -20 pts por comando.
+  * Bypassing speech recognition (teclado/QR): -50 pts por comando.
+
+
+================================================================================
+2. ANALISIS TECNICO DETALLADO POR EJE
+================================================================================
+
+--------------------------------------------------------------------------------
+2.1. HARDWARE DE CAPTURA Y MICROFONO
+--------------------------------------------------------------------------------
+Evidencia analizada:
+- Base@Home: RØDE VideoMic GO II USB-C (docs/MICROFONO_ASR.md l.33, whisper_node.py l.236-242).
+- CATIE Robotics (TDP 2024): Røde VideoMic Pro shotgun sobre robot TIAGo.
+- RoBorregos FRIDA (home2): ReSpeaker USB Mic Array v2 (scripts/respeaker.py l.1-60).
+- NimbRo (Bonn, arXiv:2412.14989): Zoom Am7 mid-side stereo microphone.
+
+Comparativa de tecnologías de micrófono para RoboCup@Home:
+
+1. Micrófonos Shotgun Direccionales (RØDE VideoMic GO II / VideoMic Pro):
+   - Patrón polar: Supercardioide / gradiente de línea acústica.
+   - Ventajas acústicas: Atenuación masiva de ruido lateral y trasero (15 a 20 dB de rechazo a 90° y 180°).
+     En la arena de RoboCup, donde hay público hablando a los costados y música de fondo, el lóbulo frontal
+     aísla eficazmente la voz del interlocutor situado a 1–2 metros frente al robot.
+   - Interfaz: El RØDE VideoMic GO II dispone de interfaz nativa USB-C con conversor analógico-digital (ADC)
+     incorporado de 48 kHz / 24-bit de alta calidad, evitando preamplificadores ruidosos de tarjeta madre.
+   - Requisito operativo crítico: Requiere apuntar activamente el micrófono al interlocutor. Si el invitado se mueve
+     o el pan-tilt no lo rastrea, la voz cae en las zonas de rechazo acústico (caída de 10-15 dB), lo que
+     provoca falsos "no_speech".
+   - Aislamiento mecánico: El shock-mount integrado (Rycote Lyre en el RØDE) desacopla mecánicamente el micrófono
+     de los ruidos de vibración de la base motriz y de los ventiladores de la Jetson y la NUC.
+
+2. Arrays de Micrófonos (ReSpeaker USB Mic Array v2 / 4-6 canales):
+   - Utilizados por RoBorregos FRIDA (`home2/hri/packages/speech/scripts/respeaker.py`).
+   - Ventajas: Permiten cálculo de DOA (Direction of Arrival / localización de sonido por retardo de fase)
+     y beamforming acústico por DSP de hardware (chip XMOS).
+   - Desventajas en competencia observadas por equipos: El beamforming algorítmico del ReSpeaker introduce
+     distorsión de fase ("phasing" / artefactos metálicos sub-acústicos) cuando el ruido ambiente es difuso,
+     lo cual perjudica gravemente la tokenización fonética de modelos Transformer como Whisper.
+     Muchos equipos terminan tomando un único canal en bruto ("raw audio chunk") y delegando la reducción de
+     ruido a modelos neuronales posteriores (DeepFilterNet).
+
+3. Micrófonos Mid-Side / Estéreo Dedicados (Zoom Am7):
+   - Utilizado por NimbRo (Bonn, OPL 2024 Winner).
+   - Permite ajustar la amplitud del campo estéreo mediante cápsulas M-S de condensador, manteniendo
+     alta sensibilidad vocal frontal pero con mayor peso mecánico y necesidad de montajes rígidos.
+
+CONCLUSION PARA BASE@HOME:
+El RØDE VideoMic GO II supercardioide de Base@Home es una de las mejores elecciones físicas de la liga,
+coincidiendo con la arquitectura de CATIE Robotics. Sin embargo, su eficacia depende en un 100% de que
+el seguimiento visual de cabeza (pan-tilt Dynamixel) mantenga el eje acústico del micrófono alineado
+con la cara del interlocutor.
+
+
+--------------------------------------------------------------------------------
+2.2. DETECCION DE ACTIVIDAD DE VOZ (VAD) Y ENDPOINTING
+--------------------------------------------------------------------------------
+Evidencia analizada:
+- Base@Home: `jetson_head/src/audio_asr/audio_asr/asr_core.py` (SileroStream l.30-51, Endpointer l.69-178).
+- fbotathome: `fbot_speech/fbot_speech/speech_recognizer.py` (l.27-31, AudioToTextRecorder).
+- RoBorregos FRIDA: `home2/hri/packages/speech/scripts/voice_detection.py` (l.28-220, cascada triple)
+  y `noise_cancellation.py` (l.25-115, DeepFilterNet3).
+
+Comparativa de estrategias de segmentación de habla:
+
+1. Base@Home: Silero VAD v5 en Streaming con Endpointer Adaptativo
+   - Funcionamiento: Bloques de 512 muestras a 16 kHz (32 ms). Silero corre en sesión ONNX sobre CPU
+     en 0.34 ms por bloque en la Jetson Orin Nano (medido y verificado en `docs/MICROFONO_ASR.md` l.34).
+   - Máquina de estados `Endpointer`:
+     * Estado `WAIT`: Espera el inicio de la voz hasta `start_timeout` (8.0 s). Requiere 3 bloques consecutivos
+       (`onset_chunks=3`, 96 ms) con probabilidad >= `on_thr` (0.50) para evitar disparos en falso por golpes,
+       aplausos o ruidos impulsivos.
+     * Pre-roll buffer: Conserva 0.5–0.6 s previos al disparo para no cortar la consonante inicial de la frase.
+     * Estado `SPEECH`: Graba mientras habla; detecta el final con `end_silence` continuo (1.1 s, configurable)
+       con probabilidad < `off_thr` (0.35).
+     * Recuperación de voz débil (invitado lejos): Si la energía RMS supera 4 veces el ruido de fondo (`weak_snr=4.0`)
+       y Silero da al menos 0.12 (`weak_prob=0.12`), se clasifica como voz débil y se transcribe relajando los filtros.
+   - Evaluación: Arquitectura robusta, determinista y sin consumo excesivo de CPU.
+
+2. RoBorregos FRIDA: Cascada Triple (RMS -> Pitch Autocorrelation -> MFCC Speaker Lock)
+   [VERIFICADO: `home2/hri/packages/speech/scripts/voice_detection.py`, lineas 170-220]
+   - Implementa un filtro en 3 etapas:
+     1. Filtro de energía RMS (`energy_threshold=1500.0`): rechaza silencio absoluto.
+     2. Verificación de periodicidad espectral (`_is_periodic`): autocorrelación en la ventana de frecuencias
+        vocales (`VOWEL_FREQ_LOW` a `VOWEL_FREQ_HIGH`). Rechaza ruidos no vocales (motores, ventiladores, golpes).
+     3. Bloqueo de identidad de hablante (`_is_speech` con `_get_mfcc` y distancia coseno):
+        Al detectar la primera frase, memoriza un vector MFCC de 13 coeficientes del hablante. Si en los bloques
+        posteriores la similitud coseno cae por debajo de `similarity_threshold` (0.80), el bloque se descarta
+        como "foreign voice rejected".
+   - Evaluación: El concepto de MFCC speaker-lock es sumamente inteligente para evitar que personas en el fondo
+     contaminen la grabación. No obstante, en un entorno dinámico como una fiesta, si el hablante gira la cabeza
+     o modula diferente la voz, la similitud puede fluctuar y cortar frases legítimas.
+
+3. Reducción de Ruido Activa Neuronal (DeepFilterNet3):
+   [VERIFICADO: `home2/hri/packages/speech/scripts/noise_cancellation.py`]
+   - RoBorregos utiliza DeepFilterNet3 en `noise_cancellation.py` a 48 kHz (resample factor 3 desde 16 kHz).
+   - Advertencia de rendimiento del propio código de RoBorregos (l.115-125): Si DeepFilterNet corre en CPU,
+     no logra mantenerse en tiempo real ("_DF_MAX_SLOW_CHUNKS=20", desactivación automática si la CPU se atrasa).
+   - En la Jetson Orin Nano de Base@Home, la GPU está dedicada a YOLOv8 (detección de personas y objetos). Correr
+     DeepFilterNet en CPU junto a Silero y Whisper comprometería los límites térmicos y de latencia.
+
+CONCLUSION PARA BASE@HOME:
+La combinación Silero VAD + Endpointer de Base@Home es la más equilibrada en relación calidad/costo.
+Para reforzarla en arena con ruido, el umbral de silencio final (`end_silence`) debe situarse entre 1.0 s y 1.2 s
+(coincidiendo con fbot en 1.2 s y FRIDA en 1.5 s).
+
+
+--------------------------------------------------------------------------------
+2.3. FASTER-WHISPER EN JETSON ORIN NANO Y SELECCION DE MODELOS
+--------------------------------------------------------------------------------
+Evidencia analizada:
+- Base@Home: `jetson_head/src/audio_asr/audio_asr/whisper_node.py` (WhisperModel int8 en CPU, l.100).
+- fbotathome: `fbot_speech/fbot_speech/speech_recognizer.py` y `fbot_stt_recepcionist.yaml` (distil-small.en en CPU).
+- CHARMIE: `charmie_audio/charmie_audio/audio.py` (tiny.en en GPU CUDA, l.115-130).
+- NimbRo: Faster-Whisper local multilingüe (arXiv:2412.14989).
+
+Comparación de modelos y tiempos de inferencia en hardware embebido:
+
+| Modelo | Tamaño / Precisión | Plataforma | Tiempo / Frase (s) | Exactitud / Comportamiento |
+|---|---|---|---|---|
+| **base.en** (Base@Home) | int8 (CTranslate2) | Jetson Orin Nano CPU (4 hilos) | **1.50 s** (medido) | 15/17 frases sintéticas exactas. Errores leves resueltos por NLU |
+| small.en (Base@Home) | int8 (CTranslate2) | Jetson Orin Nano CPU (4 hilos) | 4.50 s (medido) | 16/17 exactas, pero 3x más lento (inaceptable en diálogo HRI) |
+| distil-small.en (Base@Home) | int8 (CTranslate2) | Jetson Orin Nano CPU (4 hilos) | 4.05 s (medido) | 11/17 exactas. Alucinaciones y repeticiones cíclicas en bucle |
+| distil-small.en (fbotathome) | float32 | CPU PC dedicada | ~1.5 - 2.0 s | Configurado en fbot_stt_recepcionist.yaml |
+| tiny.en (CHARMIE) | float16 / standard | GPU NVIDIA (CUDA) | < 0.5 s | Muy rápido, pero alta tasa de error fonético compensada con words_dict |
+| Faster Whisper (NimbRo) | int8 / float16 | GPU dedicada (NimbRo) | Inferencia local | Multilingüe, gramática libre |
+
+Parámetros críticos de decodificación en Faster-Whisper (`whisper_node.py` l.458-472):
+- `temperature=0.0`: Esencial. La decodificación codiciosa (greedy) con temperatura 0 evita el muestreo
+  aleatorio, garantizando que ante el mismo audio se obtenga la misma transcripción y reduciendo a cero
+  las alucinaciones poéticas o divagaciones típicas de Whisper con temperatura > 0.
+- `beam_size=3`: Ofrece el mejor compromiso entre exactitud fonética y latencia de búsqueda en haz.
+  (beam_size=1 es un 25% más rápido pero degrada nombres propios inusuales; beam_size=5 cuadruplica el tiempo).
+- `vad_filter=True` en transcribe: faster-whisper ejecuta un filtrado VAD secundario interno sobre el espectrograma
+  antes de pasarlo al encoder, asegurando que fragmentos residuales de ruido no sean decodificados como palabras.
+- `condition_on_previous_text=False`: Obligatorio en robótica de diálogo por turnos. Si es True, Whisper
+  intenta encadenar la frase actual con lo escuchado en el turno anterior, provocando que un comando nuevo
+  se contamine con el contexto de hace 30 segundos.
+
+
+--------------------------------------------------------------------------------
+2.4. VOCABULARIO GUIADO: INITIAL_PROMPT, HOTWORDS Y GRAMATICAS
+--------------------------------------------------------------------------------
+Evidencia analizada:
+- Base@Home: `asr_core.py` (is_prompt_echo l.201, clean_transcript l.211), `voice_dialog.py` (asr_prompt l.86).
+- RoBorregos FRIDA: `home2/hri/packages/speech/scripts/hear_streaming.py` (hotwords l.50, default_hotwords l.52).
+- fbotathome: `fbot_stt_recepcionist.yaml` (initial_prompt con lista de 20 nombres oficiales).
+
+Mecanismo de `initial_prompt`:
+En Whisper, el `initial_prompt` no restringe la gramática ni fuerza tokens obligatorios; en su lugar, se inserta
+como contexto previo simulado en el autoregressive decoder del Transformer. Esto condiciona la distribución
+de probabilidades hacia el vocabulario, estilo y puntuación deseados.
+
+Riesgos y Patologías Medidas del `initial_prompt`:
+1. Eco del Prompt con Audio Débil o Silencio:
+   Cuando el micrófono graba ruido ambiente o una frase inaudible, el decoder de Whisper busca sentido y
+   comienza a "leer" su propio prompt (fenómeno medido en Base@Home: Whisper devolvía la lista entera de nombres).
+   En Base@Home esto fue mitigado mediante la función `is_prompt_echo(text, prompt)` en `asr_core.py` (l.201),
+   que calcula el solapamiento de palabras y descarta el resultado con status `rejected`.
+2. Contaminación Cruzada entre Tareas:
+   Si el prompt general de recepción ("Names: Adel, Angel... Drinks: juice pack...") queda activo cuando el robot
+   pasa a escuchar órdenes de navegación o manipulación en GPSR, Whisper sesgará frases como "go to the living room"
+   hacia nombres propios ("Adel to the living room").
+   Solución verificada: Inyectar prompts específicos por estado de misión:
+   - Recepción: `GuestVocabulary.whisper_prompt()` (nombres y bebidas).
+   - Secuenciador / GPSR: `voice_dialog.asr_prompt()` (verbos de acción, objetos y lugares del mapa semántico).
+
+El Parámetro `hotwords` en Faster-Whisper:
+[VERIFICADO: CTranslate2 / faster-whisper WhisperModel.transcribe API]
+Faster-whisper incluye el parámetro `hotwords` (string con palabras clave separadas por espacio o coma,
+ej. `hotwords="Adel Angel Axel Charlie Jane Jules Morgan Paris Robin Simone"`).
+A diferencia del `initial_prompt`, `hotwords` aplica un refuerzo de probabilidad de logits sobre el árbol
+de prefijos de los tokens durante la búsqueda por haz (beam search), sin simular una frase previa completa.
+Esto elimina prácticamente el riesgo de alucinación de texto largo y enfoca la atención en los términos críticos.
+RoBorregos FRIDA ya lo utiliza en `hear_streaming.py` (`self.default_hotwords = "Frida, RoBorregos"`).
+
+
+--------------------------------------------------------------------------------
+2.5. RECONOCIMIENTO DE NOMBRES PROPIOS Y BEBIDAS (MANEJO DE OOV Y FONETICA)
+--------------------------------------------------------------------------------
+Evidencia analizada:
+- CHARMIE: `charmie_ws/src/charmie_audio/charmie_audio/words_dict.py` (names_dict l.5-25, drinks_dict l.27-52).
+- Base@Home: `guest_vocabulary.py` (NAME_ALIASES l.43, DRINK_ALIASES l.48, phonetic_key l.67, match_name l.107).
+- fbotathome: `fbot_stt_recepcionist.yaml` (initial_prompt con nombres canónicos).
+
+El Problema Fundamental en Competencia:
+En la arena de RoboCup, los jueces y voluntarios no pronuncian inglés con acento neutro de estudio; intervienen
+acentos de todo el mundo (brasileño, japonés, francés, holandés, latinoamericano). Whisper, entrenado con audio
+de internet, tiende a transcribir fonéticamente lo que escucha o mapearlo a palabras conocidas del inglés común:
+- "Juice Pack" suele transcribirse como "juice bag", "juice but", "swissbag", "juspek", "drip spec", "peck".
+- "Iced Tea" suele transcribirse como "ice t", "stick", "ice cream", "icedy", "nice d", "anasti", "oysti".
+- "Red Wine" suele salir como "red vine", "headwind", "white", "edvin".
+- "Robin" sale como "robyn", "harbin", "hobby", "corbin", "colvin".
+- "Jules" sale como "jewels", "joules", "julz".
+
+Soluciones Comparadas:
+
+1. Diccionario Empírico Exhaustivo (CHARMIE `words_dict.py`):
+   La Universidad de Aveiro compiló a lo largo de torneos internacionales (RoboCup 2023 Burdeos, 2024 Eindhoven)
+   un diccionario inverso donde cada palabra clave oficial tiene asociadas entre 5 y 30 variantes reales
+   capturadas en competencia.
+   Ejemplo real de CHARMIE (`words_dict.py` l.27-38):
+   ```python
+   "Juice_Pack": ["pack", "gispeck", "druspak", "juspek", "swissbag", "speck", "just play",
+                  "juice bag", "drew spec", "druspek", "drip spec", "juicy pek", "juice but"]
+   "Iced_Tea":   ["ice", "tea", "i-st", "stick", "i see", "ice cream", "icedy", "anasti", "oysti"]
+   ```
+   La coincidencia se realiza por búsqueda de subcadenas y n-gramas en el texto transcrito.
+
+2. Matching Híbrido: Ortográfico + Fonético (Base@Home `guest_vocabulary.py`):
+   Base@Home utiliza una función fonética compacta tipo metaphone (`phonetic_key`) combinada con
+   `difflib.SequenceMatcher`:
+   - Si la palabra normalizada coincide con un alias en `NAME_ALIASES` -> Asignación directa.
+   - Si la clave fonética (`phonetic_key(w) == phonetic_key(ln)`) coincide -> Coincidencia de alta confianza
+     (resuelve "Jewels" -> Jules, "Axle" -> Axel, "Adele" -> Adel, "Jayne" -> Jane).
+   - Si la similitud por ratio de Levenshtein supera el umbral (0.75 para nombres, 0.80 para bebidas) -> Asignación.
+
+SINTESIS DE MEJOR PRACTICA:
+La combinación ideal consiste en incorporar las listas empíricas de transcripciones corruptas de CHARMIE
+dentro de los diccionarios `NAME_ALIASES` y `DRINK_ALIASES` de Base@Home, manteniendo el comparador fonético
+como respaldo ante variantes no catalogadas.
+
+
+--------------------------------------------------------------------------------
+2.6. MANEJO DE "NO ENTENDI" Y MAQUINA DE DIALOGO (TURN-TAKING Y HRI)
+--------------------------------------------------------------------------------
+Evidencia analizada:
+- Base@Home: `docs/MICROFONO_ASR.md` (l.56-95), `voice_client.py` (l.45-165),
+  `hri_receptionist_challenge.py` (STATE_ASK_CONFIRM l.1856, STATE_CONFIRM_DETAILS l.1888).
+- fbotathome: `fbot_speech/fbot_speech/speech_recognizer.py` (delayStarterRecorder con beep, l.57).
+- RoBorregos FRIDA: `audio_feedback.py` y `say.py` (turn-taking con audio cues).
+- RuleBook: `tasks/HumanRobotInteractionChallenge.tex` (l.84-90).
+
+Protocolo de Turn-Taking Acústico:
+Uno de los fallos más comunes en competencia es que el humano empiece a hablar mientras el robot aún está
+emitiendo su frase de TTS, o que hable antes de que el micrófono esté efectivamente grabando.
+El flujo obligatorio de turn-taking observado en los mejores equipos:
+1. El robot emite su frase verbal mediante TTS ("Hello, what is your name and favorite drink?").
+2. El robot reproduce un tono acústico breve y distintivo (`beep.wav`, 150–250 ms a 1 kHz).
+   Tanto Base@Home (`speaker.py` l.88) como fbot (`fbot_speech/fbot_speech/speech_recognizer.py` l.59)
+   implementan este beep para señalizar al humano el inicio del turno de habla.
+3. El micrófono y el VAD se abren SOLO después de que el beep ha terminado de sonar.
+4. Si hay retroalimentación visual (pantalla o anillo LED / ojos del robot), los ojos conmutan a color azul/verde
+   o la pantalla muestra un icono animado de "Escuchando...".
+
+Estrategia Óptima frente a Fallos de Entendimiento:
+Los estados de respuesta de `voice_client.py` en Base@Home (`ok`, `no_speech`, `rejected`, `timeout`, `offline`)
+deben guiar el comportamiento según el reglamento:
+- Caso A: `no_speech` (la persona no habló o el VAD no detectó voz suficiente):
+  El robot dice: "I could not hear you. Please speak a little louder after the beep." y repite el intento.
+  Reglamento: Repetir porque no se escuchó NO penaliza y NO cuenta como pregunta no esencial.
+- Caso B: `ok` con extracción exitosa y alta confianza (score fonético >= 0.85 o alias exacto):
+  El robot responde directamente: "Nice to meet you, {name}! I will remember that you like {drink}."
+  Se OMITE la pregunta "Is that correct?".
+  Reglamento: El robot GANA el bonus de +15 pts por dato (hasta +60 pts en el test).
+- Caso C: `ok` pero con extracción dudosa (similitud fonética entre 0.65 y 0.84) o solo 1 dato extraído:
+  El robot repite preguntando solo por el dato faltante ("What was your favorite drink?").
+- Caso D: 2 intentos fallidos consecutivos:
+  El robot conmuta al servidor web de pantalla (`guest_input_server.py`):
+  "I am having trouble with the background noise. Please tap your name and drink on my screen."
+  Reglamento: Se asume la penalidad de Alternative HRI (-20 pts por dato), pero se evita completamente
+  la penalidad de -40 pts por dato erróneo, garantizando además que la misión continúe sin atascarse.
+
+
+--------------------------------------------------------------------------------
+2.7. PREVENCION DE QUE EL ROBOT SE ESCUCHE A SI MISMO (SELF-HEARING / ACOUSTIC ECHO)
+--------------------------------------------------------------------------------
+Evidencia analizada:
+- Base@Home: `whisper_node.py` (mute_callback l.186, unmute_guard_sec l.73), `asr_core.py` (feed l.112),
+  `speaker.py` (RoboCupSpeaker).
+- RoBorregos FRIDA: `say.py` (speaking_topic /saying l.45, l.185) y `voice_detection.py`.
+- NimbRo: Audio routing con JACK Audio Connection Kit (arXiv:2412.14989).
+
+El Problema del Eco Acústico (Self-Hearing):
+Si el robot reproduce voz por su propio altavoz y el micrófono está grabando, el ASR transcribirá
+la propia locución del robot. Esto genera bucles de diálogo infinitos (el robot "escucha" lo que acaba de decir
+y trata de procesarlo como un comando de usuario).
+
+Estrategias de Mitigación Comparadas:
+
+1. Software Muting / Compuerta de Estado (Base@Home y RoBorregos):
+   - En Base@Home: `speaker.py` publica en `/voice/mute` (True al empezar a hablar, False al terminar).
+   - En `whisper_node.py` (l.186) y `asr_core.py` (l.112): mientras `muted=True`, los bloques de audio
+     entrantes del micrófono se reemplazan por ceros digitales (`chunk = np.zeros_like(chunk); prob = 0.0`).
+   - `unmute_guard_sec` (0.35 s): Al recibir `mute=False`, el nodo mantiene el micrófono silenciado durante
+     350 ms adicionales. Esto es crucial para disipar la reverberación acústica de la sala y los ecos tardíos
+     del altavoz, evitando que el final de la última palabra del robot sea capturado como inicio de voz del humano.
+   - `max_mute_sec` (25.0 s): Failsafe de seguridad por si un nodo de TTS crashea sin enviar el `mute=False`,
+     evitando que el robot quede permanentemente sordo.
+
+2. Enrutamiento de Audio por JACK (NimbRo):
+   - NimbRo utiliza el servidor de audio en tiempo real JACK. Permite conectar sinks y sources a nivel
+     de kernel con latencias de microsegundos, silenciando o redirigiendo canales de audio en hardware
+     sin pasar por la capa de tópicos de ROS.
+
+3. Cancelación de Eco por Hardware (Hardware AEC):
+   - Dispositivos como el ReSpeaker USB cuentan con cancelación de eco acústico (AEC) mediante un canal
+     de loopback de audio que recibe lo que el altavoz está emitiendo y lo resta en tiempo real del micrófono.
+   - Limitación práctica: Requiere calibración acústica exacta de retardo y nivel. Si el altavoz satura
+     o distorsiona, el AEC lineal falla y deja pasar residuos de audio que disparan el VAD.
+
+EVALUACION PARA BASE@HOME:
+La implementación de Base@Home con `/voice/mute` + `unmute_guard_sec=0.35 s` es sumamente sólida y confiable.
+Su única limitación teórica es que no permite "barge-in" (que el humano interrumpa al robot mientras habla).
+Sin embargo, en RoboCup@Home el "barge-in" rara vez es deseable debido al ruido ambiente; el turn-taking
+secuencial y disciplinado con beep acústico es el estándar que garantiza mayor puntuación.
+
+
+--------------------------------------------------------------------------------
+2.8. ALTAVOZ CON SALIDA CABLEADA (ELIMINACION DE BLUETOOTH Y HDMI)
+--------------------------------------------------------------------------------
+Evidencia analizada:
+- Base@Home: `docs/MICROFONO_ASR.md` (l.161-164), `speaker.py` (ensure_bluetooth_sink l.113-125).
+- CHARMIE: `charmie_speakers/charmie_speakers/speakers.py` (over-amplification 150% l.20-50).
+- NimbRo: Audio routing cableado en chasis.
+
+Por qué Bluetooth y HDMI Fallan Catastróficamente en Competencia:
+
+1. El Fracaso del Parlante Bluetooth en la Arena:
+   - Congestión extrema de radiofrecuencia (2.4 GHz): En una sede de RoboCup conviven más de 2000 personas,
+     cientos de puntos de acceso WiFi, robots teleoperados y teléfonos celulares. El espectro de 2.4 GHz
+     sufre interferencias severas, provocando desconexiones repentinas del perfil BlueZ (A2DP/HFP), jitter
+     de audio y latencias variables impredecibles de 200 a 800 ms.
+   - Auto-suspend y buffer de enlace: Los altavoces Bluetooth entran en modo de reposo tras pocos segundos
+     de silencio. Al reanudar la reproducción de una frase corta ("Yes", "Robin"), el altavoz tarda entre
+     300 y 500 ms en restablecer el flujo de audio, cortando la primera palabra de la frase.
+
+2. El Fracaso del Audio por HDMI (Pantalla del Robot):
+   - Medido objetivamente en Base@Home (`docs/MICROFONO_ASR.md` l.161-164):
+     "El parlante HDMI de la pantalla no sirve para probar el camino acústico: se suspende y al despertar
+     se come el comienzo, y el sonido que llega no es inteligible (medido)."
+   - El controlador de audio Intel/AMD de salida HDMI entra en estado de bajo consumo de reloj de audio
+     cuando no hay stream activo. La reactivación produce un retardo y un chasquido eléctrico audible.
+
+3. La Solución de los Equipos Líderes: Audio Cableado Dedicado
+   - Conexión analógica directa mediante jack estéreo de 3.5 mm o mediante un DAC USB dedicado
+     (ej. adaptador USB a Jack basado en chip Realtek ALC5686 o C-Media).
+   - Amplificador de audio analógico de clase D integrado en el chasis (ej. módulo PAM8403 de 2x3W a 5V,
+     o TPA3116 de 2x15W a 12V) alimentado directamente por la fuente interna del robot.
+   - Altavoz de cono de papel o polipropileno de 3 o 4 pulgadas (4 u 8 ohms) montado en una caja acústica
+     o recinto sellado dentro del torso del robot, orientado al frente.
+   - Control de volumen por software: CHARMIE implementa en `speakers.py` una llamada a `pactl` que fija
+     el sink predeterminado al 150% de volumen (`allow-volume-above-100-percent` en GNOME / PulseAudio),
+     asegurando que las respuestas del robot sean claramente audibles para los jueces y para el público
+     en medio del murmullo general del pabellón.
+
+
+--------------------------------------------------------------------------------
+2.9. METODOLOGIA DE PRUEBAS OBJETIVAS Y REPRODUCIBLES DE LA CADENA DE VOZ
+--------------------------------------------------------------------------------
+Evidencia analizada:
+- Base@Home: `src/base_athome_perception/scripts/asr_benchmark.py` (inyección acústica l.20-50, live l.78).
+- RoBorregos FRIDA: `home2/hri/packages/speech/scripts/voice_detection.py` (_debug_buffer y _save_debug_segment l.215).
+- CHARMIE: `charmie_audio/charmie_audio/audio.py` (DICT_CALIBRATION l.46, list_of_previous_audios).
+
+Comparativa de Metodologías de Evaluación:
+
+1. Inyección de Audio Mezclada con Ruido Real (`asr_benchmark.py --inject`):
+   - Desarrollada en Base@Home (`whisper_node.py` l.374 y `asr_benchmark.py`): Permite inyectar archivos WAV
+     calibrados directamente en el flujo del micrófono en vivo de la Jetson a través del tópico `/voice/debug_inject`.
+   - Ventaja crucial: Evalúa el pipeline de Silero VAD, Endpointer y Faster-Whisper frente al ruido acústico REAL
+     del ambiente captado por el micrófono RØDE, pero con una fuente de voz perfectamente reproducible y controlable.
+   - El parámetro `--gain 0.25` simula una persona hablando a 2–3 metros de distancia, permitiendo verificar
+     la sensibilidad del VAD sin variabilidad humana.
+
+2. Grabación y Análisis Forense por Segmentos (RoBorregos FRIDA):
+   - En `voice_detection.py` (l.215-230), RoBorregos implementa un buffer que graba cada segmento detectado
+     en `/tmp/vad_debug/segment_XXX.wav`.
+   - Permite auditar a posteriori exactamente qué escuchó el robot tras una prueba en la arena, analizando si
+     el corte se debió a un silencio prematuro del VAD o a una mala transcripción de Whisper.
+
+3. Calibración Autónoma de Vocabulario (CHARMIE):
+   - Dispone del flag `DICT_CALIBRATION = True` en `audio.py`. Permite a los operadores decir las palabras
+     de la competencia una por una en la arena durante los días de instalación (setup days), imprimiendo la
+     salida en bruto de Whisper para incorporar de inmediato cualquier transliteración inesperada a `words_dict.py`.
+
+
+================================================================================
+3. COMPARATIVA SISTEMATICA DE EQUIPOS (TABLA DE EVIDENCIA)
+================================================================================
+
+| Equipo / Proyecto | Repositorio @ SHA | Microfono | VAD / Preprocesamiento | Modelo ASR / TTS | Estrategia Vocabulario / Dialogo | Salida de Audio / Echo Cancel | Estado de Verificacion |
+|---|---|---|---|---|---|---|---|
+| **Base@Home (UruBots)** | `ShiiSuii/base_athome` @ `a119f61` | RØDE VideoMic GO II (USB-C digital, supercardioide en cabezal) | Silero VAD v5 streaming (ONNX CPU, 0.34 ms) + Endpointer adaptativo | faster-whisper `base.en` (int8 CPU, 1.50 s) / Piper TTS (`en_US-lessac-medium`) | `initial_prompt` dinámico por estado (HRI vs GPSR) + `phonetic_key` metaphone + `clean_transcript` | `/voice/mute` por software + `unmute_guard_sec=0.35 s`. Audio actual: BT/HDMI (a reemplazar) | `JETSON_VERIFIED` (ASR/VAD en Orin Nano) / `SIM_PASS` (diálogos) |
+| **NimbRo (Univ. Bonn)** | OPL 2024 Winner (arXiv:2412.14989) | Zoom Am7 (cápsula estéreo M-S de condensador) | VAD acoplado a pipeline local | Faster Whisper (CTranslate2 local multilingüe) / Coqui TTS | Modelos fundacionales (LLMs locales) para parseo de intenciones y planificación | JACK Audio Connection Kit (enrutamiento de audio a nivel de sistema) / Altavoz cableado | `VERIFICADO` en paper arXiv:2412.14989 (Dic 2024) |
+| **RoBorregos FRIDA (Tec Monterrey)** | `RoBorregos/home2` @ `1a0caeb56354` | ReSpeaker USB Mic Array v2 (procesador XMOS) | DeepFilterNet3 (ANC) + cascada RMS, pitch periodicidad y MFCC speaker lock | gRPC streaming hacia STT / Piper TTS (`en_US-amy-medium`) con LRU cache | `default_hotwords` ("Frida, RoBorregos") + `openWakeWord` (KWS) | Tópico `/saying` con muting de captura. Salida cableada multicanal | `VERIFICADO` en código (`hri/packages/speech/scripts/`) |
+| **fbot@Home (Univ. Fed. Minas Gerais)** | `fbotathome/fbot_hri` @ `1b1f6d1081b3` | Micrófono direccional USB en cabezal | `RealtimeSTT` (`AudioToTextRecorder`) con Silero VAD (0.6) + WebRTC VAD | `distil-small.en` (CPU, float32) / Coqui TTS (`speech_synthesizer.py`) | `initial_prompt` con lista oficial de nombres en YAML de configuración | Cliente de servicio `audio_beep` (`delayStarterRecorder`) + parlante interno | `VERIFICADO` en código (`fbot_speech/`) |
+| **CHARMIE (Univ. Aveiro)** | `charmie_ws` @ `461577d6534c` | Micrófono de condensador USB | SpeechRecognition library con calibración de energía dinámica/fija | Whisper `tiny.en` (GPU CUDA) / Kokoro TTS (`speakers_kokoro.py`) | Diccionario masivo `words_dict.py` con mapeo de errores fonéticos empíricos | Salida cableada con sobre-amplificación `pactl 150%` + pre-grabados WAV | `VERIFICADO` en código (`charmie_audio/`, `charmie_speakers/`) |
+| **CATIE Robotics (Bordeaux)** | TDP 2024 (TIAGo robot) | Røde VideoMic Pro shotgun | VAD offline | Whisper model local / TTS local | Snips NLU para extracción semántica de slots y gramática | Altavoz interno cableado de TIAGo | `VERIFICADO` en TDP RoboCup 2024 |
+| **UTBots@Home (Univ. Twente)** | TDP 2024 | Micrófono en cabezal | Silero VAD | `whisper_cpp_ros` (whisper.cpp C++ en tiempo real) | Gramática basada en reglas | Altavoz interno | `VERIFICADO` en TDP RoboCup 2024 |
+
+
+================================================================================
+4. RECOMENDACIONES PRIORIZADAS PARA BASE@HOME
+================================================================================
+
+--------------------------------------------------------------------------------
+RECOMENDACION 1: REEMPLAZAR AUDIO BLUETOOTH/HDMI POR SALIDA CABLEADA Y FIJAR VOLUMEN
+--------------------------------------------------------------------------------
+Utilidad: ALTA (elimina la principal causa de fallas de audibilidad y latencia en competencia).
+Qué archivo cambiar:
+- `src/base_athome_perception/base_athome_perception/speaker.py`:
+  * Función a modificar: `ensure_bluetooth_sink()` (l.113) -> Reemplazar por `ensure_wired_sink()`.
+  * Función `_worker_loop()` (l.127): Eliminar la búsqueda de dispositivos `bluez_output`.
+    Configurar la invocación de `paplay` para que apunte directamente al sink analógico de la NUC
+    (ej. `alsa_output.pci-0000_00_1f.3.analog-stereo` o mediante DAC USB `alsa_output.usb-*.analog-stereo`).
+  * Añadir fijación forzada de volumen al 100% o 120% con `pactl set-sink-volume <sink> 100%` y des-silenciado
+    `pactl set-sink-mute <sink> false` al inicializar el nodo `RoboCupSpeaker`.
+Cómo probarlo primero en simulación:
+- En `simulation/base_athome_sim/base_athome_sim/sim_robot.py`, el nodo simula la voz mediante eventos de texto
+  en `/hri/say_something` y `/voice/mute` (l.175, l.183).
+- Probar con `pytest src/base_athome_perception/test/test_voice_client.py` en `ROS_DOMAIN_ID=77`.
+Riesgo: NINGUNO para actuadores ni navegación (recurso exclusivo de audio en la NUC).
+
+--------------------------------------------------------------------------------
+RECOMENDACION 2: EXPANDIR DICCIONARIOS FONETICOS Y OPTIMIZAR CONFIRMACION EN HRI
+--------------------------------------------------------------------------------
+Utilidad: ALTA (permite ganar hasta +60 pts de bonus por no hacer preguntas innecesarias en HRI Challenge).
+Qué archivos cambiar:
+- `src/base_athome_perception/base_athome_perception/guest_vocabulary.py`:
+  * Expandir `NAME_ALIASES` (l.43) y `DRINK_ALIASES` (l.48) integrando las variantes fonéticas empíricas
+    catalogadas por CHARMIE en `words_dict.py`:
+    - "iced tea": agregar "ice t", "stick", "ice cream", "icedy", "anasti", "oysti", "nice t", "asti".
+    - "juice pack": agregar "juice bag", "juice but", "swissbag", "juspek", "drip spec", "peck", "druspek".
+    - "red wine": agregar "red vine", "headwind", "white", "edvin".
+    - "cola": agregar "coke", "coca", "kala", "gola", "cook", "cold".
+    - "milk": agregar "muke", "mew", "mille", "mieok".
+- `src/base_athome_perception/scripts/hri_receptionist_challenge.py`:
+  * En la máquina de estados de recepción (alrededor de l.1856-1890):
+    Actualmente el flujo transita siempre por `STATE_ASK_CONFIRM` ("Is that correct?").
+    Cambiar la lógica: Si la extracción de `name` y `drink` proviene de una coincidencia de alta confianza
+    (alias exacto o coincidencia fonética directa con ratio >= 0.85), saltar directamente a `STATE_CONFIRM_DETAILS`
+    afirmando "Nice to meet you, {name}! I noted that your favorite drink is {drink}." sin hacer pregunta.
+    Solo si la confianza es intermedia (<0.85) o se detectó un solo dato, transitar a `STATE_ASK_CONFIRM`.
+Cómo probarlo primero en simulación:
+- Ejecutar el escenario de simulación de recepcionista con invitado automático:
+  `python3 src/base_athome_perception/scripts/hri_receptionist_challenge.py` en `ROS_DOMAIN_ID=77`
+  contra `sim_robot.py`, verificando que se complete el flujo sin preguntar "Is that correct?"
+  cuando el nombre/bebida coincide exactamente.
+Riesgo: NINGUNO para actuadores ni navegación (es puramente lógica de diálogo de alto nivel).
+
+--------------------------------------------------------------------------------
+RECOMENDACION 3: INCORPORAR 'HOTWORDS' EN FASTER-WHISPER DE LA JETSON
+--------------------------------------------------------------------------------
+Utilidad: MEDIA-ALTA (mejora la tasa de acierto en nombres y comandos sin provocar alucinaciones de prompt).
+Qué archivos cambiar:
+- `jetson_head/src/audio_asr/audio_asr/whisper_node.py`:
+  * En `WhisperASRNode.__init__()` (l.77): declarar parámetro `hotwords` (tipo string, por defecto "").
+  * En `transcribe()` (l.460): pasar `hotwords=req.get('hotwords', self.hotwords)` a la llamada
+    `self.model.transcribe(..., hotwords=hotwords)`.
+  * En `request_callback()` (l.206): admitir el campo `"hotwords"` en el payload JSON de `/voice/listen_request`.
+- `src/base_athome_perception/base_athome_perception/voice_client.py`:
+  * En `VoiceClient.request()` (l.76): admitir el argumento `hotwords=""` en los parámetros de la solicitud.
+- `src/base_athome_skills/base_athome_skills/mission/voice_dialog.py`:
+  * En `asr_prompt()` (l.86): generar una cadena compacta de hotwords con los verbos y lugares
+    ("kitchen, living room, table, trash, bottle, take, bring, go, stop").
+Cómo probarlo primero en simulación:
+- `sim_robot.py` ya procesa `/voice/listen_request` como JSON y mockea el resultado; se valida la compatibilidad
+  hacia atrás del protocolo.
+- Pruebas unitarias en `jetson_head/src/audio_asr/test/test_asr_core.py` en `ROS_DOMAIN_ID=77`.
+Riesgo: BAJO (cambio de software en el paquete `audio_asr`; hardware desenergizado).
+
+
+================================================================================
+5. CLASIFICACION FORMAL DE EVIDENCIA
+================================================================================
+
+5.1. VERIFICADO (con código fuente exacto, SHA y líneas comprobadas)
+- [VERIFICADO: RuleBook 2026.2 @ ebdf34d223dd, ExternalDevices.tex l.15-20]:
+  Prohibición absoluta de dispositivos inalámbricos (micrófonos de mano o headsets). Obligatoriedad de micrófono en robot.
+- [VERIFICADO: RuleBook 2026.2 @ ebdf34d223dd, HumanRobotInteractionChallenge.tex l.84-90]:
+  Regla de preguntas no esenciales (+15 pts bonus si no se preguntan confirmaciones; pedir repetir por no oír no penaliza).
+- [VERIFICADO: RuleBook 2026.2 @ ebdf34d223dd, scoresheets/HumanRobotInteractionChallenge.tex]:
+  Puntuaciones exactas: 4x15 = 60 pts por no preguntas, -40 pts por dato memorizado erróneo, -20 pts por Alternative HRI.
+- [VERIFICADO: Base@Home @ a119f61, jetson_head/src/audio_asr/audio_asr/asr_core.py]:
+  Implementación de `SileroStream`, `EnergyVAD`, `Endpointer` (start_timeout=8.0s, end_silence=1.1s),
+  `collapse_repeats()`, `is_prompt_echo()`, `clean_transcript()`.
+- [VERIFICADO: Base@Home @ a119f61, jetson_head/src/audio_asr/audio_asr/whisper_node.py]:
+  Implementación de `WhisperASRNode`, captura a 48 kHz decimada a 16 kHz (l.289), control de ganancia `_adapt_gain` (l.257),
+  silenciamiento de audio `/voice/mute` con `unmute_guard_sec=0.35 s` (l.73, l.186), precalentamiento `_warmup()` (l.151).
+- [VERIFICADO: Base@Home @ a119f61, src/base_athome_perception/base_athome_perception/speaker.py]:
+  `RoboCupSpeaker` utilizando Piper TTS neuronal (`en_US-lessac-medium.onnx`), `play_beep()` con `beep.wav` (l.88),
+  y el método `ensure_bluetooth_sink()` que busca sinks `bluez_output` (l.113-125).
+- [VERIFICADO: Base@Home @ a119f61, src/base_athome_perception/base_athome_perception/guest_vocabulary.py]:
+  `GuestVocabulary`, `phonetic_key()`, diccionarios `NAME_ALIASES` y `DRINK_ALIASES`.
+- [VERIFICADO: Base@Home @ a119f61, src/base_athome_perception/scripts/asr_benchmark.py]:
+  Banco de inyección acústica reproducible con `/voice/debug_inject` y sintetizador Piper.
+- [VERIFICADO: RoBorregos FRIDA @ 1a0caeb56354, hri/packages/speech/scripts/voice_detection.py]:
+  Cascada VAD triple: energía RMS, pitch periodicidad con autocorrelación y MFCC cosine similarity con adaptive speaker lock.
+- [VERIFICADO: RoBorregos FRIDA @ 1a0caeb56354, hri/packages/speech/scripts/noise_cancellation.py]:
+  Cancelación de ruido activa mediante DeepFilterNet3 a 48 kHz.
+- [VERIFICADO: fbotathome @ 1b1f6d1081b3, fbot_speech/fbot_speech/speech_recognizer.py]:
+  Uso de `RealtimeSTT` (`AudioToTextRecorder`) con modelo `distil-small.en`, `silero_sensitivity=0.6`,
+  `post_speech_silence_duration=1.2 s` y turn-taking con `delayStarterRecorder` y beep.
+- [VERIFICADO: CHARMIE @ 461577d6534c, src/charmie_audio/charmie_audio/words_dict.py]:
+  Diccionarios empíricos exhaustivos de transcripciones fonéticas corruptas de Whisper bajo ruido para nombres y bebidas.
+- [VERIFICADO: CHARMIE @ 461577d6534c, src/charmie_speakers/charmie_speakers/speakers.py]:
+  Sobre-amplificación forzada por software al 150% de volumen mediante `pactl set-sink-volume @DEFAULT_SINK@ 150%`.
+- [VERIFICADO: NimbRo @ arXiv:2412.14989]:
+  Pipeline de ASR local con Faster Whisper multilingüe, micrófono Zoom Am7 y audio routing con JACK.
+
+5.2. INFERIDO (deducciones lógicas fundamentadas en la arquitectura)
+- [INFERIDO]: El motivo de que RoBorregos FRIDA desactive DeepFilterNet en CPU si hay lentitud (`_DF_MAX_SLOW_CHUNKS=20`)
+  se debe a que DeepFilterNet a 48 kHz requiere convoluciones complejas que en un procesador ARM embebido consumen
+  más del 60% de un core, comprometiendo el tiempo real cuando no hay aceleración CUDA.
+- [INFERIDO]: El fallo de Commander reportado en `STATUS.md` el 2026-11-05 ("Whisper real: 3 frases bien... el resto
+  sin resultado en 14 s porque el ASR detectó voz continua") se originó porque el ruido acústico ambiental de la sala
+  mantenía la energía por encima de `off_thr` de forma ininterrumpida, impidiendo que el `Endpointer` detectara el
+  silencio de cierre de 1.1 s y forzando el corte únicamente al llegar al límite de `max_speech` (14–15 s).
+
+5.3. NO ENCONTRADO / POR CONFIRMAR
+- [POR CONFIRMAR]: Nivel de presión sonora (SPL en dB) exacto del altavoz interno que se monte en el chasis
+  de Base@Home cuando se sustituya el altavoz Bluetooth. Requiere medición con sonómetro a 1 metro.
+- [POR CONFIRMAR]: Comportamiento acústico del micrófono RØDE VideoMic GO II frente al sonido del timbre real
+  de la arena en el HRI Challenge (el sonido exacto del timbre no se publica con antelación según el RuleBook).
+- [POR CONFIRMAR]: Eficacia de la ganancia automática (`_adapt_gain`) con hablantes de diferentes volúmenes
+  en el robot real (marcado en `docs/MICROFONO_ASR.md` §7 como no probado con personas reales).

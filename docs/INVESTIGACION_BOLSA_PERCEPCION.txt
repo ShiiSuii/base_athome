@@ -1,0 +1,444 @@
+RESUMEN EJECUTIVO (INVESTIGACION PERCEPCION BOLSA BASE@HOME)
+1. Ningun equipo @Home fusiona cabeza y muneca con Kalman continuo: usan conmutacion jerarquica (coarse-to-fine).
+2. Para pasar de 2D a 3D, los equipos lideres usan mediana de puntos validos en mascara/caja, nunca un pixel unico.
+3. RealSense D435 falla en bolsas negras (absorcion IR 850nm) dando profundidad 0: mitigar con filtros de huecos y apoyo en piso.
+4. El sesgo de medir la cara frontal desplaza el centro 10-15 cm hacia la camara; bag_vision.py lo compensa sumando radio.
+5. En muneca (<30 cm), cortar rayo con plano a <15 deg produce errores de metros; inclinar >=35 deg baja el error a ~2 cm/deg.
+6. Alternativas en muneca: descartar redes monoculares (lentas en CPU, sin escala); adoptar IBVS simplificado para centrado lateral.
+7. Gesto de senalar: estudios HRI (Droeschel, Nickel) miden error humano de 8-15 deg; intersectar plano del piso amplifica el error a metros.
+8. Se debe elegir entre bolsas detectadas (como RoBorregos y CHARMIE) usando un cono de tolerancia, no un punto exacto en el piso.
+9. MIN_POINT_ANGLE_DEG=25 da falsos negativos si la bolsa esta cerca de los pies (<1 m) y falsos positivos al gesticular; pedir codo extendido.
+10. YOLO-World v8s-worldv2 es la mejor opcion CPU (~120 ms); incluir distractores (floor, wall) sube la confianza de 0.2 a 0.6.
+11. En bag_vision.py: reemplazar FLOOR_MARGIN_M=0.04 fijo por percentil 5 local de soporte, y sembrar BagBelief solo con cabeza.
+12. Validar siempre en simulacion antes de mover actuadores reales (Nivel C: poses de observacion inclinadas y descenso por esfuerzo).
+13. Agarre ciego final por esfuerzo de corriente (estilo Tech United) es el mejor respaldo ante fallas de vision a corta distancia.
+14. Plazo de cualificacion (6/12/2026): mantener arquitectura actual corrigiendo compuertas geometricas, sembrado y pose de muneca.
+
+================================================================================
+RECOMENDACIONES ORDENADAS POR UTILIDAD PARA NUESTRO ROBOT
+================================================================================
+
+R1. COMPUERTAS GEOMETRICAS EN EL RAYO DE MUNECA Y POSE DE OBSERVACION INCLINADA
+- Archivos y funciones:
+  * base_athome_perception/bag_vision.py: wrist_measure()
+  * base_athome_skills/mission/bag_task.py: FLOOR_PREGRASP_DEG y nueva pose WRIST_OBSERVE_DEG
+  * base_athome_perception/arm_manipulation.py: _bag_candidates(), locate_bag_blocking()
+- Que cambiar:
+  1. En wrist_measure(): Mantener MIN_RAY_DOWN_DEG = 20.0 y rango maximo WRIST_MAX_RANGE_M = 1.2 m (bajarlo de 1.6 m). Devolver motivo explicito de rechazo.
+  2. Agregar compuerta por cota de error propagado: delta_rango = (h * cos(a) / sin^2(a)) * rad(1.0 deg). Si delta_rango > 0.15 m, descartar medicion.
+  3. En bag_task.py: Definir una pose intermedia de observacion de muneca (WRIST_OBSERVE_DEG) donde la camara DaBai apunte hacia el piso con inclinacion >= 35 a 45 grados bajo el horizonte (a 35 deg, el error propagado baja a ~1.8 cm/deg con h = 0.40 m, en vez de los 10 m/deg medidos a 1.5 deg).
+- Clasificacion: NIVEL C (el cambio de trayectoria/pose del brazo requiere validacion con el usuario).
+- Como probarlo sin riesgo:
+  En simulacion con ATHOME_SIM=1, ejecutar pytest test_bag_vision.py probando rayos con angulos de 5, 10, 15, 20 y 40 grados. Comprobar que los rayos rasantes sean rechazados con motivo descriptivo y que con WRIST_OBSERVE_DEG el error de distancia sea < 3 cm. En el simulador sim_robot.py, intercalar la pose WRIST_OBSERVE_DEG antes de pre_grasp_floor y verificar que no colisione con el chasis.
+- Riesgo: Muy bajo en logica; medio en cinemática si la pose no se valida en simulacion antes de pasar al brazo Piper real.
+
+R2. CORRECCION DE SEMBRADO, EXPIRACION Y REINICIO EN BagBelief
+- Archivos y funciones:
+  * base_athome_perception/bag_vision.py: BagBelief, BagBelief.update()
+  * base_athome_perception/scripts/bag_finder.py: _find_bag(), _refine()
+- Que cambiar:
+  1. En BagBelief: No aceptar la primera medicion a ciegas si proviene de la muneca. La creencia solo se inicializa ("siembra") con observaciones de la cabeza (head_measure), que poseen profundidad real.
+  2. Agregar marca temporal (timestamp) a las muestras en BagBelief. Si la ultima observacion tiene mas de 10 segundos y la base se movio, resetear muestras.
+  3. En update(): Si se reciben 3 muestras consecutivas rechazadas que son coherentes entre si (distancia entre ellas < BELIEF_GATE_M), reiniciar la creencia hacia el nuevo cluster en vez de bloquearse con la primera muestra erronea.
+- Clasificacion: Nivel A (puro software, matematico/logico).
+- Como probarlo:
+  Tests unitarios en pytest inyectando una primera medicion falsa (outlier a 1 metro) seguida de 4 mediciones verdaderas consistentes, verificando que la creencia converja a la posicion real y no quede trabada en el outlier.
+- Riesgo: Minimo. Aumenta la robustez ante detecciones espurias iniciales.
+
+R3. LECTURA DEL GESTO: SELECCION ENTRE OBJETOS DETECTADOS + VERIFICACION DE CODO EXTENDIDO
+- Archivos y funciones:
+  * base_athome_skills/mission/bag_task.py: is_pointing(), pointed_floor_point()
+  * base_athome_perception/bag_vision.py: pointed_target()
+  * base_athome_perception/scripts/bag_finder.py: _wait_gesture(), _find()
+- Que cambiar:
+  1. En is_pointing(): Incorporar la articulacion del codo (ELBOW). Comprobar colinealidad brazo-antebrazo (angulo hombro-codo-muneca >= 140 grados) para evitar falsos positivos cuando el usuario tiene la mano cerca del pecho o la cintura.
+  2. Ajustar MIN_POINT_ANGLE_DEG: Cuando el usuario senala una bolsa cercana a sus pies (< 1 m), el brazo apunta hacia abajo casi paralelo al torso (angulo de 15 a 20 deg). Permitir angulos menores si el brazo esta totalmente extendido hacia abajo (codo recto) y la muneca esta por debajo de la cadera.
+  3. En bag_finder.py: No depender exclusivamente del punto matematico de interseccion hombro-muneca contra el piso z=0 (que a 3 m desvia hasta 1.5 m por un error de 10 deg en el keypoint). Usar la direccion del rayo para definir un cono o sector angular (azimut de la persona al piso) y elegir entre las bolsas detectadas por YOLO-World aquella que minimice la distancia angular a dicho rayo, adoptando la estrategia probada de RoBorregos (pointing_detection.py L347-358).
+- Clasificacion: Nivel A (software de percepcion).
+- Como probarlo:
+  Probar con bag_finder_sim y escenarios en sim_scene.py con persona simulada apuntando a 1 m, 2 m y 3 m con pequenas perturbaciones (+-5 deg) en los keypoints. Comprobar que el robot seleccione la bolsa correcta incluso con desvio del rayo.
+- Riesgo: Bajo. Resuelve el caso critico donde la bolsa queda a >1.0 m del corte del rayo y hoy se descarta como bag_not_found.
+
+R4. SOPORTE DE PISO LOCAL MEDIANTE PERCENTIL EN LUGAR DE CORTE FIJO z > 0.04 m
+- Archivos y funciones:
+  * base_athome_perception/bag_vision.py: head_measure()
+- Que cambiar:
+  1. Reemplazar pts = pts[pts[:, 2] > FLOOR_MARGIN_M] (hardcodeado en 0.04 m en map).
+  2. Calcular el soporte local a partir de la nube de la caja: support_z = np.percentile(pts[:, 2], 5) (patron de RoBorregos geometric_grasps.py L216-220).
+  3. Filtrar puntos con pts = pts[pts[:, 2] > support_z + 0.03].
+  4. Si la mediana de los puntos filtrados no supera support_z + 0.05, clasificar como "sin bulto suficiente sobre el plano".
+- Clasificacion: Nivel A (algoritmo en percepcion).
+- Como probarlo:
+  Prueba sintetica en pytest con nubes de puntos de bolsas sobre planos inclinados 2 grados respecto a map. Verificar que el soporte local no confunda el piso inclinado con el cuerpo de la bolsa.
+- Riesgo: Muy bajo. Elimina la dependencia de una calibracion perfecta de cabeceo (pitch) entre la cabeza y base_footprint.
+
+R5. MITIGACION DE PERDIDA DE PROFUNDIDAD EN D435 PARA BOLSAS NEGRAS / OSCURAS
+- Archivos y funciones:
+  * base_athome_perception/bag_vision.py: head_measure()
+  * Launch de RealSense (realsense2_camera): configuracion de filtros post-procesamiento.
+- Que cambiar:
+  1. En el driver de la D435: Habilitar en launch los filtros de librealsense: spatial_filter (smooth), temporal_filter (persistencia) y hole_filling_filter (modo 1 o 2). Incrementar laser_power al maximo (360 mW).
+  2. Fallback geometrico en head_measure(): Si YOLO-World detecta una bolsa ("black garbage bag") con alta confianza pero int(valid.sum()) < MIN_DEPTH_POINTS debido a absorcion infrarroja, no descartar inmediatamente: tomar los puntos del piso inmediatamente adyacentes a la base de la caja 2D (borde inferior) o proyectar el rayo del pixel inferior central contra el plano de soporte local estimado.
+- Clasificacion: Nivel A (software / configuracion).
+- Como probarlo:
+  Grabar un bag de prueba con una bolsa de basura negra mate real frente a la D435. Comparar la cantidad de pixeles de profundidad validos antes y despues de los filtros de librealsense y validar la estimacion por borde inferior.
+- Riesgo: Bajo. Evita que el robot quede ciego ante bolsas negras opacas.
+
+R6. ASOCIACION EXPLICITA CABEZA -> MUNECA (LA MUNECA SOLO CONFIRMA)
+- Archivos y funciones:
+  * base_athome_skills/mission/node.py: h_remember_bag()
+  * base_athome_perception/arm_manipulation.py: _bag_candidates(), locate_bag_blocking()
+  * base_athome_perception/bag_vision.py: choose_nearest()
+- Que cambiar:
+  1. En node.py: Garantizar que la cabeza sea la que siempre define bag_target. Al llegar a la pose de acercamiento, locate_bag_blocking() recibe la expectativa (expected_xyz).
+  2. Si la muneca descarta todas las detecciones (por angulo rasante o compuerta), h_remember_bag() ya tiene el fallback de usar la cabeza (self.bag_memory = tuple(head)). Mantener este fallback y no bloquear la maquina de estados.
+  3. En choose_nearest(): Cuando expected_xy is None, si hay mas de una deteccion, devolver la deteccion con mayor confianza en lugar de fallar ("varias bolsas y ninguna referencia").
+- Clasificacion: Nivel A (logica de nodo y asociacion).
+- Como probarlo:
+  Ejecutar el pipeline de mision en simulacion con ATHOME_SIM=1 y simular perdida de deteccion en muneca (ATHOME_SIM_DETECTION_DROPOUT=1.0) para constatar que complete el agarre usando la memoria de la cabeza.
+- Riesgo: Minimo.
+
+R7. CENTRADO LATERAL TIPO IBVS (VISUAL SERVOING) EN MUNECA ANTES DEL AGARRE
+- Archivos y funciones:
+  * base_athome_perception/wrist_detector.py: TargetTracker
+  * base_athome_perception/arm_manipulation.py: _grasp_core() o nueva funcion align_wrist_to_bag()
+- Que cambiar:
+  1. Descartar redes de profundidad monocular para la muneca (Depth Anything v2 / MiDaS): consumen 100-250 ms de CPU y no entregan escala metrica fiable.
+  2. En su lugar, antes de bajar el elevador/brazo para agarrar, calcular el error lateral en pixeles del centro de la caja respecto al centro optico: e_u = u_box - cx.
+  3. Comandar una pequena correccion lateral en el plano del efector (vel_y = -k * e_u / fx * Z_aprox, con Z_aprox fijado a la distancia esperada de la cabeza ~0.35 m). Dado que Z actua solo como ganancia, un error del 30% en Z solo afecta la velocidad de convergencia, no el punto final.
+- Clasificacion: NIVEL C (movimiento fino reactivo del brazo).
+- Como probarlo:
+  En simulacion, colocar la bolsa desplazada 5 cm a la izquierda del punto nominal de agarre. Verificar que el bucle visual centre la caja en la imagen antes de iniciar el descenso.
+- Riesgo: Medio si no se limita la velocidad maxima y el tiempo maximo de servocontrol (timeout de 2 s).
+
+R8. AGARRE ROBUSTO: DESCENSO POR DETECCION DE CONTACTO / ESFUERZO (ESTILO TECH UNITED)
+- Archivos y funciones:
+  * base_athome_perception/arm_manipulation.py: pick_blocking(), _grasp_core()
+  * base_athome_skills/mission/bag_task.py
+- Que cambiar:
+  1. En lugar de confiar ciegamente en que la bolsa esta exactamente a la altura plane_z, descender el torso/brazo monitoreando la corriente de las articulaciones del brazo Piper o el esfuerzo en /torso/joint_states o /joint_states.
+  2. Al detectar incremento de torque o llegar a cota de seguridad (5 cm bajo la altura esperada), detener descenso y cerrar la pinza.
+  3. Medir el ancho de apertura final de la pinza: si esta completamente cerrada (< 5 mm), la bolsa se escapo; reintentar abriendo y corrigiendo 3 cm hacia adelante (como Tech United pick_up.py L122).
+- Clasificacion: NIVEL C (control de actuadores y fuerzas de contacto).
+- Como probarlo:
+  Validar primero en sim_robot.py verificando limites de carrera y en seco en el robot con supervision de torque maximo.
+- Riesgo: Medio. Debe respetar los limites de corriente del brazo Piper para no danar reductores.
+
+================================================================================
+1. DE DETECCION 2D A POSICION 3D DE UNA BOLSA
+================================================================================
+
+1.1 MUESTREO DE PROFUNDIDAD
+- Practica observada en otros equipos:
+  * Pixel unico: Frágil y desaconsejado. LASR-at-Home (service.py:349) toma un solo pixel z_mm = depth_im[v, u] para keypoints; si el pixel cae en un agujero de ruido (0), la lectura se pierde.
+  * Mediana espacial: Estandar indiscutido.
+    - RoBorregos (vision_3D_utils.py: get_depth; base_detector_node.py L180-200): Mediana en espiral sobre una ventana local exigiendo >= 20 pixeles validos (>0 y no NaN).
+    - LASR-at-Home (service.py L188-199): np.median(points, axis=0) sobre todos los pixeles dentro de la mascara poligonal de segmentacion.
+    - CHARMIE (point_cloud_class.py L139-140): depth_median = np.median(non_zero_values) sobre los indices no-cero de la mascara.
+    - Base@Home (bag_vision.py L56-64 y L107-114): depth_at usa parche 9x9 con mediana de validos, y head_measure submuestrea una grilla regular dentro de la caja.
+
+1.2 MASCARA VS CAJA (BOUNDING BOX)
+- Una caja 2D que encierra una bolsa apoyada en el piso incluye entre un 20% y un 45% de pixeles correspondientes al piso, zocalos o patas de muebles circundantes.
+- Si se toma la mediana directa de la caja completa, la profundidad se sesga fuertemente hacia el plano de apoyo.
+- CHARMIE (point_cloud_class.py L156-175) implementa convert_bbox_to_3d_point convirtiendo la caja en una mascara rectangular completa, lo que introduce ruido de piso y fondo si la caja contiene elementos ajenos.
+- La mascara de segmentacion (LASR y CHARMIE) aisla la silueta real del objeto. Sin embargo, en bolsas plasticas arrugadas, las mascaras de YOLOv8-seg tienden a fragmentarse o perder volumen en zonas de penumbra.
+- Conclusion técnica: Si se usa caja 2D (como en nuestro BagDetector con YOLO-World), es OBLIGATORIO filtrar los puntos del plano de apoyo antes de promediar, tal como hace RoBorregos (geometric_grasps.py L216-220) y nuestro head_measure (filtrando piso y fondo).
+
+1.3 SESGO POR MEDIR LA CARA FRONTAL (FRONT-FACE BIAS)
+- Una camara RGB-D solo puede ver la cara exterior del objeto orientada hacia ella. Para una bolsa cilindrica de diametro 30-40 cm, el centro geometrico real esta entre 15 y 20 cm mas lejos que la superficie frontal visible.
+- Ni RoBorregos ni CHARMIE corrigen este sesgo: toman la mediana de la superficie y asumen que esa es la coordenada del objeto. Como consecuencia, al planificar el agarre sobre ese punto, el TCP de la pinza colisiona con el borde delantero de la bolsa o intenta cerrar sobre la pared frontal.
+- Nuestro codigo en bag_vision.py (L123-130) aborda esto explicitamente:
+  * Proyecta la nube sobre el eje visual (along) y el eje lateral (across).
+  * Calcula el radio lateral: radius = min(BAG_MAX_RADIUS_M, (P95(across) - P5(across)) / 2.0).
+  * Desplaza el centro hacia adelante desde el punto mas cercano: forward = P5(along) + radius.
+- Critica y limite de nuestro metodo: Asume una seccion circular simetrica. Si la bolsa esta desparramada (ancho 40 cm pero espesor 15 cm), sumar el radio transversal infla la distancia en profundidad en 5-10 cm. Conviene acotar el avance a min(radius, 0.12 m).
+
+1.4 QUITAR EL PISO (FLOOR REMOVAL)
+- FOODE-C137 (plane_segmentation.cpp L127-155): Recorta por cota Z y ejecuta RANSAC de plano con PCL para extraer y sustraer explicitamente el plano del piso antes del agrupamiento euclideo.
+- RoBorregos (geometric_grasps.py L216-220): Calcula support_z = np.percentile(points[:, 2], 5) (el percentil 5 de altura de la propia ROI) y descarta los puntos a menos de 5 cm de ese soporte (FLOOR_MARGIN = 0.05).
+- Base@Home (bag_vision.py L115): pts = pts[pts[:, 2] > FLOOR_MARGIN_M] con FLOOR_MARGIN_M = 0.04 m en coordenadas de map.
+- Diagnostico critico: Filtrar con una constante fija de 4 cm en marco map es vulnerable a errores angulares de cabeceo (pitch) en el montaje de la RealSense o en las uniones pan-tilt. A 2.5 m de distancia, 1 grado de desvio en pitch traslada el plano medido en 4.3 cm. Si el error es positivo, el piso entra en la nube de la bolsa; si es negativo, una bolsa baja queda eliminada como piso. La tecnica de RoBorregos de estimar el percentil 5 local es superior y debe adoptarse.
+
+1.5 BOLSAS DEFORMABLES Y OSCURAS DONDE LA D435 FALLA
+- Fisica del problema: La RealSense D435 opera mediante estereo activo por infrarrojo (850 nm). Las bolsas de consorcio negras (pigmentadas con negro de humo / carbon black) absorben mas del 95% de la radiacion IR a 850 nm. El sensor no recibe patron reflejado y produce depth = 0 en toda la region oscura. Las bolsas transparentes o plasticos muy brillantes provocan reflejos especulares que saturan el chip o miden directamente el piso a traves del plastico.
+- Estrategias de contingencia:
+  1. Filtros de librealsense: Habilitar Hole Filling Filter (modo farest/nearest) y Spatial Filter para rellenar huecos a partir del contorno visible.
+  2. Apoyo en el piso como cota de contacto: Si el cuerpo de la bolsa da profundidad 0 pero el contorno 2D en RGB esta claramente delimitado por YOLO-World, los pixeles del borde inferior de la caja corresponden al punto de contacto con el piso. El corte del rayo del pixel inferior con el plano del piso (medido a los costados de la bolsa donde el piso si refleja IR) provee la posicion 3D sin depender de la profundidad dentro de la bolsa.
+  3. Estrategia tactil Tech United (pick_up.py L146): Cuando la vision 3D no puede certificar el punto exacto de la bolsa, posicionar la pinza por encima y descender con deteccion de contacto por esfuerzo/torque.
+
+================================================================================
+2. CAMARA EN LA MUNECA SIN PROFUNDIDAD (<30 CM) - ALTERNATIVAS Y DECISION 6/12
+================================================================================
+
+La camara DaBai en la pinza tiene una zona ciega de triangulacion a distancias menores a 30 cm (disparidad fuera de rango del sensor estructurado). Cuando el brazo se acerca a la bolsa, la medicion de profundidad por hardware no esta disponible.
+
+2.1 ANALISIS DE ALTERNATIVAS
+
+A) RAYO MONOCULAR CONTRA UN PLANO (METODO ACTUAL)
+- Principio: Traza un rayo desde el centro de la caja 2D de la DaBai y busca la interseccion s con el plano horizontal a la altura media de la bolsa (top_z / 2): s = (top_z/2 - T[2]) / ray[2].
+- Precision:
+  * Para angulo bajo el horizonte a < 15 deg: Inutilizable (error > 10 m por grado de cabeceo).
+  * Para angulo a >= 35 deg: Error de 1.5 a 2.4 cm por grado (suficiente para embocar la pinza si la camara mira hacia abajo).
+- Costo CPU en NUC: Despreciable (< 0.1 ms).
+- Complejidad: Minima (analitica pura, 10 lineas de codigo).
+- Condicion critica: Requiere que el brazo este en una pose donde la camara mire hacia abajo (>= 35 deg), no en la pose pre_grasp_floor actual (casi horizontal).
+
+B) VISUAL SERVOING BASADO EN IMAGEN (IBVS - IMAGE-BASED VISUAL SERVOING)
+- Principio (Chaumette & Hutchinson 2006): Regula el error en el espacio de la imagen e = (u - u*, v - v*) entre el centroide de la bolsa y el punto objetivo de agarre de la pinza proyectado. La velocidad del efector final es v = -lambda * L_s^+ * e.
+- Precision: Sub-centimetrica en el plano lateral/vertical transversal a la camara (error < 5 mm). Es inmune a errores de calibracion cinematica del brazo Piper porque el lazo se cierra en la imagen.
+- Costo CPU en NUC: Minimo (< 0.5 ms). La matriz de interaccion para un punto centroidal es una ecuacion analitica simple de dimension 2x3.
+- Complejidad: Media. Requiere desacoplar el control en el plano de imagen (centrado lateral) del avance en profundidad (eje Z), el cual se comanda a velocidad constante o por cota fija.
+- Limitacion: No da la distancia de parada en Z por si solo; debe combinarse con el tamano de la caja (ancho de la bolsa en px) o con la distancia inicial fijada por la cabeza.
+
+C) TRIANGULACION MOVIENDO EL BRAZO O LA BASE (MOTION STEREO / PARALLAX)
+- Principio: El robot toma un fotograma en la pose A, desplaza el brazo lateralmente 8-12 cm a la pose B midiendo el desplazamiento exacto con los encoders del Piper, y triangula la posicion 3D del centroide mediante epipolar geometry.
+- Precision: Muy alta a corta distancia. Para Z = 0.40 m, linea de base b = 0.10 m, focal f = 500 px y error de 1 px: Delta Z = (Z^2 / (b * f)) * Delta u = (0.16 / 50) * 1 = 3.2 mm.
+- Costo CPU en NUC: Muy bajo (< 5 ms si se usa seguimiento KLT de caracteristicas entre ambos cuadros).
+- Complejidad: Media-Alta. Requiere una rutina cinematica especifica ("movimiento de oscilacion" o wiggle), esperar estabilizacion mecanica para evitar desenfoque de movimiento (motion blur), y coordinar estados en la maquina de manipulacion. Agrega entre 1.5 y 2.5 segundos a cada intento de agarre.
+
+D) PROFUNDIDAD MONOCULAR POR RED NEURONAL (DEPTH ANYTHING V2 SMALL / MIDAS)
+- Principio: Pasar la imagen RGB por una red tipo Vision Transformer para predecir un mapa de profundidad denso.
+- Precision: Insuficiente para manipulacion metrica. Estas redes estiman profundidad relativa afín (d = s * depth_true + t). Para recuperar la escala metrica absoluta s se requiere calibrar contra un plano de referencia o cinemática. En bolsas de basura arrugadas sin textura definida, el error de escala medido ronda el 15-25% (+-6 a 10 cm a 40 cm), lo cual hace fallar el agarre.
+- Costo CPU en NUC: Inviable para tiempo real. Depth Anything v2 Small (24.8M parametros) toma entre 110 ms y 250 ms por cuadro en una CPU Intel Core i7 NUC con PyTorch (o ~60-80 ms con OpenVINO INT8), consumiendo el 100% de 2 a 3 hilos de CPU que compiten con Nav2 y los lazos de control del brazo.
+- Complejidad: Muy Alta. Requiere empaquetar modelos ONNX/OpenVINO, dependencias pesadas y calibracion dinamica de escala.
+
+2.2 COMPARATIVA SISTEMATICA DE ALTERNATIVAS EN MUNECA
+
+Metodo               Precision (Z)   Precision (XY)  Costo CPU NUC   Complejidad   Factible al 6/12
+--------------------------------------------------------------------------------------------------
+Rayo-Plano (>=35 deg) +- 1.5 - 3 cm   +- 1 - 2 cm     < 0.1 ms        Minima        SI (Inmediato)
+IBVS (Centrado 2D)    No aplica (Z)   +- 0.3 - 0.5 cm < 0.5 ms        Media         SI (Recomendado)
+Motion Stereo (Brazo) +- 0.3 - 0.5 cm +- 0.3 - 0.5 cm < 5 ms          Media-Alta    Dificil al 6/12
+Profundidad Monocular +- 6 - 10 cm    +- 2 - 3 cm     60 - 200 ms     Muy Alta      NO (Descartar)
+
+2.3 DECISION PARA LA ENTREGA DEL 6/12/2026
+Para la cualificacion del 6/12, la solucion mas fiable y de menor riesgo es un esquema HIBRIDO EN DOS FASES:
+1. Fase de observacion con Rayo-Plano inclinado: Llevar la muneca a WRIST_OBSERVE_DEG (camara inclinada 40 grados hacia el piso). A ese angulo, ray_plane_point corta el piso con error centimetrico y actualiza la cota de aproximacion.
+2. Fase de centrado IBVS simplificado: Mientras el elevador desciende hacia la bolsa, corregir la pinza lateralmente para mantener u_box centrado en la imagen. El avance final se frena por la altura guardada o por deteccion de esfuerzo en la pinza.
+Descartar definitivamente redes de profundidad monocular por costo de CPU y falta de precision metrica.
+
+================================================================================
+3. USO CONJUNTO DE DOS CAMARAS: CABEZA Y MUNECA
+================================================================================
+
+3.1 ESTADO DEL ARTE EN @HOME Y MOBILE MANIPULATION
+- En los repositorios de RoboCup@Home:
+  * RoBorregos (home2 @1a0caeb): No asocia ni fusiona las camaras. La cabeza detecta objetos y personas; la muneca alimenta el octomap de colisiones del brazo (arm.py L584).
+  * LASR-at-Home (Base @2a3ced2): Trabaja con una unica camara en la cabeza.
+  * CHARMIE (charmie_ws @461577d): Posee 3 camaras (Head RealSense, Hand RealSense D405, Base Astra). Procesa cada camara en nodos independientes (yolo_objects.py L209, L532-550) y transforma independientemente a marcos de TF. No existe fusion bayesiana ni EKF entre cabeza y mano; la mano opera en tareas locales cuando la cabeza ya entrego el control.
+  * Tech United (tue_robocup @5bbf7bb): Solo usa camara de cabeza. Almacena entidades en el modelo de mundo ED (Environment Descriptor). El agarre final se ejecuta a ciegas con sensores de fuerza.
+- En manipulacion movil avanzada (fuera de @Home):
+  * La literatura formal de mobile manipulation (Kragic & Christensen 2002, Chaumette & Hutchinson 2006, TidyBot 2023) utiliza el patron "Eye-to-Hand + Eye-in-Hand Cooperative Switching" (conmutacion jerarquica):
+    1. La camara global (eye-to-hand / cabeza) fija el objeto en el mapa y planifica el movimiento de aproximacion de la base y el brazo.
+    2. La camara local (eye-in-hand / muneca) entra en funcionamiento SOLO cuando el efector esta a menos de 0.8-1.0 m del objeto.
+    3. No se realiza una fusion continua de pixeles entre ambas camaras: la camara de cabeza define la posicion inicial y la compuerta de validacion espacial; la camara de muneca refina localmente la pose relativa respecto a la pinza.
+
+3.2 ASOCIACION ENTRE VISTAS Y FILTROS BAYESIANOS
+- Error de calibracion cinematica:
+  La cadena cinematica desde la base hasta la camara de muneca involucra: base_footprint -> base_link -> elevador (torso_lift_joint) -> 6 articulaciones del Piper -> soporte de camara DaBai. Los errores acumulados en encoders, holguras de reductores y flexion mecanica producen un desvio tipico de 1.5 a 3.5 cm en la posicion calculada de la camara de muneca.
+- Por que un Filtro de Kalman ingenuo falla aqui:
+  Si la cabeza estima la bolsa en (x_c, y_c) con covarianza R_c, y la muneca (debido al sesgo sistematico de calibracion cinematica) la estima en (x_m, y_m) con offset constante de 3 cm, un EKF que trate ambas mediciones como independientes con ruido blanco oscilara o convergira a un punto intermedio ficticio. Para fusionarlas correctamente en un EKF habria que estimar en el vector de estado el sesgo de calibracion hand-eye (state augmentation: [x_obj, y_obj, z_obj, delta_calib]), lo cual requiere movimientos de excitacion y es inviable en una ejecucion rapida de torneo.
+- Solucion adoptada en nuestro diseno:
+  La asociacion debe basarse en Gating Espacial (validation gate):
+  * La cabeza fija la entidad BagBelief en el marco map.
+  * La muneca proyecta la posicion esperada en su marco. Solo acepta detecciones dentro de una elipse de radio BELIEF_GATE_M = 0.35 m (o Mahalanobis distance d_M^2 <= 9.0).
+  * La muneca no "pelea" por redefinir la posicion global si el angulo es desfavorable: solo refina el offset local si la medicion pasa las compuertas R1.
+
+3.3 CUANTO CUESTA IMPLEMENTARLO
+- Un filtro Bayesiano / BagBelief con mediana movil acotada por compuerta espacial como el que tenemos en bag_vision.py es computacionalmente despreciable (< 0.2 ms en Python).
+- El error en nuestro codigo actual no era la falta de un EKF complejo, sino dos errores puntuales:
+  1. Aceptar mediciones de la muneca con rayos horizontales (falta de filtro de angulo).
+  2. Inicializar la creencia con la primera muestra sin verificar si venia de la muneca o de la cabeza.
+Corrigiendo estos dos puntos, el esquema de asociacion de BagBelief es robusto, explicable y suficiente para cualificar.
+
+================================================================================
+4. LECTURA DEL GESTO DE SENALAR (POINTING GESTURE)
+================================================================================
+
+4.1 HOMBRO-MUNECA VS OJO-MUNECA (GAZE VS ARM POINTER)
+- Evidencia en la literatura de Interaccion Humano-Robot (HRI):
+  * David Droeschel, Jörg Stückler y Sven Behnke (Team NimbRo, HRI 2011, "Learning to Interpret Pointing Gestures with a Time-of-Flight Camera", Universidad de Bonn):
+    - Evaluaron la precision de senalamiento con camaras 3D ToF.
+    - El modelo geometrico simple ojo-mano (eye-hand vector) tuvo un error angular medio de 10.1 grados y un error de posicion en el objetivo de 43 cm.
+    - Demostraron que el error angular humano intrinseco al apuntar sin mira cerrada varia normalmente entre 8 y 15 grados.
+  * Kai Nickel y Rainer Stiefelhagen (ICMI 2003 e Image and Vision Computing 2007, "Visual recognition of pointing gestures for human-robot interaction"):
+    - Demostraron que aunque la linea ojo-mano representa la linea de vision cuando el humano apunta cuidadosamente, al interactuar naturalmente con un robot el usuario suele extender el brazo desde el hombro.
+    - El seguimiento de la linea ojo-mano sufre de oclusion severa cuando la mano se levanta en la direccion de la camara, tapando la cara y degradando los keypoints del rostro.
+  * Herbort & Butz (2012):
+    - Al apuntar a objetos en el piso, las personas no alinean el ojo con el dedo indice; extienden el brazo hacia abajo usando la orientacion del antebrazo/hombro.
+- Conclusion: Para objetos en el piso, el vector hombro-muneca (shoulder-wrist) es mas estable mecanica y visualmente que la linea ojo-muneca, ya que los keypoints del hombro y muneca tienen menor tasa de oclusion mutua desde una camara frontal.
+
+4.2 PROPAGACION DEL ERROR ANGULAR AL INTERSECAR EL PISO
+- Matematica del corte de rayo contra el piso z = 0:
+  Sea un hombro a altura h_s = 1.4 m y la muneca a h_w = 1.0 m, separados horizontalmente delta_xy = 0.5 m.
+  La pendiente del rayo es tan(theta) = (1.4 - 1.0) / 0.5 = 0.8 (angulo theta = 38.6 deg bajo el horizonte).
+  El rayo corta el piso a una distancia horizontal R = h_w / tan(theta) = 1.0 / 0.8 = 1.25 m por delante de la muneca.
+- Efecto de un error angular de 10 grados (error humano tipico segun Droeschel et al.):
+  * Si el usuario apunta a una bolsa a 1.5 m de distancia (theta = 40 deg):
+    Un error de +-8 deg cambia el punto en el piso entre 1.20 m y 1.95 m (desvio de +- 35-45 cm).
+  * Si el usuario apunta a una bolsa a 3.5 m de distancia (theta = 20 deg):
+    Un error de +-8 deg desplaza el corte en el piso entre 2.4 m y 6.2 m (desvio de MAS DE 2.5 METROS!).
+- Diagnostico critico sobre nuestro codigo:
+  En bag_finder.py L235:
+  _find_bag(target, end, gate_m=bag_task.MAX_BAG_FROM_RAY_M) utiliza MAX_BAG_FROM_RAY_M = 1.0 metro.
+  A distancias de la persona superiores a 2.5 metros, el error humano natural de senalamiento supera casi siempre 1.0 metro en el plano del piso. Como resultado, _find_bag descarta la bolsa real y devuelve "no encuentro la bolsa senalada: no ve una bolsa".
+
+4.3 ELEGIR ENTRE OBJETOS DETECTADOS VS INTERSECAR EL PISO
+- RoBorregos (pointing_detection.py L347-358):
+  * No intersecta el piso en 3D.
+  * Toma la recta 2D en coordenadas de imagen normalizadas que pasa por el hombro derecho y la muneca derecha: y = m*x + b.
+  * Para cada objeto detectado de las clases bolsa/mochila, calcula la distancia perpendicular en pixeles: d = |y_c - m*x_c - b| / sqrt(m^2 + 1).
+  * Selecciona el objeto que minimice esa distancia.
+- CHARMIE (carry_my_luggage_robocup2024.py L1650-1685 y yolo_pose.py L816-832):
+  * Clasifica el senalamiento en forma categorica: "Left" o "Right".
+  * Busca si existe una bolsa detectada a la izquierda o derecha de la persona en el mapa.
+  * Si no detecta ninguna bolsa, coloca una coordenada tentativa a +-0.7 m lateral de la persona.
+- Recomendacion para Base@Home:
+  Modificar bag_finder.py para combinar ambos metodos:
+  1. Usar el corte del piso solo como vector director para girar el pan-tilt de la cabeza hacia la zona senalada (_look_at).
+  2. Una vez que la cabeza mira hacia alla, detectar todas las bolsas con YOLO-World.
+  3. Proyectar el rayo hombro-muneca en 3D y calcular la distancia de cada bolsa candidata a dicho rayo en el espacio (distancia punto-recta en 3D), o en el plano de la imagen (estilo RoBorregos).
+  4. Seleccionar la bolsa con menor distancia al rayo, sin importar si el corte contra el piso quedo a 50 cm o a 1.8 m de distancia.
+
+4.4 REVISION DE NUESTRO MIN_POINT_ANGLE_DEG = 25.0
+- En bag_task.py L85-93:
+  is_pointing(shoulder, wrist, hip, min_angle_deg=25.0) calcula el angulo entre el vector torso (shoulder -> hip) y el brazo (shoulder -> wrist).
+- Evaluacion de fallos:
+  1. Falso Negativo cuando la bolsa esta cerca de los pies:
+     Si una persona de 1.75 m senala una bolsa que esta a 0.6 m de sus pies, su brazo apunta casi derecho hacia abajo. El angulo entre el torso (vertical descendente) y el brazo extendido hacia abajo es de apenas 18 a 22 grados. Con MIN_POINT_ANGLE_DEG = 25.0, el robot dictamina "ve persona, sin gesto de senalar" y fracasa la mision.
+  2. Falso Positivo al caminar o gesticular:
+     Al hablar o caminar, los brazos oscilan normalmente entre 15 y 30 grados respecto a la cadera. Si la persona esta de perfil, el vector hombro-muneca proyectado supera los 25 grados facilmente.
+  3. Falta de verificacion del codo:
+     El codigo no inspecciona el codo (L_ELBOW=7, R_ELBOW=8). Una persona rascandose la barbilla o con la mano en el bolsillo tiene un angulo hombro-muneca > 25 deg respecto a la cadera, pero el codo esta flexionado a 60 deg.
+- Correccion propuesta:
+  * Exigir extension del brazo: angulo hombro-codo-muneca >= 140 grados.
+  * Si el brazo esta extendido y la muneca esta por debajo del codo y de la cadera, admitir un umbral de separacion del torso de 15 grados.
+  * Si el brazo esta horizontal o hacia arriba, exigir al menos 30 grados de separacion.
+
+================================================================================
+5. DETECTORES PARA BOLSAS DE BASURA, DATASETS Y CRITICA A BAG_VISION.PY
+================================================================================
+
+5.1 COMPARATIVA DE MODELOS ABIERTOS EN CPU (INTEL NUC)
+- YOLO-World (v8s-worldv2, Ultralytics / Cheng et al. CVPR 2024):
+  * Arquitectura: Detector de vocabulario abierto reparametrizado. Calcula los embeddings de texto una sola vez al configurar las clases (set_classes), y durante la inferencia corre como una red convolucional estandar.
+  * Latencia en CPU Intel NUC (2 hilos): ~110 - 130 ms por cuadro a 640x640; ~60 - 75 ms a 416x416.
+  * Memoria: ~85 MB.
+  * Rendimiento en nuestra tarea: Acerto 17 de 24 fotos reales con clases de bolsa + distractores.
+- Grounding DINO (Liu et al. 2023, Swin-T):
+  * Arquitectura: Transformer multimodal con atencion cruzada continua imagen-texto en cada capa.
+  * Latencia en CPU Intel NUC: Entre 1.8 y 3.5 SEGUNDOS por cuadro.
+  * Veredicto: Inviable para seguimiento con la cabeza o lazo de control en tiempo real en la NUC.
+- YOLOv8n / YOLO11n fine-tuned (entrenado en bolsas):
+  * Latencia en CPU Intel NUC: 15 - 25 ms por cuadro.
+  * Veredicto: Es la opcion de mayor rendimiento y menor consumo para despues del 6/12 si se dispone de dataset de entrenamiento.
+
+5.2 DATASETS ABIERTOS RELEVANTES
+- TACO (Trash Annotations in Context, Proença & Simões 2020, arXiv:2003.06975):
+  * 1500 imagenes con mas de 4700 anotaciones de residuos en interiores y exteriores. Contiene categorias explicitas de "Plastic bag & wrapper" y "Garbage bag".
+- ZeroWaste Dataset (Bashkirova et al., CVPR 2022):
+  * Dataset enfocado en clasificacion y segmentacion de residuos industriales deformables y altamente ocluidos.
+- COCO Dataset estandar:
+  * Solo contiene clases genericas ("handbag", "backpack", "suitcase"). No contiene bolsas de basura negras ni bolsas plasticas deformadas en el piso. Por este motivo, COCO estandar solo obtuvo 4 aciertos sobre 24 en nuestra prueba base.
+
+5.3 EXPLICACION DEL MECANISMO DE DISTRACTORES EN YOLO-WORLD
+- En nuestra linea base (wrist_detector.py L113-118):
+  * Clases solas: ["black garbage bag", "trash bag", "plastic bag", "bag"] -> 6 de 24 aciertos (confianza ~0.20).
+  * Con distractores: BAG_WORLD_CLASSES agregando ["person", "chair", "table", "bottle", "box", "wall", "floor"] -> 17 de 24 aciertos (confianza ~0.57-0.65).
+- Fundamento teorico:
+  YOLO-World computa la similitud coseno entre las caracteristicas visuales de cada region propuesta y los embeddings de texto de las clases provistas. Cuando la lista contiene unicamente clases de bolsas, las regiones del fondo (piso de madera, sombra, patas de sillas) no tienen una etiqueta de fondo explicita a la que asociarse y compiten por afinidad semantica marginal con las bolsas, bajando la separabilidad de la funcion sigmoide/softmax y reduciendo la confianza.
+  Al proporcionar etiquetas negativas explicitas como "floor", "wall", "chair", la red proyecta con alta certeza las regiones del fondo a esas clases. Al eliminarse la competencia residual, la region que realmente contiene la bolsa se desacopla netamente, saltando la confianza de 0.20 a casi 0.60.
+
+5.4 CRITICA DETALLADA A NUESTRO ARCHIVO bag_vision.py
+1. FLOOR_MARGIN_M = 0.04 (L26):
+   Hardcodeado en 4 cm sobre z = 0 en map. Si la calibracion del pitch de la RealSense o la odometria de la base tiene 1.5 deg de inclinacion a 2 m de distancia, el plano del piso real se desplaza 5.2 cm. El piso puede invadir la bolsa o una bolsa baja (< 5 cm) puede ser totalmente purgada ("a la altura del piso: sin bulto").
+2. BAG_MAX_TOP_M = 1.3 (L22):
+   Demasiado alto para una bolsa de basura en el piso (1.3 m llega a la altura del pecho). Permite que una silla o papelera de oficina alta pase la validacion. Deberia bajarse a 0.65 m para bolsas en piso.
+3. BAG_MAX_RADIUS_M = 0.30 y forward = P5(along) + radius (L127-128):
+   Asume que el objeto es simetrico y cilindrico/esferico. Si una bolsa de basura negra esta tirada de costado con forma alargada (e.g. 45 cm de largo por 15 cm de alto y ancho), el radio lateral calculado sera de ~22 cm. Desplazar el centro 22 cm hacia adelante sobre el eje visual empuja el objetivo 10 cm mas alla del centro verdadero de la bolsa.
+4. Filtro de objetos traseros dist < np.median(dist) + BAG_MAX_RADIUS_M * 2.0 (L119):
+   Si la bolsa esta apoyada contra una pared, zocalo o pata de mesa, los puntos de la pared que caigan dentro de 60 cm de la bolsa se conservan en la nube de puntos, sesgando la mediana del centroide hacia la pared.
+5. BagBelief acepta la primera muestra sin verificar (L170-179):
+   Si la primera deteccion aceptada es un falso positivo (e.g. un zapato o zocalo), todas las detecciones posteriores de la bolsa verdadera seran rechazadas por estar a > 0.35 m (BELIEF_GATE_M). Se requieren 4 outliers acumulados para reiniciar, lo que provoca que el robot descarte cuadros validos durante varios segundos.
+6. Falta de marca temporal en BagBelief (L158-206):
+   No almacena time.time() de las muestras. Si el robot se desplazo o si pasaron 20 segundos desde la ultima medicion, las muestras viejas siguen activas en la mediana.
+7. choose_nearest aborta sin expectativa (L145-146):
+   if expected_xy is None and best is not None: return None, "varias bolsas y ninguna referencia para elegir".
+   Si en la escena hay dos bolsas visibles y la cabeza aun no recibio una cota previa, la funcion rechaza ambas en vez de seleccionar la bolsa mas prominente o mas cercana a la persona.
+
+================================================================================
+EVIDENCIA Y REFERENCIAS DE CODIGO Y LITERATURA
+================================================================================
+
+A. REPOSITORIOS ROBOCUP@HOME REVISADOS (Solo lectura, clones locales en /tmp/home_research/)
+1. RoBorregos/home2 (Tec de Monterrey, RoboCup@Home)
+   Commit SHA: 1a0caeb563546328e64b758811dd3078db8fa81f
+   Licencia: Sin archivo LICENSE en raiz (solo estudio academico).
+   - pointing_detection.py L25-41, L150-163, L215-260, L347-358:
+     Senalamiento 2D con hombro-muneca (y = m*x + b). Seleccion de objeto candidato por minima distancia euclidea en pixeles (check_closest_object). Clases zero-shot por defecto: handbag, bag, backpack, tote_bag. Limpieza de memoria a los 2.0 s.
+   - geometric_grasps.py L57-59, L215-220, L328-368:
+     above_support calcula soporte local con support_z = percentile(points[:, 2], 5) y FLOOR_MARGIN = 0.05. elevation_grid y peak para objetos deformables.
+   - base_detector_node.py L53, L180-212:
+     Deproyeccion con intrinsecas, filtro por distancia MAX_DEPTH_THRESH = 2.0 m, mediana en espiral de >= 20 pixeles validos.
+   - arm.py L584, place.py L88:
+     Camara de muneca utilizada exclusivamente para mapa de colision de octomap; no fusiona con detecciones de la cabeza.
+
+2. LASR-at-Home/Base (King's College London, RoboCup@Home, rama ros2)
+   Commit SHA: 2a3ced23a90df1e76933c793e7ab3eb6170e081c
+   Licencia: GPL-3.0 (solo estudio).
+   - common/vision/lasr_vision_yolo/lasr_vision_yolo/service.py:
+     L165-199: _project_mask_to_3d() proyecta mascara de segmentacion con modelo pinhole y calcula np.median(points, axis=0) sobre z > 0.
+     L349-359: Keypoints de personas toman un solo pixel z_mm = depth_im[v, u] y rechazan z <= 0.1 o z > 20.0 m.
+
+3. tue-robotics/tue_robocup (Tech United Eindhoven, RoboCup@Home)
+   Commit SHA: 5bbf7bb13b635e798fc01d03e4a09b7cd6f421a9
+   Licencia: Sin archivo LICENSE en raiz (solo estudio academico).
+   - challenge_take_out_the_garbage/src/challenge_take_out_the_garbage/pick_up.py L110-165:
+     pick_up de bolsa de basura real. No usa camara en muneca: confia en pose previa de world model ED, desciende con move_down_until_force_sensor_edge_up(timeout=5, distance_move_down=0.35), cierra pinza con max_torque=1.0, levanta torso y verifica agarre por diferencia de peso (minimal_weight = 0.1 kg).
+   - challenge_hand_me_that/src/challenge_hand_me_that/get_furniture_from_operator_pose.py L100-167:
+     Traza rayo del operador contra el modelo de mundo ED (ed.ray_trace) para seleccionar muebles conocidos; valida que la persona este entre 1.5 y 3.5 m.
+
+4. LAR / Team CHARMIE (Universidade do Minho, RoboCup@Home, charmie_ws)
+   Commit SHA: 461577d6534c96a1832341fe789f2d83eb2e6ecb
+   Licencia: MIT License (LICENSE.md en raiz).
+   - src/charmie_point_cloud/charmie_point_cloud/point_cloud_class.py:
+     L58-60: Camara head (RealSense D435), hand (RealSense D405 con min_dist=70 mm, max_dist=1000 mm), base (Astra).
+     L111-155: convert_mask_to_3dpoint calcula depth_median = np.median(non_zero_values) y centroide u, v de la mascara.
+     L156-175: convert_bbox_to_3d_point convierte la caja en mascara rectangular completa.
+   - src/charmie_yolo_pose/charmie_yolo_pose/yolo_pose.py L782-835:
+     arm_pointing_at() con MIN_ANGLE_POINTING = 25. Angulo calculado en 2D pixel space con calculate_3angle(shoulder, wrist, hip). Asigna categoricamente "Left" o "Right".
+   - src/charmie_yolo_objects/charmie_yolo_objects/yolo_objects.py L209, L351-375, L532-550:
+     Camara de mano corre YOLO independientemente sin fusion bayesiana con la cabeza.
+   - src/charmie_tasks/charmie_tasks/old/carry_my_luggage/carry_my_luggage_robocup2024.py L1650-1715:
+     carry_my_luggage busca o.object_name == "Bag" a la izquierda o derecha de la persona segun el gesto categorico; si no ve bolsa, asume offset ciego +-0.7 m lateral.
+
+5. FOODE-C137/RoboCup-Home-Carry-My-Luggage
+   Commit SHA: a8cb6f7
+   Licencia: MIT License.
+   - carry_my_luggage/carry_perception/src/plane_segmentation.cpp L103-155:
+     Filtro voxel de 1 cm, corte por cota Z y segmentacion RANSAC de plano del piso para removerlo antes de aislar objetos.
+
+B. ARTICULOS CIENTIFICOS REVISADOS
+1. David Droeschel, Jörg Stückler, Sven Behnke (2011). "Learning to Interpret Pointing Gestures with a Time-of-Flight Camera". ACM/IEEE International Conference on Human-Robot Interaction (HRI), pp. 207-214.
+   URL: https://www.nimbro.net/publications/HRI_2011_Droeschel.pdf
+   Aporte verificado: Error angular humano medio de 10.1 grados y error espacial de 43 cm en la linea ojo-mano. Demuestra que intersectar rayos humanos contra superficies amplifica el error y requiere aprendizaje o seleccion de candidatos discretos.
+2. Kai Nickel, Rainer Stiefelhagen (2007). "Visual recognition of pointing gestures for human–robot interaction". Image and Vision Computing, 25(12), pp. 1875-1884.
+   DOI: 10.1016/j.imavis.2005.12.020
+   Aporte verificado: Seguimiento estereo 3D de cabeza y manos con HMMs; analisis de linea cabeza-mano vs orientacion de antebrazo.
+3. François Chaumette, Seth Hutchinson (2006). "Visual servo control. I. Basic approaches". IEEE Robotics & Automation Magazine, 13(4), pp. 82-90.
+   DOI: 10.1109/MRA.2006.250573
+   Aporte verificado: Formulacion analitica de Image-Based Visual Servoing (IBVS), matriz de interaccion L_s, e independencia de errores de calibracion cinematica en centrado transversal.
+4. Pedro F. Proença, Pedro Simões (2020). "TACO: Trash Annotations in Context for Litter Detection". arXiv:2003.06975.
+   URL: https://arxiv.org/abs/2003.06975
+   Aporte verificado: Dataset abierto para residuos con anotaciones detalladas de bolsas plasticas y basura deformable.
+5. Tianheng Cheng et al. (2024). "YOLO-World: Real-Time Open-Vocabulary Object Detection". IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR 2024).
+   URL: https://arxiv.org/abs/2401.17270
+   Aporte verificado: Arquitectura reparametrizada vision-lenguaje para deteccion en tiempo real.
+
+================================================================================
+LO NO ENCONTRADO O NO VERIFICADO
+================================================================================
+1. No se encontro ningun equipo en RoboCup@Home que resuelva la zona ciega de una camara de muneca mediante un rayo monocular contra un plano como hace nuestro Base@Home. Todos los equipos revisados usan o bien una camara RGB-D de rango ultra-cercano en la mano (e.g. RealSense D405 en CHARMIE), o bien se basan exclusivamente en la camara de cabeza y ejecutan la aproximacion final a ciegas por control de fuerza/torque (Tech United).
+2. No se encontro en ningun repositorio un filtro de Kalman extendido (EKF) que fusione activamente detecciones 3D simultaneas de dos camaras (cabeza y muneca) sobre un mismo objeto. Todos los sistemas aplican conmutacion jerarquica o usan la camara de mano unicamente para percepcion de obstaculos.
+3. La constante h = 0.40 m y el angulo de 1.5 grados que explicarian los 1557 cm medidos en nuestro robot siguen siendo una deduccion geometrica (INFERIDO); falta registrar en el log del robot el valor exacto de transform de la camara DaBai en la pose pre_grasp_floor real.
+4. No se pudo verificar experimentalmente en el robot fisico si el brazo Piper reporta esfuerzo/torque en las articulaciones con suficiente relacion senal-ruido como para detectar el contacto con la bolsa en el piso (clasificado como Nivel C, a probar con el usuario).

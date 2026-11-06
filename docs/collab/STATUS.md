@@ -95,6 +95,16 @@ Antes de empezar: E-stop a mano, zona despejada y otra persona atenta. Bolsa liv
 - **Sigue simplificado:** base por velocidad sin ruedas, detector por color, persona con puntos simulados, voz escrita.
 - **Sin probar:** nada de esto en el robot real.
 
+## 2f. Plan B, correcciones por voz y regresión en Gazebo con Nav2 (2026-11-06)
+
+- **Plan B:** si falla el agarre del piso, sube el elevador sin mover el brazo, dice que le pongan el asa entre los dedos, espera 5 s, cierra y confirma por ancho. Si queda vacía, aborta. Cerrar la pinza con una persona cerca: probar con el usuario, con la bolsa ya puesta y nadie tocando los dedos.
+- **Correcciones por voz:** si no entiende el gesto o no ve la bolsa, dice qué corregir y reintenta hasta 3 veces.
+- **Regresión (Gazebo + Nav2, una corrida por escenario, `simulation/scripts/sim_escenarios.py`):** normal 1.7 cm; persona lejos 3.0; persona moviéndose 1.1; distractora 1.4; bolsa de 45 cm 2.7; muñeca desalineada 3° 2.1; sin gesto, sin persona y gesto mal apuntado fallan en el paso esperado; plan B completo; plan B sin que la persona dé la bolsa falla al recibirla. `normal` y `mueve` se corrieron con código de dos momentos; una tanda completa con el código final queda pendiente.
+- **Receptionist:** ya no pregunta "Is that correct?". `ATHOME_HRI_CONFIRM=1` la reactiva.
+- **Investigaciones en `docs/`, de Antigravity con Flash, verificar antes de usar:** `INVESTIGACION_{BOLSA_PERCEPCION,BOLSA_AGARRE,PICK_PLACE,HRI,GPSR,VOZ,CALIBRACION,REGLAS_GENERALES,SIM_REALISTA,LLM_VLM}.txt`, `PAPERS_REVISION.txt`.
+- **Riesgos del reglamento a confirmar (`INVESTIGACION_REGLAS_GENERALES.txt`):** E-stop común a todos los actuadores, arranque por teclado, lidar ciego bajo 38 cm, parlante Bluetooth, sin protocolo de ayuda humana.
+- **Sin probar:** nada de esto en el robot real.
+
 ## 3. Cómo retomar la teleoperación con el Quest (pendiente: prueba completa en el brazo real)
 
 1. Quest por USB a la **Jetson**, depuración USB autorizada (`adb devices` → `device`).

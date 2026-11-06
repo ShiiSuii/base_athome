@@ -108,6 +108,18 @@ SCENARIOS: List[Scenario] = [
         expected_state="FAILED",
         expected_failed_step="s3_find_pointed_bag",
     ),
+    Scenario(
+        name="plan_b",
+        env={"ATHOME_SIM_BAG": DEFAULT_BAG, "ATHOME_SIM_PERSON": DEFAULT_PERSON, "ATHOME_SIM_GRASP_SLIPS": "1"},
+        expected_state="SUCCEEDED",
+    ),
+    Scenario(
+        name="plan_b_sin_manos",
+        env={"ATHOME_SIM_BAG": DEFAULT_BAG, "ATHOME_SIM_PERSON": DEFAULT_PERSON, "ATHOME_SIM_GRASP_SLIPS": "1",
+             "ATHOME_SIM_PERSON_HANDS": "0"},
+        expected_state="FAILED",
+        expected_failed_step="s12_receive_bag",
+    ),
 ]
 
 SCENARIO_MAP: Dict[str, Scenario] = {s.name: s for s in SCENARIOS}
@@ -155,7 +167,8 @@ def evaluate(scenario: Scenario, data: RunData) -> EvalResult:
         reasons.append(f"estado {data.mission_state} != esperado {scenario.expected_state}")
 
     if scenario.expected_failed_step is not None:
-        if failed_step != scenario.expected_failed_step:
+        # Un paso puede fallar y dar lugar a un plan B: vale cualquiera de los fallidos
+        if scenario.expected_failed_step not in [st for st, state, _ in data.steps if state == "FAILED"]:
             reasons.append(f"fallo en {failed_step or 'ninguno'} != esperado {scenario.expected_failed_step}")
 
     if scenario.max_cm is not None:

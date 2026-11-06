@@ -63,11 +63,14 @@ def arm_pose(shoulder, wrist):
     return center, length, math.atan2(-dz, math.hypot(dx, dy)), math.atan2(dy, dx)
 
 
-def arm_sdf(name, shoulder, wrist) -> str:
-    # La mano sigue mas alla de la muneca: sin ella, la profundidad en la muneca cae al fondo, detras de la punta
+def arm_with_hand(shoulder, wrist):
+    """Pose del brazo. La mano sigue mas alla de la muneca: sin ella, la profundidad en la muneca cae al fondo."""
     n = math.dist(shoulder, wrist)
-    hand = [w + HAND_M * (w - v) / n for v, w in zip(shoulder, wrist)]
-    center, length, pitch, yaw = arm_pose(shoulder, hand)
+    return arm_pose(shoulder, [w + HAND_M * (w - v) / n for v, w in zip(shoulder, wrist)])
+
+
+def arm_sdf(name, shoulder, wrist) -> str:
+    center, length, pitch, yaw = arm_with_hand(shoulder, wrist)
     return _static_box(name, center, (length, 0.10, 0.10), (0.3, 0.45, 0.7), (0.0, pitch, yaw))
 
 
@@ -76,9 +79,12 @@ def create_command(world: str, sdf: str) -> list:
             "--reptype", "gz.msgs.Boolean", "--timeout", "5000", "--req", "sdf: " + json.dumps(sdf)]
 
 
-def set_pose_command(world: str, name: str, xyz) -> list:
+def set_pose_command(world: str, name: str, xyz, pitch: float = 0.0, yaw: float = 0.0) -> list:
+    cp, sp, cy, sy = math.cos(pitch / 2.0), math.sin(pitch / 2.0), math.cos(yaw / 2.0), math.sin(yaw / 2.0)
+    req = (f'name: "{name}" position: {{x: {xyz[0]} y: {xyz[1]} z: {xyz[2]}}} '
+           f"orientation: {{x: {-sp * sy} y: {sp * cy} z: {cp * sy} w: {cp * cy}}}")
     return ["gz", "service", "-s", f"/world/{world}/set_pose", "--reqtype", "gz.msgs.Pose", "--reptype", "gz.msgs.Boolean",
-            "--timeout", "2000", "--req", f'name: "{name}" position: {{x: {xyz[0]} y: {xyz[1]} z: {xyz[2]}}}']
+            "--timeout", "2000", "--req", req]
 
 
 def remove_command(world: str, name: str) -> list:

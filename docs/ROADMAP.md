@@ -182,7 +182,7 @@ Estado del receptionist frente a la hoja de puntaje §5.1 (análisis HOME-06a, a
 | Ofrecer asiento libre verificado | 2×100 | hecho (ocupación por YOLO-pose) — validar en robot |
 | Presentación con nombre y bebida, mirando al invitado correcto | 4×30 + 2×50 | hecho (`f56238d`) — validar |
 | Mirar hacia donde navega | 2×15 | parcial (cabeza fija en giros) |
-| **No hacer preguntas de confirmación no esenciales** | 4×15 (y −40 por dato mal memorizado) | **CONFLICTO:** desde `a8550a3` el receptionist pregunta "Is that correct?". Decidir: quitar la pregunta en modo competencia y confiar en vocabulario+fonética, o aceptar perder hasta 60 pts para evitar −160. **Decisión humana pendiente.** |
+| **No hacer preguntas de confirmación no esenciales** | 4×15 (y −40 por dato mal memorizado) | hecho: ya no pregunta "Is that correct?". `ATHOME_HRI_CONFIRM=1` la vuelve a activar. Sin probar en robot: si Whisper entiende mal, el dato queda mal memorizado |
 | Timbre | 2×30 | no hecho (YAMNet, reimplementar) |
 | Atributo visual del 1.er invitado | 4×20 (−20 si yerra) | no hecho |
 | Recibir bolsa (handover) · seguir al anfitrión · soltar bolsa | 50 + 200 + 50 | no hecho (follow como cliente de Nav2, modo seguro de brazo) |

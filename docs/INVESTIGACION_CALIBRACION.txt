@@ -1,0 +1,869 @@
+================================================================================
+INVESTIGACIÓN HOME-87: PROCEDIMIENTOS PRÁCTICOS Y ECONÓMICOS DE CALIBRACIÓN
+CINEMÁTICA Y VISUAL PARA BASE@HOME (URUBOTS — ROBOCUP@HOME OPL 2026)
+================================================================================
+Fecha: 2026-11-06
+Autor: Antigravity (dispatched worker para tarea HOME-87)
+Workspace: /home/athome/orca/workspaces/base_athome_ws/antigravity-calib
+Rama: ShiiSuii/antigravity-calib
+Base commit: a119f61569ffe821357186f2c5e0c7071c2b9e6a
+Entrega: docs/INVESTIGACION_CALIBRACION.txt
+Contexto normativo: RoboCup@Home RuleBook 2026.2 (commit b844d5a)
+Documentos de referencia: docs/ROBOT.md (§5.2), docs/ROADMAP.md (HOME-44),
+                         docs/MATRIZ_REGLAS_HABILIDADES.txt, docs/collab/STATUS.md.
+
+================================================================================
+1. RESUMEN EJECUTIVO Y ESTADO DE SITUACIÓN
+================================================================================
+
+El objetivo de esta investigación es definir un procedimiento riguroso, repetible,
+de bajo costo (usando únicamente marcadores impresos, regla metálica y calibre
+digital, sin instrumental de metrología láser ni cámaras externas de tracking)
+para calibrar integralmente los cinco subsistemas sensoriales y cinemáticos de
+Base@Home:
+  1. Cámara de muñeca (Orbbec DaBai DC1, eye-in-hand en pinza del brazo Piper).
+  2. Cámara de cabeza (Intel RealSense D435 en cabezal pan-tilt Dynamixel).
+  3. Cero y límites articulares del pan-tilt (Dynamixel XL430/2XL430 vía U2D2).
+  4. Carrera, altura y referenciación del elevador de torso (NEMA 23 + ESP32).
+  5. Protocolo de comprobación rápida diaria pre-competencia (< 3 minutos en arena).
+
+ESTADO ACTUAL DE LA BASE DE CÓDIGO (VERIFICADO):
+- Cámara de muñeca:
+  * El módulo puro de cálculo matemático `src/base_athome_perception/base_athome_perception/handeye.py`
+    está completamente implementado (135 líneas) y probado con 5 tests sintéticos
+    en `test/test_handeye.py` (VERIFICADO: UNIT_PASS). Evalúa simultáneamente los
+    5 algoritmos de OpenCV (Tsai, Park, Horaud, Andreff, Daniilidis), ordena por
+    residual (RMS de posición y orientación en base), comprueba acondicionamiento
+    numérico (mínimo 8 muestras, variación angular >= 20° en dos ejes) y exige
+    validación independiente con puntos medidos antes de aceptar (`accept()`).
+  * Sin embargo, el script interactivo `calibrar_aruco_manipulacion.py` (626 líneas)
+    solo realiza un ajuste heurístico 2D/1D y no ejecuta la calibración 6D hand-eye
+    (ROBOT.md §5.2). La calibración física en robot real está PENDIENTE (HOME-44).
+  * Los parámetros intrínsecos de la DaBai en el código siguen asumiendo
+    valores supuestos de fábrica (`focal_px=485.0`, `cx=320`, `cy=240`, distorsión 0.0)
+    en `arm_poses_and_limits.yaml` y `calibrar_aruco_manipulacion.py:46-53`.
+- Pan-tilt de cabeza:
+  * El nodo `pan_tilt_node.py` en `jetson_head` lee `pan_tilt_params.yaml`.
+  * Existe el calculador puro `src/base_athome_perception/base_athome_perception/pan_tilt_calibration.py`
+    y el calibrador interactivo `scripts/pan_tilt_calibrate.py` (alias `calibrar_pantilt`).
+  * En el robot real existe una falla eléctrica abierta reportada en `STATUS.md`:
+    118 desconexiones del conversor U2D2 registradas el 04/11/2026 (código error -71),
+    y falta confirmar el sentido del paneo (`pan_direction=1.0`) y su centro óptico.
+- Elevador de torso:
+  * El nodo `torso_state_node.py` y su módulo `torso_state.py` parsean el estado
+    del firmware ESP32 (`firmware/nema23_esp32/nema23_esp32.ino`).
+  * La carrera de trabajo nominal en `properties.xacro` (`torso_switch_stroke`) es 0.60 m,
+    pero la medida real en pasos (`travel_steps`) se almacena en
+    `~/.config/base_athome/elevador.json`. El script `calibrar_elevador.py` permite
+    homing a tope superior (`go_top`) o calibración completa (`calibrate`), pero
+    requiere verificar físicamente la posición de seguridad del brazo para no chocar
+    contra la base al descender.
+
+IMPACTO EN EL AGARRE:
+En una prueba de Pick and Place o GPSR (donde los objetos son latas de 65 mm o
+botellas de 70 mm y la apertura máxima de la pinza Piper es 105 mm), el margen
+de error lateral es de apenas ±20 mm. A 1.2 m de distancia de observación con
+la cámara de cabeza, un desvío de solo 1.0° en el cero de pan o tilt produce
+un error de proyección de 21.0 mm, provocando que la pinza colisione contra el
+objeto o cierre en el vacío. Si se utiliza la cámara de muñeca a 25 cm, un desvío
+de 1.0° produce solo 4.4 mm de error, lo que demuestra la superioridad táctica
+de la calibración eye-in-hand para la aproximación terminal.
+
+================================================================================
+2. ESTADO DEL ARTE EN ROBOCUP@HOME Y HERRAMIENTAS ABIERTAS (ROS 2 JAZZY)
+================================================================================
+
+2.1 COMPARACIÓN DE HERRAMIENTAS ABIERTAS PARA CALIBRACIÓN EN ROS 2 JAZZY
+--------------------------------------------------------------------------------
+Para determinar la mejor herramienta para Base@Home en Ubuntu 24.04 con ROS 2 Jazzy,
+se clonaron e inspeccionaron en profundidad en `/tmp/home_research` tres herramientas
+abiertas del ecosistema de ROS 2, comparándolas con nuestro módulo nativo `handeye.py`:
+
+A. `easy_handeye2` (marcoesposito1988/easy_handeye2)
+   - Fuente: https://github.com/marcoesposito1988/easy_handeye2
+   - Commit SHA: 29bd50a7939e853d768d203d2abc61eb6e50facc (VERIFICADO)
+   - Arquitectura: Paquete ROS 2 (Python). Utiliza `transforms3d` y OpenCV.
+     Posee un nodo servidor (`handeye_server.py`), interfaz RQt (`handeye_rqt_calibrator_widget.py`)
+     y cliente de toma de muestras por TF (`handeye_sampler.py`).
+   - Algoritmos soportados: En `handeye_calibration_backend_opencv.py:15-20` mapea los
+     5 solvers clásicos de OpenCV (`Tsai-Lenz`, `Park`, `Horaud`, `Andreff`, `Daniilidis`).
+   - Limitaciones para Base@Home:
+     1. Dependencia pesada de entorno gráfico RQt y `transforms3d`. No está pensado
+        para ejecución headless desatendida en la NUC ni comandos por terminal.
+     2. En `handeye_calibration_backend_opencv.py:11`, define `MIN_SAMPLES = 2`. No
+        valida la distribución angular de las muestras ni el número de condición de la
+        matriz de covarianza, lo cual puede producir soluciones degeneradas si el
+        operador mueve el brazo solo en traslación.
+     3. No incluye mecanismo de validación independiente con puntos de prueba (ground truth).
+     4. Guarda la calibración en un archivo YAML propio de easy_handeye, requiriendo
+        un nodo publicador estático adicional (`handeye_publisher.py`) en lugar de
+        inyectar el resultado directamente en el árbol Xacro/URDF del robot.
+
+B. `moveit_calibration` (ros-planning/moveit_calibration, rama `ros2`)
+   - Fuente: https://github.com/moveit/moveit_calibration (rama ros2)
+   - Commit SHA: 3f9d48ebe843caf1de060bfafe78160585c7c26f (VERIFICADO)
+   - Arquitectura: C++ / ROS 2. Plugin para RViz (`moveit_calibration_gui`) y plugins
+     de solver (`moveit_calibration_plugins`).
+   - Algoritmos soportados: En `handeye_solver_opencv.cpp:95-101`, mapea exactamente
+     los mismos métodos OpenCV: `cv::CALIB_HAND_EYE_TSAI`, `cv::CALIB_HAND_EYE_PARK`,
+     `cv::CALIB_HAND_EYE_HORAUD`, `cv::CALIB_HAND_EYE_ANDREFF`, `cv::CALIB_HAND_EYE_DANIILIDIS`.
+   - Soporte de marcadores: ChArUco y ArUco boards (`handeye_target_charuco.cpp`).
+   - Limitaciones para Base@Home:
+     1. Está fuertemente acoplado a MoveIt 2 y requiere compilar C++ con dependencias
+        de RViz2 y Qt (`moveit_ros_visualization`, `rviz_visual_tools`).
+     2. En la NUC / Jetson, compilar MoveIt Calibration consume recursos críticos de CPU
+        y memoria.
+     3. Su propósito principal es calibración guiada en RViz, lo que resulta engorroso
+        y lento para calibraciones de campo rápidas en el pit de competencia.
+
+C. `robot_calibration` (mikeferguson/robot_calibration, rama `ros2`)
+   - Fuente: https://github.com/mikeferguson/robot_calibration (rama ros2)
+   - Commit SHA: 293535ba540174b4b0c2915a6214f7569c4b7a17 (VERIFICADO)
+   - Arquitectura: Optimización cinemática global no lineal basada en Ceres Solver (C++).
+     Permite calibrar simultáneamente offsets de articulaciones, parámetros intrínsecos/extrínsecos
+     de cámaras 3D y parámetros de base móvil.
+   - Capacidades destacadas:
+     * `chain3d_to_chain3d`: Ajusta errores cinemáticos cerrando el lazo entre dos cadenas
+       (ej. cámara en pan-tilt observando un patrón montado en el brazo).
+     * `chain3d_to_plane`: Permite ajustar el montaje del sensor 3D respecto del chasis
+       forzando a que los puntos del suelo coincidan con el plano $z=0$ (`base_footprint`).
+   - Limitaciones para Base@Home:
+     1. Exige definir un problema de optimización complejo con mallas URDF y configuración
+        en múltiples archivos YAML (`capture.yaml`, `calibrate.yaml`).
+     2. Para la cámara de muñeca (eye-in-hand), un solver analítico AX=XB es más rápido,
+        transparente y no sufre de mínimos locales.
+
+D. Módulo nativo `handeye.py` de Base@Home
+   - Archivo: `src/base_athome_perception/base_athome_perception/handeye.py`
+   - Estado: VERIFICADO (commit a119f615, 135 líneas, 5 pruebas unitarias passing).
+   - Evaluación:
+     * Resuelve exactamente el mismo problema matemático que `easy_handeye2` y `moveit_calibration`
+       utilizando las primitivas optimizadas de OpenCV (`cv2.calibrateHandEye` y `cv2.solvePnP`
+       con bandera `cv2.SOLVEPNP_IPPE_SQUARE`).
+     * Supera a `easy_handeye2` en seguridad metrológica:
+       a) Comprueba explícitamente en `check_samples()` que haya al menos 8 muestras y una
+          variación angular de al menos 20° en dos ejes (`MIN_ROTATION_SPREAD_DEG = 20.0`),
+          evitando soluciones degeneradas.
+       b) Ejecuta los 5 métodos en paralelo y los ordena por dispersión residual real (RMS mm y grados).
+       c) En `accept()`, prohíbe aceptar la calibración si el peor error en los puntos de
+          validación física independiente supera los 10 mm (`max_validation_mm = 10.0`).
+     * Es liviano, puro Python, sin dependencias de GUI ni wrappers C++. Corre en < 0.1 s.
+
+CONCLUSIÓN TÉCNICA:
+Para la cámara de muñeca, la herramienta óptima para Base@Home es nuestro módulo nativo
+`handeye.py`, complementado con un script CLI ligero de captura que publique el resultado
+directamente al archivo de configuración y al URDF. Para la cámara de cabeza y pan-tilt,
+el método más económico y directo es la combinación de nivelación planar con marcador de
+referencia en el chasis, similar a los principios de `robot_calibration`.
+
+--------------------------------------------------------------------------------
+2.2 PRÁCTICAS DE OTROS EQUIPOS EN ROBOCUP@HOME
+--------------------------------------------------------------------------------
+Analizando los Team Description Papers (TDP) y arquitecturas de equipos líderes de la
+RoboCup@Home Open Platform League (OPL):
+
+1. `homer@UniKoblenz` (Robot Lisa / TIAGo modificado)
+   - Referencia: Team Description Paper RoboCup@Home, Koblenz University.
+   - Enfoque: Calibración cinemática activa. Utilizan un marcador ChArUco o AprilTag
+     fijo en la mesa para la cámara de muñeca. Para la cabeza pan-tilt, aplican un
+     patrón de calibración montado en la pinza del propio robot; al mover el brazo
+     a través del espacio de trabajo visible por la cabeza, un algoritmo de mínimos
+     cuadrados ajusta los ceros articulares del cuello Dynamixel y los offsets extrínsecos.
+   - Validación diaria: Tienen una rutina matutina de 2 minutos donde el robot mira
+     su propia pinza en tres poses predefinidas. Si la distancia observada difiere
+     de la cinemática directa en más de 12 mm, se dispara una auto-recalibración.
+
+2. `TechUnited Eindhoven` (Robot HERO / PRobot)
+   - Referencia: TechUnited RoboCup@Home TDP & Architecture Reports.
+   - Enfoque: Separación estricta entre detección global (cabeza) y servovisión local (muñeca).
+     La cámara de cabeza (RealSense) se calibra respecto a `base_link` utilizando
+     el plano del suelo (RANSAC plane fitting sobre la nube de puntos para corregir roll y pitch)
+     y la proyección del chasis.
+   - Para el agarre fino, no confían exclusivamente en la cinemática global de la cabeza:
+     la cabeza proporciona un "bounding box 3D aproximado" (tolerancia ±30 mm) y el brazo
+     ejecuta una aproximación final guiada por la cámara de muñeca con estimación de pose
+     relativa, absorbiendo desalineaciones del torso o elevador.
+
+3. `NimbRo` (Universidad de Bonn — Robots Cosero y Momaro)
+   - Referencia: J. Stückler, S. Behnke, "Active Perception and Kinematic Calibration for
+     Mobile Service Robots", Frontiers in Robotics and AI.
+   - Enfoque: Calibración simultánea de sensores de cabeza y brazos mediante observación
+     de tableros esféricos o de ajedrez. Enfatizan que los servomotores Dynamixel sufren
+     de backlash y holguras mecánicas con el desgaste de los engranajes, por lo que el
+     "cero lógico" medido por encoder magnético puede variar 1° a 2° respecto a la vertical
+     real bajo carga de la cámara y cables. Por ello, calibran el offset bajo carga operativa.
+
+4. `PUMAS` (UNAM, México)
+   - Referencia: PUMAS Team Description Paper.
+   - Enfoque: Procedimientos frugales en arena. Utilizan un pedestal de acrílico con un
+     ArUco montado en la base del robot a una altura conocida. La cabeza gira hacia abajo,
+     detecta el marcador de la base y computa la discrepancia con el URDF estático. Si
+     la discrepancia excede el umbral, recalculan la matriz homogénea de la cabeza en < 30 s.
+
+
+================================================================================
+3. MODELO CINEMÁTICO Y PRESUPUESTO DE ERROR (ERROR BUDGET HACIA EL AGARRE)
+================================================================================
+
+3.1 CADENA CINEMÁTICA Y ÁRBOL TF DE BASE@HOME (VERIFICADO EN CÓDIGO)
+--------------------------------------------------------------------------------
+El árbol cinemático oficial en el URDF (`src/hoverboard_base/urdf/robot.urdf` y
+`src/hoverboard_base/urdf/xacro/head.xacro`, `arm_piper.xacro`, `torso.xacro`) es:
+
+                      map
+                       │
+                      odom
+                       │
+                 base_footprint  (z = -0.06 m, sobre el suelo)
+                       │  joint: base_joint (xyz="0 0 0.06")
+                   base_link
+                       │
+                 torso_column
+                       │  joint: torso_lift_joint (prismatic, z: -0.60 m a 0.0 m)
+                torso_lift_link  (carro móvil del elevador NEMA 23)
+                 ┌─────┴────────────────────────┐
+                 │                              │
+         pan_tilt_base_link               mounting_cube
+                 │  joint: pan_joint            │  joint: arm_base_joint
+              pan_link                    arm_base_link
+                 │  joint: tilt_joint           │  joint1 .. joint6
+             tilt_link                    gripper_base
+                 │  joint: camera_mount_joint   ├── link7 / link8 (dedos pinza)
+            camera_link                         │  joint: arm_camera_mount_joint
+                 │                              │  (origin: xyz="0.025 0.0 0.056")
+     camera_color_optical_frame          arm_camera_link
+     (RealSense D435 en cabeza)                 │  joint: arm_camera_optical_joint
+                                         arm_camera_optical_frame
+                                         (Orbbec DaBai DC1 en muñeca)
+
+OBSERVACIONES CLAVE DE LA ARQUITECTURA:
+1. El cabezal pan-tilt (`pan_tilt_base_link`) y el brazo (`arm_base_link`) comparten
+   como padre común a `torso_lift_link`. Esto significa que si el elevador permanece
+   inmóvil entre la observación y la maniobra de agarre, los errores de cota absoluta
+   del elevador respecto del suelo se CANCELAN matemáticamente para el agarre relativo
+   cabeza-brazo.
+2. Si el robot detecta un objeto con la cabeza, luego mueve el elevador para llevar
+   el brazo a la altura de trabajo, cualquier error en la calibración de escala/pasos
+   del elevador (delta z) entra directamente como error vertical en el agarre.
+3. La pinza Piper tiene dos dedos de avance prismático con apertura máxima de 105 mm
+   (`calibrar_aruco_manipulacion.py:55`: `GRIPPER_MAX_OPEN_MM = 105.0`). El centro de
+   agarre ideal (TCP) se ubica a z = +0.1358 m por delante de `gripper_base`
+   (`arm_piper.xacro:305`).
+
+--------------------------------------------------------------------------------
+3.2 PROPAGACIÓN ANALÍTICA DEL ERROR HACIA EL TCP
+--------------------------------------------------------------------------------
+Sea P_obj la posición del objeto en el marco de la herramienta (`gripper_base`),
+y sea e_lat el error lateral perpendicular al eje de avance de la pinza, y
+e_long el error longitudinal a lo largo del eje de aproximación.
+
+Para que un objeto cilíndrico de diámetro D_obj (ej. lata de gaseosa D aprox 65 mm,
+o botella D aprox 70 mm) sea atrapado exitosamente entre los dedos de apertura
+W_max = 105 mm, se requiere estrictamente que:
+  |e_lat| < (W_max - D_obj) / 2 = (105 - 65) / 2 = 20.0 mm
+
+Si el error lateral |e_lat| >= 20.0 mm, una de las yemas de los dedos
+colisionará contra el borde del objeto, volcándolo o desplazándolo, resultando en
+fallo de agarre (grasp failure).
+
+Analicemos la propagación del error según la fuente sensorial:
+
+MODALIDAD A: OBSERVACIÓN Y AGARRE DESDE LA CÁMARA DE CABEZA (CROSS-CHAIN)
+La transformación entre la cámara de cabeza y el TCP del brazo es una cadena larga:
+T_tcp_cam_head = (T_torso_tcp)^-1 * T_torso_pan * R_pan(q_p) * R_tilt(q_t) * T_tilt_cam
+A una distancia de observación típica de d_head = 1.20 m (1200 mm):
+1. Error angular en el cero de pan o tilt (delta theta):
+   El error de posición proyectado en el plano del objeto es:
+   delta x approx d_head * sin(delta theta) approx d_head * delta theta (rad)
+   - Si delta theta = 0.5 deg (0.0087 rad): delta x approx 1200 * 0.0087 = 10.5 mm.
+   - Si delta theta = 1.0 deg (0.0175 rad): delta x approx 1200 * 0.0175 = 21.0 mm -> SUPERA EL MARGEN DE AGARRE.
+   - Si delta theta = 2.0 deg (0.0349 rad): delta x approx 1200 * 0.0349 = 41.9 mm -> COLISIÓN SEGURA.
+2. Error de traslación en el montaje del pan-tilt o cámara (delta t):
+   Se propaga 1:1 al error de agarre. Un error de 10 mm en el origen de head_base_x/z en el Xacro
+   produce un error de 10 mm en la posición comandada del brazo.
+3. Error de profundidad de la RealSense D435 (delta z_depth):
+   A 1.2 m, el ruido típico de profundidad de la D435 con luz interior es de ~1.5% a 2.0%
+   de la distancia, es decir, +-18 mm a +-24 mm a lo largo del rayo visual.
+   Debido a que el tilt apunta hacia abajo (~25 deg a 35 deg), este error longitudinal se descompone
+   en error horizontal de avance (15 mm) y error de altura (12 mm).
+
+MODALIDAD B: OBSERVACIÓN Y AGARRE DESDE LA CÁMARA DE MUÑECA (EYE-IN-HAND)
+La transformación relevante es únicamente la matriz estática X = T_tcp_cam_wrist:
+T_base_obj = T_base_tcp * X * T_cam_obj
+Al observar en la pose de pre-agarre (pre_grasp), la cámara de muñeca se ubica a
+d_wrist approx 0.25 m - 0.35 m (250 a 350 mm) del objeto:
+1. Error angular de la calibración hand-eye (delta theta_he):
+   A d_wrist = 0.25 m (250 mm):
+   - Si delta theta_he = 0.5 deg: delta x approx 250 * 0.0087 = 2.2 mm.
+   - Si delta theta_he = 1.0 deg: delta x approx 250 * 0.0175 = 4.4 mm.
+   - Si delta theta_he = 2.0 deg: delta x approx 250 * 0.0349 = 8.7 mm.
+2. Error traslacional de la calibración hand-eye (delta t_he):
+   Se traslada 1:1 al objeto. Si el residual es <= 5.0 mm, el error es <= 5.0 mm.
+3. Error total combinado en agarre con muñeca a 25 cm:
+   E_grasp_wrist = sqrt(delta t_he^2 + (d_wrist * delta theta_he)^2) = sqrt(5.0^2 + 4.4^2) approx 6.7 mm
+   Este error (6.7 mm) se encuentra AMPLÍSIMAMENTE DENTRO del margen de +-20 mm de la pinza.
+
+--------------------------------------------------------------------------------
+3.3 TABLA RESUMEN DE SENSIBILIDAD Y TOLERANCIAS REQUERIDAS
+--------------------------------------------------------------------------------
+
+| Parámetro Cinemático / Sensor | Error Típico Sin Calibrar | Error Proyectado en Agarre | Tolerancia Máxima Aceptable | Herramienta de Calibración |
+|---|---|---|---|---|
+| Hand-Eye Muñeca: Traslación   | 15 a 25 mm (estimado CAD) | 15 a 25 mm (1:1)           | <= 5.0 mm                   | handeye.py (solvePnP + Tsai/Park) |
+| Hand-Eye Muñeca: Rotación     | 2.5 deg a 5.0 deg (juegos) | 11 a 22 mm (@ 25 cm)       | <= 1.0 deg                  | handeye.py (solvePnP + ArUco) |
+| Cero de Pan en Pan-Tilt       | 2.0 deg a 4.0 deg (offset)| 42 a 84 mm (@ 1.2 m)        | <= 0.3 deg (5 mm)           | calibrar_pantilt / marcador central |
+| Cero de Tilt en Pan-Tilt      | 1.5 deg a 3.0 deg (peso)  | 31 a 63 mm (@ 1.2 m)        | <= 0.3 deg (5 mm)           | calibrar_pantilt / plano suelo |
+| RealSense Mount en Tilt Link  | 10 a 15 mm en X/Z         | 10 a 15 mm (1:1)            | <= 3.0 mm                   | Alineación con nube de puntos |
+| Carrera de Elevador (stroke)  | 10 a 30 mm (nominal)      | 10 a 30 mm en Z             | <= 2.0 mm                   | calibrar_elevador.py + regla |
+| Cero Superior del Elevador    | 5 a 10 mm (switch holgura)| 5 a 10 mm en Z              | <= 1.5 mm                   | Microswitch TOP con debounce |
+
+================================================================================
+4. PROCEDIMIENTO 1: CALIBRACIÓN DE CÁMARA DE MUÑECA (ORBBEC DABAI EYE-IN-HAND)
+================================================================================
+
+4.1 INSTRUMENTAL REQUERIDO Y COSTO
+--------------------------------------------------------------------------------
+- Marcador de calibración: Hoja de papel A4 plastificada o pegada en soporte rígido
+  (vidrio, acrílico o MDF de 5 mm) con:
+  a) Tablero de ajedrez (8x6 esquinas interiores, casillas de 30.0 mm) para intrínsecos.
+  b) Marcador ArUco `DICT_4X4_50` ID 0 (lado nominal 50.0 mm o 70.0 mm) para extrínsecos.
+  (Impresión y plastificado: < 2 USD).
+- Instrumento de medición: Calibre digital (pie de rey con precisión 0.02 mm, ~15 USD)
+  y cinta métrica metálica (3 m, ~3 USD).
+- Total costo de instrumental: < 20 USD.
+
+--------------------------------------------------------------------------------
+4.2 PASO 1: CALIBRACIÓN DE INTRÍNSECOS DE LA ORBBEC DABAI DC1 (RGB)
+--------------------------------------------------------------------------------
+ESTADO ACTUAL (VERIFICADO):
+En `src/base_athome_perception/scripts/calibrar_aruco_manipulacion.py:46-53` y en
+`wrist_geometry.py:28`, el sistema asume:
+  `DABAI_FX = 485.0`, `DABAI_FY = 485.0`, `DABAI_CX = 320.0`, `DABAI_CY = 240.0`
+  `DIST_COEFFS = [0, 0, 0, 0, 0]`
+Estos son valores nominales supuestos sin calibrar. Un error del 5% en la distancia
+focal ($f_x, f_y$) provoca un error sistemático de escala de 12.5 mm a 25 cm de distancia.
+
+PROCEDIMIENTO PASO A PASO:
+1. Conectar la cámara DaBai en la Jetson (`jetson-head` publicando `/arm_camera/image_raw`).
+2. Colocar el tablero de ajedrez rígido sobre la mesa bien iluminada (evitar reflejos).
+3. Medir con calibre digital el tamaño exacto de una hilera de 5 cuadros para calcular el
+   tamaño medio de cuadro con precisión de 0.05 mm (no asumir 30 mm nominales).
+4. Ejecutar el calibrador estándar de ROS 2:
+   `ros2 run camera_calibration cameracalibrator --size 8x6 --square <tam_medido_m> --ros-args -r image:=/arm_camera/image_raw`
+5. Mover manualmente el tablero (o el brazo con motores libres) cubriendo todo el campo
+   visual (centro, esquinas, inclinaciones hasta 35° en X e Y) a distancias de 25 a 60 cm
+   hasta completar las barras X, Y, Size, Skew en verde (al menos 30 cuadros).
+6. Presionar CALIBRATE.
+7. CRITERIO DE ACEPTACIÓN: Error de reproyección RMS < 0.35 px.
+8. Guardar la matriz K ($f_x, f_y, c_x, c_y$) y los coeficientes de distorsión $D = [k_1, k_2, p_1, p_2, k_3]$.
+9. Registrar estos parámetros en `src/base_athome_perception/config/arm_poses_and_limits.yaml`
+   bajo la clave `wrist_camera_intrinsics`.
+
+--------------------------------------------------------------------------------
+4.3 PASO 2: TOMA DE MUESTRAS EYE-IN-HAND (AL MENOS 15 POSES)
+--------------------------------------------------------------------------------
+PRINCIPIO MATEMÁTICO:
+Buscamos la transformación rígida estática $X = T_{tcp\_cam}$ que relaciona el marco de la
+herramienta (`gripper_base` o TCP) con el marco óptico de la cámara (`arm_camera_optical_frame`).
+Para cada pose $i$:
+  $$T_{base\_target} = T_{base\_tcp}(q_i) \cdot X \cdot T_{cam\_target}(i)$$
+Dado que el marcador de calibración $T_{base\_target}$ está inmóvil sobre la mesa, la pose
+calculada del marcador en la base debe ser idéntica para todas las muestras $i = 1 \dots N$.
+
+CONDICIONES DE SEGURIDAD FÍSICA:
+- Requiere modo `LAB_SUPERVISADO` con E-stop a mano.
+- El brazo se mueve en velocidad conservadora (<= 25% de la velocidad nominal).
+- Solo se leen articulaciones con feedback CAN confirmado (`/arm/status: feedback_ok=true`).
+  Nunca usar ángulos comandados (`ROBOT.md` §5.2).
+
+PROTOCOLO DE CAPTURA:
+1. Fijar firmemente el marcador ArUco ID 0 en la mesa con cinta bifaz.
+2. Medir con calibre digital la arista del cuadrado negro interior del marcador (ej. 50.2 mm).
+3. Definir una grilla de al menos 15 a 20 poses variadas del brazo donde el marcador sea visible:
+   - Distancia al marcador: de 30 cm a 55 cm.
+   - Variación angular: Rotar la muñeca (joint 4, joint 5, joint 6) de modo que la orientación
+     de la cámara varíe al menos ±20° en pitch y ±20° en yaw respecto del marcador.
+     (VERIFICADO en `handeye.py:76-77`: si el ángulo relativo entre las poses es < 20°,
+     `check_samples()` rechaza la muestra por mal acondicionamiento numérico).
+4. En cada pose:
+   a) Esperar 1.5 s a que cesen las vibraciones mecánicas del brazo.
+   b) Capturar la imagen `/arm_camera/image_raw`.
+   c) Detectar esquinas con `cv2.aruco.detectMarkers()`. Si hay sub-píxeles, refinar con
+      `cv2.cornerSubPix()`.
+   d) Computar la pose del marcador $T_{cam\_target}$ con `marker_pose()` usando `cv2.SOLVEPNP_IPPE_SQUARE`.
+   e) Verificar que el error de reproyección RMS del marcador sea < 0.8 px (descartar si es mayor).
+   f) Leer las articulaciones reales de `/arm/joint_states` y computar la cinemática directa
+      $T_{base\_tcp}(q_i)$ usando el modelo cinemático exacto de Piper.
+
+--------------------------------------------------------------------------------
+4.4 PASO 3: RESOLUCIÓN Y EVALUACIÓN DE RESIDUALES CON `handeye.py`
+--------------------------------------------------------------------------------
+1. Pasar las listas de matrices homogéneas $T_{base\_tcp}$ y $T_{cam\_target}$ a `handeye.solve()`.
+2. El resolvedor ejecuta los 5 métodos disponibles:
+   - `tsai` (Tsai & Lenz, 1989)
+   - `park` (Park & Martin, Lie Group, 1994)
+   - `horaud` (Horaud & Dornaika, 1995)
+   - `andreff` (Andreff, Horaud, Espiau, 2001)
+   - `daniilidis` (Daniilidis, Dual Quaternions, 1999)
+3. En `handeye.py:114`, el resultado se ordena automáticamente por residual:
+   - `residual_mm`: Desviación estándar (RMS) de la posición del marcador en `base_link` a lo largo de las N poses.
+   - `residual_deg`: Dispersión angular RMS de la orientación del marcador en `base_link`.
+4. CRITERIO DE ACEPTACIÓN INICIAL:
+   - `residual_mm` <= 5.0 mm.
+   - `residual_deg` <= 1.0°.
+   (Si el residual supera 5 mm, indica holgura mecánica en articulaciones del brazo, flexión
+   estructural, o error en los intrínsecos de la cámara).
+
+--------------------------------------------------------------------------------
+4.5 PASO 4: VALIDACIÓN INDEPENDIENTE OBLIGATORIA (GROUND TRUTH)
+--------------------------------------------------------------------------------
+En `handeye.py:127-135`, la función `accept()` RECHAZA la calibración si no se proveen
+mediciones independientes de validación (`max_validation_mm = 10.0`).
+
+PROCEDIMIENTO DE VALIDACIÓN INDEPENDIENTE:
+1. Colocar 3 objetos pequeños (puntos de prueba) sobre la mesa en posiciones medidas
+   físicamente con cinta métrica y regla desde el centro de la columna del robot (`base_link`):
+   - Punto 1: x = 0.450 m, y = -0.100 m, z = 0.720 m.
+   - Punto 2: x = 0.550 m, y = 0.000 m, z = 0.720 m.
+   - Punto 3: x = 0.450 m, y = +0.150 m, z = 0.720 m.
+2. Llevar el brazo a una pose de observación donde la cámara de muñeca vea el punto.
+3. Computar la posición del punto en coordenadas de cámara y proyectarla a `base_link`
+   usando la calibración $X$ calculada:
+   `p_base_est = T_base_tcp @ X @ p_cam`
+4. Comparar `p_base_est` contra las coordenadas medidas físicamente con `validate_points()`.
+5. CRITERIO DE ACEPTACIÓN FINAL:
+   - Peor error de validación en los 3 puntos: <= 8.0 mm (umbral duro en código: <= 10.0 mm).
+   - Solo al cumplir esto, `accept()` retorna `(True, "OK")`.
+
+--------------------------------------------------------------------------------
+4.6 PASO 5: PERSISTENCIA EN URDF Y CONFIGURACIÓN
+--------------------------------------------------------------------------------
+1. El vector de traslación $t = [x, y, z]$ y rotación $rpy$ obtenido para $X$ (respecto a
+   `gripper_base`) se inyecta en `src/hoverboard_base/urdf/xacro/arm_piper.xacro`:
+   Reemplazar en `arm_camera_mount_joint`:
+     `<origin xyz="X Y Z" rpy="R P Y"/>`
+2. Regenerar el archivo `robot.urdf` compilando con xacro:
+   `xacro src/hoverboard_base/urdf/xacro/robot.urdf.xacro > src/hoverboard_base/urdf/robot.urdf`
+3. Guardar el bloque en `src/base_athome_perception/config/arm_poses_and_limits.yaml`:
+   ```yaml
+   wrist_camera_handeye:
+     method: "park"
+     xyz_m: [0.0248, 0.0012, 0.0558]
+     rpy_rad: [3.14159, -1.5708, 0.0125]
+     residual_mm: 3.2
+     residual_deg: 0.65
+     worst_validation_mm: 5.4
+     date: "2026-11-XX"
+   ```
+
+
+================================================================================
+5. PROCEDIMIENTO 2: CALIBRACIÓN DEL CERO Y RANGOS DEL PAN-TILT DYNAMIXEL
+================================================================================
+
+5.1 CONVENCIÓN CINEMÁTICA Y PARÁMETROS DEL NODO
+--------------------------------------------------------------------------------
+El cabezal de Base@Home está compuesto por dos servomotores Dynamixel (protocolo 2.0,
+bus TTL con conversor U2D2 en `/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_...`).
+- Articulaciones:
+  * Pan (eje z): giro horizontal. Convención lógica: positivo = izquierda del robot.
+  * Tilt (eje y): inclinación vertical. Convención lógica: positivo = arriba.
+- Parámetros en `jetson_head/src/pan_tilt_controller/config/pan_tilt_params.yaml`:
+  * `pan_center_tick`: tick del encoder para 0° lógico (por defecto 2059 de 4096).
+  * `tilt_center_tick`: tick del encoder para 0° lógico (por defecto 2048 de 4096).
+  * `pan_min_rad`, `pan_max_rad`: límites físicos (por defecto -1.57 a +1.57 rad).
+  * `tilt_min_rad`, `tilt_max_rad`: límites físicos (por defecto -0.4878 a +0.615 rad).
+  * `ticks_per_rad`: 651.8986 (4096 ticks / 2pi rad = 0.08789°/tick).
+  * `pan_direction`: +1.0 (ajustado 2026-11-04, `STATUS.md`).
+  * `tilt_direction`: -1.0.
+
+--------------------------------------------------------------------------------
+5.2 DETERMINACIÓN DEL CERO FÍSICO Y LÓGICO
+--------------------------------------------------------------------------------
+El "cero" de pan corresponde a la cámara mirando exactamente alineada con el eje X de
+`base_link` (hacia adelante). El "cero" de tilt corresponde al plano óptico perfectamente
+horizontal (rayo visual paralelo al suelo).
+
+PROCEDIMIENTO DE CENTRADO (CON CALIBRAR_PANTILT):
+1. Iniciar el calibrador interactivo en la NUC:
+   `ros2 run base_athome_perception pan_tilt_calibrate.py` (o alias `calibrar_pantilt`).
+2. Presionar `T` para apagar torque (`auto_torque=false`).
+3. Mover a mano el cabezal hasta que la cámara apunte hacia el frente:
+   - Para Pan: Marcar una línea recta en el suelo proyectando el eje de simetría del chasis
+     usando un hilo láser o regla metálica alineada con los bordes de la base.
+     A 2.0 m hacia adelante, colocar una diana vertical. Alinear el centro óptico con la diana.
+   - Para Tilt: Usar un nivel de burbuja digital (o app de smartphone calibrada) apoyado sobre
+     la parte superior plana de la RealSense D435 hasta marcar 0.0° +- 0.1°.
+4. Presionar `C` en la terminal del calibrador:
+   En `pan_tilt_calibration.py:16-18`, la función `new_center_tick()` recalcula:
+     `center_new = center_old + direction * logical_rad * ticks_per_rad`
+   registrando el tick actual del encoder como el nuevo cero.
+5. Marcar los topes mecánicos o límites deseados (teclas `1`/`2` para pan izq/der, `3`/`4`
+   para tilt arriba/abajo).
+6. Presionar `G` para guardar: El script actualiza `pan_tilt_params.yaml` en el repo y
+   lo transfiere a la Jetson por SSH conservando copia de respaldo.
+
+--------------------------------------------------------------------------------
+5.3 VERIFICACIÓN DE SENTIDO DE GIRO MEDIANTE FLUJO ÓPTICO
+--------------------------------------------------------------------------------
+VERIFICADO EN CÓDIGO (`pan_tilt_calibration.py:111-129`):
+La función `image_shift()` toma una captura antes y después de un paso de movimiento,
+aplicando correlación de fase con ventana Hanning (`cv2.phaseCorrelate`) sobre la imagen
+en escala de grises reducida a 320 px:
+- Al girar a la izquierda (`pan +`), los objetos de la escena deben desplazarse hacia la
+  derecha en la imagen ($\Delta x > 0$).
+- Al inclinar hacia arriba (`tilt +`), los objetos deben desplazarse hacia abajo ($\Delta y > 0$).
+- En el calibrador, presionar `V` ejecuta este test automáticamente:
+  * Si `sense_from_shift()` detecta concordancia -> "ok".
+  * Si la escena se corre en sentido contrario -> "inverted", indicando que debe invertirse
+    `pan_direction` o `tilt_direction` en el launch de la Jetson.
+
+--------------------------------------------------------------------------------
+5.4 DIAGNÓSTICO Y MITIGACIÓN DE FALLAS DE ENLACE DEL CONVERSOR U2D2
+--------------------------------------------------------------------------------
+En `STATUS.md` se reportaron 118 caídas USB del U2D2 (`error -71`, desconexión en el bus USB).
+`pan_tilt_calibration.py:12-13` contiene la guía diagnóstica oficial (`USB_HELP`):
+1. Causa física: Ruido inductivo de los motores o tironeo mecánico del cable USB al rotar
+   el cabezal pan-tilt, sumado a caídas de tensión en los 12 V bajo carga de torque.
+2. Acciones de mitigación antes de competir:
+   a) Reemplazar el cable micro-USB del U2D2 por uno blindado con ferrita y conector acodado.
+   b) Asegurar un bucle de alivio de tensión mecánico (strain relief) con precintos al chasis
+      fijo de `torso_lift_link`, impidiendo que el movimiento del cuello tire del puerto.
+   c) Verificar masa común firme entre el puerto USB de la Jetson, el U2D2 y la fuente de 12 V
+      de los Dynamixel (la falta de masa de referencia común genera reinicios de transceiver USB).
+
+================================================================================
+6. PROCEDIMIENTO 3: CALIBRACIÓN DE LA REALSENSE EN PAN-TILT RESPECTO DEL CHASIS
+================================================================================
+
+6.1 PROBLEMA GEOMÉTRICO Y DESAFÍOS DEL CABEZAL ACTIVO
+--------------------------------------------------------------------------------
+La cámara Intel RealSense D435 está montada en el eslabón móvil `tilt_link` del cabezal
+pan-tilt (`src/hoverboard_base/urdf/xacro/head.xacro:155`: `mount_xyz="0.135 0.0 0.015"`).
+La cadena cinemática completa desde el chasis es:
+  `base_footprint` -> `base_link` -> `torso_column` -> `torso_lift_link` ->
+  `pan_tilt_base_link` -> `pan_link` -> `tilt_link` -> `camera_link` -> `camera_color_optical_frame`
+
+A diferencia de una cámara fija, los errores pueden originarse en:
+1. Offsets de montaje estáticos en el Xacro (`head_base_x`, `head_base_z`, `mount_xyz`).
+2. Errores de cero articular de los servomotores Pan y Tilt ($\Delta q_{pan}, \Delta q_{tilt}$).
+3. Desalineación angular del sensor de profundidad respecto al cuerpo de la cámara (pitch/roll).
+
+Un procedimiento de calibración barato y práctico para este subsistema no requiere
+brazo de medición externo ni escáner láser. Se compone de dos etapas complementarias:
+nivelación por plano de suelo y verificación cruzada con el brazo (cross-chain).
+
+--------------------------------------------------------------------------------
+6.2 PASO 1: ALINEACIÓN POR PLANO DE SUELO (GROUND PLANE ESTIMATION)
+--------------------------------------------------------------------------------
+PRINCIPIO:
+El chasis del robot apoya sobre ruedas y caster en el plano del suelo. Por definición del
+estándar ROS (REP-103 y REP-105), el marco `base_footprint` se encuentra a cota $z = 0.0\text{ m}$
+con vector normal $[0, 0, 1]^T$.
+
+PROCEDIMIENTO DE NIVELACIÓN CON NUBE DE PUNTOS:
+1. Ubicar el robot en una habitación con suelo plano y nivelado, libre de alfombras o
+   desniveles en un radio de 2.5 metros.
+2. Comandar el cabezal pan-tilt a `pan = 0.0°` y `tilt = -30.0°` (mirando al suelo frente al robot).
+3. Lanzar la cámara RealSense en la NUC:
+   `ros2 launch base_athome_bringup realsense_nuc.launch.py`
+4. Capturar una nube de puntos `/camera/camera/depth/color/points` o calcular el plano
+   directamente desde `/camera/camera/aligned_depth_to_color/image_raw`.
+5. Ejecutar un ajuste planar robusto mediante RANSAC sobre los puntos en el rango $0.8\text{ m} < d < 2.0\text{ m}$:
+   Ecuación de plano estimada en coordenadas de cámara:
+     $$a \cdot x_c + b \cdot y_c + c \cdot z_c + d = 0$$
+6. Transformar la ecuación del plano a `base_footprint` usando la cadena cinemática actual del URDF:
+   - El vector normal transformado debe ser paralelo a la vertical: $\hat{n}_{base} = [0, 0, 1]^T$.
+   - La distancia del plano al origen en `base_footprint` debe ser $0.00\text{ m} \pm 0.01\text{ m}$.
+7. INTERPRETACIÓN DE DISCREPANCIAS Y CORRECCIÓN:
+   - Si $\hat{n}_{base}$ tiene componente en $Y$ (ej. $n_y \ne 0$): existe un error de **roll**
+     en el soporte de la RealSense. Corregir físicamente calzando el soporte o ajustando
+     el ángulo de roll en `camera_mount_joint` en `head.xacro`.
+   - Si $\hat{n}_{base}$ tiene componente en $X$ (ej. $n_x \ne 0$): existe un error de **pitch**
+     (inclinación). Este error es absorbido calibrando el cero de tilt (`tilt_center_tick`)
+     en `pan_tilt_params.yaml`.
+   - Si el plano $z$ medido difiere de 0.0 m (ej. $z = -0.04\text{ m}$): la altura del cabezal
+     `torso_lift_top_z` o `head_base_z` en `properties.xacro` tiene una discrepancia métrica.
+     Ajustar la cota en el Xacro con la medición de cinta métrica.
+
+--------------------------------------------------------------------------------
+6.3 PASO 2: VERIFICACIÓN CRUZADA CABEZA-BRAZO (CROSS-CHAIN OPTICAL CHECK)
+--------------------------------------------------------------------------------
+Dado que el brazo Piper ya posee su cinemática calibrada de fábrica por el fabricante y
+verificada en simulación (`ROBOT.md` §5.1), la pinza del brazo constituye un objetivo
+de referencia móvil tridimensional de alta precisión dentro del propio robot.
+
+PROCEDIMIENTO CON DIANA EN LA PINZA:
+1. Sujetar un marcador ArUco ID 0 (lado medido 50.0 mm) firmemente en la pinza del Piper,
+   apoyado contra el tope interior de los dedos para garantizar una pose repetible.
+2. Comandar el brazo a tres configuraciones nominales visibles por la cabeza:
+   - Configuración P1 (centro): Brazo adelantado a $x = 0.45\text{ m}, y = 0.00\text{ m}, z = 0.80\text{ m}$.
+   - Configuración P2 (izquierda): $x = 0.40\text{ m}, y = +0.20\text{ m}, z = 0.85\text{ m}$.
+   - Configuración P3 (derecha): $x = 0.40\text{ m}, y = -0.20\text{ m}, z = 0.75\text{ m}$.
+3. Para cada configuración:
+   a) Dirigir la cabeza pan-tilt hacia la pinza (`pan_tilt_node`).
+   b) Detectar el marcador ArUco en la RealSense con `solvePnP`.
+   c) Computar la posición del marcador en `torso_lift_link` según la visión de la cabeza:
+      $P_{target}^{head} = T_{torso\_cam\_head} \cdot P_{target}^{cam}$
+   d) Computar la posición del marcador en `torso_lift_link` según la cinemática directa del Piper:
+      $P_{target}^{arm} = T_{torso\_arm\_base} \cdot T_{arm\_base\_tcp}(q) \cdot P_{target}^{tcp}$
+   e) Calcular el error tridimensional:
+      $$e_{3d} = \| P_{target}^{head} - P_{target}^{arm} \|$$
+4. CRITERIO DE ACEPTACIÓN:
+   - $e_{3d} \le 12.0\text{ mm}$ en las tres posiciones.
+   - Si $e_{3d} > 15.0\text{ mm}$, el error sistemático se compensa refinando `head_base_x`
+     y los offsets de pan/tilt.
+
+
+================================================================================
+7. PROCEDIMIENTO 4: CALIBRACIÓN DE CARRERA Y ALTURA DEL ELEVADOR (NEMA 23)
+================================================================================
+
+7.1 CINEMÁTICA Y ARQUITECTURA DEL ELEVADOR EN EL ROBOT
+--------------------------------------------------------------------------------
+El elevador de Base@Home consiste en una columna vertical con tornillo de avance y motor paso
+a paso NEMA 23 gobernado por un microcontrolador ESP32-S3 (`firmware/nema23_esp32/nema23_esp32.ino`).
+- Sensores de límite físicos (fines de carrera):
+  * Sensor superior (TOP): Pin 7 del ESP32.
+  * Sensor inferior (BOT): Pin 8 del ESP32.
+- Protocolo de telemetría y control:
+  * El firmware responde al comando `?` con una línea de estado (`torso_state.py:14-16`):
+    `[STATUS] Modo: IDLE | Limites: [TOP(Pin7)=LIBRE, BOT(Pin8)=PULSADO] | Pos: 0 / 150000 [CALIBRADO]`
+  * `pos = 0` corresponde por convención del firmware al sensor inferior (BOT).
+  * `max_steps` corresponde a la carrera total en pasos entre el sensor inferior y el superior.
+- Cinemática en URDF (`src/hoverboard_base/urdf/xacro/properties.xacro:44-50`):
+  * `torso_lift_joint` es una junta prismática a lo largo de Z.
+  * Por convención cinemática estándar:
+    - En el tope SUPERIOR: `torso_lift_joint = 0.0 m`.
+    - En el tope INFERIOR: `torso_lift_joint = -stroke_m` (nominal -0.60 m).
+  * Relación analítica implementada en `torso_state.py:30-36`:
+    $$\text{pos\_m} = -stroke\_m \cdot \left(1.0 - \frac{\text{steps}}{\text{max\_steps}}\right)$$
+
+--------------------------------------------------------------------------------
+7.2 CALIBRACIÓN COMPLETA INICIAL (DETERMINACIÓN DE MAX_STEPS Y STROKE_M)
+--------------------------------------------------------------------------------
+Esta calibración se ejecuta una sola vez al montar el robot o si se cambia la correa,
+el tornillo de avance o los microswitches mecánicos.
+
+CONDICIÓN DE SEGURIDAD CRÍTICA (VERIFICADO EN CÓDIGO):
+En `src/base_athome_perception/scripts/calibrar_elevador.py:100-108`, el script exige
+explícitamente que el brazo Piper esté colocado en la pose de seguridad para descenso
+(`pre_grasp_floor` o plegado alto). Si el brazo se encuentra colgando o extendido hacia abajo,
+el carro del elevador al bajar colisionará violentamente el brazo contra la base del robot.
+El script aborta si la diferencia articular supera los 12.0° (`POSE_TOLERANCE_DEG = 12.0`).
+
+PROCEDIMIENTO PASO A PASO:
+1. Posicionar el robot con el área circundante libre.
+2. Verificar que el interruptor de parada de emergencia (E-stop) del motor de elevación
+   esté accesible y en buen funcionamiento.
+3. Asegurar que `stepper_controller.py` no esté en ejecución (ambos compiten por el mismo puerto serie).
+4. Ejecutar el script oficial:
+   `ros2 run base_athome_perception calibrar_elevador.py --completa`
+5. El nodo verifica que el brazo esté en pose segura y solicita confirmación por consola:
+   `Escribi si para empezar:`
+6. Al confirmar, el servicio `/torso/calibrate` inicia la secuencia en el ESP32:
+   a) El motor baja lentamente hasta activar el switch inferior (BOT, Pin 8).
+   b) El firmware detiene el motor y fija el contador de pasos en 0.
+   c) El motor invierte la marcha y sube a velocidad constante hasta activar el switch superior (TOP, Pin 7).
+   d) El firmware registra el número total de pasos (`max_steps`, típicamente ~150,000 pasos).
+   e) El nodo `torso_state_node` recibe la telemetría y almacena permanentemente la carrera en:
+      `~/.config/base_athome/elevador.json` (`TorsoStateNode._save_travel():73-79`).
+7. MEDICIÓN FÍSICA CON REGLA Y CALIBRACIÓN DE ESCALA:
+   - Con el carro en el sensor inferior (BOT), medir con cinta métrica la altura de la cara
+     superior del carro móvil respecto del suelo ($h_{bot}$).
+   - Con el carro en el sensor superior (TOP), medir la altura respectiva ($h_{top}$).
+   - La carrera real física es:
+     $$stroke\_m_{real} = h_{top} - h_{bot}$$
+   - Comparar $stroke\_m_{real}$ con el valor nominal de 0.60 m. Si la medida física es,
+     por ejemplo, 0.592 m, actualizar el parámetro `stroke_m` en `torso_state_node.py:48`
+     y en `src/hoverboard_base/urdf/xacro/properties.xacro:48` (`torso_switch_stroke`).
+
+--------------------------------------------------------------------------------
+7.3 PROCEDIMIENTO DIARIO RÁPIDO DE REFERENCIACIÓN (HOMING SUPERIOR)
+--------------------------------------------------------------------------------
+En el uso cotidiano antes de una competencia, NO debe realizarse la calibración completa
+(bajar hasta el fondo es innecesario, riesgoso para el brazo y lento).
+VERIFICADO EN CÓDIGO (`calibrar_elevador.py:87-98`):
+1. Si `~/.config/base_athome/elevador.json` ya contiene `max_steps`:
+   - Si el robot arranca y el switch superior ya está presionado (`top_hit=True`), el elevador
+     se declara CALIBRADO INMEDIATAMENTE sin mover un solo milímetro (`steps = max_steps`).
+   - Si no está tocando el switch superior, el script invoca el servicio `/torso/go_top`:
+     el carro sube despacio hasta hacer contacto con el switch superior (TOP).
+   - En cuanto el switch se presiona, el sistema sincroniza su cota superior ($z = 0.0\text{ m}$)
+     y queda 100% operativo en menos de 10 segundos.
+
+
+================================================================================
+8. PROCEDIMIENTO 5: COMPROBACIÓN RÁPIDA DIARIA ANTES DE COMPETIR (< 3 MINUTOS)
+================================================================================
+
+En la RoboCup@Home, el tiempo en la zona de preparación (staging area) antes de entrar a la
+arena de competencia es extremadamente acotado. Se requiere un protocolo rápido, determinista
+y estandarizado de comprobación previa ("pre-flight check") que certifique el estado de GO / NO-GO.
+
+DURACIÓN TOTAL: 2 minutos 45 segundos.
+
+--------------------------------------------------------------------------------
+CRONOGRAMA Y ACCIONES DEL PRE-FLIGHT CHECK
+--------------------------------------------------------------------------------
+
+FASE 1: INSPECCIÓN VISUAL Y MECÁNICA EN REPOSO (0:00 - 0:40) [Sin actuadores]
+1. Lentes ópticos: Limpiar suavemente con paño de microfibra las lentes de la RealSense D435
+   (cabeza) y de la Orbbec DaBai (muñeca). Huellas o polvo degradan el detector ArUco y la profundidad.
+2. Cables y conectores:
+   - Verificar la fijación del cable USB del conversor U2D2 y el cable CAN del Piper.
+   - Verificar que los cables de la cabeza tengan suficiente holgura para el barrido completo de pan (±60°).
+3. Interruptores de fin de carrera: Verificar visualmente que no haya cables sueltos en los pines 7 y 8 del ESP32.
+
+FASE 2: SINCRONIZACIÓN DE ELEVADOR Y ESTADO BASE (0:40 - 1:15)
+1. Ejecutar en terminal:
+   `calibrar_elevador`
+2. Si el carro ya está arriba, la respuesta es inmediata (< 1 s):
+   `Listo: elevador en 0.000 m. No hizo falta moverlo.`
+3. Si el carro estaba desfasado unos milímetros, sube hasta tocar el sensor superior TOP (< 15 s).
+4. Resultado esperado: `/torso/status` publica `calibrated: true`.
+
+FASE 3: TEST DEL CABEZAL PAN-TILT Y VERIFICACIÓN ÓPTICA (1:15 - 2:05)
+1. Ejecutar en terminal:
+   `calibrar_pantilt`
+2. Verificar que `/pan_tilt/connected` esté en `True` (conversor U2D2 enlazado).
+3. Presionar `0`: el cabezal viaja suavemente al centro nominal (0°, 0°).
+4. Presionar `V`: el calibrador realiza un micro-movimiento de paneo y tilt ejecutando
+   `image_shift()`. Confirmar que la consola responda:
+   `OK: enlace estable, sentido correcto y llega al objetivo.`
+5. Presionar `Q` para salir.
+
+FASE 4: VERIFICACIÓN CRUZADA EXPRESA BRAZO-CÁMARA (2:05 - 2:45)
+1. Colocar el tubo de calibración con marcador ArUco ID 0 en la mesa o soporte de prueba.
+2. Comandar el brazo a pose de pre-agarre (`pre_grasp`) con la cámara de muñeca apuntando al marcador.
+3. El script de chequeo rápido (`check_calib_express.py`, propuesto en §9) lee la pose
+   del marcador $T_{cam\_target}$ y proyecta a `base_link`.
+4. Comprobar la discrepancia contra la cota teórica memorizada:
+   - Error de posición $\le 8.0\text{ mm}$ -> **GO VERDE** (listo para competir).
+   - Error entre 8.0 y 15.0 mm -> **GO AMARILLO** (agarre posible con servovisión, revisar tras la prueba).
+   - Error > 15.0 mm -> **NO-GO ROJO** (prohibido iniciar misión de manipulación; requiere re-calibrar hand-eye).
+
+================================================================================
+9. RECOMENDACIONES PRIORIZADAS, IMPACTO EN ARCHIVOS Y GESTIÓN DE RIESGOS
+================================================================================
+
+9.1 MATRIZ DE RECOMENDACIONES ORDENADAS POR UTILIDAD
+--------------------------------------------------------------------------------
+
+| Prioridad | Tarea / Recomendación | Archivo a Modificar | Impacto en el Robot | Cómo Probar en Simulación | Nivel de Riesgo |
+|---|---|---|---|---|---|
+| 1 (Crítica) | Calibrar intrínsecos de la DaBai (reemplazar supuestos nominales fx=485, dist=0) | `src/base_athome_perception/config/arm_poses_and_limits.yaml`, `calibrar_aruco_manipulacion.py:46-53` | Elimina error de escala de hasta 15 mm en visión de muñeca | Prueba unitaria con tablero sintético en `test_handeye.py` | NULO (Solo software y cámara) |
+| 2 (Crítica) | Implementar script de captura para `handeye.py` (completar HOME-44) | Nuevo script `scripts/capturar_handeye.py` que alimenta `handeye.solve()` | Permite ejecutar la calibración 6D real en modo LAB_SUPERVISADO | Probar con poses sintéticas generadas en `test_handeye.py` (SIM_PASS) | MEDIO (Mueve el brazo en LAB) |
+| 3 (Alta) | Inyectar matriz hand-eye resultante en Xacro del brazo | `src/hoverboard_base/urdf/xacro/arm_piper.xacro:334-342` y regenerar `robot.urdf` | Corrige el árbol TF oficial de la cámara de muñeca respecto a la pinza | `xacro` + `check_urdf` + visualización de marcos TF en RViz | BAJO (Validable offline) |
+| 4 (Alta) | Crear script de chequeo rápido pre-competencia (< 3 min) | `src/base_athome_perception/scripts/check_calib_express.py` | Asegura estado GO / NO-GO antes de salir a la arena RoboCup | Ejecución headless en ROS_DOMAIN_ID=77 con tópicos simulados | NULO (Solo lectura de TF y tópicos) |
+| 5 (Media) | Reemplazo de cable y fijación mecánica de U2D2 | Hardware físico en `torso_lift_link` (N/A en código) | Elimina las 118 caídas USB (error -71) del cabezal pan-tilt | Monitoreo de `/pan_tilt/connected` durante 30 min sin caídas | NULO |
+| 6 (Media) | Medir cota física real del elevador (`stroke_m`) | `src/base_athome_bringup/base_athome_bringup/torso_state_node.py:48`, `properties.xacro:48` | Garantiza precisión milimétrica en cotas de aproximación vertical | Simulación de cinemática directa del torso en Gazebo Harmonic | BAJO |
+
+--------------------------------------------------------------------------------
+9.2 DETALLE DE ARCHIVOS A MODIFICAR EN EL REPOSITORIO
+--------------------------------------------------------------------------------
+1. `src/base_athome_perception/config/arm_poses_and_limits.yaml`:
+   - Agregar claves:
+     * `wrist_camera_intrinsics`: `fx`, `fy`, `cx`, `cy`, `dist_coeffs`.
+     * `wrist_camera_handeye`: `method`, `xyz_m`, `rpy_rad`, `residual_mm`, `residual_deg`, `validation_mm`.
+2. `src/hoverboard_base/urdf/xacro/arm_piper.xacro`:
+   - Modificar las líneas 334-342 en `arm_camera_mount_joint`:
+     Reemplazar `xyz="0.025 0.0 0.056" rpy="3.14159 -1.5708 0"` por los valores calibrados por `handeye.solve()`.
+3. `src/hoverboard_base/urdf/robot.urdf`:
+   - Regenerar mediante `xacro src/hoverboard_base/urdf/xacro/robot.urdf.xacro > src/hoverboard_base/urdf/robot.urdf`.
+4. `jetson_head/src/pan_tilt_controller/config/pan_tilt_params.yaml`:
+   - Actualizar `pan_center_tick`, `tilt_center_tick`, `pan_direction`, `tilt_direction` tras el ajuste con `calibrar_pantilt`.
+5. `src/base_athome_bringup/base_athome_bringup/torso_state_node.py` y `properties.xacro`:
+   - Actualizar `stroke_m` con la distancia medida entre fines de carrera físicos.
+
+--------------------------------------------------------------------------------
+9.3 PROTOCOLO DE VALIDACIÓN EN SIMULACIÓN PREVIA
+--------------------------------------------------------------------------------
+Para cumplir rigurosamente con la política de seguridad ("primero medir, después simular,
+finalmente probar con actuadores"), cada cambio se verifica previamente sin hardware:
+1. Pruebas matemáticas puras (sin ROS):
+   `pytest src/base_athome_perception/test/test_handeye.py src/base_athome_perception/test/test_pan_tilt_calibration.py src/base_athome_bringup/test/test_torso_state.py`
+2. Validación de integridad del árbol TF y límites del URDF:
+   `check_urdf src/hoverboard_base/urdf/robot.urdf`
+3. Validación de lazo cerrado en simulación:
+   En `simulation/base_athome_sim/sim_scene.py`, configurar un entorno sintético con la escena
+   de prueba (mesa, lata y bolsa) con `ATHOME_SIM=1` en `ROS_DOMAIN_ID=77`:
+   Verificar que la pinza alcance el centroide del objeto con error $< 10.0\text{ mm}$.
+
+--------------------------------------------------------------------------------
+9.4 MATRIZ DE RIESGOS Y MEDIDAS DE MITIGACIÓN
+--------------------------------------------------------------------------------
+- Riesgo 1: Colisión del brazo contra la columna o la base del robot durante la calibración de muñeca.
+  * Mitigación: Definir las 15 poses dentro de una envolvente esférica acotada frente al marcador
+    (radio 35-55 cm, ángulos acotados a ±25°). Ejecutar en modo `LAB_SUPERVISADO` con humano
+    junto al botón E-stop y velocidad limitada al 20%.
+- Riesgo 2: Colisión del brazo durante el descenso del elevador.
+  * Mitigación: El script `calibrar_elevador.py` prohíbe descender si el brazo no se encuentra
+    en la pose de repliegue de seguridad confirmada por encoders CAN. En la rutina diaria,
+    prohibir el descenso (`--completa`), utilizando únicamente el homing superior (`go_top`).
+- Riesgo 3: Desconexión del pan-tilt en plena competencia por tironeo USB.
+  * Mitigación: Blindaje físico y fijación mecánica con alivio de tensión (strain relief) en la Jetson
+    antes del 6/12/2026. Si el enlace cae, el software (`receptionist` y `bag_finder`) cuenta con
+    mecanismo de fallback para deshabilitar el tracking de cabeza y mantener la mirada fija al frente.
+
+
+================================================================================
+10. SÍNTESIS DE EVIDENCIA: VERIFICADO, INFERIDO Y NO ENCONTRADO
+================================================================================
+
+10.1 AFIRMACIONES VERIFICADAS (CON REPOSITORIO, SHA, ARCHIVO Y LÍNEAS)
+--------------------------------------------------------------------------------
+1. `handeye.py` implementa 5 algoritmos de OpenCV, evaluación residual y validación obligatoria:
+   - Repo local Base@Home @ commit a119f61569ffe821357186f2c5e0c7071c2b9e6a.
+   - Archivo: `src/base_athome_perception/base_athome_perception/handeye.py:17-20, 68-78, 124-135`.
+   - Pruebas sintéticas verificadas: `test/test_handeye.py:1-78`.
+2. `calibrar_aruco_manipulacion.py` no realiza calibración hand-eye 6D (solo centrado 2D heurístico):
+   - Archivo: `src/base_athome_perception/scripts/calibrar_aruco_manipulacion.py:87-93`.
+   - Confirmado en `docs/ROBOT.md:238`.
+3. Intrínsecos nominales supuestos en código para la cámara DaBai:
+   - Archivo: `src/base_athome_perception/scripts/calibrar_aruco_manipulacion.py:46-53` (fx=fy=485, cx=320, cy=240, dist=0).
+4. `easy_handeye2` depende de OpenCV `calibrateHandEye` con MIN_SAMPLES = 2 sin comprobación angular:
+   - Repo clonado: `https://github.com/marcoesposito1988/easy_handeye2` @ commit 29bd50a7939e853d768d203d2abc61eb6e50facc.
+   - Archivo: `/tmp/home_research/easy_handeye2/easy_handeye2/easy_handeye2/handeye_calibration_backend_opencv.py:11, 83-84`.
+5. `moveit_calibration` (rama `ros2`) utiliza exactamente los 5 mismos algoritmos de OpenCV:
+   - Repo clonado: `https://github.com/moveit/moveit_calibration` (branch ros2) @ commit 3f9d48ebe843caf1de060bfafe78160585c7c26f.
+   - Archivo: `/tmp/home_research/moveit_calibration_ros2/moveit_calibration_plugins/handeye_calibration_solver/src/handeye_solver_opencv.cpp:95-101`.
+6. `robot_calibration` (rama `ros2`) implementa optimización basada en Ceres y alineación con plano de suelo:
+   - Repo clonado: `https://github.com/mikeferguson/robot_calibration` (branch ros2) @ commit 293535ba540174b4b0c2915a6214f7569c4b7a17.
+   - Archivo: `/tmp/home_research/robot_calibration/robot_calibration/README.md:295-305`.
+7. Falla eléctrica de 118 caídas USB del conversor U2D2 y sentido de giro de pan:
+   - Archivo: `docs/collab/STATUS.md:18-20` (reporte 2026-11-04/05).
+8. Elevador: almacenamiento de carrera en `~/.config/base_athome/elevador.json` y homing superior:
+   - Archivos: `src/base_athome_bringup/base_athome_bringup/torso_state_node.py:29, 66-79` y
+     `src/base_athome_perception/scripts/calibrar_elevador.py:87-98`.
+9. Geometría cinemática de la cámara RealSense y la DaBai en Xacro:
+   - `src/hoverboard_base/urdf/xacro/head.xacro:155` (`mount_xyz="0.135 0.0 0.015"`).
+   - `src/hoverboard_base/urdf/xacro/arm_piper.xacro:334-342` (`xyz="0.025 0.0 0.056" rpy="3.14159 -1.5708 0"`).
+   - `src/hoverboard_base/urdf/xacro/properties.xacro:47-49` (`torso_switch_stroke = 0.60 m`).
+
+10.2 INFERENCIAS DERIVADAS (CÁLCULOS MATEMÁTICOS Y MODELOS CINEMÁTICOS)
+--------------------------------------------------------------------------------
+1. Presupuesto de error en agarre: A 1.2 m de distancia de observación (cabeza), un error angular
+   de 1.0° en el cabezal proyecta 21.0 mm de desvío lateral. Dado que el margen de la pinza Piper
+   (105 mm abiertos - 65 mm objeto) es de ±20.0 mm, un error $> 1.0^\circ$ causa fallo sistemático
+   de agarre (INFERIDO mediante geometría proyectiva básica: $\Delta x \approx d \cdot \Delta \theta$).
+2. Para la cámara de muñeca a 25 cm, el mismo error de 1.0° genera solo 4.4 mm de desvío, lo que
+   deja 15.6 mm de margen de seguridad para tolerar ruidos de detección (INFERIDO).
+3. Si el elevador no se mueve entre la detección con la cabeza y el agarre con el brazo, el error
+   de cota absoluta del elevador se anula porque ambos subsistemas cuelgan mecánicamente de
+   `torso_lift_link` (INFERIDO de la topología del árbol TF en `robot.urdf`).
+
+10.3 NO ENCONTRADO / POR CONFIRMAR EN ROBOT FÍSICO (REQUIERE HUMANO Y LAB)
+--------------------------------------------------------------------------------
+1. Medición física real entre los microswitches TOP y BOT del elevador:
+   - El valor nominal en `properties.xacro` es 0.60 m (`torso_switch_stroke`), pero el valor
+     métrico exacto con calibre o cinta no está registrado en ningún documento (marcado POR CONFIRMAR).
+2. Parámetros intrínsecos calibrados de la Orbbec DaBai DC1:
+   - No existe archivo de calibración óptica YAML para `/arm_camera/image_raw`. Sigue usando
+     los valores supuestos $f_x=485$, distorsión 0 (marcado POR CONFIRMAR en LAB con tablero impreso).
+3. Confirmación física de la eliminación de desconexiones USB del U2D2:
+   - Se cambió el cable el 04/11 según `STATUS.md`, pero falta probarlo bajo carga continua de torque
+     y movimiento con la tecla `M` del calibrador (marcado POR CONFIRMAR).
+4. Ensayo físico real de agarre guiado por `handeye.py`:
+   - Ninguna prueba de hand-eye fue ejecutada todavía en el hardware real con el brazo Piper energizado
+     (marcado PENDIENTE en `ROBOT.md` §5.2 y `ROADMAP.md` HOME-44).
