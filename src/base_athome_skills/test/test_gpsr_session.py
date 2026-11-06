@@ -51,8 +51,8 @@ def session():
     if started_here:
         rclpy.init()
     w = World()
-    w.script = ["go to the kitchen", "yes", "guide me to the table", "yes", "bring me the moon", "bring me the moon",
-                "bring me the moon", "follow me", "yes"]
+    w.script = ["go to the kitchen", "yes", "guide me to the table", "yes", "blue tomorrow sings", "blue tomorrow sings",
+                "blue tomorrow sings"]
     original = Node.__init__
 
     def with_params(self, name, **kw):
