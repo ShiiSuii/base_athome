@@ -139,7 +139,7 @@ Escala: **P0** desbloquea seguridad/progreso · **P1** valor demostrable · **P2
 | HOME-68 | Profundizar papers para AIM e IROS 2027: `docs/PAPERS_REVISION.txt` (Antigravity, pendiente de entrega y de verificar referencias) | Antigravity | Pendiente |
 | HOME-69 | Investigación profunda de otros equipos sobre la bolsa: percepción (A) y agarre y tarea (B). Base para confirmar el agarre por esfuerzo, pose de observación, plan B y correcciones por voz | Antigravity, luego Claude | En curso |
 | HOME-70 | Borrador del TDP: `docs/TDP_BORRADOR.txt`, con 39 puntos POR CONFIRMAR. Falta actualizar percepción de la bolsa y completar autores, fotos y resultados reales | Antigravity, Equipo | En curso |
-| HOME-71 | Web: analizar https://urubots.uy y preparar los datos para su programador, incluida la lista de papers | Antigravity | En curso |
+| HOME-71 | Web: `docs/WEB_URUBOTS_FALTANTES.txt` con los cambios y datos para el programador de https://urubots.uy. Falta pasárselo y aportar fotos, roles y video | Equipo | Listo para entregar |
 | HOME-72 | Plan de filmación: `docs/VIDEO_PLAN_FILMACION.txt`. Falta filmar con el robot real y al menos 5 intentos completos | Equipo | Plan listo |
 | HOME-73 | Revisión adversaria del código de la bolsa | Antigravity | En curso |
 | HOME-55 | Receptionist en el robot: barrido de 2 filas (~16 s), seguimiento leve del rostro, revisión del pan-tilt al arrancar | humano + Claude | persona sentada detectada; revisión ✔ |
