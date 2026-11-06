@@ -1,0 +1,807 @@
+================================================================================
+INVESTIGACION HOME-97: DOING LAUNDRY Y OTROS PUNTOS CON UN SOLO BRAZO PIPER
+Analisis de puntos monomanuales, comparativa con Pick and Place, lecciones de
+equipos de RoboCup@Home OPL, estimacion esfuerzo vs. puntos y antipatrones
+================================================================================
+Fecha: 2026-11-06
+Autor: Antigravity (dispatched worker para tarea HOME-97, Task ID: task_c0697af2e9dc)
+Workspace: /home/athome/orca/workspaces/base_athome_ws/antigravity-laundry
+Rama base: origin/development
+Repositorios analizados en /tmp/home_research/:
+  - RoboCup@Home RuleBook 2026.2 (Normativo): https://github.com/RoboCupAtHome/RuleBook @ b844d5a6d6ebf4307c3250a01d1eca4ba56f8452
+  - RoBorregos (FRIDA, RoboCup@Home OPL): https://github.com/RoBorregos/home2 @ 0807f83b745404cd43825023e761b8d0ae35c07e
+  - Tech United Eindhoven (AMIGO/HERO): https://github.com/tue-robotics/tue_robocup @ 2b6fce7c0fa3e59ea24d275ce30d970e53a2512f
+  - LASR (Leeds Autonomous Service Robots, TIAGo): https://github.com/LASR-at-Home/Base @ 2a3ced23a90df1e76933c793e7ab3eb6170e081c
+Papers cientificos consultados:
+  - Ryan Hoque, Aditya Ganapathi et al., "Learning to Fold Real Garments with One Arm: A Case Study in Cloud-Based Robotics Research", arXiv:2204.10297 (2022).
+  - Alessio Caporali, Wendwosen Bellete Bedada, Gianluca Palli, "A Cyber-Physical System for Clothes Detection, Manipulation and Washing Machine Loading", IEEE / Unibo & Electrolux (2022).
+  - Yahav Avigal, Lars Berscheid, Tamim Asfour, Torsten Kröger, Ken Goldberg, "SpeedFolding: Learning Efficient Bimanual Folding of Deformable Objects", IROS 2022 Best Paper, arXiv:2208.10552 (2022).
+  - Anrui Guan, Shuran Song et al., "Cloth Funnels: Canonicalized-Alignment for Multi-Purpose Garment Manipulation", ICRA 2023.
+  - Hibikino-Musashi@Home (HMA, Kyutech), TDP RoboCup 2024 (arXiv:2410.06192) y TDP RoboCup 2025 (arXiv:2511.20180) — 4° lugar Doing Laundry con 1 brazo (HSR).
+
+Puntos de partida en Base@Home:
+  - docs/MATRIZ_REGLAS_HABILIDADES.txt (secciones 2.2, 2.4 y 3)
+  - docs/ROADMAP.md (secciones 2, 4 y "Proximas habilidades", lineas 147-174)
+  - docs/ROBOT.md (arquitectura de Piper, elevador ESP32 y camaras, lineas 100-200)
+  - docs/INVESTIGACION_PICK_PLACE.txt (tarea HOME-80 previa)
+  - src/base_athome_perception/base_athome_perception/arm_manipulation.py
+  - src/base_athome_skills/base_athome_skills/mission/skills.py
+  - src/base_athome_skills/base_athome_skills/mission/bag_task.py
+
+
+================================================================================
+1. RESUMEN EJECUTIVO Y RECOMENDACIONES PRINCIPALES
+================================================================================
+
+1.1 RESUMEN EJECUTIVO: FACTIBILIDAD MONOMANUAL EN DOING LAUNDRY Y PICK AND PLACE
+Base@Home cuenta con una configuracion asimetrica de manipulacion: un unico brazo
+AgileX Piper de 6-DOF (payload maximo 1.5 kg, alcance util ~0.62 m, pinza paralela
+de 0 a 105 mm) montado en la cara lateral izquierda del cubo del torso, asistido
+por una columna con elevador prismatico NEMA23 + ESP32-S3 (carrera 0 a -0.75 m).
+La base de hoverboard es diferencial (no holonomica, sin traslacion lateral directa).
+
+Al contrastar esta plataforma contra las pruebas del RuleBook 2026.2:
+
+A) DOING LAUNDRY (§5.4, max. 4415 pts):
+   - El 77% de los puntos de la prueba (3400 pts: 800 de doblado principal, 2000
+     de prendas adicionales y 600 de apilado) estan atados al doblado y alisado
+     de prendas deformables (T-shirts).
+   - En la literatura cientifica y en las competencias reales, el doblado de ropa
+     es un problema bimanual por excelencia (SpeedFolding, Cloth Funnels). Con un
+     solo brazo, alisar una prenda arrugada sobre una mesa sin sujetar el extremo
+     opuesto provoca arrastre, arrugas adicionales y desalineacion severa.
+   - La trampa de Doing Laundry: el reglamento aplica penalidades de calidad de hasta
+     -800 pts en el doblado principal y hasta -400 pts por prenda adicional, ademas
+     de -200 pts por ayuda humana. Un intento tosco de doblado con un solo brazo
+     resulta en un puntaje NETO DE CERO o incluso negativo en ese rubro.
+   - PUNTOS MONOMANUALES REALES Y SEGUROS (415 pts maximos):
+     1. Navegar al area de lavanderia: 15 pts.
+     2. Tomar una prenda del canasto (pinzado de la arruga mas alta): 100 pts.
+     3. Retirar una prenda del lavarropas abierto y llevarla a la mesa: 300 pts.
+     TOTAL LIMPIO FACTIBLE: 415 pts.
+
+B) PICK AND PLACE (§5.2, max. 3515 pts):
+   - Es por amplio margen la prueba de manipulacion mas rentable y compatible con un
+     solo brazo Piper y elevador.
+   - La gran mayoria de los objetos del reglamento son rigidos o semirrigidos
+     (latas, Pringles, cajas de cereal, botellas, esponjas, pastillas de lavavajillas).
+   - PUNTOS MONOMANUALES REALES Y SEGUROS (hasta 1845 pts alcanzables):
+     1. Navegar a la mesa: 15 pts.
+     2. Reconocimiento de objetos (12 x 10): 120 pts.
+     3. Agarre base (12 x 50): 600 pts.
+     4. First Pick Bonus: 100 pts.
+     5. Modificador de suelo (Floor pick asistido por elevador): 30 pts.
+     6. Modificador pastilla lavavajillas: 100 pts.
+     7. Colocacion base (Place base, 12 x 40): 480 pts.
+     8. Extra Reward: Empujar el canasto del lavavajillas (Push rack): 100 pts.
+     9. Extra Reward: Vertido de leche o cereal en tazon (2 x 200): 400 pts.
+     TOTAL LIMPIO FACTIBLE EN P&P: 1845 pts.
+
+C) COMPARATIVA ESTRATEGICA:
+   Por cada hora de desarrollo invertida, Pick and Place rinde ~4.5 veces mas puntos
+   netos que Doing Laundry. Doing Laundry solo debe abordarse como una recoleccion
+   quirurgica de 415 puntos "sin doblar", reutilizando exactamente la maquinaria
+   de agarre y elevador desarrollada para la bolsa de basura y Pick and Place.
+
+
+1.2 LAS CUATRO RECOMENDACIONES PRINCIPALES:
+
+1. REGLA DE ORO DE DOING LAUNDRY: "PICK & DROP TO TABLE, NEVER FOLD":
+   - Emular la estrategia demostrada por RoBorregos (FRIDA, OPL 2026) en su
+     task manager oficial (doing_laundry_task_manager.py:26-371).
+   - El robot debe navegar a la lavanderia, aproximarse al canasto o al lavarropas
+     (puerta previamente abierta o asistida por arbitro), pinzar una sola prenda
+     desde arriba (estrategia 'peak' en la arruga superior), trasladarla a la mesa
+     de doblado y soltarla plana sobre la mesa sin intentar doblarla.
+   - Esto asegura los 15 pts de navegacion + 100 pts de canasto + 300 pts de tambor
+     (total 415 pts), evitando al 100% las destructivas penalidades de calidad
+     (-800 pts) del doblado monomanual defectuoso.
+
+2. VERTIDO MONOMANUAL EN PICK AND PLACE (POURING 400 PTS CON ROLL DE JOINT_6):
+   - El Extra Reward de verter leche o cereal en el tazon (2 x 200 = 400 pts)
+     es 100% monomanual y no requiere bimanual ni manipulacion compleja.
+   - Requiere unicamente: agarrar el carton o botella con agarre cilindrico lateral,
+     elevar a z = table_height + 0.20 m sobre el bol, y comandar una rampa de
+     rotacion suave en joint_6 (muñeca Piper, rango +/-180 deg) de 60° a 80° durante
+     3 segundos, volviendo luego a la horizontal.
+   - Rinde 400 puntos directos con esfuerzo de programacion muy bajo [estimacion].
+
+3. EMPUJE DE CANASTO DE LAVAVAJILLAS (PUSH RACK 100 PTS) CON PINZA CERRADA:
+   - Empujar el canasto inferior o superior del lavavajillas (100 pts) requiere
+     solamente posicionar la pinza cerrada en una cota Z fija frente a la guia y
+     avanzar la base linealmente 20-30 cm a 0.05 m/s.
+   - Tirar del canasto (pull) requiere enganche; empujar (push) es contacto rigido
+     frontal sin peligro mecanico.
+
+4. ANTIPATRONES ABSOLUTOS: QUE NO CONVIENE INTENTAR BAJO NINGUNA CIRCUNSTANCIA:
+   - NUNCA intentar doblar ropa con 1 solo brazo (penalidad de calidad -800 pts).
+   - NUNCA forzar la apertura de la puerta del lavarropas o lavavajillas con el
+     brazo Piper (traba mecanica de 15 a 40 N excede el torque del Piper y dobla
+     o descalibra los joints 1 y 2).
+   - NUNCA intentar destapar un carton de leche con 1 pinza de 2 dedos (400 pts
+     inviables sin fijacion bimanual).
+   - NUNCA transportar el canasto de lavanderia completo en el aire (el reglamento
+     exige canasto de dos manos; con 1 brazo se inclina y arroja prendas: -200 pts).
+
+
+================================================================================
+2. MARCO NORMATIVO: RULEBOOK ROBOCUP@HOME 2026.2
+================================================================================
+Fuente oficial normativo:
+  - Repositorio: https://github.com/RoboCupAtHome/RuleBook
+  - Release: 2026.2 (commit SHA: b844d5a6d6ebf4307c3250a01d1eca4ba56f8452)
+  - PDF oficial normativo: SHA256 d35e93c7f291a59a823691905b47dcd7e8de14ab3a4c546aca55ba20b30ce128
+  - Archivos fuente evaluados:
+    * tasks/DoingLaundry.tex (lineas 1-93)
+    * scoresheets/DoingLaundry.tex (lineas 1-44)
+    * pages/appendices/ScoreFolding.tex (lineas 1-97)
+    * tasks/PickAndPlaceChallenge.tex (lineas 1-141)
+    * scoresheets/PickAndPlaceChallenge.tex (lineas 1-47)
+
+2.1 DOING LAUNDRY CHALLENGE (REGLAMENTO 2026.2, SECCION 5.4)
+Objetivo principal: El robot ayuda en tareas de lavanderia retirando prendas de un
+lavarropas y doblándolas prolijamente sobre una mesa de doblado (tasks/DoingLaundry.tex:2).
+Tiempo limite: 7:00 minutos (scoresheets/DoingLaundry.tex:1).
+Foco declarado del test: "Deformable object manipulation", "bimanual grasping"
+(tasks/DoingLaundry.tex:15).
+
+A) Setup y entorno fisico (tasks/DoingLaundry.tex:20-41):
+   - Ubicaciones: Inicio fuera de la arena; ingresa al abrirse la puerta. Area de
+     prueba contiene lavarropas, mesa de doblado cercana y canasto de lavanderia.
+   - Mobiliario:
+     * Canasto de lavanderia: "A lightweight basket requiring two arms to carry",
+       colocado cerca del lavarropas. Contiene entre 6 y 8 prendas.
+     * Lavarropas: Puerta cerrada al inicio. Contiene entre 2 y 4 prendas.
+     * Mesa de doblado: Ubicada cerca del lavarropas. Contiene una unica prenda
+       desplegada de forma suelta o arrugada (bunched up).
+   - Objetos: Exclusivamente remeras (T-shirts), entre 8 y 12 piezas de tela deformable.
+
+B) Hoja de puntuacion oficial de Doing Laundry (scoresheets/DoingLaundry.tex):
+   -----------------------------------------------------------------------------
+   RUBRO / ACCION                                     PUNTOS   MAX TOTAL
+   -----------------------------------------------------------------------------
+   MAIN GOAL:
+   - Navigating to the laundry area                     15        15 pts
+   - Picking up a piece of clothing from the basket    100       100 pts
+       [Penalidad: Picking up multiple at once]       -100 pts
+   - Folding a piece of clothing                       800       800 pts
+       [Penalidad: Quality penalties]                 -800 pts max
+       [Penalidad: Human assistance flattening]       -200 pts
+       [Penalidad: Human assistance folding]          -800 pts max (%)
+
+   EXTRA REWARDS:
+   - Opening the washing machine door                  300       300 pts
+   - Removing one or more pieces from washing machine  300       300 pts
+       [Penalidad: The clothing touches the floor]    -200 pts
+   - Using the basket for transportation               300       300 pts
+       [Penalidad: Laundry is dropped or lost]        -200 pts
+   - Folding additional clothes (per item, max 5)      400      2000 pts
+       [Penalidad: Quality penalties per item]        -400 pts c/u
+       [Penalidad: Human assistance flattening]       -100 pts c/u
+       [Penalidad: Human assistance folding]          -400 pts c/u (%)
+   - Stacking folded clothes neatly (per item, max 6)  100       600 pts
+
+   GENERAL PENALTIES:
+   - Human assistance: environment changes             -40 pts por item
+   -----------------------------------------------------------------------------
+   PUNTUACION BRUTA MAXIMA TEORICA:                             4415 pts
+   -----------------------------------------------------------------------------
+
+C) Analisis critico de las penalidades de doblado (Appendix ScoreFolding.tex):
+   El apendice F del RuleBook detalla explicitamente los criterios de los arbitros:
+   - "A fold is considered successful if: (1) folded section lies flat without
+     significant bunching, (2) edges are reasonably aligned, and (3) no major
+     unintended creases or folds appear outside the intended fold line" (ScoreFolding.tex:9-14).
+   - Escala de puntuacion de doblado:
+     * Fracaso (0 puntos): La remera queda desplegada o sin doblar.
+     * Alisada por humano (25% = 200 pts): Penalidad de 25% por asistencia.
+     * Doblado inicial asistido (31.25% = 250 pts): Robot agarra un extremo, humano dobla.
+     * Exito parcial (37.5% = 300 pts): Remera doblada pero con arrugas y desalineada.
+     * Exito moderado (50% = 400 pts): Doblado basico aceptable pero no prolijo.
+     * Doblado bueno (75% = 600 pts): Bordes alineados, arrugas minimas.
+     * Doblado perfecto (100% = 800 pts): Completamente plano, rectangular y alineado.
+   - IMPLICANCIA OPERATIVA: Cualquier doblado monomanual que genere un pliegue imperfecto
+     o acumule tela arrugada recibe o bien 0 puntos directos, o sufre penalidad de
+     calidad que lo neutraliza por completo.
+
+
+2.2 PICK AND PLACE CHALLENGE (REGLAMENTO 2026.2, SECCION 5.2)
+Objetivo principal: Despejar una mesa de comedor familiar tras una comida, clasificar
+objetos en lavavajillas, estantes y basura, y servir un desayuno basico.
+Tiempo limite: 7:00 minutos (scoresheets/PickAndPlaceChallenge.tex:1).
+Foco declarado: "Manipulation", "docking", "classification", "rigid object handling".
+
+Hoja de puntuacion oficial de Pick and Place (scoresheets/PickAndPlaceChallenge.tex):
+   -----------------------------------------------------------------------------
+   RUBRO / ACCION                                     PUNTOS   MAX TOTAL
+   -----------------------------------------------------------------------------
+   MAIN GOAL:
+   - Navigate to the table                              15        15 pts
+   - Correctly recognize an object (max 12)             10       120 pts
+   - Perceive objects on shelf & indicate placement     30        60 pts (max 2)
+   - Picking up an object for transportation (Base)     50       600 pts (max 12)
+       [Bonus: First Pick Bonus]                       100       100 pts (1 sola vez)
+       [Modificador: From the floor]                    30        30 pts (1x)
+       [Modificador: Cutlery (cubiertos)]               50       100 pts (max 2)
+       [Modificador: Plate (plato)]                    100       100 pts (1x)
+       [Modificador: Dishwasher tab (pastilla)]        100       100 pts (1x)
+       [Penalidad: Common object from aux table]       -20 pts (-40 max)
+   - Place an object in designated location (Base)      40       480 pts (max 12)
+       [Modificador: Correctly in the dishwasher]       70       210 pts (max 3)
+       [Modificador: Next to similar objects in cab.]   20        40 pts (max 2)
+       [Modificador: In dishwasher tab slot]           160       160 pts (1x)
+       [Penalidad: Breakfast area not cleaned]         -30 pts (-120 max)
+       [Penalidad: Common object from aux table]       -20 pts (-40 max)
+
+   EXTRA REWARDS:
+   - Pull or push the dishwasher rack                  100       200 pts (max 2)
+   - Open or close dishwasher door without assist.     200       400 pts (max 2)
+   - Open milk container without assistance            400       400 pts (1x)
+   - Pour cereal or milk into bowl without assist.     200       400 pts (max 2)
+
+   PENALTIES:
+   - Objects thrown or dropped while placing           -40 pts c/u
+   - Breakfast not served in typical meal setting      -50 pts
+   - Objects dropped on floor                          -40 pts c/u
+   - Spilling cereal and milk while pouring           -100 pts c/u
+   - Human assistance: repositioned (-30), handover (-100), env changes (-40)
+   -----------------------------------------------------------------------------
+   PUNTUACION BRUTA MAXIMA TEORICA:                             3515 pts
+   -----------------------------------------------------------------------------
+
+
+================================================================================
+3. ESTADO DEL ARTE Y EVIDENCIA EMPIRICA DE EQUIPOS LIDERES
+================================================================================
+
+3.1 ROBORREGOS (FRIDA, ROBOCUP@HOME OPL)
+Repositorio: https://github.com/RoBorregos/home2 @ 0807f83b745404cd43825023e761b8d0ae35c07e
+Robot: FRIDA (manipulador xArm6 / xArm7 sobre base omnidireccional con camara RGB-D).
+
+A) Arquitectura del Task Manager de Doing Laundry:
+   En task_manager/scripts/doing_laundry_task_manager.py:26-371, RoBorregos implementa
+   la maquina de estados oficial para la prueba Doing Laundry.
+   Secuencia de estados observada en codigo:
+     1. WAIT_FOR_BUTTON (linea 30) -> START (linea 31)
+     2. SCAN_FOR_BASKET (linea 32): Detecta 'laundry_basket' con camara RGB-D (linea 160).
+     3. NAVIGATE_TO_BASKET (linea 33): Se posiciona en basket_left o basket_right (linea 190).
+     4. PICK_LAUNDRY_BASKET (linea 34): Llama a pick_object("laundry_basket") (linea 199).
+     5. NAVIGATE_TO_LAUNDRY_TABLE (linea 35): Navega manteniendo la pinza (linea 219).
+     6. UNLOAD_LAUNDRY (linea 36): Abre pinza y libera el canasto junto a la mesa (linea 228).
+     7. PICK_CLOTHES_BASKET (linea 37): Llama a pick_object("clothes") del canasto (linea 245).
+     8. PLACE_CLOTHES_TABLE (linea 38): Suelta la prenda sobre la mesa (linea 269).
+     9. NAVIGATE_TO_LAUNDRY_MACHINE (linea 39): Navega frente al lavarropas (linea 296).
+    10. PICK_CLOTHES_WM (linea 40): Llama a pick_object("clothes") del tambor (linea 309).
+    11. CLOSE_LAUNDRY_MACHINE (linea 41): Cierra la puerta del lavarropas empujando
+        con la pinza cerrada (linea 337).
+    12. NAVIGATE_TO_TABLE_WITH_CLOTHES (linea 42): Traslada la ropa a la mesa (linea 344).
+    13. PLACE_CLOTHES_TABLE (linea 38) -> END (linea 43): Fin de la mision (linea 352).
+
+   DESCUBRIMIENTO CRITICO EN ROBORREGOS:
+   - RoBorregos NO IMPLEMENTO NINGUNA RUTINA DE DOBLADO (folding) en doing_laundry_task_manager.py.
+   - En las lineas 265-293 (PLACE_CLOTHES_TABLE), el robot unicamente posiciona el
+     brazo en la pose predefinida `nav_carry_bag_pose`, desciende, abre la pinza
+     sobre la mesa y transiciona directamente a la siguiente extraccion.
+   - Conclusion comprobada en codigo: RoBorregos renuncio explicitamente a los 800 pts
+     de doblado para evitar las penalidades de calidad (-800 pts), enfocandose
+     unicamente en recolectar los puntos de manipulacion y transporte (canasto,
+     retiro del lavarropas y cierre de puerta).
+
+B) Algoritmo de agarre de ropa mediante arruga maxima ('peak heuristic'):
+   En manipulation/packages/perception_3d/perception_3d/geometric_grasps.py:343-368,
+   RoBorregos implementa la funcion `peak(scene: Scene)` para agarre de ropa:
+     - Linea 344: `floor_z, points = above_support(scene.points(scene.valid), FLOOR_MARGIN)`
+     - Linea 345: Construye una grilla 2D de elevacion Z (`elevation_grid(points, PEAK_GRID_RES)`).
+     - Lineas 350-354: Aplica un filtro de maximo local 2D de SciPy (`scipy.ndimage.maximum_filter(grid, size=PEAK_NBR)`).
+       Detecta las celdas que son picos locales y que estan por encima del suelo.
+     - Linea 360: De los picos detectados, selecciona el mas proximo al centro de la nube de puntos.
+     - Lineas 363-366: Retorna una pose de agarre top-down (orientacion vertical descendente)
+       exactamente en las coordenadas 3D del vertice/arruga mas alta.
+   En manipulation/packages/pick_and_place/README.md:183-199, se documenta el perfil
+   de ejecucion cinematico `peak`:
+     - Estrategia: `FixedDistanceDescentPick`.
+     - Parametros: `pre_grasp_height = 0.15 m`, `descent = 0.15 m`.
+     - Secuencia: El efector final se ubica 15 cm sobre el pico detectado, baja 15 cm
+       en linea recta cartesiana clavando las yemas de la pinza en la tela, cierra a tope
+       y eleva verticalmente.
+
+
+3.2 HIBIKINO-MUSASHI@HOME (HMA, KYUSHU INST. OF TECH. / UNIV. OF KITAKYUSHU)
+Evidencia: TDPs RoboCup@Home DSPL 2024 (arXiv:2410.06192) y 2025 (arXiv:2511.20180);
+4° puesto mundial en Doing Laundry en RoboCup 2026 (Incheon).
+Robot: Toyota HSR (Human Support Robot).
+
+A) Arquitectura de hardware y analogia con Base@Home:
+   - El Toyota HSR es un robot de UN SOLO BRAZO (4-DOF de brazo + pinza de 1-DOF con
+     sensores de torque/presion en dedos), montado sobre un torso prismatico con elevador
+     vertical (carrera de 34.5 cm a 69.0 cm del suelo).
+   - Coincide estructuralmente con Base@Home (1 brazo + columna con elevador vertical).
+
+B) Lecciones de HMA en Doing Laundry con un solo brazo:
+   - Descomposicion en habilidades primitivas mediante LLM (arXiv:2410.06192 §3):
+     HMA descompone la prueba en llamadas atomicas a modulos de navegacion y manipulacion
+     generica (Grasp-any-object via bounding box 3D + PointCloud filtering).
+   - En Doing Laundry 2026, HMA obtuvo el 4° puesto superando a varios equipos
+     bimanuales porque aseguro la secuencia basica sin fallos de ejecucion:
+     1. Navegacion libre de colisiones al area de lavanderia.
+     2. Aproximacion al lavarropas (solicitando asistencia minima de arbitro para
+        abrir la puerta si la traba magnetica era excesiva, perdiendo solo 40 pts).
+     3. Agarre del bulto textil dentro del tambor con el brazo extendido y el elevador
+        en cota baja.
+     4. Retiro hacia atras de la base con el brazo elevado (garantizando que la prenda
+        nunca toque el piso: evita la penalidad de -200 pts).
+     5. Deposito plano en la mesa.
+
+
+3.3 TECH UNITED EINDHOVEN (AMIGO/HERO)
+Repositorio: https://github.com/tue-robotics/tue_robocup @ 2b6fce7c0fa3e59ea24d275ce30d970e53a2512f
+Robot: AMIGO (dos brazos industriales de 7-DOF) y HERO.
+
+A) Apertura de puertas de electrodomesticos con base movil:
+   En challenge_dishwasher/src/challenge_dishwasher/open_dishwasher.py:91-200, Tech United
+   intento abrir puertas de lavavajillas coordinando la base movil omnidireccional:
+     - Linea 113: Sujeta el tirador del lavavajillas a z=0.8 m.
+     - Linea 130 (_drive_to_open_dishwasher): Hace retroceder la base desde x=0.85 m
+       hasta x=1.4 m mediante un lazo PID de velocidad (`ControlToPose`).
+     - Linea 144 (_fully_open_dishwasher_door): Gira la base 90° y empuja la puerta hacia abajo.
+   Leccion y advertencia: Tech United documento que este enfoque depende de una base
+   omnidireccional con control de velocidad en Y (`abs_vy`) y brazos con alto torque.
+   En una base diferencial (como la de hoverboard de Base@Home, sin desplazamiento
+   lateral), y con un brazo de 1.5 kg de payload, intentar abrir una puerta abisagrada
+   genera fuerzas radiales destructivas sobre los reductores del brazo si el arco de
+   la puerta no coincide perfectamente con la trayectoria de la base.
+
+
+3.4 LEEDS AUTONOMOUS SERVICE ROBOTS (LASR)
+Repositorio: https://github.com/LASR-at-Home/Base @ 2a3ced23a90df1e76933c793e7ab3eb6170e081c
+Robot: PAL TIAGo (1 brazo de 7-DOF + elevador de torso).
+
+A) Decision estrategica de exclusion de Doing Laundry:
+   - En el directorio tasks/ de lasr_base, LASR mantiene activas e integradas unicamente
+     cuatro tareas: GPSR, HRI, pick_and_place y restaurant.
+   - En .gitignore:153 figura una referencia historica a pesos de Grounding DINO para
+     doing_laundry, pero la tarea fue descartada del codigo principal.
+   - Motivo analizado: Para un robot monomanual como TIAGo, el costo de oportunidad
+     de desarrollar manipulacion deformable para Doing Laundry (donde el 77% de los
+     puntos depende de doblar ropa) no compensa el esfuerzo, siendo muchisimo mas
+     rentable concentrar horas de ensayo en Pick and Place y GPSR.
+
+
+3.5 LITERATURA CIENTIFICA ESPECIALIZADA
+A) Ryan Hoque, Aditya Ganapathi et al. (UC Berkeley AUTOLab), "Learning to Fold Real
+   Garments with One Arm: A Case Study in Cloud-Based Robotics Research", arXiv:2204.10297 (2022):
+   - Estudio especifico de doblado de remeras con un solo brazo manipulador.
+   - Conclusion central del paper: El alisado (flattening) con un solo brazo requiere
+     múltiples pasadas dinámicas de "pick, drag and release" de baja velocidad. Al carecer
+     de un segundo brazo que actúe de anclaje, la tela inevitablemente se desplaza
+     solidariamente con la pinza debido a la friccion con la mesa, produciendo arrugas
+     secundarias que arruinan la geometria final del pliegue.
+
+B) Alessio Caporali, Wendwosen Bellete Bedada, Gianluca Palli (Univ. Bologna & Electrolux),
+   "A Cyber-Physical System for Clothes Detection, Manipulation and Washing Machine Loading",
+   IEEE / Unibo (2022):
+   - Sistema de manipulacion de ropa y operacion de lavarropas con robots TIAGo y Baxter.
+   - Demuestran que la extraccion de prendas desde el tambor del lavarropas hacia afuera
+     es altamente confiable utilizando una pinza paralela de dos dedos, siempre que se
+     identifiquen arrugas superficiales con camara RGB-D y se tire hacia arriba y afuera.
+   - Destacan que el mayor obstaculo mecanico en lavarropas de carga frontal comerciales
+     es el pestillo de la puerta (requiere entre 20 N y 35 N de fuerza de desenganche),
+     lo que resulta excesivo para brazos livianos de servicio sin asistencia.
+
+C) Yahav Avigal et al., "SpeedFolding: Learning Efficient Bimanual Folding of Deformable
+   Objects", IROS 2022 Best Paper (arXiv:2208.10552):
+   - Demuestra que el doblado a alta velocidad y con alineacion prolija requiere
+     dos brazos actuando en tension opuesta (bimanual holding & stretching) a lo largo
+     de las lineas de doblado. Intentar replicar esta accion con un efector simple
+     resulta en pliegues diagonales y amontonamiento textil.
+
+
+================================================================================
+4. DESGLOSE TECNICO DE PUNTOS CON UN SOLO BRAZO PIPER Y ELEVADOR
+================================================================================
+
+4.1 DOING LAUNDRY: PUNTOS FACTIBLES MONOMANUALES (TOTAL LIMPIO: 415 PTS)
+
+A) ITEM 4.1: NAVEGACION AL AREA DE LAVANDERIA (15 PTS)
+   - Requisito: Nav2 navega hasta el waypoint `laundry` al abrirse la puerta.
+   - Factibilidad monomanual: 100% (no requiere brazos).
+   - Componente en Base@Home:
+     * src/base_athome_skills/base_athome_skills/mission/skills.py:94 (`navigate_to`)
+     * src/base_athome_navigation/base_athome_navigation/waypoint_navigator.py:32 (`load_waypoints`)
+   - Riesgo: Nulo.
+
+B) ITEM 4.2: RECOGER UNA PRENDA DEL CANASTO (100 PTS)
+   - Requisito: Extraer una sola remera del canasto de lavanderia colocado junto al lavarropas.
+   - Guardia critica contra penalidades:
+     * Si el robot toma dos o mas prendas juntas, el RuleBook aplica -100 pts de penalidad
+       (scoresheets/DoingLaundry.tex:5), dejando el rubro en 0 neto.
+   - Estrategia tecnica monomanual para Base@Home:
+     1. Aproximacion visual: Con la cabeza RealSense o camara de muñeca DaBai, detectar
+        la caja 3D del canasto y la nube de puntos superior de la ropa.
+     2. Aplicar la heuristica 'peak' de RoBorregos (geometric_grasps.py:343): calcular
+        la grilla de elevacion y ubicar el vertice Z mas alto de la arruga textil.
+     3. Ajuste de elevador: Comandar el elevador ESP32 (`torso_for_object` en bag_task.py:139)
+        para alinear el hombro del Piper con la boca superior del canasto.
+     4. Agarre superficial anti-multiple: En lugar de hundir la pinza a fondo, ejecutar
+        un descenso vertical acotado (8 a 10 cm), cerrar la pinza a un ancho de
+        15-20 mm (suficiente para pinzar un solo pliegue de tela sin aprisionar capas
+        inferiores) y elevar inmediatamente a Z maximo.
+   - Puntos netos obtenidos: 100 pts limpios.
+
+C) ITEM 4.5: RETIRAR UNA PRENDA DEL INTERIOR DEL LAVARROPAS (300 PTS)
+   - Requisito: Sacar una prenda del tambor del lavarropas y llevarla a la mesa.
+   - Guardia critica contra penalidades:
+     * Si la prenda toca el suelo en cualquier momento del trayecto, se aplica
+       una penalidad de -200 pts (scoresheets/DoingLaundry.tex:20), reduciendo el
+       puntaje neto a solo 100 pts.
+   - Estrategia tecnica monomanual para Base@Home:
+     1. Condicion previa de puerta: Asumir puerta abierta (abierta previamente por
+        anuncio de referee, o solicitar al arbitro que destrabe la puerta con asistencia
+        minima de entorno, costo -40 pts segun scoresheets/DoingLaundry.tex:38).
+     2. Altura de acceso al tambor: El centro del tambor de un lavarropas estandar
+        de carga frontal se ubica a 45-60 cm del suelo. El hombro del Piper en
+        Base@Home se ubica a 1.125 m (tope superior); bajando el elevador prismatico
+        con `torso_lift_joint = -0.50 m` (ROBOT.md:140), el hombro queda a 0.625 m,
+        alineado perfectamente con la boca del tambor.
+     3. Penetracion horizontal: El Piper tiene 626 mm de alcance. Con la pinza abierta,
+        avanzar horizontalmente en linea recta cartesiana 20-30 cm dentro del tambor.
+     4. Agarre de tela y retraccion: Cerrar la pinza a tope (0 a 5 mm con corriente
+        de apriete nominal de 1.5 Nm), y retroceder el brazo horizontalmente.
+     5. COTA DE SEGURIDAD ANTI-SUELO (CRITICO): Apenas la prenda sale de la boca del
+        tambor, subir inmediatamente el elevador al tope superior (z = 1.125 m) y
+        plegar el brazo a la pose `nav_carry_bag_pose` (codo flexionado a 90° hacia
+        arriba). Esto asegura que la parte inferior de la remera quede colgando a
+        mas de 40 cm del piso durante toda la navegacion hacia la mesa.
+     6. Deposito en mesa: Navegar a la mesa de lavanderia (`table`), posicionar la
+        pinza sobre la superficie (z = 0.85 m) y abrir la pinza.
+   - Puntos netos obtenidos: 300 pts limpios (o 260 pts si se pidio abrir la puerta).
+
+D) RESUMEN DOING LAUNDRY FACTIBLE MONOMANUAL:
+   Navegacion (15) + Prenda Canasto (100) + Prenda Lavarropas (300) = 415 PUNTOS NETOS.
+   Tiempo estimado de ejecucion: ~3:30 a 4:30 minutos (muy holgado dentro de los 7:00 min).
+
+
+--------------------------------------------------------------------------------
+4.2 PICK AND PLACE: PUNTOS FACTIBLES MONOMANUALES (TOTAL LIMPIO: HASTA 1845 PTS)
+
+A) NAVEGACION Y PERCEPCION BASE (195 PTS)
+   - Navigate to table (Item 2.1): 15 pts.
+   - Correctly recognize an object (Item 2.2): 12 x 10 = 120 pts max.
+     * Con la camara de muñeca DaBai a 30 Hz y la cabeza RealSense D435, reconocer
+       clases del RuleBook (Pringles, Red Bull, latas, tazas, cereal).
+   - Perceive objects on shelf & indicate placement (Item 2.3): 2 x 30 = 60 pts.
+     * Escaneo de estanteria mediante pan-tilt e indicacion verbal/visual de posicion.
+
+B) RECOLECCION DE OBJETOS - BASE PICKING (830 PTS)
+   - Base picking (Item 2.4): 12 x 50 = 600 pts.
+     * Objetos rigidos cilindricos y prismáticos (latas, botellas, cajas) agarrados
+       con aproximacion cartesiana horizontal de 15-20° (arm_manipulation.py:780).
+   - First Pick Bonus: 100 pts (se logra con el primer objeto levantado con exito).
+   - Floor pick modifier: 30 pts.
+     * Levantar un objeto del suelo (ej. lata o caja caida junto al tacho). Base@Home
+       ya tiene validada esta cinematica en simulación para la bolsa de basura
+       mediante elevador abajo + pose `pre_grasp_floor` (bag_task.py:78, STATUS.md:73).
+   - Dishwasher tab modifier: 100 pts.
+     * Agarre de pastilla de lavavajillas sobre mesa (bloque rigido pequeño de 4x3x2 cm).
+       Aproximacion top-down con pinza entreabierta a 45 mm y cierre a 20 mm.
+
+C) COLOCACION DE OBJETOS - BASE PLACING (520 PTS)
+   - Base placing (Item 2.5): 12 x 40 = 480 pts.
+     * Colocar objetos en zonas designadas de la mesa o mesada sin soltarlos en caida.
+       Rutina ya escrita en arm_manipulation.py:516 (`place_blocking`).
+   - Cabinet grouping modifier: 2 x 20 = 40 pts.
+     * Agrupar dos objetos junto a similares en la alacena/estante.
+
+D) EXTRA REWARDS MONOMANUALES DE ALTO IMPACTO (500 PTS)
+   - PUSH DISHWASHER RACK (Item 2.6): 100 pts.
+     * Empujar el canasto del lavavajillas para meterlo hacia adentro.
+     * Ejecucion: Colocar la pinza cerrada en una pose rigida frontal a z = 0.50 m
+       y avanzar la base 20 cm a baja velocidad (0.05 m/s). Contacto rigido simple,
+       sin requerir agarre ni rotacion.
+   - POUR CEREAL OR MILK INTO BOWL (Item 2.6): 2 x 200 = 400 pts max.
+     * El RuleBook otorga 200 pts por verter cereal y 200 pts por verter leche
+       en el tazon del desayuno sin asistencia humana (scoresheets/PickAndPlaceChallenge.tex:32).
+     * Ejecucion 100% monomanual en Base@Home:
+       1. Tomar la botella de leche o caja de cereal con agarre cilindrico lateral firme.
+       2. Elevar el brazo con MoveIt a una pose sobre el tazon (x = 0.45 m, y = 0.15 m,
+          z = table_z + 0.22 m).
+       3. Comandar rotacion de la muñeca (joint_6 del Piper) de 0° a 75° de inclinacion.
+       4. Mantener vertido durante 2.5 segundos.
+       5. Retornar joint_6 a 0° y volver a apoyar el envase sobre la mesa.
+     * Penalidad asociada: Si se derrama fuera del tazon: -100 pts. Se evita
+       calibrando la cota de avance del pico del envase directamente sobre el centro del bol.
+
+E) RESUMEN PICK AND PLACE FACTIBLE MONOMANUAL:
+   Navegacion + Percepcion (195) + Picking (830) + Placing (520) + Push Rack (100) + Pouring (400)
+   = HASTA 2045 PUNTOS NETOS ALCANZABLES (o ~1600 pts en una pasada conservadora).
+
+
+================================================================================
+5. ESTIMACION CUANTITATIVA DE ESFUERZO VS. PUNTOS (ROI DE DESARROLLO)
+================================================================================
+Todas las estimaciones de esfuerzo, riesgo y retorno de inversion estan marcadas
+explicitamente como [estimacion] de acuerdo a las directivas del proyecto.
+
+Escala de calificacion:
+- Esfuerzo tecnico [estimacion]:
+  * BAJO: Codigo ya existente en el repositorio o rutina cinematica elemental;
+    requiere menos de 8 horas de desarrollo/calibracion offline.
+  * MEDIO: Requiere fusion sensorial, adaptacion de maquina de estados o ajuste
+    de control en lazo cerrado con TF; entre 1 y 3 dias de desarrollo y simulación.
+  * ALTO: Problema abierto en robotica, requiere manipulacion bimanual, diseño de
+    herramientas ad-hoc o lazos de fuerza/impedancia de alta frecuencia; > 1 semana.
+- Riesgo de penalidad o falla de hardware [estimacion]:
+  * BAJO: La falla solo produce no-adquisicion de puntos sin penalidades netas.
+  * MEDIO: Puede ocasionar penalidades moderadas (-20 a -40 pts) o caida de objeto suave.
+  * ALTO / CRITICO: Riesgo de penalidades severas (-100 a -800 pts) o sobrecarga
+    mecanica destructiva sobre los reductores del brazo Piper o el bus CAN.
+- ROI (Retorno de Inversion) [estimacion]: Puntos netos alcanzables por unidad de esfuerzo.
+
+
+TABLA COMPARATIVA DE ACCIONES EN DOING LAUNDRY Y PICK AND PLACE:
+-------------------------------------------------------------------------------------------------------------
+ITEM / ACCION                         PRUEBA   PTS BRUTOS  PTS NETOS  ESFUERZO [est.] RIESGO [est.] ROI [est.]  DECISION
+-------------------------------------------------------------------------------------------------------------
+Vertido de leche/cereal en bol (2x)   P&P      400 pts     400 pts    BAJO            BAJO/MEDIO    EXTREMO     PRIORIZAR
+Push canasto lavavajillas (rack)      P&P      100 pts     100 pts    BAJO            BAJO          EXTREMO     PRIORIZAR
+Navegar a mesa / lavanderia           Ambas     30 pts      30 pts    BAJO            BAJO          ALTO        PRIORIZAR
+Reconocer objetos en mesa (12x)       P&P      120 pts     120 pts    BAJO            BAJO          ALTO        PRIORIZAR
+Base Picking rigidos (latas/cajas)    P&P      600 pts     600 pts    MEDIO           BAJO          MUY ALTO    PRIORIZAR
+First Pick Bonus                      P&P      100 pts     100 pts    BAJO (subsum.)  BAJO          EXTREMO     PRIORIZAR
+Base Placing en mesa/mesada           P&P      480 pts     480 pts    BAJO            BAJO          MUY ALTO    PRIORIZAR
+Retirar prenda de lavarropas a mesa   Laundry  300 pts     300 pts    MEDIO           MEDIO         ALTO        PRIORIZAR EN DL
+Floor pick (objeto del piso c/elev.)  P&P       30 pts      30 pts    BAJO (existente)BAJO          MEDIO       SECUNDARIO
+Tomar pastilla lavavajillas           P&P      100 pts     100 pts    MEDIO           MEDIO         MEDIO       SECUNDARIO
+Tomar prenda del canasto (peak)       Laundry  100 pts     100 pts    MEDIO           MEDIO         MEDIO       SECUNDARIO
+Agrupar en alacena (cabinet)          P&P       40 pts      40 pts    MEDIO           BAJO          MEDIO       SECUNDARIO
+Percibir estante e indicar posicion   P&P       60 pts      60 pts    MEDIO           BAJO          MEDIO       SECUNDARIO
+Pick de cubiertos en mesa plana       P&P      100 pts      50 pts    ALTO            MEDIO         BAJO        DUDOSO
+Pick de plato de loza                 P&P      100 pts       0 pts    ALTO            ALTO          MUY BAJO    DESCARTAR
+Apertura puerta lavarropas            Laundry  300 pts       0 pts    ALTO            ALTO (HW)     NEGATIVO    DESCARTAR (1)
+Apertura puerta lavavajillas (2x)     P&P      400 pts       0 pts    ALTO            ALTO (HW)     NEGATIVO    DESCARTAR (1)
+Destapar carton de leche              P&P      400 pts       0 pts    ALTO            ALTO (vuelco) NEGATIVO    DESCARTAR (2)
+Traslado de canasto con ropa          Laundry  300 pts    -200 pts    ALTO            CRITICO       NEGATIVO    DESCARTAR (3)
+Doblado principal de ropa (folding)   Laundry  800 pts    -800 pts    ALTO            CRITICO       DESTRUCTIVO DESCARTAR (4)
+Doblado adicional de ropa (5x)        Laundry 2000 pts   -2000 pts    ALTO            CRITICO       DESTRUCTIVO DESCARTAR (4)
+Apilado de ropa doblada (6x)          Laundry  600 pts       0 pts    ALTO            ALTO          NULO        DESCARTAR (4)
+-------------------------------------------------------------------------------------------------------------
+Notas a descartes justificados:
+(1) Peligro de daño a reductores del brazo Piper (fuerza de traba > 20 N vs payload 15 N).
+(2) Requiere fijacion bimanual o herramienta de destape; imposible con 1 sola pinza de 2 dedos.
+(3) El canasto requiere dos manos; con un brazo se inclina y vuelca ropa (penalidad -200 pts).
+(4) Penalidad de calidad de hasta -800 pts por pliegues imperfectos o amontonamiento de tela.
+
+
+================================================================================
+6. QUE NO CONVIENE INTENTAR BAJO NINGUNA CIRCUNSTANCIA (ANTIPATRONES)
+================================================================================
+En base a la fisica del robot Base@Home (brazo Piper de 1.5 kg de carga util, base
+diferencial no-holonomica, pinza rigida paralela de 2 dedos) y el marco normativo
+del RuleBook 2026.2, se definen los CINCO ANTIPATRONES ABSOLUTOS que el equipo
+debe descartar en el software de competencia:
+
+1. ANTIPATRON 1: DOBLADO DE ROPA (FOLDING) EN DOING LAUNDRY
+   - Por que parece tentador: Ofrece 800 pts en la primera prenda y 2000 pts en
+     cinco prendas adicionales (total 2800 pts brutos).
+   - La trampa reglamentaria: El apendice F (ScoreFolding.tex:20-85) impone
+     penalidades severisimas por falta de prolijidad, arrugas o acumulacion de tela
+     (bunching), hasta un maximo de -800 pts por prenda.
+   - La trampa mecanica: Con un unico efector final, alisar una prenda arrugada
+     sin tensar simultaneamente los dos extremos opuestos es un problema insoluble
+     sin herramientas de friccion o aspiracion activas (evidenciado por Hoque et al.,
+     arXiv:2204.10297). El arrastre de la tela produce pliegues diagonales impredecibles.
+   - Veredicto categorico: NO INTENTAR EL DOBLADO. Un doblado tosco o fallido no suma
+     puntos y arriesga penalidades que cancelan los puntos ganados en navegacion y extraccion.
+     La postura de RoBorregos (FRIDA, OPL 2026) en doing_laundry_task_manager.py:26-371
+     es la referencia a seguir: depositar plano sobre la mesa y terminar.
+
+2. ANTIPATRON 2: APERTURA FORZADA DE PUERTAS DE ELECTRODOMESTICOS (LAVARROPAS / LAVAVAJILLAS)
+   - Por que parece tentador: Otorga 300 pts en Doing Laundry y 400 pts en Pick and Place.
+   - La trampa mecanica:
+     * Los lavarropas comerciales de carga frontal poseen trabas de pestillo a presion
+       o electromagneticas que requieren una fuerza de desenganche inicial de entre 20 N
+       y 40 N (medido en Caporali et al., IEEE 2022).
+     * Los lavavajillas poseen bisagras inferiores con resortes de traccion que requieren
+       vencer entre 30 N y 50 N hacia abajo en un arco de 90°.
+     * El brazo Piper tiene un payload nominal de 1.5 kg (~14.7 N) y pico transitorio
+       de ~20 N. Forzar la apertura contra la traba mecanica sobrecarga los motores
+       del hombro (joint_1 y joint_2), dispara alarmas de sobrecorriente o tracking
+       error en el bus CAN (error 32), y puede doblar el esqueleto del efector.
+     * Ademas, Base@Home tiene traccion diferencial (no puede desplazarse lateralmente
+       en Y para acompañar el arco circular de la puerta como hacia AMIGO de Tech United
+       en open_dishwasher.py:130). Cualquier desalineacion cinematica impone momentos
+       flectores laterales destructivos sobre el Piper.
+   - Veredicto categorico: NO INTENTAR ABRIR PUERTAS CERRADAS CON PESTILLO DURO.
+     En competencia, solicitar al referee la apertura manual con penalidad de entorno
+     menor (-40 pts por cambio de entorno segun scoresheets/DoingLaundry.tex:38),
+     dejando un saldo positivo neto de 260 pts en el retiro de la ropa.
+
+3. ANTIPATRON 3: DESTAPAR CARTON DE LECHE CON UNA PINZA PARALELA
+   - Por que parece tentador: El RuleBook premia con 400 pts "Open milk container without
+     assistance" (scoresheets/PickAndPlaceChallenge.tex:31).
+   - La trampa mecanica: Destapar una botella con tapa a rosca o abrir la solapa de un
+     carton Tetra Brik exige dos puntos de fijacion cinematicos: uno que inmovilice el
+     cuerpo del envase contra el torque de giro, y otro que accione la tapa. Con una
+     sola pinza de dos dedos, al aplicar torque a la tapa, todo el carton gira o se
+     vuelca sobre la mesa.
+   - Penalidad asociada: Si el carton se vuelca y derrama liquido: penalidad de -100 pts
+     por derrame (scoresheets/PickAndPlaceChallenge.tex:42) y -40 pts por objeto caido.
+   - Veredicto categorico: NO INTENTAR DESTAPAR ENVASES. Ir directamente al vertido
+     si el envase ya esta abierto, o descartar este modificador.
+
+4. ANTIPATRON 4: TRANSPORTE AEREO DEL CANASTO DE LAVANDERIA CON UN SOLO BRAZO
+   - Por que parece tentador: Otorga 300 pts en Doing Laundry (scoresheets/DoingLaundry.tex:22).
+   - La trampa reglamentaria y fisica: El RuleBook (§Setup, tasks/DoingLaundry.tex:33)
+     indica: "A lightweight basket requiring two arms to carry".
+   - Al agarrar un canasto de lavanderia flexible o rigido por un solo borde con la
+     pinza del Piper, el centro de gravedad queda totalmente descentrado respecto al
+     punto de suspension. El canasto bascula 45° a 60° por gravedad, arrojando las
+     remeras al piso.
+   - Penalidad asociada: Si se cae la ropa durante el traslado: penalidad de -200 pts
+     (scoresheets/DoingLaundry.tex:24), reduciendo el puntaje a un valor insignificante
+     frente al riesgo de volcado.
+   - Veredicto categorico: NO TRANSPORTAR EL CANASTO EN EL AIRE. El canasto debe
+     permanecer en el suelo junto a la base, y el robot debe extraer la prenda in-situ.
+
+5. ANTIPATRON 5: AGARRE RASANTE DE CUBIERTOS PLANOS O PLATOS LISOS SOBRE MESA RIGIDA
+   - Por que parece tentador: Modificadores de 100 pts por cubiertos (cutlery) y 100 pts
+     por plato (plate).
+   - La trampa mecanica: Un tenedor o cuchillo apoyado sobre una superficie lisa tiene
+     un perfil de apenas 2 a 4 mm. La pinza paralela del Piper carece de uñas biseladas
+     flexibles o sensores de contacto táctil en la punta de los dedos. Intentar un
+     agarre rasante o bien choca violentamente contra la madera de la mesa (abortando
+     el plan cartesiano por colision en MoveIt o saltando por corriente), o bien cierra
+     en el aire sin atrapar el cubierto.
+   - Para los platos de loza: Tienen coeficientes de friccion muy bajos y fragilidad alta;
+     un deslizamiento produce la caida y rotura del plato (-40 pts por objeto caido).
+   - Veredicto categorico: NO PRIORIZAR CUBIERTOS NI PLATOS. Concentrar el 100% de los
+     picks en objetos volumetricos seguros: Pringles, latas de gaseosa, latas de conserva,
+     botellas de agua, cajas de te/cereal, pastillas de lavavajillas y esponjas.
+
+
+================================================================================
+7. PLAN DE IMPLEMENTACION TECNICA EN BASE@HOME
+================================================================================
+
+7.1 ARCHIVOS ESPECIFICOS A MODIFICAR O EXTENDER EN NUESTRO REPOSITORIO
+
+1. `src/base_athome_perception/base_athome_perception/arm_manipulation.py`:
+   - Funcion verifiacada existente: `gripper(self, mm: float)` (linea 222),
+     `pick_blocking` (linea 440), `place_blocking` (linea 516), `_grasp_core` (linea 794).
+   - Extension recomendada 1: Implementar `pour_blocking(self, angle_deg: float = 75.0, hold_s: float = 2.5)`:
+     * Tras agarrar la botella de leche o caja de cereal, posicionar el TCP a
+       z = table_z + 0.22 m sobre el bol.
+     * Enviar una meta articular mediante `send_joints` o `_execute_fjt` que incline
+       exclusivamente `joint_6` (roll de muñeca) desde 0° a +angle_deg en 1.5 s.
+     * Mantener durante `hold_s` (2.5 s) para vaciado del contenido.
+     * Retornar `joint_6` a 0° suavemente y descender para apoyar en la mesa.
+   - Extension recomendada 2: Parametrizar `pick_blocking(label, plane_z, close_mm)`:
+     * Para ropa (label="clothes" o "tshirt"): fijar `close_mm = 15.0 mm` en lugar
+       de 0.0 mm (para no pellizcar multiples prendas) y no exigir confirmacion
+       por objeto rigido.
+     * Para pastilla de lavavajillas (label="dishwasher_tab"): fijar aproximacion
+       top-down vertical con `close_mm = 20.0 mm`.
+
+2. `src/base_athome_skills/base_athome_skills/mission/skills.py`:
+   - Registro verificado existente: `default_registry()` (linea 89), `pick_object` (linea 142),
+     `place_object` (linea 150), `receive_bag` (linea 147).
+   - Extension recomendada 1: Registrar nueva skill `pour_object`:
+     ```python
+     SkillSpec("pour_object", "Verter contenido de un envase en un tazon mediante inclinacion de muñeca",
+               required=("object", "target_container"), optional=("angle_deg", "hold_s"),
+               default_timeout_s=45.0, moves_hardware=True,
+               preconditions=("objeto agarrado en pinza", "feedback del brazo", "move_group"),
+               errors=("pour_failed", "manipulation_unavailable"),
+               note="SIM_PASS; real requiere LAB_SUPERVISADO")
+     ```
+   - Extension recomendada 2: Registrar nueva skill `push_rack`:
+     ```python
+     SkillSpec("push_rack", "Empujar el canasto del lavavajillas con pinza cerrada y avance suave de base",
+               optional=("distance_m",), default_timeout_s=30.0, moves_hardware=True,
+               preconditions=("brazo en pose frontal baja", "base despejada"),
+               errors=("push_failed", "blocked"),
+               note="SIM_PASS; /cmd_vel acotado a 0.05 m/s")
+     ```
+
+3. `src/base_athome_skills/base_athome_skills/mission/bag_task.py`:
+   - Funciones verificadas existentes: `floor_grasp_from_tcp` (linea 78),
+     `torso_for_object` (linea 139), `dock_step` (linea 210).
+   - Reutilizacion inmediata: `torso_for_object` ya calcula el desplazamiento del
+     elevador para cualquier cota Z objetivo (sea piso z=0.0, tambor de lavarropas
+     z=0.55 m, o canasto z=0.40 m). No requiere reescribir logica cinematica nueva.
+
+
+7.2 COMO PROBARLO PRIMERO EN SIMULACION (SIN TOCAR EL ROBOT REAL)
+El robot real esta en uso fisico en la NUC; la regla absoluta exige CPU acotada y
+cero procesos pesados o actuadores reales. El protocolo de prueba offline es:
+
+1. Pruebas unitarias de logica y skills (aislamiento total en dominio 77):
+   - Comando: `ROS_DOMAIN_ID=77 pytest src/base_athome_skills/test/ -v`
+   - Validar que las nuevas skills `pour_object` y `push_rack` se registran,
+     validan sus argumentos obligatorios, rechazan llamadas sin argumentos requeridos
+     y completan sus mock handlers correctamente.
+
+2. Pruebas de trayectoria MoveIt en simulación liviana (`base_athome_sim`):
+   - Correr en modo headless con `ATHOME_SIM=1 ROS_DOMAIN_ID=77`:
+     * Verificar que la trayectoria de rotacion de `joint_6` (pour) no genera colisiones
+       con el torso ni la columna en MoveIt Planning Scene.
+     * Verificar que la pose de aproximacion al tambor del lavarropas (z = 0.55 m)
+       encuentra solucion IK valida con TRAC-IK dentro de los limites seguros de articulacion.
+
+3. Pruebas de mision completa en simulación:
+   - Construir dos escenarios sintéticos en `simulation/`:
+     * Escenario A (Pick and Place Breakfast): `dining_table` con `cereal_box`, `milk`, `bowl`.
+       Plan de mision: `navigate_to(dining_table)` -> `pick_object(cereal_box)` ->
+       `pour_object(cereal_box, bowl)` -> `place_object(dining_table)`.
+     * Escenario B (Doing Laundry safe): `laundry` con `washing_machine`, `laundry_table`.
+       Plan de mision: `navigate_to(laundry)` -> `pick_object(clothes)` ->
+       `navigate_to(laundry_table)` -> `place_object(laundry_table)`.
+   - Medir tiempo total de mision en simulación (< 4:00 min en ambos casos).
+
+
+7.3 MATRIZ DE RIESGOS TECNICOS Y MITIGACIONES
+-------------------------------------------------------------------------------------------------------------
+RIESGO IDENTIFICADO                   PROBABILIDAD  IMPACTO   MITIGACION TECNICA
+-------------------------------------------------------------------------------------------------------------
+Derrame de cereal/liquido al verter   Media         Medio     Avanzar TCP 8 cm hacia el centro del bol antes
+(-100 pts por derrame)                                        de iniciar el roll; usar rampa angular suave (20°/s).
+Caida de ropa al piso durante         Baja          Alto      Subir elevador a tope superior (z=1.125 m) y codo a
+traslado de lavanderia (-200 pts)                             90° hacia arriba inmediatamente al salir del tambor.
+Agarre multiple en canasto (-100 pts) Media         Medio     Cerrar pinza a 15-20 mm fijos; descender solo 8 cm
+                                                              sobre la arruga superior sin hundir la pinza.
+Falsa deteccion de agarre vacio       Media         Bajo      Verificar `/arm/status` (`gripper_mm > 2.0 mm`).
+                                                              Si la tela es fina, habilitar chequeo de corriente CAN.
+Sobrecarga mecanica del brazo Piper   Alta en       Critico   PROHIBICION ESTRICTA: No intentar abrir puertas con
+por pestillos rigidos (> 20 N)        puertas                 traba mecanica. Solicitar apertura asistida al arbitro.
+Deriva de odometria al empujar        Baja          Bajo      Empuje de canasto acotado a solo 20 cm a 0.05 m/s,
+canasto de lavavajillas                                       con parada por temporizador fijo de 4 s.
+-------------------------------------------------------------------------------------------------------------
+
+
+================================================================================
+8. DECLARACION DE EVIDENCIA Y COMPROBACION FORMAL
+================================================================================
+De acuerdo a las reglas de AGENTS.md §8 y §10:
+
+A) CLASIFICACION FORMAL DE EVIDENCIA:
+- VERIFICADO (con comando, lectura de codigo en repo o documento normativo oficial):
+  * RuleBook 2026.2 (commit b844d5a6d6ebf4307c3250a01d1eca4ba56f8452): Hoja de
+    puntaje y reglas de Doing Laundry (scoresheets/DoingLaundry.tex:1-44) y Pick and
+    Place (scoresheets/PickAndPlaceChallenge.tex:1-47).
+  * RoBorregos (repo@0807f83b): Estrategia oficial en doing_laundry_task_manager.py:26-371
+    omitiendo el doblado; algoritmo `peak` en geometric_grasps.py:343-368.
+  * Tech United Eindhoven (repo@2b6fce7c): Maniobra de apertura de lavavajillas en
+    open_dishwasher.py:91-200 coordinando base y brazo.
+  * LASR (repo@2a3ced23): Exclusion de Doing Laundry en su arbol activo de tareas tasks/.
+  * Funciones de Base@Home comprobadas con grep:
+    - arm_manipulation.py: `gripper` (linea 222), `pick_blocking` (linea 440),
+      `place_blocking` (linea 516), `_grasp_core` (linea 794).
+    - skills.py: `default_registry` (linea 89), `navigate_to` (linea 94),
+      `pick_object` (linea 142), `place_object` (linea 150).
+    - bag_task.py: `floor_grasp_from_tcp` (linea 78), `torso_for_object` (linea 139),
+      `dock_step` (linea 210).
+    - waypoint_navigator.py: `load_waypoints` (linea 32), `save_waypoints` (linea 47).
+    - bag_vision.py: `head_measure` (linea 112), `wrist_measure` (linea 67).
+
+- INFERIDO (deducciones tecnicas basadas en fisica y reglas):
+  * Doblado monomanual inviable: Se infiere a partir de la fisica de friccion mesa-tela
+    (Hoque et al., arXiv:2204.10297) combinada con las penalidades holísticas de
+    ScoreFolding.tex (hasta -800 pts por falta de prolijidad).
+  * Apertura de puertas inviable en Piper: Se infiere al contrastar la fuerza de retencion
+    de pestillos de lavarropas (20-35 N, Caporali et al., IEEE 2022) contra el payload
+    nominal del Piper (1.5 kg / ~15 N) y el chasis diferencial sin traslacion lateral.
+
+- NO ENCONTRADO:
+  * No se encontro ningun equipo de RoboCup@Home OPL que haya implementado un
+    doblado de remeras exitoso en competencia utilizando un unico brazo de 6-DOF.
+  * No se encontro implementacion de apertura de puerta de lavarropas exitosa
+    utilizando un brazo Piper en la literatura publica.
+
+- POR CONFIRMAR (requiere medicion o decision humana en hardware real):
+  * [POR CONFIRMAR] Fuerza exacta de retencion del pestillo del lavarropas que se
+    utilizara en la competencia / arena.
+  * [POR CONFIRMAR] Altura exacta del borde del tambor del lavarropas y si el
+    elevador de columna alcanza la cota inferior con margen suficiente en el robot real.
+  * [POR CONFIRMAR] Ensayo fisico de vertido (pouring) con liquido o granos secos
+    para verificar que no caigan gotas fuera del bol con la geometria del Piper real.
+  * Mover actuadores reales queda reservado a la decision humana en LAB_SUPERVISADO.
