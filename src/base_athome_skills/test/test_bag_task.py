@@ -155,3 +155,9 @@ def test_dock_stops_for_something_the_extended_arm_would_hit():
     stop = bt.dock_stop_range_with_arm(g)
     assert bt.dock_verdict(0.0, 0.18, stop_range_m=stop) == "blocked"   # a 40 cm del centro: el chasis pasa, la pinza no
     assert bt.dock_verdict(0.0, 0.60, stop_range_m=stop) == "go"
+
+
+def test_a_bag_the_lidar_can_see_does_not_stop_the_dock_by_itself():
+    g = bt.FloorGrasp(reach_x=0.54, reach_y=0.09)
+    assert bt.dock_stop_range_with_arm(g, 0.45) == pytest.approx(bt.dock_stop_range())
+    assert bt.dock_stop_range_with_arm(g, 0.30) > bt.dock_stop_range()

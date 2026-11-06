@@ -544,7 +544,7 @@ class MissionExecutorNode(Node):
                 if action == "turn":
                     msg.angular.z = max(-DOCK_TURN_RPS, min(DOCK_TURN_RPS, 1.5 * amount))
                 else:
-                    stop = bag_task.dock_stop_range_with_arm(grasp)
+                    stop = bag_task.dock_stop_range_with_arm(grasp, self.bag_target[2])
                     if bag_task.dock_verdict(0.0, self.front_range, stop_range_m=stop) == "blocked":
                         return SkillResult.failure("blocked", f"algo a {self.front_range:.2f} m adelante: paro")
                     msg.linear.x = min(DOCK_SPEED_MPS, max(0.03, amount))

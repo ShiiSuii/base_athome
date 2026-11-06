@@ -51,6 +51,8 @@ MAX_POINT_RANGE_M = 6.0
 BAG_GRASP_BELOW_TOP_M = 0.04        # los dedos toman el nudo o el asa, no el aire sobre la bolsa
 BAG_GRASP_MIN_Z_M = 0.03            # nunca mas cerca del piso que esto
 DOCK_POSITION_TOL_M = 0.01
+LASER_HEIGHT_M = 0.38               # alto del haz desde el piso
+BEAM_MARGIN_M = 0.03
 DOCK_LATERAL_TOL_M = 0.10           # mas corrida que esto a un costado, el brazo no la alcanza desde esa pose
 DOCK_ALIGN_TOL_RAD = math.radians(1.0)
 # La pose enseñada deja la bolsa justo en el borde de lo que alcanza el brazo con esa orientacion (con la pose del 05/11
@@ -204,9 +206,12 @@ def dock_step(bag_in_base: Sequence[float], grasp: FloorGrasp = FloorGrasp()) ->
     return "go", remaining
 
 
-def dock_stop_range_with_arm(grasp: FloorGrasp, margin_m: float = MIN_BASE_CLEARANCE_M) -> float:
-    """Como dock_stop_range, para el brazo en la pose de piso: la pinza va mas adelante que el chasis. La bolsa no frena
-    nada porque esta debajo del haz."""
+def dock_stop_range_with_arm(grasp: FloorGrasp, bag_top_z: float = 0.0, margin_m: float = MIN_BASE_CLEARANCE_M) -> float:
+    """Como dock_stop_range, para el brazo en la pose de piso: la pinza va mas adelante que el chasis.
+    Una bolsa debajo del haz no frena nada. Una que llega al haz, el lidar la ve: ahi el margen es solo el del chasis, si no
+    frenaria por la bolsa misma. Queda sin proteccion lo alto que este mas cerca que la bolsa."""
+    if float(bag_top_z) >= LASER_HEIGHT_M - BEAM_MARGIN_M:
+        return dock_stop_range(margin_m)
     return max(CHASSIS_FRONT_M, grasp.reach_x) - LASER_X_M + margin_m
 
 
