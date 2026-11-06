@@ -88,6 +88,13 @@ Antes de empezar: E-stop a mano, zona despejada y otra persona atenta. Bolsa liv
 - **Carpeta:** todo lo propio de simulación pasó a `simulation/`; el código del robot sigue en `src/` y es el mismo.
 - **Sin probar:** nada en el robot real. En Gazebo hay 2 corridas completas, sin una tanda de repetición ni los escenarios de falla.
 
+## 2e. Nav2 real en Gazebo (2026-11-06)
+
+- `NAV2=1` levanta los servidores de Nav2 con `nav2_params.yaml` del robot, sin modificarlo, y un mapa generado del mundo con `simulation/scripts/hacer_mapa.py`. El simulador deja de ofrecer su acción falsa y su localización.
+- **Resultado:** 1 corrida completa, pinza a 3.8 cm del nudo. El planificador avisa `Inflation layer ... not set sufficiently` para colisiones no circulares: sale de los parámetros del robot, revisarlo.
+- **Sigue simplificado:** base por velocidad sin ruedas, detector por color, persona con puntos simulados, voz escrita.
+- **Sin probar:** nada de esto en el robot real.
+
 ## 3. Cómo retomar la teleoperación con el Quest (pendiente: prueba completa en el brazo real)
 
 1. Quest por USB a la **Jetson**, depuración USB autorizada (`adb devices` → `device`).
