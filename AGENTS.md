@@ -125,6 +125,7 @@ Reglas:
 
 - Nunca commit directo a `main`, force-push, rebase de ramas ajenas, `git reset --hard` o `git clean -fdx` sobre trabajo ajeno.
 - Ramas: `claude/<id>-<tema>`, `antigravity/<id>-<tema>`. Commits pequeños con mensaje claro.
+- **`development`** es la base de trabajo: se integra todo ahí, documentos de coordinación incluidos. **`main`** es la versión pública limpia: solo se actualiza con `tools/agents/publicar_main.sh` (excluye lo de `tools/agents/main_excluir.txt`) y con autorización humana. Las dos son públicas: `development` no es lugar para datos sensibles.
 - Cambios sin commitear que no son tuyos (p. ej. `semantic_map.yaml`, `waypoints.yaml`, `arm_poses_and_limits.yaml`) no se stagean, sobrescriben ni descartan.
 - Integración en rama de trabajo, re-ejecutando tests; merge a `main` solo con autorización humana.
 - Si la configuración del host pide confirmación para `git push`, respetarla.

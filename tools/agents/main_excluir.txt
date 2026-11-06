@@ -1,0 +1,16 @@
+# Lo que queda solo en development y no pasa a main. Rutas de git, una por línea; termina en / para una carpeta.
+.claude
+AGENTS.md
+CLAUDE.md
+docs/ROADMAP.md
+docs/collab/
+docs/PAPERS_IDEAS.txt
+docs/PAPERS_REVISION.txt
+docs/TDP_INSTRUCTIVO.txt
+docs/TDP_BORRADOR.txt
+docs/VIDEO_CUALIFICACION.txt
+docs/VIDEO_PLAN_FILMACION.txt
+docs/WEB_URUBOTS_FALTANTES.txt
+docs/ANYDESK_DIAGNOSTICO.txt
+scripts/anydesk_estable.sh
+tools/agents/
