@@ -48,6 +48,7 @@ except ImportError:  # pragma: no cover
     NavigateToPose = None
 
 NAV_SUCCEEDED, NAV_CANCELED, NAV_ABORTED = 4, 5, 6
+DOCK_TURN_RPS = 0.3
 DOCK_SPEED_MPS = 0.08      # tramo final hasta la bolsa
 TORSO_TOLERANCE_M = 0.02
 
@@ -472,6 +473,7 @@ class MissionExecutorNode(Node):
         tcp_mm, R = m.kin.forward_kinematics([math.radians(v) for v in m.poses["pre_grasp_floor"]["joints_deg"]])
         tcp = np.asarray(m.shoulder_in_base()) - [0.0, 0.0, m.torso_pos or 0.0] + np.asarray(tcp_mm) / 1000.0
         grasp = bag_task.floor_grasp_from_tcp(tcp, R[:, 2])
+        grasp = bag_task.with_reach_margin(grasp)
         clearance = bag_task.base_clearance(grasp=grasp)
         if clearance < bag_task.MIN_BASE_CLEARANCE_M:
             return None, (f"con la pose de piso, una bolsa quedaria a {clearance * 100:.0f} cm del chasis: "
@@ -487,39 +489,49 @@ class MissionExecutorNode(Node):
         grasp, why = self._floor_grasp()
         if grasp is None:
             return SkillResult.failure("pose_too_close", why)
-        pose = bag_task.stand_pose(self.bag_target, self._pose_now(), extra_back_m=bag_task.DOCK_DISTANCE_M, grasp=grasp)
+        back = bag_task.DOCK_DISTANCE_M + bag_task.BAG_REFINE_BACK_M
+        pose = bag_task.stand_pose(self.bag_target, self._pose_now(), extra_back_m=back, grasp=grasp)
         res = self._navigate(ctx, "lejos de la bolsa", pose)
         if not res.ok:
             return res
         # Ya cerca, la cabeza mide mejor. Sin esta medicion sigue con la de lejos: la muneca es la siguiente oportunidad.
         again, err = self._ask_finder(ctx, "refine_bag", min(8.0, ctx.remaining()), near=list(self.bag_target[:2]))
-        if err is not None:
-            return SkillResult.success(f"{res.message}; no pude volver a medirla: {err.message}")
-        moved = math.hypot(again["bag"][0] - self.bag_target[0], again["bag"][1] - self.bag_target[1])
-        self.bag_target = tuple(float(v) for v in again["bag"])
-        if moved < bag_task.BAG_RENAV_M:
-            return SkillResult.success(f"{res.message}; medida de nuevo, corrijo {moved * 100:.0f} cm", bag=list(self.bag_target))
+        note = f"no pude volver a medirla: {err.message}" if err is not None else ""
+        if err is None:
+            moved = math.hypot(again["bag"][0] - self.bag_target[0], again["bag"][1] - self.bag_target[1])
+            self.bag_target = tuple(float(v) for v in again["bag"])
+            note = f"medida de nuevo, corrijo {moved * 100:.0f} cm"
         pose = bag_task.stand_pose(self.bag_target, self._pose_now(), extra_back_m=bag_task.DOCK_DISTANCE_M, grasp=grasp)
-        res = self._navigate(ctx, "lejos de la bolsa, corregido", pose)
-        return SkillResult.success(f"{res.message}; corregi {moved * 100:.0f} cm", bag=list(self.bag_target)) if res.ok else res
+        res = self._navigate(ctx, "al inicio del tramo final", pose)
+        return SkillResult.success(f"{res.message}; {note}", bag=list(self.bag_target)) if res.ok else res
 
     def h_dock_bag(self, ctx: SkillContext) -> SkillResult:
         if self.odom_xy is None:
             return SkillResult.failure("blocked", "sin odometria para el tramo final")
+        if self.bag_target is None:
+            return SkillResult.failure("no_bag_target", "no hay bolsa ubicada")
+        grasp, why = self._floor_grasp()
+        if grasp is None:
+            return SkillResult.failure("pose_too_close", why)
         start = self.odom_xy
-        end = time.time() + bag_task.DOCK_DISTANCE_M / DOCK_SPEED_MPS * 3.0 + 2.0
+        end = time.time() + bag_task.DOCK_MAX_TRAVEL_M / DOCK_SPEED_MPS * 2.0 + 10.0
         try:
             while time.time() < end:
                 if ctx.cancel.is_set():
                     return SkillResult.failure(ERR_CANCELED, "acercamiento cancelado")
                 done = math.hypot(self.odom_xy[0] - start[0], self.odom_xy[1] - start[1])
-                verdict = bag_task.dock_verdict(done, self.front_range)
-                if verdict == "done":
+                action, amount = bag_task.dock_step(bag_task.object_in_base(self.bag_target, self._pose_now()), grasp)
+                if action == "done":
                     return SkillResult.success(f"junto a la bolsa (tramo final {done:.2f} m)")
-                if verdict == "blocked":
-                    return SkillResult.failure("blocked", f"algo a {self.front_range:.2f} m adelante: paro")
+                if done > bag_task.DOCK_MAX_TRAVEL_M:
+                    return SkillResult.failure("blocked", f"el tramo final ya lleva {done:.2f} m sin llegar a la bolsa: paro")
                 msg = Twist()
-                msg.linear.x = DOCK_SPEED_MPS
+                if action == "turn":
+                    msg.angular.z = max(-DOCK_TURN_RPS, min(DOCK_TURN_RPS, 1.5 * amount))
+                else:
+                    if bag_task.dock_verdict(0.0, self.front_range) == "blocked":
+                        return SkillResult.failure("blocked", f"algo a {self.front_range:.2f} m adelante: paro")
+                    msg.linear.x = min(DOCK_SPEED_MPS, max(0.03, amount))
                 self.pub_cmd_vel.publish(msg)
                 time.sleep(0.05)
             return SkillResult.failure("blocked", "el tramo final no termino a tiempo")

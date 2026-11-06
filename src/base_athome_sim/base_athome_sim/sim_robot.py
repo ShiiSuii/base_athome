@@ -15,6 +15,7 @@ import glob
 import json
 import math
 import os
+import subprocess
 import threading
 import time
 
@@ -36,7 +37,7 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data
 from sensor_msgs.msg import CameraInfo, Image, JointState, LaserScan
-from std_msgs.msg import Bool, Float32, Float64, String
+from std_msgs.msg import Bool, Empty, Float32, Float64, String
 from std_srvs.srv import SetBool, Trigger
 from base_athome_sim import sim_scene
 from tf2_ros import Buffer, StaticTransformBroadcaster, TransformBroadcaster, TransformListener
@@ -66,6 +67,9 @@ def to_image(arr, encoding, stamp, frame):
     m.step = arr.strides[0]
     m.data = arr.tobytes()
     return m
+
+
+GZ_WORLD = "casa_basura"
 
 
 class SimRobot(Node):
@@ -135,6 +139,7 @@ class SimRobot(Node):
         self.wfx = float(calib.get("focal_px", 485.0))
         self.wcx, self.wcy = float(calib.get("cx_px", 320.0)), float(calib.get("cy_px", 240.0))
         self.gz = bool(gp("gazebo"))
+        self.gz_arm_ready = False
         self.map = None if self.gz else self._load_map(gp("map_yaml"))
 
         # --- Publicadores (mismos nombres que el robot real) ---
@@ -500,6 +505,66 @@ class SimRobot(Node):
         sub(CameraInfo, "/sim/gz/head/camera_info", self._gz_info)
         sub(Image, "/sim/gz/wrist", self._gz_wrist)
         self.get_logger().info("Modo Gazebo: base/lidar/camaras desde gz sim")
+        if self.bag_map is not None:
+            self.pub_bag_attach = self.create_publisher(Empty, gz_model.BAG_ATTACH_TOPIC, 10)
+            self.pub_bag_detach = self.create_publisher(Empty, gz_model.BAG_DETACH_TOPIC, 10)
+            self.bag_top = float(self.bag_map[2])
+            self.gz_arm_shown, self.gz_arm_ready = None, False
+            self.gz_ready_t = time.time() + 15.0     # la union nace atada al crear la bolsa: soltarla hasta entonces
+            sub(Odometry, gz_model.BAG_ODOM_TOPIC, self._gz_bag_odom)
+            self.create_timer(0.2, self._gz_people)
+            threading.Thread(target=self._gz_spawn_scene, daemon=True).start()
+
+    def _gz_run(self, cmd):
+        try:
+            return subprocess.run(cmd, capture_output=True, text=True, timeout=10).stdout
+        except (OSError, subprocess.SubprocessError) as e:
+            self.get_logger().warn(f"gz service: {e}")
+            return ""
+
+    def _gz_spawn_scene(self):
+        """Crea la bolsa y la persona cuando el mundo ya corre."""
+        models = [gz_model.bag_sdf(self.bag_map[:2], self.bag_top), gz_model.person_sdf(self.person_xy)]
+        if self.bag2 is not None:
+            models.append(gz_model.bag_sdf(self.bag2[:2], self.bag2[2]).replace(f'name="{gz_model.BAG_MODEL}"', 'name="bolsa_2"')
+                          .replace(gz_model.BAG_ODOM_TOPIC, "/sim/gz/bolsa_2/odometry"))
+        time.sleep(3.0)
+        for sdf in models:
+            for _ in range(10):
+                if "true" in self._gz_run(gz_model.create_command(GZ_WORLD, sdf)):
+                    break
+                time.sleep(1.0)
+            else:
+                self.get_logger().error("No pude crear un modelo en Gazebo")
+        self.get_logger().info("Bolsa y persona creadas en Gazebo")
+
+    def _gz_bag_odom(self, m):
+        if time.time() < self.gz_ready_t:
+            self.pub_bag_detach.publish(Empty())
+        if not self.obj_attached:
+            p = m.pose.pose.position
+            self.bag_map = [p.x, p.y, p.z + self.bag_top / 2.0]
+
+    def _gz_people(self):
+        """Publica los puntos del cuerpo y muestra en Gazebo el brazo con el que senala."""
+        person = self._person()
+        self.pub_people.publish(String(data=json.dumps(dict(people=[person] if person else []))))
+        if person is None:
+            return
+        pointing = self.person_pointing and not self.obj_attached and not self.bag_delivered
+        if pointing != self.gz_arm_shown:
+            self.gz_arm_shown = pointing
+            target = (self.bag_map[0] + self.point_err, self.bag_map[1] - self.point_err)
+            kp = sim_scene.make_person(person["xy"], (self.base.x, self.base.y), target)["keypoints"]
+            threading.Thread(target=self._gz_show_arm, args=(kp[6], kp[10], pointing), daemon=True).start()
+
+    def _gz_show_arm(self, shoulder, wrist, pointing):
+        self.gz_arm_ready = False
+        self._gz_run(gz_model.remove_command(GZ_WORLD, "brazo_persona"))
+        if pointing:
+            self._gz_run(gz_model.create_command(GZ_WORLD, gz_model.arm_sdf("brazo_persona", shoulder, wrist)))
+            time.sleep(1.0)      # que llegue a los cuadros de la camara
+            self.gz_arm_ready = True
 
     def _gz_tick(self, now):
         v = w = 0.0
@@ -615,7 +680,8 @@ class SimRobot(Node):
         if self.person_sway:
             xy[1] += self.person_sway * math.sin(2.0 * math.pi * time.time() / 6.0)
         target = None
-        if self.person_pointing and not self.obj_attached and not self.bag_delivered:
+        # En Gazebo el brazo visible tarda en aparecer: el gesto cuenta recien cuando la camara lo puede medir
+        if self.person_pointing and not self.obj_attached and not self.bag_delivered and (not self.gz or self.gz_arm_ready):
             target = (self.bag_map[0] + self.point_err, self.bag_map[1] - self.point_err)
         return sim_scene.make_person(xy, (self.base.x, self.base.y), target)
 
@@ -706,9 +772,13 @@ class SimRobot(Node):
             if not self.obj_attached and self.arm.gripper_mm <= dia_mm + 2.0 and d < 0.06:
                 self.obj_attached = True
                 self.get_logger().info("Objeto AGARRADO (sim)")
+                if self.gz and self.bag_map is not None:
+                    self.pub_bag_attach.publish(Empty())
             elif self.obj_attached and self.arm.gripper_mm > dia_mm + 10.0:
                 self.obj_attached = False
                 self.get_logger().info("Objeto SOLTADO (sim)")
+                if self.gz and self.bag_map is not None:
+                    self.pub_bag_detach.publish(Empty())
                 if self.bag_map is not None:    # la bolsa cae al piso donde se solto, parada sobre su base
                     c, s = math.cos(self.base.yaw), math.sin(self.base.yaw)
                     self.bag_map = [self.base.x + c * self.obj[0] - s * self.obj[1],

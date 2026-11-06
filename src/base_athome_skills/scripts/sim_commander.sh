@@ -6,7 +6,7 @@
 set -u
 WS=$(cd "$(dirname "$0")/../../.." && pwd)
 set +u; source /opt/ros/jazzy/setup.bash; source "$WS/install/setup.bash"; set -u
-export SIM_MISSION_TAG=$$ ROS_DOMAIN_ID=42 ATHOME_SIM=1 ATHOME_SIM_OBJECT_LABEL=${ATHOME_SIM_OBJECT_LABEL:-bottle}
+export SIM_MISSION_TAG=$$ ROS_DOMAIN_ID=${SIM_DOMAIN:-42} ATHOME_SIM=1 ATHOME_SIM_OBJECT_LABEL=${ATHOME_SIM_OBJECT_LABEL:-bottle}
 [ -f "$HOME/cyclonedds_local.xml" ] && export CYCLONEDDS_URI=file://$HOME/cyclonedds_local.xml
 LOG=${SIM_LOG_DIR:-/tmp}/sim_commander_$$; mkdir -p "$LOG"
 MAP=$WS/src/base_athome_sim/config/sim_semantic_map.yaml
@@ -27,8 +27,16 @@ cleanup() {
   echo "logs: $LOG"
 }
 trap cleanup EXIT; trap 'exit 130' HUP INT TERM
-start ros2 launch base_athome_sim sim.launch.py rviz:=$RV > "$LOG/sim.log" 2>&1
-sleep 8
+# GAZEBO=1: mundo con fisica y sensores reales de gz sim. GZ_GUI=1 abre su ventana.
+if [ "${GAZEBO:-0}" = 1 ]; then
+  export GZ_PARTITION=sim_$$
+  GUI=false; [ "${GZ_GUI:-0}" = 1 ] && GUI=true
+  start ros2 launch base_athome_sim sim.launch.py rviz:=$RV gazebo:=true gz_gui:=$GUI > "$LOG/sim.log" 2>&1
+  sleep 25
+else
+  start ros2 launch base_athome_sim sim.launch.py rviz:=$RV > "$LOG/sim.log" 2>&1
+  sleep 8
+fi
 ARGS=(--ros-args -p semantic_map:="$MAP" -p waypoints:=/nonexistent)
 # La percepcion real de la bolsa, contra la imagen dibujada por la simulacion
 [ -n "${ATHOME_SIM_BAG:-}" ] && start python3 "$WS/src/base_athome_perception/scripts/bag_finder.py" > "$LOG/bag_finder.log" 2>&1

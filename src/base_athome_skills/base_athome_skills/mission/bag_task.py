@@ -6,6 +6,7 @@ Marco map, metros. Con la pose FLOOR_PREGRASP_DEG y el elevador arriba, el punto
 Orden para no golpear nada: frenar lejos -> brazo a la pose de piso -> avanzar con el elevador arriba (la pinza pasa
 por encima de la bolsa) -> bajar -> agarrar. El brazo nunca baja colgando sobre la base.
 """
+import dataclasses
 import math
 import os
 import re
@@ -49,7 +50,13 @@ MIN_POINT_ANGLE_DEG = 25.0          # brazo separado del cuerpo: si no, esta col
 MAX_POINT_RANGE_M = 6.0
 BAG_GRASP_BELOW_TOP_M = 0.04        # los dedos toman el nudo o el asa, no el aire sobre la bolsa
 BAG_GRASP_MIN_Z_M = 0.03            # nunca mas cerca del piso que esto
-BAG_RENAV_M = 0.03                  # mas corrida que esto, la base se vuelve a parar
+DOCK_POSITION_TOL_M = 0.01
+DOCK_ALIGN_TOL_RAD = math.radians(1.0)
+# La pose enseñada deja la bolsa justo en el borde de lo que alcanza el brazo con esa orientacion (con la pose del 05/11
+# a z=0.20: x=0.55 da IK, x=0.57 casi no y x=0.60 nunca). Parar un poco mas cerca da margen para corregir.
+REACH_MARGIN_M = 0.04
+DOCK_MAX_TRAVEL_M = 0.80            # mas que esto en el tramo final: algo anda mal con la medicion
+BAG_REFINE_BACK_M = 0.30            # mas atras de donde empieza el tramo final: la cabeza llega a ver la bolsa entera
 MAX_BAG_FROM_RAY_M = 1.0            # bolsa aceptada alrededor del punto senalado
 PLACE_TORSO_M = -0.45               # altura para soltar la bolsa en el piso
 PERSON_NEAR_M = 2.2                 # mas cerca de esto ya se ve bien el gesto: no hace falta moverse
@@ -156,6 +163,26 @@ def base_clearance(bag_radius_m: float = DEFAULT_BAG_RADIUS_M, grasp: FloorGrasp
 def dock_stop_range(margin_m: float = MIN_BASE_CLEARANCE_M) -> float:
     """Distancia del lidar a la que el frente del chasis queda a `margin_m` de lo que tenga adelante."""
     return CHASSIS_FRONT_M - LASER_X_M + margin_m
+
+
+def with_reach_margin(grasp: FloorGrasp, margin_m: float = REACH_MARGIN_M) -> FloorGrasp:
+    """El punto donde conviene dejar la bolsa: mas cerca que el limite de alcance de la pose, sobre el mismo rayo."""
+    k = (grasp.reach_x - float(margin_m)) / grasp.reach_x
+    return dataclasses.replace(grasp, reach_x=grasp.reach_x * k, reach_y=grasp.reach_y * k)
+
+
+def dock_step(bag_in_base: Sequence[float], grasp: FloorGrasp = FloorGrasp()) -> Tuple[str, float]:
+    """Que hacer en el tramo final segun donde esta la bolsa AHORA: ('turn', error en rad), ('go', metros que faltan) o
+    ('done', 0). Nav2 llega con 18 cm de tolerancia: avanzar una distancia fija deja la bolsa fuera de alcance.
+    Primero alinea, asi al avanzar derecho la bolsa cae en el punto de agarre."""
+    x, y = float(bag_in_base[0]), float(bag_in_base[1])
+    remaining = x - grasp.reach_x
+    if remaining <= DOCK_POSITION_TOL_M:
+        return "done", 0.0
+    error = math.atan2(y - grasp.reach_y * x / grasp.reach_x, x)
+    if abs(error) > DOCK_ALIGN_TOL_RAD:
+        return "turn", error
+    return "go", remaining
 
 
 def dock_verdict(travelled_m: float, front_range_m: Optional[float], goal_m: float = DOCK_DISTANCE_M,

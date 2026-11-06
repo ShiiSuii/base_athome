@@ -110,3 +110,23 @@ def test_person_close_means_stay():
 def test_grasp_height_takes_the_knot_and_stays_off_the_floor():
     assert bt.grasp_height(0.30) == pytest.approx(0.26)
     assert bt.grasp_height(0.05) == pytest.approx(bt.BAG_GRASP_MIN_Z_M)
+
+
+def test_dock_stops_by_where_the_bag_is_not_by_a_fixed_distance():
+    g = bt.FloorGrasp(reach_x=0.56, reach_y=0.09)
+    assert bt.dock_step((0.56, 0.09), g)[0] == "done"
+    assert bt.dock_step((0.50, 0.08), g)[0] == "done"      # ya se paso: no seguir
+    action, left = bt.dock_step((1.04, 0.167), g)
+    assert action == "go" and left == pytest.approx(0.48)  # Nav2 lo dejo 8 cm mas lejos de lo pedido
+
+
+def test_dock_aligns_first_when_the_bag_is_to_a_side():
+    action, err = bt.dock_step((1.0, 0.40), bt.FloorGrasp(reach_x=0.56, reach_y=0.09))
+    assert action == "turn" and err > 0
+    action, err = bt.dock_step((1.0, -0.30), bt.FloorGrasp(reach_x=0.56, reach_y=0.09))
+    assert action == "turn" and err < 0
+
+
+def test_reach_margin_keeps_the_bag_on_the_same_ray_closer_to_the_robot():
+    g = bt.with_reach_margin(bt.FloorGrasp(reach_x=0.56, reach_y=0.14))
+    assert g.reach_x == pytest.approx(0.52) and g.reach_y / g.reach_x == pytest.approx(0.25)

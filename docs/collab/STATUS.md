@@ -61,7 +61,9 @@ Antes de empezar: E-stop a mano, zona despejada y otra persona atenta. Bolsa liv
 10. Copiar `/tmp/commander_<pid>/`, porque se borra al reiniciar. Anotar: distancia real entre la pinza y la bolsa, lo que dijo cada paso y si la muñeca confirmó.
 
 **Qué mirar, según la simulación con la pose real**
-- Con la pose del 05/11 19:05 la cabeza no llegó a ver la bolsa entera de cerca, y la muñeca tampoco: el agarre usó la primera medición de la cabeza. Si el paso 4 da más de 3-4 cm de error, frenar y corregir eso antes de agarrar.
+- La medición de la cabeza es la que manda el agarre: en simulación la muñeca casi nunca ve la bolsa entera de cerca. Si el paso 4 da más de 3-4 cm de error, frenar y corregir eso antes de agarrar.
+- La pose del 05/11 19:05 deja poco alcance. Si dice `fuera del alcance`, enseñar la pose un poco más cerca del robot, con `ensenar_pregrasp`.
+- Antes del tramo final se para 30 cm más atrás para volver a medir, y el tramo final se guía por la bolsa: puede girar un poco en el lugar con el brazo afuera. Dejar libre alrededor.
 - El agarre es 4 cm debajo de la parte más alta. Si la bolsa es baja o el nudo está a un costado, puede tomar aire.
 - `no vi a nadie señalando`: estirar más el brazo. Con menos de 25° respecto del cuerpo no cuenta como gesto.
 - `agarre vacío`: revisar el paso 7. Hoy no se confirma con esfuerzo.
@@ -74,6 +76,15 @@ Antes de empezar: E-stop a mano, zona despejada y otra persona atenta. Bolsa liv
 - Simulación (distancia de la pinza al nudo, nudo de 10 mm): normal 2.5 cm, persona lejos 5.6 cm (límite 6, sin resolver), persona moviéndose 2.5, distractora 2.3, bolsa de 45 cm 1.9, muñeca desalineada 3° 3.4, pose real enseñada 1.2. Todas completaron la misión.
 - `revisar_basura`: verificación previa de solo lectura. Probada contra la simulación, no contra el robot; allí indicó la pose de piso como faltante porque el archivo de poses de simulación no la tenía.
 - **Sin probar:** nada en el robot. El nudo simulado es un punto rígido: no demuestra que una bolsa real no se escape.
+
+## 2d. La misión de la basura en Gazebo (2026-11-05)
+
+- **Correr:** `GAZEBO=1 GZ_GUI=1 ATHOME_SIM_BAG=1.5,1.2,0.30 ATHOME_SIM_PERSON=2.6,0.3 ATHOME_SIM_OBJECT_LABEL=handbag src/base_athome_skills/scripts/sim_commander.sh "take out the trash"`. Sin `GZ_GUI` corre sin ventana.
+- **Qué viene de Gazebo:** física, lidar, RealSense con profundidad, cámara de muñeca, bolsa (cae y se engancha con una unión al cerrar la pinza). **Sigue siendo simplificado:** Nav2 falso, base movida por velocidad y sin gravedad (no simula ruedas), detector por color, persona con keypoints simulados, voz simulada, sin simular el firmware real.
+- **Resultado:** 1 corrida completa en pantalla, pinza a 1.7 cm del nudo, con la pose real de piso. Antes fallaron 6, cada una por un problema distinto.
+- **Arreglos que valen para el robot real:** la cabeza centra la bolsa antes de medirla; se vuelve a medir 30 cm antes del tramo final; el tramo final se guía por la bolsa medida, no por 40 cm fijos (Nav2 real tiene 18 cm de tolerancia); frena 4 cm antes del límite de alcance.
+- **Alcance con la pose del 05/11 19:05:** con esa orientación a z = 0.20 m, x = 0.55 m llega con y ≥ 9 cm; x = 0.57 m solo con y ≥ 15 cm; x = 0.60 m nunca (IK numérica). Enseñar la pose más cerca da más margen.
+- **Sin probar:** nada en el robot real ni una sola tanda de repetición en Gazebo.
 
 ## 3. Cómo retomar la teleoperación con el Quest (pendiente: prueba completa en el brazo real)
 

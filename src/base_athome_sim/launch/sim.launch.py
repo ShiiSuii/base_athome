@@ -34,15 +34,15 @@ def _setup(context):
     if use_gz:
         shares = {os.path.dirname(get_package_share_directory(p)) for p in ("piper_description", "hoverboard_base")}
         shares.add(os.path.join(get_package_prefix("piper_description"), "share"))
-        world = os.path.join(sim_share, "worlds", "casa_simple.sdf")
+        world = os.path.join(sim_share, "worlds", "casa_basura.sdf" if os.environ.get("ATHOME_SIM_BAG") else "casa_simple.sdf")
         gz_urdf = os.path.join("/tmp", f"base_athome_gz_{os.getuid()}.urdf")
         with open(gz_urdf, "w", encoding="utf-8") as f:
             f.write(gz_model.gazebo_urdf(urdf))
         actions += [
             SetEnvironmentVariable("GZ_SIM_RESOURCE_PATH", ":".join(sorted(shares) + [os.environ.get("GZ_SIM_RESOURCE_PATH", "")])),
-            ExecuteProcess(cmd=["gz", "sim", "-r", world] + ([] if gz_gui else ["-s"]), output="log"),
+            ExecuteProcess(cmd=["gz", "sim", "-r", world] + ([] if gz_gui else ["-s", "--headless-rendering"]), output="log"),
             Node(package="ros_gz_sim", executable="create", output="screen",
-                 arguments=["-name", gz_model.MODEL, "-file", gz_urdf, "-z", "0.02"]),
+                 arguments=["-name", gz_model.MODEL, "-file", gz_urdf, "-z", "0.0"]),
             Node(package="ros_gz_bridge", executable="parameter_bridge", output="log",
                  arguments=gz_model.bridge_args(),
                  parameters=[{"override_timestamps_with_wall_time": True}]),

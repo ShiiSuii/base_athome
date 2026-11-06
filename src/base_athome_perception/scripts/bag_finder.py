@@ -273,6 +273,15 @@ class BagFinder(Node):
         belief, why = self._find_bag(target, end)
         if belief is None:
             return dict(id=req.get("id"), ok=False, error="bag_not_found", message=f"no encuentro la bolsa senalada: {why}")
+        # Se miro hacia donde senalaba: la bolsa puede estar en el borde de la imagen. Centrarla y medirla entera.
+        first = belief.xy
+        self._look_at(first)
+        time.sleep(1.2)
+        centered, _ = self._find_bag(first, min(end, time.time() + 4.0), gate_m=bv.BELIEF_GATE_M, allow_clipped=False)
+        if centered is not None:
+            belief = centered
+        else:
+            self.get_logger().warn("No pude ver la bolsa entera: queda la medicion aproximada")
         bag = [belief.xy[0], belief.xy[1], belief.top_z]
         self.get_logger().info(f"Bolsa en {np.round(bag, 2).tolist()} (senalaba {np.round(target, 2).tolist()})")
         return dict(id=req.get("id"), ok=True, bag=bag, pointed=list(target))
