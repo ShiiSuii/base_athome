@@ -1,0 +1,236 @@
+================================================================================
+REPORTE TECNICO: PROTOTIPO DE DETECCION DE OBSTACULOS BAJOS (HOME-67)
+Fecha: 2026-11-05
+Worktree: /home/athome/orca/workspaces/base_athome_ws/antigravity-low
+Rama: ShiiSuii/antigravity-low
+Evidencia: UNIT_PASS (escenas sinteticas). Sin validacion en camara real ni robot.
+================================================================================
+
+1. RESUMEN Y MOTIVACION
+-----------------------
+El LiDAR 2D Hokuyo UST-05LX de Base@Home tiene su base a 32 cm del piso y su haz
+de barrido a 38 cm del piso (medido el 2026-11-05, ver docs/ROBOT.md seccion 5).
+Por lo tanto, el costmap actual de Nav2 es ciego a cualquier obstaculo cuya altura
+total sea menor a 38 cm (patas horizontales de muebles o sillas, cajas bajas,
+bolsas de basura apoyadas en el suelo, zapatos o escalones bajos).
+
+En cumplimiento de la propuesta HOME-67 (docs/ROADMAP.md), se verifico y probo el
+modulo puro en Python, sin dependencias de ROS ni de hardware, junto con su suite
+de tests unitarios sobre escenas sinteticas:
+- Modulo: /home/athome/orca/workspaces/base_athome_ws/antigravity-low/src/base_athome_perception/base_athome_perception/low_obstacles.py
+- Tests:  /home/athome/orca/workspaces/base_athome_ws/antigravity-low/src/base_athome_perception/test/test_low_obstacles.py
+- Reporte: /home/athome/orca/workspaces/base_athome_ws/antigravity-low/docs/HOME_67_OBSTACULOS_BAJOS.txt
+
+IMPORTANTE: La navegacion funcional es protegida (AGENTS.md seccion 4). Este
+prototipo NO esta conectado a Nav2 ni modifica ningun archivo de navegacion. La
+simulacion y las escenas sinteticas NO demuestran seguridad fisica.
+
+
+2. DISENO DEL MODULO PURO (low_obstacles.py)
+--------------------------------------------
+Entradas de `LowObstacleDetector.detect(depth, t_base_cam)` / `depth_to_low_scan`:
+- `depth`: matriz 2D `H x W` (`uint16` en mm con `depth_scale=0.001` como entrega la
+  RealSense D435 en `aligned_depth_to_color`, o `float` en metros con `depth_scale=1.0`).
+  Valores 0, NaN o inf se tratan como pixeles sin medicion valida.
+- `k`: matriz intrinseca 3x3 (o vector de 9 elementos `CameraInfo.k`).
+- `t_base_cam`: matriz homogenea 4x4 que transforma puntos del frame optico de la
+  camara (`camera_color_optical_frame`: X derecha, Y abajo, Z adelante) al frame
+  del piso (`base_footprint`: X adelante, Y izquierda, Z arriba, piso en Z=0).
+  Recibir `t_base_cam` por cuadro es indispensable porque la D435 va montada sobre
+  el cabezal pan-tilt (`pan_joint`, `tilt_joint`) y la columna con elevador
+  (`torso_lift_joint`).
+
+Pipeline de procesamiento:
+1. Submuestreo espacial configurable (`stride=2` por defecto: pasa de 640x480 a
+   320x240) con cache de rayos normalizados `(xn, yn)` por resolucion.
+2. Filtrado de rango optico valido (`depth_min=0.25 m` a `depth_max=3.0 m`).
+3. Retroproyeccion 3D vectorizada en `float32` directamente al frame `base_footprint`:
+   `P_base = z * (R @ [xn, yn, 1]^T) + t`, obteniendo altura `h` sobre el piso y
+   distancia horizontal `horiz = hypot(px, py)` respecto del origen de `base_footprint`.
+4. Recorte de banda vertical de obstaculos bajos:
+   `z_min + floor_margin_per_m * horiz <= h <= z_max`
+   con `z_min = 0.04 m` (4 cm, descarta piso y alfombras finas) y `z_max = 0.38 m`
+   (38 cm, altura del haz del Hokuyo). `floor_margin_per_m` permite aumentar el
+   umbral inferior proporcionalmente a la distancia para absorber errores de pitch.
+5. Tres etapas de filtrado de ruido:
+   - Filtro espacial de vecindad (`min_neighbors=2` de 8 vecinos en la grilla
+     submuestreada): elimina pixeles voladores ("flying pixels") y ruido speckle.
+   - Filtro de soporte angular por bin (`min_points_per_bin=3`): exige un minimo de
+     impactos 3D dentro del mismo bin angular antes de declarar un obstaculo.
+   - Filtro temporal opcional (`persistence_window`, `persistence_min_hits`): exige
+     que el bin se active en al menos M de los ultimos N cuadros consecutivos.
+6. Salida `LowScan` (equivalente a `sensor_msgs/msg/LaserScan`):
+   - `ranges` con semantica explicita:
+     * valor finito `[range_min, range_max]`: distancia horizontal al obstaculo mas
+       cercano en ese bin angular;
+     * `+inf`: bin observado por la camara (hubo profundidad valida en esa direccion)
+       pero libre de obstaculos entre 4 y 38 cm;
+     * `NaN`: bin no observado (fuera del FOV de la camara o sin profundidad valida).
+
+
+3. MEDICION DE TIEMPO POR CUADRO (BENCHMARK EN NUC)
+---------------------------------------------------
+Medido en la NUC (Intel i3-1220P, Python 3.12.3, NumPy vectorizado en CPU) sobre
+imagenes sinteticas de 640x480 (`uint16` mm, perfil actual `640x480x15` de
+`realsense_nuc.launch.py`, presupuesto de 66.7 ms por cuadro a 15 Hz):
+
+- `stride=1` (640x480 completo, 307200 px):
+  mean = 8.28 ms | median = 8.22 ms | p95 = 9.69 ms | max = 9.82 ms
+- `stride=2` (default, 320x240, 76800 px):
+  mean = 1.58 ms | median = 1.52 ms | p95 = 1.83 ms | max = 2.71 ms
+- `stride=4` (160x120, 19200 px):
+  mean = 0.47 ms | median = 0.46 ms | p95 = 0.53 ms | max = 0.59 ms
+
+Con `stride=2` el calculo toma ~1.6 ms por cuadro (~2.4 % del periodo de 66.7 ms a
+15 Hz), cumpliendo holgadamente la restriccion de CPU acotada en la NUC.
+
+
+4. SALIDA DE LOS TESTS (ROS_DOMAIN_ID=77)
+-----------------------------------------
+Comando ejecutado:
+`ROS_DOMAIN_ID=77 PYTHONPATH=src/base_athome_perception python3 -m pytest -v -s src/base_athome_perception/test/test_low_obstacles.py`
+
+Salida textual:
+```
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-7.4.4, pluggy-1.4.0 -- /usr/bin/python3
+cachedir: .pytest_cache
+rootdir: /home/athome/orca/workspaces/base_athome_ws/antigravity-low/src/base_athome_perception
+plugins: cov-4.1.0, colcon-core-0.20.1, typeguard-4.1.5
+collecting ... collected 9 items
+
+src/base_athome_perception/test/test_low_obstacles.py::test_floor_only_produces_zero_obstacles PASSED
+src/base_athome_perception/test/test_low_obstacles.py::test_low_box_detected_at_correct_range_and_angle PASSED
+src/base_athome_perception/test/test_low_obstacles.py::test_tall_obstacle_above_lidar_band_ignored PASSED
+src/base_athome_perception/test/test_low_obstacles.py::test_bag_on_floor_off_center PASSED
+src/base_athome_perception/test/test_low_obstacles.py::test_tilted_head_pan_tilt_and_roll_compensation PASSED
+src/base_athome_perception/test/test_low_obstacles.py::test_depth_with_holes_nans_infs_and_speckle_noise PASSED
+src/base_athome_perception/test/test_low_obstacles.py::test_temporal_persistence_filter_rejects_single_frame_glitches PASSED
+src/base_athome_perception/test/test_low_obstacles.py::test_floor_margin_per_m_compensates_pitch_calibration_error PASSED
+src/base_athome_perception/test/test_low_obstacles.py::test_validation_and_benchmark_budget
+[BENCHMARK 640x480 NUC] stride=1: mean=8.28ms median=8.22ms p95=9.69ms max=9.82ms | stride=2 (default): mean=1.58ms median=1.52ms p95=1.83ms max=2.71ms | stride=4: mean=0.47ms median=0.46ms p95=0.53ms max=0.59ms
+PASSED
+
+============================== 9 passed in 0.99s ===============================
+```
+
+
+5. COMO SE CONECTARIA A NAV2 (SI EL USUARIO DECIDE INTEGRARLO)
+--------------------------------------------------------------
+Integrarlo modifica el comportamiento de navegacion y requiere autorizacion expresa
+del usuario (AGENTS.md seccion 4). El flujo recomendado cuando se autorice es:
+
+A. Nodo ROS 2 adaptador (en la NUC, p. ej. `low_obstacle_scan_node.py` dentro de
+   `base_athome_perception`):
+   1. Suscribirse en la NUC a `/camera/camera/aligned_depth_to_color/image_raw` y
+      `/camera/camera/aligned_depth_to_color/camera_info` (la camara ya corre en la
+      NUC; no viaja imagen cruda por Ethernet).
+   2. Consultar TF `base_footprint <- camera_color_optical_frame` en el timestamp
+      exacto de la imagen (`tf_buffer.lookup_transform('base_footprint',
+      msg.header.frame_id, msg.header.stamp, timeout=0.05s)`).
+   3. GUARDIA DE SEGURIDAD TF/SENSORES: antes de publicar cualquier barrido,
+      verificar que:
+      - `/pan_tilt/connected` sea `True` (evita usar `pan=0, tilt=0` sinteticos si
+        el U2D2 se desconecta por USB, hallazgo S-11 y falla electrica abierta en
+        STATUS.md);
+      - la edad del TF y de `/pan_tilt/joint_states` sea `< 0.2 s`;
+      - si el elevador no esta en el tope superior, `/torso/joint_states` provenga
+        de una medicion real de `torso_state` calibrado (S-15).
+      Si cualquiera falla, NO publicar `/low_obstacles/scan` (evita inyectar el piso
+      como pared fantasma o borrar obstaculos por pose erronea).
+   4. Ejecutar `LowObstacleDetector.detect(depth, T_base_cam)` con
+      `persistence_window=3, persistence_min_hits=2` y `floor_margin_per_m=0.015`.
+   5. Publicar `sensor_msgs/msg/LaserScan` en `/low_obstacles/scan` con
+      `header.frame_id = "base_footprint"` y `header.stamp = msg.header.stamp`.
+
+B. Configuracion en `src/base_athome_navigation/config/nav2_params.yaml` (solo en
+   `local_costmap` al inicio; NO en AMCL ni en `static_layer`):
+   - En `local_costmap.local_costmap.ros__parameters.obstacle_layer`:
+     `observation_sources: scan low_scan`
+   - Agregar la fuente `low_scan`:
+     ```yaml
+     low_scan:
+       topic: /low_obstacles/scan
+       sensor_frame: base_footprint
+       data_type: "LaserScan"
+       marking: True
+       clearing: True          # O empezar con clearing: False en las primeras pruebas
+       inf_is_valid: True      # Los bins observados libres (+inf) limpian dentro del FOV
+       obstacle_min_range: 0.25
+       obstacle_max_range: 1.80
+       raytrace_min_range: 0.25
+       raytrace_max_range: 1.90
+     ```
+   - Alternativa mas completa en Nav2: reemplazar `ObstacleLayer` por `VoxelLayer`
+     o `SpatioTemporalVoxelLayer (STVL)` con `voxel_decay` corto (3-5 s), de modo
+     que los obstaculos bajos marcados cuando la cabeza miraba hacia abajo se
+     recuerden unos segundos y caduquen solos si el objeto se mueve.
+
+
+6. RIESGOS TECNICOS Y OPERATIVOS
+--------------------------------
+1. Sensibilidad al angulo de tilt y desconexiones del pan-tilt (RIESGO CRITICO):
+   A 1.8 m de distancia horizontal, un error de apenas 1.5 grados en `tilt_joint`
+   desplaza verticalmente el piso medido en ~4.7 cm, superando `z_min = 4 cm` y
+   haciendo que el piso plano aparezca como una pared falsa frente al robot. Dado
+   que el U2D2 del pan-tilt registra desconexiones USB bajo carga (STATUS.md §1),
+   si el nodo usa un angulo de tilt desactualizado o en cero cuando la cabeza real
+   esta inclinada, bloqueara a Nav2 con obstaculos fantasma. Mitigacion: exigir
+   `/pan_tilt/connected == True`, filtrar durante giros rapidos de la cabeza
+   (`|vel_tilt| > 0.1 rad/s`) y configurar `floor_margin_per_m >= 0.015`.
+2. Altura del elevador no medida (S-15):
+   La D435 sube y baja con `torso_lift_link`. Si el elevador baja 30 cm para agarrar
+   una bolsa en el piso (HOME-63) pero TF sigue reportando `torso_lift_joint = 0`,
+   toda la nube queda desplazada +30 cm en Z: el piso real se interpreta a Z = +30 cm
+   (pleno centro de la banda 4-38 cm) y rodea al robot de obstaculos falsos.
+   Mitigacion: requerir `torso_state` calibrado o desactivar el publicador cuando el
+   elevador se mueva sin feedback.
+3. Auto-oclusion por el brazo Piper o una bolsa transportada:
+   Cuando el brazo va en `pre_grasp_floor` o lleva la bolsa de basura delante del
+   torso, entra en el FOV inferior de la D435 entre 4 y 38 cm de altura y a 0.25-0.60 m
+   del centro de la base. Si no se enmascara el radio propio del robot (`range_min`
+   mayor que el footprint de 0.44 m o filtro por caja del brazo via FK), el robot se
+   vera a si mismo como obstaculo y Nav2 abortara el movimiento.
+4. Campo de vision (FOV) estrecho y memoria del costmap:
+   La D435 tiene ~69 deg de FOV horizontal (frente a 270 deg del Hokuyo) y cuando
+   la cabeza mira al frente (`tilt = 0`) el borde inferior de la imagen toca el piso
+   recien a ~1.5-2.0 m: existe una zona ciega inmediata delante del chasis salvo que
+   el tilt baje ~20-30 deg al navegar. Ademas, al girar en el lugar
+   (`RotationShimController`), un obstaculo bajo sale del FOV de la camara; si otra
+   fuente lo limpia o si no se retiene en el costmap local, el robot puede pisarlo al
+   rotar. Nota: en `ObstacleLayer` 2D el Hokuyo (`scan`, `clearing: True`) limpiaria
+   los obstaculos marcados por `low_scan` porque ambos comparten la misma grilla 2D
+   y el rayo del Hokuyo a 38 cm pasa por encima del obstaculo bajo viendo la pared al
+   fondo. Por eso, en Nav2 NO deben compartir una misma `ObstacleLayer` 2D con
+   `clearing: True` del LiDAR sobre la capa baja: `low_scan` debe ir en una capa
+   separada (o `VoxelLayer` 3D donde el rayo del LiDAR a Z=0.38 m solo limpia los
+   voxels de Z=0.38 m y NO limpia los voxels bajos de Z=0.04..0.38 m).
+5. Artefactos opticos de la RealSense D435:
+   Pisos brillantes, ceramicos oscuros, luz solar directa por ventanas o bordes de
+   alto contraste generan huecos (`0`) o "flying pixels". El modulo mitiga esto
+   distinguiendo `NaN` (no observado, no limpia) de `+inf` (observado libre) y
+   aplicando `min_neighbors`, `min_points_per_bin` y persistencia temporal, pero
+   debe validarse con bolsas negras y pisos reales del laboratorio (POR CONFIRMAR).
+
+
+7. ESTADO DE VERIFICACION
+-------------------------
+- Verificado (`UNIT_PASS`):
+  * Geometria de retroproyeccion 3D y transformacion con `T_base_cam` (pan, tilt, roll,
+    traslacion de camara).
+  * Escenas sinteticas: piso plano solo (0 falsos positivos, distincion `+inf` vs `NaN`),
+    caja baja de 18 cm, objeto alto sobre 38 cm ignorado, bolsa descentrada en el piso,
+    cabeza inclinada con pan/tilt/roll, profundidad con 25 % de huecos (`0`/`NaN`/`inf`)
+    + ruido speckle ("flying pixels"), filtro de persistencia temporal (M de N cuadros)
+    y margen de piso por distancia (`floor_margin_per_m`).
+  * Tiempo de ejecucion por cuadro en la NUC: 1.58 ms medio (p95 1.83 ms) a 640x480
+    con `stride=2`.
+  * Cero archivos de navegacion modificados (`git diff` limpio sobre paquetes protegidos).
+- Sin verificar (POR CONFIRMAR en sesion con camara real y humano):
+  * Desempeno con cuadros reales de la D435 sobre bolsas de basura reales, patas de
+    sillas cromadas/negras y distintos pisos bajo iluminacion real.
+  * Calibracion extrinseca exacta del tilt y offset de `camera_color_optical_frame`
+    respecto a `base_footprint` en el robot fisico.
+  * Integracion en una capa separada o `VoxelLayer` de Nav2 sin que el raytrace del
+    Hokuyo a 38 cm borre los obstaculos bajos marcados por la camara.
+================================================================================
