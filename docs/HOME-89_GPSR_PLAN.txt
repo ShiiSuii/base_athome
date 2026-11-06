@@ -1,0 +1,125 @@
+================================================================================
+INFORME DE ENTREGA HOME-89: CONEXION GPSR_PARSER -> PLAN DEL EJECUTOR
+================================================================================
+Proyecto: Base@Home (UruBots) — RoboCup@Home Open Platform League (OPL)
+Tarea: HOME-89 (Conectar tools/gpsr_parser con el plan del ejecutor, solo compilacion)
+Fecha: 2026-11-06
+Autor: Antigravity (dispatched worker para HOME-89)
+Rama de trabajo: ShiiSuii/antigravity-gpsrplan
+Base: origin/development (406f8fc)
+Entregables:
+  1. src/base_athome_skills/base_athome_skills/mission/gpsr_plan.py
+  2. src/base_athome_skills/test/test_gpsr_plan.py
+  3. docs/HOME-89_GPSR_PLAN.txt
+
+================================================================================
+1. RESUMEN DE LA IMPLEMENTACION
+================================================================================
+Se creo el modulo `gpsr_plan.py` que conecta el analizador sintactico determinista
+`tools/gpsr_parser` con el motor determinista de planes de misiones (`mission/plan.py`),
+especificamente con el validador estricto `validate_plan()`:
+
+- Entrada flexible: procesa cadenas de texto de ordenes en lenguaje natural,
+  instancias de `PlanResult` de `GPSRParser`, o listas directas de acciones `[{'action': ..., 'params': ...}]`.
+- Resolucion dinamica de rutas: ubica `tools/gpsr_parser` en el arbol del repositorio
+  o entorno de trabajo sin requerir paths fijos de sistema.
+- Mapeo cerrado y determinista a habilidades de Base@Home:
+  * go_to           -> navigate_to       (args: place)                     [AVAILABLE]
+  * find_object     -> detect_object     (args: object)                    [AVAILABLE]
+  * pick            -> pick_object       (args: object)                    [AVAILABLE]
+  * place           -> place_object      (args: place)                     [AVAILABLE]
+  * say             -> speak             (args: text)                      [AVAILABLE]
+  * deliver_to      -> deliver_object    (args: person, place)             [UNAVAILABLE]
+  * find_person     -> find_person       (args: name/gesture/posture/cloth)[UNAVAILABLE]
+  * follow          -> follow_person     (args: person, destination)       [UNAVAILABLE]
+  * guide           -> guide_person      (args: place, person)             [UNAVAILABLE]
+  * answer_question -> answer_question   (sin args)                        [UNAVAILABLE]
+- Identificacion y rechazo sin ambiguedad:
+  * Acciones sin ninguna skill en Base@Home: `count` y `describe` son detectadas
+    explicitamente y marcadas como error ("la accion GPSR '<act>' no tiene skill
+    disponible en Base@Home (sin implementar)").
+  * Habilidades no implementadas en el hardware actual: marcadas como error en modo
+    estricto por `validate_plan` ("la skill '<skill>' no esta implementada/validada").
+- Evaluacion de lotes: `evaluate_batch()` permite contrastar conjuntos de comandos
+  generando estadisticas y tablas de cobertura reproducibles.
+
+================================================================================
+2. TABLA DE COBERTURA REAL (30 COMANDOS DE commands.jsonl)
+================================================================================
+Evaluacion sobre los primeros 30 comandos oficiales del CommandGenerator:
+- Total comandos evaluados:          30
+- Compilan en estricto (100% lista):  1 ( 3.3%)
+- Compilan en lenient (sintacticos): 26 (86.7%)
+- Rechazados en estricto:            29 (96.7%)
+
+Desglose exacto de motivos de rechazo en modo estricto:
+--------------------------------------------------------------------------------
+Motivo de rechazo                             | Comandos | Porcentaje | Comandos afectados (IDs)
+--------------------------------------------------------------------------------
+no_skill:count                                |  1       |   3.3%     | #17
+no_skill:describe                             |  3       |  10.0%     | #14, #15, #28
+unavailable_skill:deliver_object              |  6       |  20.0%     | #3, #4, #6, #9, #22, #27
+unavailable_skill:deliver_object,find_person  |  6       |  20.0%     | #12, #13, #18, #21, #24, #30
+unavailable_skill:find_person                 |  8       |  26.7%     | #2, #5, #10, #11, #16, #20, #25, #29
+unavailable_skill:find_person,follow_person   |  5       |  16.7%     | #1, #7, #8, #23, #26
+--------------------------------------------------------------------------------
+TOTAL RECHAZADOS                              | 29       |  96.7%
+--------------------------------------------------------------------------------
+
+Comando que compila exitosamente en modo estricto:
+- ID 19: "navigate to the side tables then find a lemon and grasp it and put it on the storage rack"
+  Pasos generados:
+    1. navigate_to (place: side tables)
+    2. detect_object (object: lemon)
+    3. pick_object (object: lemon)
+    4. navigate_to (place: storage rack)
+    5. place_object (place: storage rack)
+  Todas las habilidades estan en estado AVAILABLE en default_registry() y validadas.
+
+================================================================================
+3. EXTENSION A 50 COMANDOS (ESTABILIDAD DE TASAS)
+================================================================================
+- Total comandos evaluados:          50
+- Compilan en estricto (100% lista):  3 ( 6.0%)  [IDs 19, 39, 44]
+- Compilan en lenient (sintacticos): 42 (84.0%)
+- Rechazados por no_skill:count:      3 ( 6.0%)
+- Rechazados por no_skill:describe:   5 (10.0%)
+- Rechazados por skills unavailable: 39 (78.0%)
+
+================================================================================
+4. SUITE DE PRUEBAS AUTOMATIZADAS
+================================================================================
+Comando de ejecucion (sin entorno ROS ni hardware, ROS_DOMAIN_ID=77):
+  ROS_DOMAIN_ID=77 PYTHONPATH=src/base_athome_skills pytest src/base_athome_skills/test/test_gpsr_plan.py -v
+
+Resultados:
+  - test_gpsr_compiles_navigation_and_speech: PASSED
+  - test_gpsr_compiles_manipulation_only_available_skills: PASSED
+  - test_gpsr_rejects_missing_skills_count_and_describe: PASSED
+  - test_gpsr_rejects_unavailable_skills_in_strict_mode: PASSED
+  - test_gpsr_accepts_unavailable_skills_in_lenient_mode: PASSED
+  - test_gpsr_places_validation: PASSED
+  - test_gpsr_invalid_and_empty_inputs: PASSED
+  - test_gpsr_plan_result_input_compatibility: PASSED
+  - test_gpsr_commands_jsonl_benchmark_30: PASSED
+  - test_gpsr_commands_jsonl_benchmark_50: PASSED
+
+Total: 10 passed en 0.11 s (EVIDENCIA: UNIT_PASS).
+
+================================================================================
+5. LO QUE SE VERIFICO Y LO QUE QUEDO SIN VERIFICAR
+================================================================================
+VERIFICADO (UNIT_PASS):
+- Compilacion y validacion estatica determinista de texto -> GPSRParser -> Plan -> validate_plan().
+- Mapeo de argumentos de las 10 habilidades reconocidas contra sus SkillSpecs en SkillRegistry.
+- Rechazo sistematico de acciones sin skill ('count', 'describe') y skills UNAVAILABLE
+  ('find_person', 'follow_person', 'guide_person', 'deliver_object', 'answer_question').
+- Evaluacion de cobertura real sobre 30 y 50 comandos del dataset oficial.
+- Validacion semantica de lugares mediante diccionario `places` y funcion `resolve()`.
+
+POR CONFIRMAR / NO VERIFICADO:
+- Ninguna prueba fisica en actuadores reales (traccion de base, brazo Piper, pan-tilt, elevador)
+  en estricto cumplimiento de las reglas del modo DESARROLLO.
+- Ejecucion de planes compilados en el nodo ROS 2 `mission_executor` con hardware real.
+- Reconocimiento de voz en vivo mediante Whisper para comandos GPSR largos o re-fraseados por LLM.
+- Implementacion futura de las habilidades actualmente marcadas como UNAVAILABLE (HOME-49, HOME-15b).
