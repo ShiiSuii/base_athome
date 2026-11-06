@@ -1,0 +1,805 @@
+INVESTIGACION DE REGLAS GENERALES Y SEGURIDAD — ROBOCUP@HOME OPL 2026.2
+Proyecto: Base@Home (UruBots) — RoboCup@Home Open Platform League
+Fecha: 2026-11-06
+Autor: Antigravity (dispatched worker para tarea HOME-85, dispatch ctx_1081fba06ea0, task task_0c0bd2965d95)
+Workspace: /home/athome/orca/workspaces/base_athome_ws/antigravity-reglas
+Rama y commit base: ShiiSuii/antigravity-reglas @ a119f61 (origin/development @ a119f61)
+Archivo de entrega: docs/INVESTIGACION_REGLAS_GENERALES.txt
+
+================================================================================
+1. FUENTE Y REGLAMENTO NORMATIVO
+================================================================================
+
+- Repositorio oficial del reglamento: https://github.com/RoboCupAtHome/RuleBook
+- Release normativo vigente: 2026.2 (tag 2026.2)
+  URL: https://github.com/RoboCupAtHome/RuleBook/releases/tag/2026.2
+  Commit SHA de referencia: b844d5a6d6ebf4307c3250a01d1eca4ba56f8452
+  PDF oficial publicado: "Version 2026 Rev-1, revision 2026-05-11"
+  SHA256 del PDF normativo: d35e93c7f291a59a823691905b47dcd7e8de14ab3a4c546aca55ba20b30ce128
+- Regla de exclusion estricta: NO se utiliza tasks/old/. Se analizan exclusivamente
+  las reglas generales, requisitos de robot y anexos vigentes para la liga unificada OPL.
+- Archivos fuente evaluados en el repositorio RuleBook:
+  * pages/general_rules/Robots.tex (Requisitos de robot, apariencia, tamaño, peso, E-stop, Start button)
+  * pages/general_rules/Procedure.tex (Procedimiento durante pruebas, seguridad, señal de inicio, tiempos, reinicio, autonomía)
+  * pages/general_rules/ContinueRules.tex (Ayuda humana, bypass de ASR, interfaces HRI alternativas, penalidades)
+  * pages/general_rules/PenaltiesBonuses.tex (Penalidades extraordinarias, inasistencia, colisiones graves)
+  * pages/general_rules/ExternalDevices.tex (Dispositivos externos, computo externo en ECRA, dispositivos inalambricos)
+  * pages/general_rules/Scenario.tex (Escenario, puertas, red inalambrica ArenaNetwork, objetos conocidos)
+  * pages/general_rules/TeamRegistration.tex (Calificacion, TDP, Video, Sitio Web, material open source)
+  * pages/general_rules/AudienceInteraction.tex y vizbox.tex (Pantalla de audiencia, visualizador VizBox)
+  * pages/organization/Setup.tex (Inspeccion de Robot, limites temporales, poster session)
+  * pages/scoresheets/registration_form.tex (Planilla oficial de inspeccion y Safety First)
+  * pages/introduction/Awards.tex (Premios oficiales, Open-source software award, Best HRI)
+  * pages/appendices/LeagueRequirements.tex (Requisitos de arena, dimensiones, puertas, red)
+
+Criterios de clasificacion de evidencia:
+- VERIFICADO: Confirmado directamente en el texto normativo del RuleBook 2026.2 (@b844d5a) o comprobado mediante grep y ejecucion de tests unitarios en el codebase de Base@Home (@a119f61).
+- INFERIDO: Deduccion tecnica fundamentada a partir de especificaciones de hardware/software documentadas (ej. tiempo de booteo de sistemas distribuidos, calculo de ancho total a partir de trocha y ruedas).
+- NO ENCONTRADO: Aspecto normativo exigido por el reglamento para el cual no existe codigo, diseno, plano electrico ni registro experimental en el repositorio.
+- Estados de cumplimiento: CUMPLE, FALTA, POR CONFIRMAR.
+
+
+================================================================================
+2. RESUMEN EJECUTIVO Y ESTADO GLOBAL DE BASE@HOME
+================================================================================
+
+Base@Home compite en la RoboCup@Home Open Platform League (OPL). El reglamento 2026.2
+impone requisitos estrictos de seguridad funcional ("Safety First!"), dimensiones,
+tiempos de reaccion y procedimientos de evaluacion que preceden a cualquier prueba
+operativa.
+
+Estado de cumplimiento general:
+1. Inspeccion de Robot (Robot Inspection): FALTA rutina automatizada. PENDIENTE prueba
+   de campo de detencion ante obstaculo humano. El robot cumple la velocidad crucero
+   (0.38 m/s << 1.66 m/s limite de 6 km/h) pero carece de un procedimiento formal de paso.
+2. Parada de Emergencia (E-Stop): ESTADO CRITICO / POR CONFIRMAR. El reglamento exige
+   un boton rojo visible (unico boton rojo del robot) que corte inmediatamente TODOS los
+   actuadores. En el repositorio el corte electrico unificado esta documentado como PENDIENTE
+   (docs/ROBOT.md:110-113); en software cada actuador tiene comandos aislados, pero no hay
+   evidencia fisica de un bus de desconexion comun bajo hardware energizado.
+3. Apertura de puerta y arranque: PARCIAL. Existe DoorOpenDetector probado con LaserScan
+   (src/base_athome_skills/base_athome_skills/door_detector.py), pero los scripts de misiones
+   (hri_receptionist_challenge.py:1556) dependen de pulsar [ESPACIO] en teclado, lo cual
+   esta EXPRESAMENTE PROHIBIDO para el arbitro por la regla 3.6.8.
+4. Tiempos e inactividad: RIESGO ALTO. El reglamento fija 30 segundos de inactividad antes
+   de la descalificacion y retiro forzado. El nodo commander_node.py tiene un timeout de
+   espera de voz de exactamente 30.0 s sin mecanismos de solicitud verbal de extension de
+   tiempo (regla 3.6.14). Setup time es de solo 1 minuto (exige robot pre-encendido).
+5. Pedir ayuda humana (Continue rules): FALTA. No existe modulo en skills ni perception
+   que formule pedidos estructurados de ayuda humana con supervision y verificacion, ni
+   interfaz HRI tactil/alternativa para bypass de ASR aprobada para mitigar fallos acusticos.
+6. Altura, dimensiones y peso: CUMPLE dimensionalmente en CAD/URDF (~0.62 m ancho << 0.70 m;
+   ~1.60 m altura << 2.00 m), pero medidas con cinta metrica y balanza estan POR CONFIRMAR.
+7. Voz y comunicacion: PARCIAL. Microfono shotgun RODE integrado a bordo (cumple prohibicion
+   de micros inalambricos); TTS RoboCupSpeaker operativo. RIESGO: referencia a parlante
+   Bluetooth en speaker.py:113 (prohibido emitir redes/RF no autorizadas); falta conector
+   jack/RF para transmision al sistema de sonido del estadio (audited in inspection).
+8. Codigo abierto y Open Source Award: Repositorio publico en GitHub, pero no se ha
+   empaquetado ninguna libreria autonoma independiente de framework con paper de 4 paginas
+   para postular al premio oficial Open Source Software Award.
+
+
+================================================================================
+3. LISTA DE VERIFICACION DETALLADA POR ITEM (REGLAS GENERALES Y REQUISITOS)
+================================================================================
+
+--------------------------------------------------------------------------------
+3.1. INSPECCION DE ROBOT (ROBOT INSPECTION)
+--------------------------------------------------------------------------------
+[REGLA Y CITA NORMATIVA]
+- Fuente: pages/organization/Setup.tex, Seccion 2.4 (\ref{sec:robot_inspection}), lineas 97-126;
+  y pages/scoresheets/registration_form.tex, lineas 44-91.
+- Exigencia reglamentaria:
+  1. Condicion de ingreso a competencia: Ningun robot puede participar en ninguna prueba regular
+     sin haber superado formalmente la Robot Inspection (Setup.tex:115). Si falla, debe solicitar
+     re-inspeccion posterior.
+  2. Procedimiento de ejecucion: Se realiza como una prueba regular. El robot inicia fuera de la arena
+     ante la puerta cerrada. El arbitro abre la puerta. El robot debe ingresar de forma completamente
+     autonoma, navegar hasta el "Inspection Point" predefinido, someterse al examen de los inspectores
+     del Comite Tecnico (TC), y luego navegar de forma autonoma hacia la puerta de salida designada
+     tras recibir la senal manual de arranque (Setup.tex:101, 111).
+  3. Tiempo limite estricto: Maximo 3 minutos por robot. A los 3 minutos la prueba se interrumpe
+     y el robot debe ser retirado inmediatamente por la puerta de salida (Setup.tex:116).
+  4. Lista de aspectos verificados durante la inspeccion (Setup.tex:104-114, registration_form.tex:71-90):
+     * Boton(es) de parada de emergencia (Emergency button).
+     * Evasion de colision activa: Un miembro del TC se cruza intencionalmente frente al robot
+       en avance ("a TC member steps in front of the robot") para verificar frenado seguro.
+     * Voz del robot: Debe ser fuerte, clara y comprensible ("loud and clear").
+     * Contenedores personalizados (bandejas, bowls): Sujecion mecanica firme.
+     * Dispositivos externos y computo fuera del robot: Pre-autorizacion expresa.
+     * Interfaces alternativas de HRI (touchscreen, tablet, web UI): Pre-aprobacion.
+     * Velocidad del robot: Maximo ritmo de caminata humana (6 km/h = 1.66 m/s, registration_form.tex:48).
+     * Dimensiones fisicas: Paso por puerta estandar (altura <= 200 cm, ancho <= 70 cm).
+     * Senal manual de arranque: Demostracion de inicio desde Inspection Point hacia salida.
+     * Sistema de audio/parlante: Verificacion de salida de audio o conector RF (jack auxiliar).
+     * Seguridad mecanica y estetica: Prohibicion de cinta adhesiva ("duct tape"), cables colgando,
+       bordes filosos o hardware electronico expuesto. Penalidad de hasta 50 puntos por mala apariencia.
+
+[ESTADO EN BASE@HOME SEGUN CODIGO Y DOCS]
+- Evidencia:
+  * Movimiento a Inspection Point y salida: Nav2 dispone de SmacPlanner2D y RegulatedPurePursuit
+    con navigate_to_pose (docs/ROBOT.md:345-353).
+  * Velocidad de navegacion: desired_linear_vel = 0.38 m/s en src/base_athome_navigation/config/nav2_params.yaml:113
+    y max_speed_raw = 450 en src/hoverboard_base/config/hoverboard_params.yaml:11. VERIFICADO CUMPLE (0.38 m/s << 1.66 m/s).
+  * Rutina de mision para Inspeccion: NO ENCONTRADO en el repositorio. No existe script ni maquina
+    de estados que coordine entrada -> navegacion a Inspection Point -> solicitud de inspeccion verbal ->
+    espera de senal de inicio manual -> navegacion a Exit Door.
+  * Frenado ante persona cruzandose: El lidar Hokuyo UST-05LX barre a 38 cm de altura (laser_offset_z=0.32,
+    base 22 cm, docs/ROBOT.md:126). Detecta piernas de adultos. Sin embargo, no hay prueba fisica
+    registrada de tiempo y distancia de frenado con la inercia del robot cargado con baterias.
+  * Cableado y cubierta: docs/ROBOT.md:110-115 reporta alimentacion y cableado PENDIENTE;
+    riesgo de penalizacion de hasta 50 puntos si existen cables descubiertos o fijaciones provisorias.
+- Clasificacion: FALTA (rutina especifica de mision, prueba formal de frenado ante inspector y cierre de chasis).
+
+
+--------------------------------------------------------------------------------
+3.2. PARADA DE EMERGENCIA (E-STOP: HARDWARE, SOFTWARE E INALAMBRICO)
+--------------------------------------------------------------------------------
+[REGLA Y CITA NORMATIVA]
+- Fuente: pages/general_rules/Robots.tex, Seccion 3.3.4 (\ref{rule:robots_emergency_button}), lineas 35-43;
+  pages/general_rules/Procedure.tex, Seccion 3.6.1 (\ref{rule:safetyfirst}), lineas 3-9;
+  pages/scoresheets/registration_form.tex, lineas 50-63.
+- Exigencia reglamentaria:
+  1. Visibilidad y accesibilidad: Cada robot debe poseer un boton de parada de emergencia (E-stop)
+     facilmente visible y accesible desde el exterior (Robots.tex:38).
+  2. Color rojo exclusivo: El boton de parada de emergencia DEBE ser de color rojo, y DEBE ser
+     el UNICO boton rojo presente en toda la estructura del robot ("must be colored red and must be
+     the only red buttons on the robot", Robots.tex:39). Si existen otros botones rojos, el TC
+     exigira cubrirlos con cinta o retirarlos.
+  3. Comportamiento inmediato de corte: Al pulsar el boton de E-stop, el robot y TODAS SUS PARTES
+     deben detener el movimiento INMEDIATAMENTE ("the robot and all its parts must stop moving
+     immediately", Robots.tex:41). Esto incluye base de traccion, brazo manipulador, elevador de torso
+     y cabeza pan-tilt.
+  4. Obligacion categorica y consecuencias: Si un arbitro o miembro del TC/EC presiona el E-stop o
+     ordena detener el robot, la detencion debe ser instantanea y sin discusion. El desacato o
+     falla en detener el robot acarrea DESCALIFICACION INMEDIATA de la competencia en curso y una
+     posible suspension de los miembros del equipo por al menos 1 ano por la RoboCup Federation (Procedure.tex:8).
+
+[ESTADO EN BASE@HOME SEGUN CODIGO Y DOCS]
+- Evidencia:
+  * docs/ROBOT.md lineas 110-113 (VERIFICADO): "Alimentacion — PENDIENTE (sin evidencia electrica):
+    plan historico del equipo: 7s6p NUC/LiDAR, 10s3p motores hoverboard, 7s5p elevador + Jetson,
+    ~12 V para Dynamixel. Falta: BMS, fusibles por rama, que corta el E-stop, reguladores.
+    No usar como plano electrico; ningun agente ordena conectar baterias. El reglamento exige
+    que el E-stop detenga *todo* (base, brazo, elevador, pan-tilt) — verificacion electrica pendiente."
+  * docs/TDP_BORRADOR.txt linea 1159-1165 (VERIFICADO): "POR CONFIRMAR #5 ... configuracion final de
+    baterias/BMS/fusibles y verificacion fisica de que el E-stop corta a la vez base, Piper,
+    elevador y pan-tilt".
+  * Capa de software:
+    - Base hoverboard: hoverboard_driver.py:312 implementa watchdog cmd_vel_timeout=0.5 s; firmware STM32
+      define TIMEOUT 20 (firmware/firmware_config/lenzod_red_stm32_usart3_odometry/config.h:35).
+    - Brazo Piper: piper_arm_controller.py dispone de cancelacion y guarda de feedback, pero
+      deshabilitar motores lo deja caer por gravedad si no hay freno mecanico activado (STATUS.md:14).
+    - Elevador: stepper_controller.py dispone de comando 's' (stop), pero el ESP32 no esta conectado (STATUS.md:134).
+    - Pan-tilt: pan_tilt_node.py responde a /pan_tilt/set_torque (docs/ROBOT.md:303).
+  * Corte electromecanico unificado: NO ENCONTRADO en el diseno electrico un rele/contactor
+    central gobernado por una seta de emergencia roja que desenergice simultaneamente la etapa de
+    potencia de motores hoverboard (36V), Piper (24V), NEMA23 (24V) y Dynamixel (12V) preservando
+    la logica de las computadoras (NUC y Jetson).
+- Clasificacion: POR CONFIRMAR / FALTA (Riesgo maximo de seguridad: descalificacion inmediata si no
+  se implementa y certifica en banco el corte fisico unificado con boton rojo exclusivo).
+
+
+--------------------------------------------------------------------------------
+3.3. DETECCION Y APERTURA DE PUERTA (DOOR OPENING)
+--------------------------------------------------------------------------------
+[REGLA Y CITA NORMATIVA]
+- Fuente: pages/general_rules/Procedure.tex, Seccion 3.6.8 (\ref{rule:start_signal}), linea 94;
+  pages/general_rules/Scenario.tex, Seccion 3.2.2 (\ref{rule:scenario_walls}), lineas 29-32;
+  pages/appendices/LeagueRequirements.tex, lineas 46-56.
+- Exigencia reglamentaria:
+  1. Posicion inicial de pruebas: En todas las pruebas donde el robot comienza fuera de la arena,
+     el robot se posiciona frente a la puerta de entrada cerrada, acompanado por un solo miembro del equipo.
+  2. Inicio de prueba: El test comienza cuando un ARBITRO (nunca un miembro del equipo) abre la puerta.
+  3. Caracteristicas de la puerta de la arena:
+     * Ancho minimo: 900 mm (recomendado 915 mm). Altura minima: 2000 mm.
+     * Manija tipo picaporte ("handles, not knobs"), apertura hacia adentro en entrada y hacia afuera en salida.
+     * Umbral liso ("smooth or very flat, without steps, lips, or obstacles").
+  4. Entrada autonoma: El robot debe detectar la apertura de forma 100% autonoma y cruzar el umbral
+     sin intervencion humana (Procedure.tex:130).
+  5. Apertura fisica de puertas: En pruebas avanzadas (HRI Challenge Item 1.2: 400 pts; Finales: 33),
+     el robot puede intentar abrir la puerta por si mismo, pero la regla general autoriza que el
+     arbitro actue como abridor para el inicio de las tareas generales.
+
+[ESTADO EN BASE@HOME SEGUN CODIGO Y DOCS]
+- Evidencia:
+  * Modulo de deteccion: src/base_athome_skills/base_athome_skills/door_detector.py (VERIFICADO).
+    Implementa DoorDetectorConfig (linea 14) y DoorOpenDetector (linea 51).
+    - Metodo update(distance) (linea 60): Maquina de estados CALIBRATING -> WAITING_CLOSED -> OPEN.
+    - Calibra la distancia de referencia con 10 scans (linea 18).
+    - Exige incremento sostenido >= 0.6 m durante 5 scans consecutivos a 40 Hz (~0.125 s) (lineas 20-21).
+    - Tests unitarios: src/base_athome_skills/test/test_door_detector.py (8 passed, STATUS.md:19).
+  * Apertura mecanica por el robot: NO ENCONTRADO / NO HAY (confirmado en docs/MATRIZ_REGLAS_HABILIDADES.txt:64).
+    El Piper 6-DOF (carga 1.5 kg) y la base diferencial carecen de cinematica coordinada para accionar
+    picaportes pesados. Estrategia oficial: solicitar apertura al arbitro / voluntario (puntuacion 0 en
+    ese sub-item pero permite completar el resto del reto).
+- Clasificacion: CUMPLE para deteccion de apertura por arbitro; FALTA para manipulacion de picaporte.
+
+
+--------------------------------------------------------------------------------
+3.4. ARRANQUE Y SENAL DE INICIO (START SIGNAL / START BUTTON)
+--------------------------------------------------------------------------------
+[REGLA Y CITA NORMATIVA]
+- Fuente: pages/general_rules/Robots.tex, Seccion 3.3.5 (\ref{rule:start_button}), lineas 44-50;
+  pages/general_rules/Procedure.tex, Seccion 3.6.8 (\ref{rule:start_signal}), lineas 96-111;
+  pages/organization/Setup.tex, linea 111.
+- Exigencia reglamentaria:
+  1. Casos de uso: Obligatorio para cualquier prueba donde el robot inicie dentro de la arena o no
+     haya puerta de entrada (ej. Pick & Place, Dining Room, segunda fase de Inspection).
+  2. Protocolo de activacion por el arbitro:
+     * El robot debe comunicar de forma audible o visual que esta listo para iniciar y que debe
+       hacer el arbitro ("must clearly inform the referee it is ready to start, and what it needs to do").
+     * Procedimiento de un solo toque ("one-button procedure") facil de operar por el arbitro.
+  3. Metodos autorizados previa aprobacion en Robot Inspection:
+     * Pulsar un boton fisico en el robot (claramente marcado como "START", accesible, NUNCA rojo).
+     * Liberar la seta de parada de emergencia (release E-stop).
+     * Boton fisico en mando remoto autorizado.
+     * Sensor de contacto o presion (ej. empujar suavemente la pinza, el torso o la cabeza).
+     * Instruccion verbal ("Robot, start").
+     * Gesto manual.
+     * Interfaz HRI en pantalla tactil / interfaz web (un solo boton grafico grande).
+  4. PROHIBICION EXPRESA Y TAXATIVA (Procedure.tex:108):
+     "Start signals that involve the referee usage of mouses or writting on keyboards are forbidden."
+     (Queda terminantemente prohibido exigir al arbitro usar un raton o escribir en un teclado).
+
+[ESTADO EN BASE@HOME SEGUN CODIGO Y DOCS]
+- Evidencia:
+  * Infraccion de regla en script actual:
+    src/base_athome_perception/scripts/hri_receptionist_challenge.py:1556-1558 (VERIFICADO):
+    `print("👉 Todo cargado. Con la ventana seleccionada: [ESPACIO] arranca la mision...")`
+    `self.say("All systems online. Press space to start.", emotion="happy", blocking=True)`
+    Depende de presionar la barra espaciadora en el teclado de la NUC. Si un arbitro es invitado
+    a presionar [ESPACIO], la prueba incurre en infraccion directa de la regla 3.6.8.
+  * Interfaz web de Commander:
+    src/base_athome_skills/base_athome_skills/mission/commander_node.py:37-52 (VERIFICADO):
+    Dispone de servidor HTTP en puerto 8770 con botones "Ver plan", "Ejecutar" (clase .go) y "Cancelar".
+    Permite operacion de un solo toque en tablet/movil (touchscreen), pero requiere configurar
+    un modo kiosk o URL directa sin necesidad de teclear comandos en el <textarea>.
+  * Boton fisico de arranque: NO ENCONTRADO en el chasis del robot.
+- Clasificacion: FALTA (debe eliminarse el requerimiento de pulsar [ESPACIO] y habilitarse comando
+  vocal ("start") o boton tactil de un toque en pantalla/tablet aprobado en inspeccion).
+
+
+--------------------------------------------------------------------------------
+3.5. TIEMPOS, SETUP, INACTIVIDAD Y REINICIO (TIME LIMITS & RESTARTS)
+--------------------------------------------------------------------------------
+[REGLA Y CITA NORMATIVA]
+- Fuente: pages/general_rules/Procedure.tex, Seccion 3.6.9 (\ref{rule:restart}), lineas 113-124;
+  pages/general_rules/Procedure.tex, Seccion 3.6.14 (\ref{rule:time_limits}), lineas 173-188;
+  pages/organization/Setup.tex, linea 116.
+- Exigencia reglamentaria:
+  1. Tiempo de preparacion (Setup time): REGLA GENERAL: NO HAY TIEMPO DE SETUP ("Unless stated
+     otherwise, there is no setup time", Procedure.tex:181). Los robots deben estar listos para
+     ingresar a la arena a mas tardar 1 minuto despues de que se cerro la puerta al equipo anterior.
+  2. Limite de inactividad (Inactivity rule): Si el robot permanece inmovil o atrapado en un bucle
+     sin progresar (y sin demostrar que intenta progresar), se considera inactivo. A los 30 SEGUNDOS
+     de inactividad continua, el robot es ELIMINADO de la arena por el arbitro (Procedure.tex:177).
+  3. Solicitud de extension temporal por el robot: El robot de manera autonoma (NUNCA el equipo)
+     puede solicitar al arbitro una extension del tiempo de inactividad para un calculo pesado
+     (ej. "I am computing the plan, please give me 60 seconds"). Maximo 3 minutos de extension,
+     utilizable UNA SOLA VEZ por prueba (Procedure.tex:179-180).
+  4. Regla de reinicio unico (Restart rule):
+     * Se permite un unico reinicio por intento de prueba.
+     * CONDICION ESTRICTA: Solo puede solicitarse ANTES de que el robot acumule 40 puntos.
+     * El cronometro de la prueba NO se detiene durante el reinicio.
+     * El equipo tiene un maximo de 60 segundos para reiniciar el robot y llevarlo a la posicion inicial.
+     * Todos los puntos obtenidos antes del reinicio se pierden (se computan solo los posteriores).
+  5. Duracion de pruebas regulares: 10 a 15 minutos segun la tarea (Receptionist: 10 min; Pick & Place: 10 min;
+     GPSR: 10 min; Doing Laundry: 15 min; Robot Inspection: 3 min).
+
+[ESTADO EN BASE@HOME SEGUN CODIGO Y DOCS]
+- Evidencia:
+  * Timeout critico en Commander:
+    src/base_athome_skills/base_athome_skills/mission/commander_node.py:189, 210 (VERIFICADO):
+    `voice = VoiceClient(self, start_timeout=30.0)`
+    `answer = self._hear(voice, "esperando yes o no", start_timeout=10.0)`
+    El timeout por defecto de escucha en VoiceClient es exactamente 30.0 s. Si el operador tarda
+    o el ambiente es ruidoso, el robot agota los 30 s sin emitir palabra ni moverse, colocandose
+    al borde del retiro forzado por inactividad.
+  * Solicitud verbal de extension: NO ENCONTRADO en commander_node.py ni en hri_receptionist_challenge.py.
+    No hay mecanismo implementado para invocar la regla 3.6.14.2 cuando un planificador de MoveIt
+    o un procesamiento de vision tarde mas de 25 segundos.
+  * Tiempo de booteo y red:
+    NUC y Jetson requieren entre 45 y 75 s para booteo en frio, subida de CycloneDDS unicast y
+    carga de modelos YOLO/Whisper (STATUS.md:140). Como el setup time es de maximo 1 minuto tras
+    el equipo previo, el robot NO puede encenderse desde cero en puerta; debe permanecer energizado
+    en el staging area con ROS 2 corriendo y nodos en espera pasiva.
+- Clasificacion: FALTA (Watchdog de inactividad con avisos verbales periodicos "I am working..."
+  y acortamiento de timeouts de ASR a 10-15 s con reintento activo).
+
+
+--------------------------------------------------------------------------------
+3.6. PEDIR AYUDA HUMANA Y SU COSTO (HUMAN ASSISTANCE / CONTINUE RULES)
+--------------------------------------------------------------------------------
+[REGLA Y CITA NORMATIVA]
+- Fuente: pages/general_rules/ContinueRules.tex, Secciones 3.7 (\ref{rule:continue}), 3.7.1 (\ref{rule:continue_procedure}),
+  3.7.2 (\ref{rule:continue_scoring}), 3.7.3 (Referee Intervention), 3.7.4 (\ref{rule:asrcontinue}) y 3.7.5 (\ref{rule:asralternative}), lineas 1-118.
+- Exigencia reglamentaria:
+  1. Principio rector: El robot debe intentar completar todas las tareas de forma autonoma.
+     La asistencia humana es exclusivamente el ULTIMO RECURSO ("intended as a last resort").
+     Antes de pedir ayuda, el robot debe intentar omitir (skip) o diferir subtareas inviables y
+     continuar con las partes alcanzables (ContinueRules.tex:6).
+  2. Protocolo obligatorio de solicitud de ayuda (ContinueRules.tex:21-35):
+     * Solicitud explicita y clara: El robot debe indicar claramente que necesita ayuda.
+     * Tipo de ayuda e intencion: Debe especificar con exactitud QUE accion requiere del humano
+       y CUAL es el resultado esperado (intended outcome).
+     * Supervision activa: El robot debe supervisar la accion mientras ocurre y determinar si
+       se ajusta a lo solicitado.
+     * Verificacion obligatoria: El robot NO PUEDE asumir exito sin confirmacion sensorial
+       o interaccion explicita ("must not assume success without confirmation through perception
+       or explicit interaction").
+  3. Costo y penalidad en puntuacion:
+     * CERO PUNTOS: Cualquier elemento de la tarea completado mediante asistencia humana recibe
+       0 PUNTOS ("scored as zero points", ContinueRules.tex:62), salvo que la tarea especifique lo contrario.
+  4. Intervencion y terminacion por el arbitro (ContinueRules.tex:64-73):
+     * El arbitro puede dar por terminada la prueba inmediatamente si se solicita ayuda no anunciada
+       en la reunion de lideres (Team Leader Meeting), si el robot no muestra progreso razonable tras
+       recibir ayuda, o si A PARTIR DE LA SEGUNDA SOLICITUD DE AYUDA se observan pedidos repetidos
+       o excesivos sin demostrar accion autonoma.
+  5. Reglas de Bypass de Reconocimiento de Voz (ASR) (ContinueRules.tex:81-100):
+     * Operador por defecto (arbitro): Sin penalidad (0% reduccion). Puede repetir la frase hasta 3 veces.
+     * Operador personalizado (miembro del equipo): -10% del puntaje maximo alcanzable en la prueba.
+     * Instruccion por gestos manuales aprobados: -20% del puntaje maximo alcanzable.
+     * Metodo de entrada natural alternativo (touchscreen / app GUI): Hasta -20% de reduccion.
+       Debe ser intuitivo, autoexplicativo, sin manual, y adaptarse dinamicamente al contexto (ContinueRules.tex:106-112).
+
+[ESTADO EN BASE@HOME SEGUN CODIGO Y DOCS]
+- Evidencia:
+  * Ausencia de protocolo de ayuda humana: NO ENCONTRADO en src/base_athome_skills ni en perception.
+    Si el robot falla un agarre o Nav2 aborta una trayectoria, la mision se detiene o lanza error.
+    No existen dialogos que soliciten al humano "Please hand me the object" o "Please open the door",
+    ni rutinas de verificacion visual de que el objeto fue colocado o la puerta abierta.
+  * docs/ROADMAP.md linea 153 (VERIFICADO): Tarea pendiente "Plan B: pedir la bolsa en mano si falla
+    el agarre, y correcciones por voz... Estado: No hecho".
+  * Bypass de ASR en HRI: docs/ROADMAP.md linea 191 (VERIFICADO): "Interfaz tactil: hasta -20% ...
+    usar solo como respaldo tras 2 fallos de ASR". Actualmente la interfaz de commander_node.py
+    no esta adaptada como UI de bypass formal para que un arbitro seleccione comandos de lista fija.
+- Clasificacion: FALTA (debe implementarse una libreria de "Continue/Human Assistance" que formule
+  el pedido verbal, supervise con camara/feedback y verifique el resultado para evitar abandono de tarea).
+
+
+--------------------------------------------------------------------------------
+3.7. FALLAS, COLISIONES E INTERVENCION DEL ARBITRO
+--------------------------------------------------------------------------------
+[REGLA Y CITA NORMATIVA]
+- Fuente: pages/general_rules/Procedure.tex, Seccion 3.6.1 (\ref{rule:safetyfirst}), lineas 3-9;
+  Seccion 3.6.6 (Collisions), lineas 60-72; Seccion 3.6.7 (\ref{rule:robot_removal}), lineas 74-86;
+  pages/general_rules/PenaltiesBonuses.tex, Seccion 3.8.2 (\ref{rule:extraordinary_penalties}), lineas 17-26;
+  pages/setup/macros_scoresheets.tex, linea 35.
+- Exigencia reglamentaria:
+  1. Jerarquia absoluta: La regla "Safety First!" prevalece sobre cualquier otra regla del reglamento.
+  2. Tipologia de contactos fisicos:
+     * Contacto leve ("Touching"): Un toque suave de objetos es aceptable pero desaconsejado.
+     * Contacto funcional ("Functional touching"): Permitido aplicar presion sobre muebles o empujar
+       puertas/sillas con partes estructurales, PERO el robot debe anunciarlo verbalmente de antemano
+       y solicitar amablemente no ser detenido ("clearly announce the interaction and kindly request
+       not being stopped", Procedure.tex:70).
+     * Colision grave ("Major collision"): Chocar contra una pared, mueble o persona provoca la
+       DETENCION INMEDIATA de la prueba por el arbitro.
+  3. Penalidades extraordinarias:
+     * Colision con negligencia grave: Descalificacion de la prueba (0 puntos) o de toda la competencia
+       (PenaltiesBonuses.tex:22).
+     * Fraude / Simulacion de autonomia ("Cheating / Breaking Fair Play"): Descalificacion de la prueba
+       y penalidad de -500 PUNTOS (\penaltybig), con posible expulsion del torneo (PenaltiesBonuses.tex:19).
+     * Inasistencia no anunciada a una prueba programada: Penalidad de -500 PUNTOS (\notattendingpenalty = 500).
+       La ausencia debe notificarse a la organizacion con al menos 60 minutos de anticipacion (PenaltiesBonuses.tex:14).
+     * No presentarse como arbitro o asistente asignado: Penalidad de -250 PUNTOS (\penaltysmall = 250) (PenaltiesBonuses.tex:24).
+  4. Desobediencia a la orden de parada: Negarse a detener el robot tras solicitud del arbitro
+     conlleva expulsion del torneo y suspension de 1 ano para los integrantes (Procedure.tex:8).
+
+[ESTADO EN BASE@HOME SEGUN CODIGO Y DOCS]
+- Evidencia:
+  * Zona ciega del lidar Hokuyo:
+    docs/ROBOT.md linea 126 y docs/collab/STATUS.md linea 45 (VERIFICADO):
+    "base de 22 cm; base del lidar a 32 cm del piso; haz a 38 cm (laser_offset_z=0.32)...
+    Nav2 no ve obstaculos por debajo de 38 cm."
+    Cualquier objeto bajo (juguetes, zapatillas, cables, pedestales de lamparas, patas de mesas en cruz)
+    es completamente invisible para el sistema de navegacion Nav2, generando riesgo inminente de
+    colision grave (major collision) con descalificacion directa de la prueba.
+  * RealSense D435 no integrada en costmap de navegacion:
+    docs/ROBOT.md:49-50 y ROADMAP.md:160 ("HOME-67 Obstaculos bajos con RealSense ... Prototipo; decision
+    del usuario"). La camara RGB-D de la cabeza no proyecta nube de puntos ni costmap 3D en Nav2;
+    la navegacion depende unicamente del plano 2D del Hokuyo.
+  * Comportamientos de recuperacion en Nav2:
+    src/base_athome_navigation/config/nav2_params.yaml lineas 350-352 definen behaviors Spin, BackUp y Wait.
+    Un giro de recuperacion (Spin) con el brazo Piper fuera de la posicion recogida o con el elevador
+    desplegado puede barrer muebles circundantes.
+- Clasificacion: POR CONFIRMAR / RIESGO CRITICO (Riesgo alto de colision por zona ciega bajo 38 cm).
+
+
+--------------------------------------------------------------------------------
+3.8. ALTURA, DIMENSIONES Y PESO DEL ROBOT
+--------------------------------------------------------------------------------
+[REGLA Y CITA NORMATIVA]
+- Fuente: pages/general_rules/Robots.tex, Seccion 3.3.3 (\ref{rule:robots_size}), lineas 24-33;
+  pages/appendices/LeagueRequirements.tex, linea 36;
+  pages/scoresheets/registration_form.tex, lineas 71-72.
+- Exigencia reglamentaria:
+  1. Dimensiones de paso: El robot debe caber comodamente a traves de una puerta estandar de
+     vivienda: tipicamente 200 cm (altura) por 70 cm (ancho) (Robots.tex:27).
+  2. Diametro de base tipico en OPL: 70 cm de diametro maximo de huella de navegacion, con
+     extensiones permitidas para brazos manipuladores durante la operacion (LeagueRequirements.tex:36).
+  3. Peso total y presion de suelo: Sin limite numerico fijo, pero debe respetar la normativa de
+     construccion de edificios y oficinas del pais sede (no danar parquet ni sobrecargar losas, Robots.tex:30).
+  4. Transportabilidad rapida: El robot debe poder ser levantado y retirado de la arena por los
+     miembros del equipo de manera rapida y sencilla ("quick and easy", Robots.tex:32).
+  5. Cantidad de robots: Maximo 2 por equipo. Un cambio de efector final (pinza alternativa) cuenta
+     como un segundo robot y exige superar la inspeccion en ambas configuraciones (Robots.tex:6).
+
+[ESTADO EN BASE@HOME SEGUN CODIGO Y DOCS]
+- Evidencia:
+  * Dimensiones segun modelo URDF/Xacro:
+    src/hoverboard_base/urdf/xacro/properties.xacro (VERIFICADO):
+    - chassis_length = 0.48 m (linea 7)
+    - chassis_width = 0.48 m (linea 8)
+    - chassis_height = 0.22 m (linea 10)
+    - track_width = 0.5620 m (linea 14)
+    - wheel_width = 0.055 m (linea 16)
+    - column_height = 1.30 m (linea 34)
+    Calculo de ancho maximo exterior: track_width (0.562 m) + wheel_width (0.055 m) = 0.617 m (61.7 cm).
+    Calculo de altura total: base 0.22 m + columna 1.30 m + cabeza pan-tilt/camara ~0.15 m = ~1.67 m.
+    Comparacion con el limite normativo:
+    - Ancho: 61.7 cm < 70.0 cm (CUMPLE con 8.3 cm de holgura).
+    - Altura: 1.67 m < 2.00 m (CUMPLE con 33 cm de holgura).
+  * Huella de navegacion (Footprint):
+    src/base_athome_navigation/config/nav2_params.yaml define robot_radius: 0.44 m (diametro equivalente 88 cm).
+    El costo de inflado protege al robot contra colisiones, aunque para puertas estrechas (90 cm) exige
+    ajustar el radio de inflado para permitir el paso sin oscilaciones (docs/ROBOT.md:350).
+  * Peso y transporte:
+    docs/TDP_BORRADOR.txt:1160 reporta peso medido como POR CONFIRMAR. Estimado entre 45 y 55 kg
+    (baterias Li-ion, base de hoverboard con motores hub, estructura de aluminio, columna NEMA23,
+    brazo Piper de 1.5 kg, dos mini-PCs). Transportable entre dos personas mediante asas laterales.
+- Clasificacion: CUMPLE dimensionalmente en diseno; POR CONFIRMAR pesaje final en bascula y medicion
+  con cinta metrica en el robot real ensamblado.
+
+
+--------------------------------------------------------------------------------
+3.9. VOZ, AUDIO Y COMUNICACION (WIRELESS, AUDIO Y AUDIENCE DISPLAY)
+--------------------------------------------------------------------------------
+[REGLA Y CITA NORMATIVA]
+- Fuente: pages/general_rules/Robots.tex, linea 18;
+  pages/general_rules/ExternalDevices.tex, lineas 9-35;
+  pages/general_rules/Scenario.tex, Seccion 3.2.5 (\ref{rule:scenario_wifi}), lineas 179-198;
+  pages/general_rules/AudienceInteraction.tex, lineas 1-5;
+  pages/general_rules/vizbox.tex, lineas 1-16;
+  pages/organization/Setup.tex, linea 112.
+- Exigencia reglamentaria:
+  1. Microfonos y transmision de audio:
+     * PROHIBICION ESTRICTA de microfonos inalambricos corporales (headsets, solaperos de mano,
+       ExternalDevices.tex:9). Todos los sensores acusticos deben viajar fisicamente a bordo del robot.
+  2. Sistema de reproduccion y salida de audio para el recinto:
+     * La voz sintetizada del robot debe ser potente y clara en un entorno de feria ruidoso (Setup.tex:106).
+     * En la Robot Inspection se verifica el sistema de altavoces y la presencia de un conector o
+       enlace RF hacia la consola de sonido del estadio ("robot speaker system (plug for RF transmission)",
+       Setup.tex:112), para que los jueces y el publico escuchen claramente los dialogos.
+  3. Red inalambrica y conectividad:
+     * UNICAMENTE se permite la conexion a la red oficial de la arena (ArenaNetwork) mediante la VLAN
+       especifica asignada al equipo (Scenario.tex:187-193).
+     * PROHIBICION TOTAL DE REDES INALAMBRICAS PROPIAS: La emision de redes WiFi o puntos de acceso
+       (hotspots), incluso con SSID oculto, resulta en DESCALIFICACION INMEDIATA del equipo (Scenario.tex:195).
+     * No hay garantia de disponibilidad ni estabilidad de WiFi: el robot debe ser capaz de operar
+       de forma completamente autonoma sin acceso a red externa (ExternalDevices.tex:10, Scenario.tex:183).
+  4. Pantalla e interaccion con la audiencia:
+     * Se espera que el robot transmita informacion de estado a la audiencia (estado del robot, mapa,
+       modelo del mundo, subtitulos de la conversacion con el humano) utilizando una pantalla o el
+       servidor web oficial VizBox (AudienceInteraction.tex:5, vizbox.tex:5-12).
+
+[ESTADO EN BASE@HOME SEGUN CODIGO Y DOCS]
+- Evidencia:
+  * Microfono a bordo: RODE VideoMic GO II (shotgun direccional) conectado por USB a la Jetson (VERIFICADO,
+    docs/ROBOT.md:107). Cumple la prohibicion de microfonos inalambricos corporales.
+  * ASR en nodo local: jetson_head/src/audio_asr/audio_asr/whisper_node.py corre Whisper en CPU int8
+    sin depender de la nube. Cumple la exigencia de operar offline ante caidas de red (VERIFICADO).
+  * RIESGO DE RF / BLUETOOTH EN PARLANTE:
+    src/base_athome_perception/base_athome_perception/speaker.py lineas 113-125 (VERIFICADO):
+    `def ensure_bluetooth_sink() -> Optional[str]:`
+    `res = subprocess.run(["pactl", "list", "sinks", "short"]... "bluez_output")`
+    `subprocess.run(["pactl", "set-default-sink", bt_sink]...)`
+    El codigo intenta enlazar un parlante Bluetooth. En una competencia con saturacion de la banda
+    de 2.4 GHz, los parlantes Bluetooth sufren cortes, latencias severas y violan la prohibicion
+    de emitir o enlazar dispositivos inalambricos no homologados en la inspeccion.
+    Solucion requerida: Salida de audio 100% cableada por jack de 3.5 mm o USB, con splitter de linea
+    para alimentar tanto el parlante propio como el transmisor RF de la arena.
+  * Interfaz de red cableada NUC-Jetson:
+    docs/ROBOT.md lineas 78-94 (VERIFICADO): CycloneDDS configurado con unicast estricto sobre cable
+    Ethernet directo (10.42.0.1 y 10.42.0.12). Hotspots apagados en NetworkManager. CUMPLE la regla
+    antihotspot del reglamento.
+  * Visualizador para audiencia (VizBox):
+    No existe nodo VizBox ni publicador de subtitulos hacia pantallas de audiencia. Commander
+    posee un servidor HTTP interno en puerto 8770, pero esta disenado para control del equipo, no
+    para visualizacion publica (FALTA).
+- Clasificacion: PARCIAL (Audio de recepcion CUMPLE; salida por Bluetooth debe ser eliminada y
+  reemplazada por conector jack auxiliar; VizBox o pantalla de subtitulos FALTA).
+
+
+--------------------------------------------------------------------------------
+3.10. CODIGO ABIERTO Y PREMIO OPEN SOURCE (OPEN SOURCE REQUIREMENTS & AWARD)
+--------------------------------------------------------------------------------
+[REGLA Y CITA NORMATIVA]
+- Fuente: pages/general_rules/TeamRegistration.tex, Secciones 3.1.2 (\ref{rule:website_tdp}),
+  3.1.4 (Team Website) y 3.1.5 (\ref{rule:qualification}), lineas 18-97;
+  pages/introduction/Awards.tex, Seccion 1.3.6 (\ref{award:oss}), lineas 50-60.
+- Exigencia reglamentaria:
+  1. Requisitos para Calificacion (Team Website & TDP):
+     * El sitio web del equipo (en ingles) debe contener material cientifico, publicaciones de los ultimos
+       5 anos y codigo fuente documentado en repositorios de codigo abierto (TeamRegistration.tex:74).
+     * Los repositorios, planos (blueprints) y conjuntos de datos liberados son altamente valorados
+       en la calificacion oficial ("highly valued during the qualification process", linea 83).
+     * El anexo del TDP (pagina 9) debe listar paquetes de terceros utilizados y contribuciones de hardware.
+  2. Premio al Software de Codigo Abierto (Open-source software award):
+     * Otorgado desde Nagoya 2017 para premiar la mejor contribucion a la comunidad RoboCup@Home.
+     * Metricas IEEE requeridas: escalabilidad, portabilidad, mantenibilidad, tolerancia a fallos
+       y robustez (Awards.tex:53). Codigo limpio, documentado y con patrones de diseno estandar.
+     * CONDICION TECNICA FUNDAMENTAL (Awards.tex:54):
+       "Additionally, the open-source software must be available as a framework-independent standalone
+       library to ensure it can be reused with any software architecture."
+       (El software de codigo abierto debe estar disponible como una libreria autonoma e INDEPENDIENTE
+       DE FRAMEWORK, de modo que pueda ser reutilizada en cualquier arquitectura, sin atarse a un stack privativo).
+     * Postulacion formal: Envio de un paper corto de maximo 4 paginas al Comite Tecnico al menos
+       1 mes antes de la competencia, justificando la contribucion, patrones de software, comparacion con
+       el estado del arte y equipos que ya esten utilizando la herramienta.
+
+[ESTADO EN BASE@HOME SEGUN CODIGO Y DOCS]
+- Evidencia:
+  * Repositorio publico en GitHub:
+    Repositorio base_athome (https://github.com/ShiiSuii/base_athome) es publico y bajo desarrollo.
+    Candidato para la calificacion del 6/12/2026.
+  * Librerias desacopladas existentes:
+    - src/base_athome_skills/base_athome_skills/door_detector.py (VERIFICADO):
+      Disenado como logica pura sin dependencias de ROS 2 (recibe secuencias numericas crudas).
+    - src/base_athome_perception/base_athome_perception/seat_occupancy.py (VERIFICADO):
+      Logica geometrica y de asignacion desacoplada de middleware.
+  * Brecha para el Open Source Award:
+    No se ha seleccionado ni publicado una libreria autonoma empaquetada (ej. en PyPI o repositorio
+    independiente con documentacion Sphinx/mkdocs y CI completo) ni se ha redactado el paper de
+    postulacion de 4 paginas exigido por el Comite Tecnico.
+- Clasificacion: CUMPLE para calificacion (repo publico y TDP); FALTA para postular al premio Open Source.
+
+
+================================================================================
+4. ANALISIS DE IMPACTO: QUE PUEDE DESCALIFICAR O COSTAR MAS PUNTOS
+================================================================================
+
+El reglamento de RoboCup@Home penaliza drasticamente los fallos de seguridad funcional,
+la indisciplina organizativa y los bloqueos por inactividad. A continuacion se detallan
+las causas directas de descalificacion y las mayores fuentes de perdida de puntaje:
+
+--------------------------------------------------------------------------------
+4.1. CAUSAS DE DESCALIFICACION DIRECTA DEL TORNEO O DE LA PRUEBA
+--------------------------------------------------------------------------------
+1. DESOBEDIENCIA AL E-STOP O FALLA EN DETENER EL ROBOT (DESCALIFICACION + EXPULSION):
+   - Cita: Procedure.tex, Seccion 3.6.1 (\ref{rule:safetyfirst}), lineas 7-8.
+   - Consecuencia: Descalificacion inmediata del torneo y propuesta de suspension por
+     al menos 1 ano por la directiva de la RoboCup Federation. Ocurre si el robot no frena
+     de inmediato al pulsar la seta o al recibir la orden de los jueces.
+2. EMISION DE REDES INALAMBRICAS PROPIAS (HOTSPOTS / SSIDs OCULTOS) (DESCALIFICACION):
+   - Cita: Scenario.tex, Seccion 3.2.5 (\ref{rule:scenario_wifi}), lineas 195-197.
+   - Consecuencia: Descalificacion automatica del equipo. Esta terminantemente prohibido
+     levantar routers propios o puntos de acceso WiFi en la NUC o Jetson.
+3. FRAUDE Y SIMULACION DE AUTONOMIA (CHEATING / BREAKING FAIR PLAY) (DESCALIFICACION + -500 PTS):
+   - Cita: Procedure.tex:55 y PenaltiesBonuses.tex:19 (\ref{rule:extraordinary_penalties}).
+   - Consecuencia: Descalificacion de la prueba en curso, aplicacion de una penalidad de
+     -500 puntos (\penaltybig) y posible expulsion definitiva de la competencia.
+4. COLISION GRAVE CON NEGLIGENCIA (MAJOR COLLISION) (DESCALIFICACION DE PRUEBA / TORNEO):
+   - Cita: PenaltiesBonuses.tex:22 y Procedure.tex:66.
+   - Consecuencia: Descalificacion inmediata del test (0 puntos) y potestad del TC de
+     expulsar al robot si considera que la navegacion es peligrosa para el entorno.
+5. NO SUPERAR LA INSPECCION DE ROBOT (BLOQUEO TOTAL DE PARTICIPACION):
+   - Cita: Setup.tex, Seccion 2.4 (\ref{sec:robot_inspection}), linea 115.
+   - Consecuencia: Ningun robot tiene permitido ingresar a ninguna prueba del torneo si
+     no aprobo previamente la Robot Inspection.
+
+--------------------------------------------------------------------------------
+4.2. MAYORES FUENTES DE PERDIDA DE PUNTOS
+--------------------------------------------------------------------------------
+1. INASISTENCIA NO ANUNCIADA A UNA PRUEBA (-500 PUNTOS):
+   - Cita: PenaltiesBonuses.tex:14 (\ref{rule:not_attending}).
+   - Penalidad directa: -500 puntos (\notattendingpenalty). Debe anunciarse la baja con al
+     menos 60 minutos de antelacion ante la mesa de organizacion (OC).
+2. INACTIVIDAD DE 30 SEGUNDOS (PERDIDA TOTAL DE PUNTOS RESTANTES):
+   - Cita: Procedure.tex:177 (\ref{rule:time_limits}).
+   - Consecuencia: Retiro forzado del robot. Si una mision de 1450 puntos (ej. HRI Challenge)
+     se traba en el segundo 20 sin hablar ni moverse, a los 30 segundos se pierde todo el puntaje.
+3. NO PRESENTAR ARBITRO O ASISTENTE ASIGNADO (-250 PUNTOS):
+   - Cita: PenaltiesBonuses.tex:24 (\ref{rule:extraordinary_penalties}).
+   - Penalidad: -250 puntos (\penaltysmall) por cada turno donde el equipo no envia su delegado.
+4. PERDIDA POR SOLICITUD DE AYUDA HUMANA (0 PUNTOS EN SUBTAREA):
+   - Cita: ContinueRules.tex:62 (\ref{rule:continue_scoring}).
+   - Consecuencia: La subtarea asistida recibe 0 puntos. Si se pide ayuda repetida a partir
+     del segundo intento, el arbitro puede cancelar la prueba completa.
+5. FALLA DE VOZ (ASR) SIN INTERFAZ DE BYPASS ALTERNATIVA (PERDIDA DE HASTA 1450 PUNTOS):
+   - Cita: ContinueRules.tex:81-100.
+   - Consecuencia: Si el ASR falla por ruido de feria y no hay UI tactil autorizada (-20% penalidad),
+     el robot no puede recibir ordenes y obtiene 0 puntos en toda la mision.
+6. MALA APARIENCIA / HARDWARE EXPUESTO (-50 PUNTOS):
+   - Cita: Setup.tex:117.
+   - Penalidad: Hasta 50 puntos aplicados durante la Robot Inspection por cables colgando o cinta adhesiva.
+
+
+================================================================================
+5. LOS 5 MAYORES RIESGOS PARA BASE@HOME ANTES DE LA COMPETENCIA
+================================================================================
+
+1. RIESGO 1: PARADA DE EMERGENCIA (E-STOP) ELECTRICA UNIFICADA NO HOMOLOGADA
+   - Causa raiz: En docs/ROBOT.md:110-113 y docs/TDP_BORRADOR.txt:1159-1165 se documenta
+     que el corte electrico central del E-stop esta PENDIENTE. En software existen comandos
+     aislados por nodo, pero no hay evidencia de un rele de desconexion rapida gobernado por
+     un boton rojo fisico unico y visible que desenergice a la vez motores de traccion (36V),
+     brazo Piper (24V), elevador NEMA23 (24V) y servos Dynamixel (12V).
+   - Impacto normativo: DESCALIFICACION DIRECTA en la Robot Inspection (Setup.tex:104, Robots.tex:41).
+     El robot no podra ingresar a ninguna prueba regular si el E-stop no frena todo fisicamente.
+
+2. RIESGO 2: ZONA CIEGA DE NAVEGACION POR DEBAJO DE 38 CM (RIESGO DE COLISION GRAVE)
+   - Causa raiz: El sensor Hokuyo UST-05LX emite su plano laser a 38 cm de altura (base 22 cm,
+     laser_offset_z=0.32 en robot.urdf.xacro). La camara RealSense D435 no esta integrada
+     en los costmaps de Nav2 (docs/ROBOT.md:126, ROADMAP.md:160).
+   - Impacto normativo: DETENCION Y 0 PUNTOS por "Major Collision" (Procedure.tex:66).
+     Cualquier obstaculo de baja altura (juguetes, patas de mesas, calzado, cables, cajas bajas)
+     no es percibido por Nav2, provocando colision frontal directa y cancelacion de la prueba.
+
+3. RIESGO 3: BLOQUEO POR INACTIVIDAD DE 30 SEGUNDOS Y ARRANQUE DEPENDIENTE DE TECLADO
+   - Causa raiz: El timeout de espera de voz en VoiceClient es de 30.0 s (commander_node.py:189),
+     lo que iguala exactamente el limite de inactividad de la regla 3.6.14. Ademas, el arranque
+     del script de misiones espera que el operador presione [ESPACIO] en teclado (hri_receptionist_challenge.py:1556),
+     violando la prohibicion taxativa de la regla 3.6.8 que prohibe el uso de teclados al arbitro.
+   - Impacto normativo: EXPULSION DE LA ARENA a los 30 segundos por inactividad (Procedure.tex:177)
+     e INFRACCION REGLAMENTARIA en senal de inicio manual si se le solicita al juez presionar teclas.
+
+4. RIESGO 4: USO DE PARLANTE BLUETOOTH Y FALTA DE CONECTOR RF DE AUDIO
+   - Causa raiz: El codigo de sintesis de voz speaker.py:113-125 busca y enlaza sinks Bluetooth
+     ("bluez_output"). En un recinto con centenares de personas y congestion extrema de 2.4 GHz,
+     el enlace Bluetooth colapsa y emite radiacion RF no autorizada. Asimismo, no existe jack
+     auxiliar o salida cableada de audio documentada para transmitir la voz a la consola del estadio.
+   - Impacto normativo: FALLA DE INSPECCION (Setup.tex:112 exige verificar salida/RF) e ininteligibilidad
+     de la voz ante los jueces, perdiendo puntos de confirmacion HRI (hasta 1450 pts).
+
+5. RIESGO 5: AUSENCIA DE PROTOCOLO DE AYUDA HUMANA ("CONTINUE") Y UI ALTERNATIVA DE BYPASS
+   - Causa raiz: No existen rutinas en skills ni perception para invocar ayuda humana estructurada
+     cuando una habilidad fisica falla (ej. agarre de bolsa o picaporte trabado), ni se cuenta
+     con una interfaz web/tablet de facil acceso para que el arbitro ingrese ordenes si el ASR falla.
+   - Impacto normativo: ABANDONO INVOLUNTARIO DE MISION. Sin protocolo de ayuda, el robot aborta
+     el plan completo y termina la prueba con puntuacion nula, en lugar de aceptar 0 puntos en la
+     accion particular (-10% o -20% en ASR) y rescatar los cientos de puntos de las siguientes subtareas.
+
+
+================================================================================
+6. LO QUE QUEDA SIN VERIFICAR (POR CONFIRMAR) EN EL ROBOT REAL
+================================================================================
+
+Los siguientes puntos estan clasificados como POR CONFIRMAR debido a que no cuentan con
+ensayos fisicos concluyentes en el robot energizado:
+
+1. PESO TOTAL EN BASCULA Y MEDIDAS CON CINTA METRICA DEL ROBOT REAL ARMADO:
+   - Estado: Estimado por URDF/CAD (~61.7 cm ancho, ~1.67 m altura, ~50 kg peso).
+   - Pendiente: Colocar el robot real completamente montado (con baterias, cubiertas y cableado)
+     sobre una bascula industrial y medir con cinta metrica altura de tope y ancho exterior maximo
+     para asentar en la registration_form.tex y TDP Annex.
+2. VERIFICACION ELECTRICA DEL CORTE DE E-STOP EN BANCO CON HARDWARE ENERGIZADO:
+   - Estado: Codigo ROS 2 responde a topicos de parada, pero la alimentacion electrica esta
+     marcada como PENDIENTE en docs/ROBOT.md:110-113.
+   - Pendiente: Ensayo fisico supervisado (LAB_SUPERVISADO) donde se pulse la seta roja de
+     emergencia mientras los 4 actuadores se mueven simultaneamente (base a 0.3 m/s, brazo
+     interpolando, elevador subiendo y pan-tilt girando), constatando que todos se detienen
+     al instante sin desconectar las computadoras ni perder logs de depuracion.
+3. PRUEBA DE FRENADO SEGURO ANTE EL PASO DE UN MIEMBRO DEL COMITE TECNICO:
+   - Estado: Simulado en RViz / Gazebo.
+   - Pendiente: Ejecutar prueba fisica en la NUC a 0.38 m/s donde una persona cruza repentinamente
+     a 1.0 m de distancia, midiendo tiempo de reaccion, desaceleracion y distancia de detencion
+     sin derrape ni volcamiento.
+4. PRESION SONORA (SPL EN DECIBELES) DE LA VOZ DEL ROBOT A 2 METROS:
+   - Estado: Sintesis TTS probada por software con RoboCupSpeaker.
+   - Pendiente: Medir con decibelimetro a 2.0 m de distancia con parlante cableado a maximo
+     volumen sin saturacion para garantizar que supera los 70-75 dBA en el estadio.
+5. ROBUSTEZ ACUSTICA DEL MICROFONO RODE CON RUIDO DE FONDO DE COMPETENCIA:
+   - Estado: Whisper small.en probado en ambiente silencioso (STATUS.md:18).
+   - Pendiente: Evaluar porcentaje de reconocimiento ASR inyectando grabaciones de murmullo
+     y aplausos de eventos RoboCup reales a 65 dBA a 1.5 m del robot.
+
+
+================================================================================
+7. RECOMENDACIONES DE INGENIERIA PRIORIZADAS POR UTILIDAD
+================================================================================
+
+A continuacion se presentan las recomendaciones concretas de ingenieria de software
+para subsanar las brechas reglamentarias detectadas, ordenadas por beneficio inmediato,
+indicando archivo afectado, procedimiento de validacion en simulacion y nivel de riesgo:
+
+--------------------------------------------------------------------------------
+RECOMENDACION 1: ELIMINAR EL ARRANQUE POR TECLADO [ESPACIO] Y ADMITIR SENAL REGLAMENTARIA
+--------------------------------------------------------------------------------
+- Archivo a modificar:
+  src/base_athome_perception/scripts/hri_receptionist_challenge.py (lineas 1555-1565)
+- Cambio propuesto:
+  Reemplazar la espera exclusiva de la tecla [ESPACIO] por dos vias reglamentarias:
+  1. Si se inicia fuera de la arena: Transicionar directamente a la escucha de DoorOpenDetector
+     (src/base_athome_skills/base_athome_skills/door_detector.py).
+  2. Si se inicia dentro: Escuchar una senal verbal de inicio ("Robot, start") o publicar un
+     topico ROS 2 /robot/start_trigger que pueda ser activado con un boton web grande en la UI.
+- Validacion previa en simulation/:
+  Correr en sim_commander.sh con ATHOME_SIM=1 verificando que la maquina de estados pasa de
+  PRE-FLIGHT a EJECUCION automaticamente sin requerir pulsacion de teclas.
+- Nivel de riesgo: BAJO (no afecta cinematica ni navegacion protegida; elimina causal de infraccion).
+
+--------------------------------------------------------------------------------
+RECOMENDACION 2: IMPLEMENTAR WATCHDOG ACTIVO DE INACTIVIDAD CON AVISOS DE PROGRESO
+--------------------------------------------------------------------------------
+- Archivo a modificar:
+  src/base_athome_skills/base_athome_skills/mission/commander_node.py (lineas 185-215)
+- Cambio propuesto:
+  1. Reducir el start_timeout de escucha continua de ASR de 30.0 s a 12.0 s.
+  2. Si a los 10 segundos no se recibio audio ni accion de navegacion, emitir una frase audible
+     ("I am waiting for your instruction" o "I am processing the data") para resetear formalmente
+     el criterio de inactividad de los jueces.
+  3. Agregar la capacidad de invocar la regla 3.6.14.2: decir "Requesting 60 seconds of processing time"
+     si una planificacion de MoveIt o mapa semantico requiere mas tiempo.
+- Validacion previa en simulation/:
+  Simular retardo artificial de ASR en test_commander_voice.py y verificar que el nodo emite
+  el mensaje de mantenimiento de estado antes de los 15 segundos.
+- Nivel de riesgo: BAJO.
+
+--------------------------------------------------------------------------------
+RECOMENDACION 3: CREAR LIBRERIA Y MAQUINA DE ESTADOS DE AYUDA HUMANA ("CONTINUE CLIENT")
+--------------------------------------------------------------------------------
+- Archivo a crear:
+  src/base_athome_skills/base_athome_skills/mission/human_assistance.py
+- Cambio propuesto:
+  Implementar la clase HumanAssistanceClient que cumpla taxativamente ContinueRules.tex:
+  - Formular el pedido explicito: "I cannot reach the bag. Could you please hand it to me?".
+  - Esperar interaccion guiada.
+  - Verificar visualmente o por esfuerzo de pinza (/arm/status) que la accion fue completada.
+  - Registrar en el log de la mision que el sub-item se marco con 0 puntos por ayuda humana,
+    pero continuar de inmediato hacia el siguiente waypoint sin abortar la prueba completa.
+- Validacion previa en simulation/:
+  Inyectar falla forzada de agarre en sim_scene.py y verificar que la mision completa la transicion
+  pidiendo ayuda simulada y entregando el objeto en el destino final.
+- Nivel de riesgo: BAJO.
+
+--------------------------------------------------------------------------------
+RECOMENDACION 4: ERRADICAR BLUETOOTH Y ASEGURAR SALIDA CABLEADA CON CONECTOR RF
+--------------------------------------------------------------------------------
+- Archivo a modificar:
+  src/base_athome_perception/base_athome_perception/speaker.py (lineas 113-125)
+- Cambio propuesto:
+  1. Eliminar completamente la llamada a ensure_bluetooth_sink() y la busqueda de "bluez_output".
+  2. Fijar como sink predeterminado la tarjeta de sonido interna de la NUC (line-out o HDMI/jack).
+  3. Solicitar al equipo de hardware instalar un splitter de audio pasivo (jack 3.5 mm dual):
+     una salida al parlante amplificado del robot y otra salida rotulada como "ARENA PA / RF TRANSMISSION"
+     para entregar al Comite Tecnico durante la Robot Inspection.
+- Validacion previa en simulation/:
+  Ejecutar test_voice_client.py verificando que pactl conmuta al dispositivo local sin errores de timeout.
+- Nivel de riesgo: BAJO.
+
+--------------------------------------------------------------------------------
+RECOMENDACION 5: INTEGRAR FILTRADO DE OBSTACULOS BAJOS CON REALSENSE (HOME-67)
+--------------------------------------------------------------------------------
+- Archivo a modificar:
+  src/base_athome_navigation/config/nav2_params.yaml (costmap local, como propuesta NAV-PROP-006)
+- Cambio propuesto:
+  Agregar una capa de observacion obstacle_layer tipo PointCloud2 basada en el topico
+  /camera/depth/color/points de la RealSense D435 con filtro de altura (z: 0.05 a 0.50 m)
+  para rellenar la zona ciega del Hokuyo por debajo de 38 cm.
+- Validacion previa en simulation/:
+  En simulation/scripts/hacer_mapa.py colocar obstaculos de 15 cm de altura en Gazebo y verificar
+  que Nav2 los infla en el costmap local y planifica rutas evasivas sin colisionar.
+- Nivel de riesgo: MEDIO (requiere autorizacion especifica al tocar parametros de navegacion protegida).
+
+--------------------------------------------------------------------------------
+RECOMENDACION 6: DESARROLLAR LA RUTINA FORMAL DE ROBOT INSPECTION
+--------------------------------------------------------------------------------
+- Archivo a crear:
+  src/base_athome_skills/scripts/robot_inspection_mission.py
+- Cambio propuesto:
+  Crear una maquina de estados de mision dedicada para superar los 3 minutos de inspeccion:
+  1. Esperar apertura de puerta con DoorOpenDetector.
+  2. Navegar de forma autonoma al Inspection Point (/amcl_pose predefinido).
+  3. Decir fuerte y claro: "Robot ready for inspection. Please verify emergency stop, speaker and collision avoidance."
+  4. Esperar senal manual de arranque reglamentaria (start button o comando verbal).
+  5. Navegar hacia la puerta de salida (Exit Door) y anunciar "Robot inspection completed."
+- Validacion previa en simulation/:
+  Correr en sim_commander.sh con waypoints de inspeccion y medir tiempo total de recorrido
+  (debe ser inferior a 2 minutos para contar con 1 minuto de margen respecto al limite de 3 min).
+- Nivel de riesgo: BAJO.
+
+================================================================================
+FIN DE DOCUMENTO — INVESTIGACION_REGLAS_GENERALES.txt
+================================================================================
