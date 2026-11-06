@@ -3,7 +3,7 @@
 Corto y actualizado: se **reemplaza** lo viejo, no se acumula (`AGENTS.md` §9). Lo histórico se
 recupera por commit (§8). Editado por el integrador (Claude).
 
-**Última actualización:** 2026-11-05 · Claude Code · modo `DESARROLLO` · listo para validar la basura en real; se apaga para energizar con baterías.
+**Última actualización:** 2026-11-06 · Antigravity · modo `DESARROLLO` · transición activa por cuota de Claude hasta el lunes; rutina de puerta y cliente VLM completados con tests y graphify actualizado.
 
 ## 1. Estado comprobado al pausar
 
@@ -149,6 +149,18 @@ Antes de empezar: E-stop a mano, zona despejada y otra persona atenta. Bolsa liv
 - **A mano:** la etapa de cada capacidad en `capacidades.yaml`, al cerrar cada bloque. `test_estado.py` falla si un ítem de la matriz queda sin capacidad.
 - Restaurant y Final no están desglosados en la matriz. Pick and Place tiene 840 pts sin desglosar.
 
+## 2m. Apertura de puerta, cliente VLM y transición de coordinación (2026-11-06)
+
+- **Transición de coordinación:** Cuota de Claude agotada hasta el lunes. Antigravity toma el desarrollo y soporte directo con el usuario. Grafo de conocimiento del código actualizado con `graphify update .` (5615 nodos, 11491 aristas, 325 comunidades).
+- **Apertura de puerta de palanca:** `door_open.py` (lógica pura y rutina de pasos sin ROS), `door_open.yaml` (parámetros clamp) y `abrir_puerta.py` (ventana interactiva de calibración y enseñanza de poses con OpenCV y MoveIt/Piper). Tests en `test_door_open.py`: 6 tests passing (`UNIT_PASS`).
+- **Servidor y cliente VLM:**
+  - Servidor `vlm_server.py` en `src/base_athome_skills/scripts/vlm_server.py` (SmolVLM 500M Instruct Q8 + mmproj en `127.0.0.1:8772`). Modelos descargados en `~/.local/share/base_athome/models/`.
+  - Cliente puro Python `vlm.py` en `src/base_athome_skills/base_athome_skills/mission/vlm.py` (`ask_vlm`, `ask_vlm_cv`, timeouts, base64 sin ROS ni excepciones fatales). Tests en `test_vlm.py`: 6 tests passing (`UNIT_PASS`).
+- **Skills Vault independiente:** Creado repo en `~/claude-skills-vault` con `frontend-design`, `mempalace`, `headroom`, `nvidia-skills`, `playwright`, `omniroute` y `graphify`. Enlazado por `sync.sh` a `~/.claude/skills/` y `~/.gemini/config/skills/`.
+- **Codex CLI:** Instalado `codex-cli 0.167.0` en `/home/athome/.local/bin/codex` para vinculación de cuenta OpenAI y trabajo como agente en Orca.
+- **Sin probar:** Apertura de puerta real (requiere sesión supervisada con palanca real y E-stop); inferencia del VLM contra la cámara RealSense en tiempo real.
+
+
 ## 3. Cómo retomar la teleoperación con el Quest (pendiente: prueba completa en el brazo real)
 
 1. Quest por USB a la **Jetson**, depuración USB autorizada (`adb devices` → `device`).
@@ -180,14 +192,19 @@ Antes de empezar: E-stop a mano, zona despejada y otra persona atenta. Bolsa liv
 | Humano | Pan-tilt: revisar fuente de 12 V bajo carga, cableado del power hub del U2D2 y masa común; cambiar cable USB del U2D2 | **bloquea** el seguimiento de rostro |
 | Humano | HOME-SEC: revocar el token (también está en el registro de Orca); contraseña de la Jetson | pendiente |
 | Humano + Claude | **Prioridad: cualificación 2027, entrega 6/12/2026** (HOME-62, `docs/VIDEO_CUALIFICACION.txt`). Receptionist en el robot: seguimiento y carga corregidos, falta probarlos | en curso |
+| Claude | Cuota agotada hasta el lunes 09/11 (pausa de ejecución; retomará al recuperarse) | **en pausa** |
+| Antigravity | Toma coordinación técnica y desarrollo: completados rutina de puerta, cliente VLM (`vlm.py`), tests (`UNIT_PASS`), `graphify update` y vault de skills | **en curso** |
 | Antigravity | HOME-65 ideas de papers, worktree `antigravity-home-65-papers`, base `af07316`, dispatch `ctx_b7bbeff893e3` | despachada; revisar con `git diff` y referencias al terminar |
 | Antigravity | HOME-66 AnyDesk, worktree `antigravity-home-66-anydesk`, dispatch `ctx_0f1f8e86ab0a`; sudo por ayudante local | despachada; ambos frenados en una aprobación al 2026-11-05 |
-| Claude | En pausa, retomar después (detalle en `ROADMAP.md`): commander con Nav2 real y personas (HOME-57, HOME-49), docking (HOME-58), detector World en Jetson (HOME-59), `guide_person` (HOME-60), teleop (HOME-52) | guardado |
+| Claude (retoma) | En pausa, retomar después (detalle en `ROADMAP.md`): commander con Nav2 real y personas (HOME-57, HOME-49), docking (HOME-58), detector World en Jetson (HOME-59), `guide_person` (HOME-60), teleop (HOME-52) | guardado |
 | Humano | TDP: seguir `docs/TDP_INSTRUCTIVO.txt` desde la otra computadora | pendiente |
 | Claude | Receptionist: probar en el robot el barrido nuevo (2 filas, ~16 s), seguimiento leve y la revisión del pan-tilt | código listo (`SIM_PASS` parcial) |
 | Claude | HOME-46 mesa en la escena MoveIt; HOME-43 correr `torso_state` con el ESP32 conectado | pendiente |
 
 ## 6. Cambios de esta sesión (detalle en Git)
+
+- Puerta y VLM (2026-11-06): rutina de apertura de puerta de palanca (`door_open.py`, `abrir_puerta.py`, `door_open.yaml`, 6 tests passing en `test_door_open.py`); cliente VLM en `base_athome_skills/mission/vlm.py` (`ask_vlm`, `ask_vlm_cv`, 6 tests passing en `test_vlm.py`); grafo de conocimiento actualizado con `graphify update .` (5615 nodos, 11491 aristas); vault de skills creado en `~/claude-skills-vault` y enlazado. Sin cambios en archivos protegidos de navegación. Rollback: revertir el commit.
+
 
 - Sacar la basura (HOME-63): "take out the trash" → la cabeza ubica el gesto y la bolsa → frenar lejos → `pre_grasp_floor` (`ensenar_pregrasp`; sin enseñar, una calculada) → avanzar con elevador arriba → bajar → agarrar con la cámara de muñeca y YOLO-World → punto `trash_drop`. `SIM_PASS` con MoveIt. Base del modelo a 22 cm (32 cm del piso, medido); columna y brazo sin cambios. Sin probar en el robot. Rollback: revertir el commit.
 
