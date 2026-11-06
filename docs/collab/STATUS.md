@@ -148,6 +148,8 @@ Antes de empezar: E-stop a mano, zona despejada y otra persona atenta. Bolsa liv
 - **Se actualiza solo:** rama y commit, procesos vivos, puntos de la matriz, skills del registro, comandos GPSR que compilan y resultados de `sim_escenarios.py`. Marca con ⚠ una capacidad si su código cambió después de la última prueba.
 - **A mano:** la etapa de cada capacidad en `capacidades.yaml`, al cerrar cada bloque. `test_estado.py` falla si un ítem de la matriz queda sin capacidad.
 - Restaurant y Final no están desglosados en la matriz. Pick and Place tiene 840 pts sin desglosar.
+- **Rediseño visual (2026-11-06):** Interfaz modernizada (`frontend-design`), sección "¿Qué puedo probar ya mismo?", métricas de madurez por etapa, buscador en vivo, filtros interactivos y actualización de capacidades (`vlm` y `abrir_puerta` pasaron de `falta` a `tests` con `8e516ab`).
+
 
 ## 2m. Apertura de puerta, cliente VLM y transición de coordinación (2026-11-06)
 

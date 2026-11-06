@@ -1,48 +1,875 @@
-<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Debug Base@Home</title>
-<style>
-:root{--bg:#10151b;--pn:#18202a;--pn2:#202b37;--tx:#e8edf2;--mu:#93a1b0;--li:#2c3947;--robot:#3fb97f;--gazebo:#4d9de0;--simulador:#7f8ce8;--tests:#c99bf0;--parcial:#e6b34d;--falta:#e8695f;--sc:#7a8794}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 system-ui,sans-serif}
-header{padding:16px 22px;background:var(--pn);border-bottom:1px solid var(--li);display:flex;flex-wrap:wrap;gap:14px 26px;align-items:center}
-h1{font-size:19px;margin:0 auto 0 0}h2{font-size:16px;margin:0 0 10px}.mu{color:var(--mu)}
-main{padding:18px 22px;display:grid;gap:18px;max-width:1500px;margin:auto}.pn{background:var(--pn);border:1px solid var(--li);border-radius:9px;padding:15px}
-.modo{font-weight:700;padding:3px 10px;border-radius:99px;background:var(--pn2)}.modo.real{background:var(--falta);color:#fff}.modo.sim{background:var(--gazebo);color:#fff}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(285px,1fr));gap:12px}.st{background:var(--pn2);padding:11px;border-radius:7px}
-.num{font-size:25px;font-weight:700}.bar{display:flex;height:11px;border-radius:6px;overflow:hidden;background:var(--li);margin:7px 0}.bar i{display:block}
-.tag{display:inline-block;padding:1px 8px;border-radius:99px;font-size:12px;font-weight:600;color:#10151b;white-space:nowrap}
-table{width:100%;border-collapse:collapse}td,th{padding:6px 8px;border-top:1px solid var(--li);text-align:left;vertical-align:top}th{color:var(--mu);font-weight:500;font-size:12px;border-top:0}
-.warn{color:var(--parcial)}.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}button{background:var(--pn2);color:var(--tx);border:1px solid var(--li);padding:5px 11px;border-radius:6px;cursor:pointer;font:inherit}button.on{background:var(--gazebo);border-color:var(--gazebo);color:#fff}
-.alert{border-left:4px solid var(--parcial);background:var(--pn2);padding:8px 11px;border-radius:5px;margin-bottom:8px}.wrap{overflow-x:auto}
-@media(max-width:640px){main,header{padding:12px}}
-</style></head><body>
-<header><h1>Debug Base@Home</h1><span id="modo" class="modo">…</span><span id="git" class="mu"></span><span id="hora" class="mu"></span></header>
-<main>
-<section class="pn"><h2>Capacidades</h2><div id="res" class="grid"></div><div id="leyenda" class="mu" style="margin-top:9px;font-size:12.5px"></div></section>
-<section class="pn"><h2>Pruebas de la categoría (OPL)</h2><div id="prs" class="grid"></div><div class="tabs" id="tabs" style="margin-top:13px"></div><div class="wrap" id="items"></div></section>
-<section class="pn"><h2>GPSR: comandos oficiales que compilan</h2><div id="cob"></div></section>
-<section class="pn"><h2>Qué sabe y qué falta</h2><div class="tabs" id="filtro"></div><div id="avisos"></div><div class="wrap"><table id="caps"></table></div></section>
-<section class="pn"><h2>Skills que el commander puede usar</h2><div id="sk"></div></section>
-<section class="pn"><h2>Última regresión en simulación</h2><div id="esc" class="wrap"></div></section>
-<section class="pn"><h2>Corriendo ahora</h2><div id="procs" class="mu"></div></section>
-</main>
-<script>
-const N={robot:'En el robot',gazebo:'En Gazebo',simulador:'Simulador liviano',tests:'Solo tests',parcial:'Parcial',falta:'Falta',sin_clasificar:'Sin clasificar'};
-const C=k=>`var(--${k==='sin_clasificar'?'sc':k})`,tag=k=>`<span class="tag" style="background:${C(k)}">${N[k]||k}</span>`;
-const e=s=>String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));let D,tab='GPSR',fil='todas';
-function pinta(){const d=D;const m=document.getElementById('modo');m.textContent=d.vivo.modo;m.className='modo '+(d.vivo.modo==='robot real'?'real':d.vivo.modo==='simulación'?'sim':'');
-git.textContent=`${d.rama} · ${d.commit.slice(0,60)}${d.sucio.length?` · ${d.sucio.length} sin commitear`:''}`;hora.textContent='actualizado '+d.hora;
-const T=d.capacidades.length,c=d.conteo;res.innerHTML=[['robot','Ya lo sabe, en el robot'],['gazebo','Funciona en Gazebo'],['simulador','En simulador liviano'],['tests','Escrito, con tests'],['parcial','A medias'],['falta','Falta aprender']].map(([k,t])=>`<div class="st"><div class="num" style="color:${C(k)}">${c[k]||0}<span class="mu" style="font-size:14px"> / ${T}</span></div>${t}</div>`).join('');
-leyenda.textContent='Nada pasa a "En el robot" sin una prueba real. Compilar o pasar en simulación no demuestra que funcione ni que sea seguro en el robot.';
-prs.innerHTML=Object.entries(d.pruebas).map(([k,p])=>{const w=x=>p.total?100*x/p.total:0;return `<div class="st"><b>${e(d.nombres[k]||k)}</b><div class="bar"><i style="width:${w(p.robot)}%;background:var(--robot)"></i><i style="width:${w(p.avance)}%;background:var(--parcial)"></i></div><span class="mu">${p.robot} en robot · ${p.avance} en camino · ${p.falta} faltan${p.sin_desglosar?` · ${p.sin_desglosar} sin desglosar`:''} · ${p.total} pts</span></div>`}).join('')+Object.entries(d.sin_desglose||{}).map(([k,t])=>`<div class="st"><b>${e(k)}</b><div class="mu" style="margin-top:6px">${e(t)}</div></div>`).join('');
-tabs.innerHTML=Object.keys(d.pruebas).map(k=>`<button class="${k===tab?'on':''}" onclick="tab='${k}';pinta()">${k}</button>`).join('');
-const P=d.pruebas[tab];items.innerHTML=P?`<table><tr><th>Ítem</th><th>Pts</th><th>Estado</th><th>Capacidad</th></tr>${P.items.map(i=>`<tr><td>${e(i.id)} ${e(i.titulo)}</td><td>${i.puntos}</td><td>${tag(i.etapa)}</td><td class="mu">${e(i.capacidad||'—')}</td></tr>`).join('')}</table>`:'';
-const co=d.cobertura;if(co){const cats=Object.keys(co.total);const ok=cats.reduce((a,k)=>a+(co.ok[k]||0),0),t=cats.reduce((a,k)=>a+co.total[k],0);cob.innerHTML=`<div class="num">${ok}<span class="mu" style="font-size:14px"> / ${t}</span></div><div class="grid" style="margin:8px 0">${cats.map(k=>`<div class="st">${e(k)}: <b>${co.ok[k]||0}</b> / ${co.total[k]}<div class="bar"><i style="width:${100*(co.ok[k]||0)/co.total[k]}%;background:var(--gazebo)"></i></div></div>`).join('')}</div><span class="mu">Sin LLM. Compilar no es ejecutar. Lo que bloquea: ${co.motivos.map(([a,b])=>`${e(a)} (${b})`).join(' · ')}</span>`}else cob.textContent='No se pudo calcular.';
-let av='';const ch=d.capacidades.filter(x=>x.cambio&&x.cambio.length);
-if(ch.length)av+=`<div class="alert">⚠ Cambió el código después de la última prueba: ${ch.map(x=>e(x.nombre)).join(', ')}.</div>`;if(d.sin_clasificar.length)av+=`<div class="alert">Ítems de la matriz sin capacidad: ${d.sin_clasificar.join(', ')}.</div>`;avisos.innerHTML=av;
-filtro.innerHTML=['todas','robot','gazebo','simulador','tests','parcial','falta'].map(k=>`<button class="${k===fil?'on':''}" onclick="fil='${k}';pinta()">${k==='todas'?'Todas':N[k]}</button>`).join('');
-caps.innerHTML=`<tr><th>Capacidad</th><th>Área</th><th>Estado</th><th>Qué falta</th></tr>`+d.capacidades.filter(x=>fil==='todas'||x.etapa===fil).map(x=>`<tr><td>${e(x.nombre)}${x.cambio&&x.cambio.length?' <span class="warn" title="Cambió después de la última prueba">⚠</span>':''}</td><td class="mu">${e(x.area)}</td><td>${tag(x.etapa)}</td><td class="mu">${e(x.falta||'')}</td></tr>`).join('');
-const s=d.escenarios;esc.innerHTML=s?`<span class="mu">${s.filas.filter(f=>f.ok).length}/${s.filas.length} pasaron, cada uno en su última corrida</span><table><tr><th>Escenario</th><th>Resultado</th><th>Pinza</th><th>Cuándo</th><th>Motivo</th></tr>${s.filas.map(f=>`<tr><td>${e(f.nombre)}</td><td style="color:${f.ok?'var(--robot)':'var(--falta)'}">${f.ok?'pasó':'falló'}</td><td>${f.cm==null?'—':f.cm+' cm'}</td><td class="mu">${e(f.cuando)} · ${e(f.modo)} · ${e(f.commit)}</td><td class="mu">${e(f.detalle||'')}</td></tr>`).join('')}</table>`:'<span class="mu">Sin resultados guardados: se llena al correr simulation/scripts/sim_escenarios.py.</span>';
-const S=d.skills||[];sk.innerHTML=`<span class="mu">${S.filter(x=>x.status==='available').length} disponibles de ${S.length}. Disponible significa que está registrada, no que funcione en el robot.</span><div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:6px">${S.map(x=>`<span class="tag" title="${e(x.description)}" style="background:${x.status==='available'?'var(--pn2);color:var(--tx)':'var(--falta)'}">${e(x.name)}</span>`).join('')}</div>`;
-const pr=Object.entries(d.vivo.procesos);procs.textContent=pr.length?pr.map(([a,b])=>`${a} (dominio ${b})`).join(' · '):'Nada del robot corriendo.'}
-async function trae(){try{const n=await (await fetch('/api/state')).json();if(D&&D.pagina!==n.pagina)return location.reload();D=n;pinta()}catch(x){hora.textContent='sin conexión con el tablero'}}
-D=/*ESTADO*/null;if(D)pinta();trae();setInterval(trae,4000);
-</script></body></html>
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Base@Home · Estado Técnico y Capacidades</title>
+  <style>
+    :root {
+      --bg: #090d13;
+      --card-bg: #111722;
+      --card-hover: #161f2e;
+      --surface: #182232;
+      --border: #233145;
+      --border-focus: #3b82f6;
+      --tx-main: #f1f5f9;
+      --tx-muted: #94a3b8;
+      --tx-dim: #64748b;
+
+      --c-robot: #10b981;
+      --c-robot-bg: rgba(16, 185, 129, 0.15);
+      --c-gazebo: #3b82f6;
+      --c-gazebo-bg: rgba(59, 130, 246, 0.15);
+      --c-sim: #6366f1;
+      --c-sim-bg: rgba(99, 102, 241, 0.15);
+      --c-tests: #a855f7;
+      --c-tests-bg: rgba(168, 85, 247, 0.15);
+      --c-parcial: #f59e0b;
+      --c-parcial-bg: rgba(245, 158, 11, 0.15);
+      --c-falta: #ef4444;
+      --c-falta-bg: rgba(239, 68, 68, 0.15);
+      --c-neutral: #475569;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--tx-main);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+      padding-bottom: 40px;
+    }
+
+    /* HEADER */
+    header {
+      background: var(--card-bg);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 28px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      backdrop-filter: blur(8px);
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .brand h1 {
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+      color: #fff;
+    }
+    .live-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--c-robot);
+      box-shadow: 0 0 10px var(--c-robot);
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(0.9); }
+    }
+    .meta-bar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 12px;
+    }
+    .pill {
+      font-size: 12px;
+      font-weight: 600;
+      padding: 4px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .pill.robot-real { background: rgba(239,68,68,0.18); border-color: var(--c-falta); color: #fca5a5; }
+    .pill.simulacion { background: rgba(59,130,246,0.18); border-color: var(--c-gazebo); color: #93c5fd; }
+    .pill.apagado { background: var(--surface); color: var(--tx-muted); }
+    .pill.git { font-family: monospace; color: #cbd5e1; }
+    .pill.dirty { border-color: var(--c-parcial); color: #fde047; }
+
+    /* LAYOUT */
+    main {
+      max-width: 1560px;
+      margin: 24px auto;
+      padding: 0 24px;
+      display: grid;
+      gap: 24px;
+    }
+
+    /* CARDS & PANELS */
+    .panel {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px 24px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+    }
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .panel-header h2 {
+      font-size: 16px;
+      font-weight: 700;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .panel-subtitle {
+      font-size: 13px;
+      color: var(--tx-muted);
+    }
+
+    /* HERO STATS */
+    .hero-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+    }
+    .hero-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px 18px;
+      transition: transform 0.2s, border-color 0.2s;
+      cursor: pointer;
+    }
+    .hero-card:hover {
+      transform: translateY(-2px);
+      border-color: var(--tx-dim);
+    }
+    .hero-card.active {
+      border-color: #3b82f6;
+      box-shadow: 0 0 12px rgba(59, 130, 246, 0.2);
+    }
+    .hero-label {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .hero-count {
+      font-size: 32px;
+      font-weight: 800;
+      line-height: 1.1;
+      margin-bottom: 4px;
+    }
+    .hero-desc {
+      font-size: 12px;
+      color: var(--tx-muted);
+    }
+
+    /* QUICK RUNNABLE SECTION */
+    .run-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+      gap: 14px;
+    }
+    .run-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .run-title {
+      font-weight: 600;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .run-cmd {
+      background: #090d13;
+      border: 1px solid var(--border);
+      padding: 5px 10px;
+      border-radius: 6px;
+      font-family: monospace;
+      font-size: 12px;
+      color: #38bdf8;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .run-desc {
+      font-size: 12px;
+      color: var(--tx-muted);
+    }
+
+    /* BADGES */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 9px;
+      border-radius: 999px;
+      font-size: 11.5px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .badge.robot { background: var(--c-robot-bg); color: var(--c-robot); border: 1px solid rgba(16,185,129,0.3); }
+    .badge.gazebo { background: var(--c-gazebo-bg); color: var(--c-gazebo); border: 1px solid rgba(59,130,246,0.3); }
+    .badge.simulador { background: var(--c-sim-bg); color: #818cf8; border: 1px solid rgba(99,102,241,0.3); }
+    .badge.tests { background: var(--c-tests-bg); color: #c084fc; border: 1px solid rgba(168,85,247,0.3); }
+    .badge.parcial { background: var(--c-parcial-bg); color: var(--c-parcial); border: 1px solid rgba(245,158,11,0.3); }
+    .badge.falta { background: var(--c-falta-bg); color: var(--c-falta); border: 1px solid rgba(239,68,68,0.3); }
+    .badge.area { background: var(--surface); color: #94a3b8; border: 1px solid var(--border); }
+
+    /* COMPETITION BARS */
+    .comp-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 16px;
+    }
+    .comp-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+    }
+    .comp-header {
+      display: flex;
+      justify-content: space-between;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 8px;
+    }
+    .progress-bar {
+      height: 10px;
+      border-radius: 6px;
+      background: var(--bg);
+      overflow: hidden;
+      display: flex;
+      margin: 8px 0;
+    }
+    .progress-bar i { height: 100%; transition: width 0.3s ease; }
+    .comp-stats {
+      font-size: 12px;
+      color: var(--tx-muted);
+      display: flex;
+      justify-content: space-between;
+    }
+
+    /* FILTERS & SEARCH */
+    .filter-bar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    .search-input {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--tx-main);
+      padding: 7px 14px;
+      border-radius: 8px;
+      font-size: 13px;
+      min-width: 260px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .search-input:focus { border-color: var(--border-focus); }
+    .tab-btn {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--tx-muted);
+      padding: 6px 14px;
+      border-radius: 8px;
+      font-size: 12.5px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .tab-btn:hover { color: #fff; border-color: var(--tx-dim); }
+    .tab-btn.active {
+      background: #2563eb;
+      border-color: #2563eb;
+      color: #fff;
+    }
+
+    /* TABLES */
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+    }
+    th {
+      background: #0f151f;
+      color: var(--tx-muted);
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+    }
+    td {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+      font-size: 13px;
+    }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: rgba(255, 255, 255, 0.02); }
+    .warn-badge {
+      background: rgba(245, 158, 11, 0.2);
+      color: #fbbf24;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: bold;
+      margin-left: 6px;
+    }
+
+    /* ALERTS */
+    .alert-box {
+      background: rgba(245, 158, 11, 0.1);
+      border-left: 4px solid var(--c-parcial);
+      padding: 12px 16px;
+      border-radius: 6px;
+      margin-bottom: 14px;
+      color: #fef3c7;
+      font-size: 13px;
+    }
+
+    /* PROCESSES */
+    .proc-tag {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 4px 10px;
+      font-size: 12px;
+      font-family: monospace;
+      color: #38bdf8;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    @media (max-width: 768px) {
+      header { padding: 12px 16px; }
+      main { padding: 0 14px; }
+      .search-input { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="brand">
+      <div class="live-dot" title="Tablero sincronizado en vivo"></div>
+      <h1>Base@Home · Estado y Capacidades</h1>
+    </div>
+    <div class="meta-bar">
+      <span id="modo-badge" class="pill apagado">Detectando modo...</span>
+      <span id="git-info" class="pill git">Git: ...</span>
+      <span id="dirty-info" class="pill dirty" style="display:none">0 sin commitear</span>
+      <span id="hora-info" class="pill">...</span>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- RESUMEN EJECUTIVO / QUÉ ESTÁ FUNCIONAL -->
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <h2>📊 Madurez de Capacidades</h2>
+          <span class="panel-subtitle">Diagnóstico visual de qué está listo para competir, qué funciona en simulador y qué falta.</span>
+        </div>
+      </div>
+      <div class="hero-grid" id="hero-metrics">
+        <!-- Rellenado por JS -->
+      </div>
+    </section>
+
+    <!-- QUÉ PUEDO PROBAR YA MISMO -->
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <h2>🚀 Listos para Ejecutar</h2>
+          <span class="panel-subtitle">Módulos verificados y comandos directos que podés lanzar ahora mismo.</span>
+        </div>
+      </div>
+      <div class="run-grid">
+        <div class="run-card">
+          <div class="run-title">🗺️ Navegación Autónoma 2D</div>
+          <div class="run-desc">Nav2 completo con AMCL, costmaps, evasión de obstáculos y waypoint navigator.</div>
+          <div class="run-cmd"><span>alias:</span> <code>navegacion</code> / <code>rviznav</code></div>
+        </div>
+        <div class="run-card">
+          <div class="run-title">🗑️ Misión Sacar la Basura</div>
+          <div class="run-desc">Visión RealSense, cálculo de agarre de bolsa fina, aproximación y drop point.</div>
+          <div class="run-cmd"><span>simulación:</span> <code>sim_basura</code></div>
+        </div>
+        <div class="run-card">
+          <div class="run-title">🚪 Apertura de Puerta de Palanca</div>
+          <div class="run-desc">Rutina de palanca enseñada a mano, calibrador de agarre y cinemática MoveIt/Piper.</div>
+          <div class="run-cmd"><span>calibrador:</span> <code>abrir_puerta</code></div>
+        </div>
+        <div class="run-card">
+          <div class="run-title">🗣️ Sesión GPSR & Voice Dialog</div>
+          <div class="run-desc">Arranque por puerta, diálogo con Whisper, LLM local Qwen 1.5B y ejecutor.</div>
+          <div class="run-cmd"><span>robot/sim:</span> <code>gpsr</code> / <code>commander</code></div>
+        </div>
+        <div class="run-card">
+          <div class="run-title">👁️ Servidor VLM (SmolVLM)</div>
+          <div class="run-desc">Inferencia de lenguaje y visión local en CPU para describir objetos y escenas.</div>
+          <div class="run-cmd"><span>puerto:</span> <code>127.0.0.1:8772</code> (vlm.py)</div>
+        </div>
+        <div class="run-card">
+          <div class="run-title">📐 Editor Semántico de Mapas</div>
+          <div class="run-desc">Editor web para zonas, waypoints y mesas de pick & place en tiempo real.</div>
+          <div class="run-cmd"><span>editor:</span> <code>mapa_zonas</code> (:8080)</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- MATRIZ DE REGLAS Y PUNTOS DE COMPETICIÓN -->
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <h2>🏆 Pruebas RoboCup@Home (OPL)</h2>
+          <span class="panel-subtitle">Distribución de puntos oficiales según la matriz de habilidades.</span>
+        </div>
+      </div>
+      <div class="comp-grid" id="comp-cards">
+        <!-- Rellenado por JS -->
+      </div>
+      <div style="margin-top: 18px;">
+        <div class="filter-bar" id="comp-tabs"></div>
+        <div class="table-wrap">
+          <table id="comp-items-table"></table>
+        </div>
+      </div>
+    </section>
+
+    <!-- MATRIZ DETALLADA DE CAPACIDADES -->
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <h2>📋 Qué Sabe y Qué Falta (Matriz Completa)</h2>
+          <span class="panel-subtitle">Estado granular de cada módulo del robot con advertencias automáticas de desincronización.</span>
+        </div>
+      </div>
+      <div id="alerts-container"></div>
+      <div class="filter-bar">
+        <input type="text" id="cap-search" class="search-input" placeholder="🔍 Buscar por nombre, área o archivo...">
+        <div id="stage-filters" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+      </div>
+      <div class="table-wrap">
+        <table id="caps-table">
+          <thead>
+            <tr>
+              <th style="width:24%">Capacidad</th>
+              <th style="width:12%">Área</th>
+              <th style="width:14%">Estado</th>
+              <th style="width:50%">Qué falta para validar</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- GPSR COVERAGE & REGRESIÓN -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:24px">
+      <section class="panel">
+        <div class="panel-header">
+          <h2>💬 Cobertura Gramatical GPSR</h2>
+          <span class="panel-subtitle">Comandos oficiales evaluados sin LLM</span>
+        </div>
+        <div id="gpsr-content"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <h2>🔬 Regresión en Simulación</h2>
+          <span class="panel-subtitle">Últimas corridas contra escenarios</span>
+        </div>
+        <div id="sim-content" class="table-wrap"></div>
+      </section>
+    </div>
+
+    <!-- PROCESOS ACTIVOS -->
+    <section class="panel">
+      <div class="panel-header">
+        <h2>⚡ Procesos Corriendo Ahora</h2>
+        <span class="panel-subtitle">Inspección directa de /proc y ROS_DOMAIN_ID</span>
+      </div>
+      <div id="procs-list" style="display:flex;gap:8px;flex-wrap:wrap"></div>
+    </section>
+
+  </main>
+
+  <script>
+    const STAGE_CONFIG = {
+      robot: { label: "En Robot Real", icon: "🟢", color: "var(--c-robot)", desc: "100% probado en hardware real" },
+      gazebo: { label: "En Gazebo", icon: "🔵", color: "var(--c-gazebo)", desc: "Física y sensores en simulación completa" },
+      simulador: { label: "Simulador Liviano", icon: "💻", color: "var(--c-sim)", desc: "Validado en mock/escena liviana" },
+      tests: { label: "Tests Unitarios", icon: "🟣", color: "var(--c-tests)", desc: "Lógica probada con tests aislados" },
+      parcial: { label: "A Medias", icon: "🟡", color: "var(--c-parcial)", desc: "Desarrollo parcial o calibración pendiente" },
+      falta: { label: "Pendiente", icon: "🔴", color: "var(--c-falta)", desc: "Sin implementar aún" }
+    };
+
+    let D = /*ESTADO*/null;
+    let selectedCompTab = 'HRI';
+    let selectedStageFilter = 'todas';
+    let searchTerm = '';
+
+    function escapeHtml(s) {
+      return String(s ?? '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+    }
+
+    function render() {
+      if (!D) return;
+      const d = D;
+
+      // 1. HEADER
+      const modoBadge = document.getElementById('modo-badge');
+      const modo = d.vivo ? d.vivo.modo : 'apagado';
+      modoBadge.textContent = 'Modo: ' + (modo === 'robot real' ? '🤖 Robot Real' : modo === 'simulación' ? '🌐 Simulación' : '💤 Apagado');
+      modoBadge.className = 'pill ' + (modo === 'robot real' ? 'robot-real' : modo === 'simulación' ? 'simulacion' : 'apagado');
+
+      document.getElementById('git-info').textContent = `🌿 ${d.rama || 'main'} · ${String(d.commit || '').slice(0, 36)}`;
+
+      const dirty = document.getElementById('dirty-info');
+      if (d.sucio && d.sucio.length > 0) {
+        dirty.style.display = 'inline-flex';
+        dirty.textContent = `✎ ${d.sucio.length} sin commitear`;
+      } else {
+        dirty.style.display = 'none';
+      }
+
+      document.getElementById('hora-info').textContent = `⏱️ ${d.hora || ''}`;
+
+      // 2. HERO METRICS (MADUREZ)
+      const totalCaps = d.capacidades ? d.capacidades.length : 0;
+      const c = d.conteo || {};
+      const heroMetrics = document.getElementById('hero-metrics');
+      heroMetrics.innerHTML = Object.entries(STAGE_CONFIG).map(([k, cfg]) => {
+        const count = c[k] || 0;
+        const pct = totalCaps ? Math.round((count / totalCaps) * 100) : 0;
+        const isSel = selectedStageFilter === k;
+        return `
+          <div class="hero-card ${isSel ? 'active' : ''}" onclick="setStageFilter('${k}')">
+            <div class="hero-label" style="color:${cfg.color}">
+              <span>${cfg.icon} ${cfg.label}</span>
+              <span>${pct}%</span>
+            </div>
+            <div class="hero-count" style="color:${cfg.color}">
+              ${count}<span style="font-size:16px;color:var(--tx-dim);font-weight:500"> / ${totalCaps}</span>
+            </div>
+            <div class="hero-desc">${cfg.desc}</div>
+          </div>
+        `;
+      }).join('');
+
+      // 3. COMPETITION CARDS
+      const compCards = document.getElementById('comp-cards');
+      const pruebas = d.pruebas || {};
+      const nombresPruebas = d.nombres || {};
+      compCards.innerHTML = Object.entries(pruebas).map(([k, p]) => {
+        const wRobot = p.total ? (100 * p.robot / p.total) : 0;
+        const wAvance = p.total ? (100 * p.avance / p.total) : 0;
+        const nombre = nombresPruebas[k] || k;
+        return `
+          <div class="comp-card">
+            <div class="comp-header">
+              <span>${escapeHtml(nombre)} (${k})</span>
+              <span>${p.total} pts</span>
+            </div>
+            <div class="progress-bar">
+              <i style="width:${wRobot}%;background:var(--c-robot)" title="En robot: ${p.robot} pts"></i>
+              <i style="width:${wAvance}%;background:var(--c-parcial)" title="En desarrollo: ${p.avance} pts"></i>
+            </div>
+            <div class="comp-stats">
+              <span style="color:var(--c-robot)">✔ ${p.robot} pts en robot</span>
+              <span style="color:var(--c-parcial)">⏳ ${p.avance} pts en camino</span>
+              <span style="color:var(--c-falta)">⭕ ${p.falta} pendientes</span>
+            </div>
+          </div>
+        `;
+      }).join('') + Object.entries(d.sin_desglose || {}).map(([k, txt]) => `
+        <div class="comp-card" style="opacity:0.75">
+          <div class="comp-header">
+            <span>${escapeHtml(k)}</span>
+            <span class="badge area">Reglamento</span>
+          </div>
+          <div class="panel-subtitle" style="margin-top:6px">${escapeHtml(txt)}</div>
+        </div>
+      `).join('');
+
+      // Competition tabs & items table
+      const compTabs = document.getElementById('comp-tabs');
+      compTabs.innerHTML = Object.keys(pruebas).map(k => `
+        <button class="tab-btn ${k === selectedCompTab ? 'active' : ''}" onclick="setCompTab('${k}')">
+          ${k} (${pruebas[k].items.length} ítems)
+        </button>
+      `).join('');
+
+      const curPrueba = pruebas[selectedCompTab];
+      const compTable = document.getElementById('comp-items-table');
+      if (curPrueba && curPrueba.items) {
+        compTable.innerHTML = `
+          <thead>
+            <tr>
+              <th style="width:12%">Ítem</th>
+              <th style="width:50%">Requisito Oficial</th>
+              <th style="width:12%">Puntos</th>
+              <th style="width:26%">Capacidad Asignada</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${curPrueba.items.map(it => `
+              <tr>
+                <td><code>${escapeHtml(it.id)}</code></td>
+                <td><b>${escapeHtml(it.titulo)}</b></td>
+                <td><span style="font-weight:700;color:#38bdf8">${it.puntos} pts</span></td>
+                <td>
+                  <span class="badge ${it.etapa}">${STAGE_CONFIG[it.etapa] ? STAGE_CONFIG[it.etapa].icon : ''} ${STAGE_CONFIG[it.etapa] ? STAGE_CONFIG[it.etapa].label : it.etapa}</span>
+                  <div style="font-size:12px;color:var(--tx-muted);margin-top:3px">${escapeHtml(it.capacidad || '—')}</div>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        `;
+      }
+
+      // 4. ALERTS
+      const alerts = document.getElementById('alerts-container');
+      let alertHtml = '';
+      const changedCaps = (d.capacidades || []).filter(c => c.cambio && c.cambio.length > 0);
+      if (changedCaps.length > 0) {
+        alertHtml += `
+          <div class="alert-box">
+            <b>⚠ Código modificado después de la última prueba:</b>
+            ${changedCaps.map(c => `<code>${escapeHtml(c.nombre)}</code> (${c.cambio.length} archivo/s modificado/s)`).join(', ')}.
+            Se recomienda re-ejecutar la suite de tests correspondiente.
+          </div>
+        `;
+      }
+      alerts.innerHTML = alertHtml;
+
+      // 5. STAGE FILTER BUTTONS
+      const stageFilters = document.getElementById('stage-filters');
+      stageFilters.innerHTML = [
+        ['todas', 'Todas las Capacidades'],
+        ['funcionales', '🟢+🔵 Funcionales (Robot + Gazebo)'],
+        ['robot', '🟢 En Robot Real'],
+        ['gazebo', '🔵 En Gazebo'],
+        ['simulador', '💻 Simulador'],
+        ['tests', '🟣 Tests OK'],
+        ['parcial', '🟡 Parcial'],
+        ['falta', '🔴 Pendiente']
+      ].map(([k, label]) => `
+        <button class="tab-btn ${k === selectedStageFilter ? 'active' : ''}" onclick="setStageFilter('${k}')">
+          ${label}
+        </button>
+      `).join('');
+
+      // 6. CAPABILITIES TABLE
+      renderCapsTable();
+
+      // 7. GPSR COVERAGE
+      const gpsr = document.getElementById('gpsr-content');
+      const co = d.cobertura;
+      if (co && co.total) {
+        const cats = Object.keys(co.total);
+        const okTot = cats.reduce((acc, k) => acc + (co.ok[k] || 0), 0);
+        const tot = cats.reduce((acc, k) => acc + co.total[k], 0);
+        const pct = tot ? Math.round(100 * okTot / tot) : 0;
+        gpsr.innerHTML = `
+          <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:12px">
+            <span style="font-size:28px;font-weight:800;color:var(--c-gazebo)">${okTot}</span>
+            <span style="color:var(--tx-muted)">de ${tot} comandos compilan (${pct}%)</span>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:12px">
+            ${cats.map(k => `
+              <div style="background:var(--surface);padding:10px;border-radius:6px;border:1px solid var(--border)">
+                <div style="font-size:12px;color:var(--tx-muted)">${escapeHtml(k)}</div>
+                <div style="font-weight:700;font-size:16px;color:#fff">${co.ok[k] || 0} / ${co.total[k]}</div>
+              </div>
+            `).join('')}
+          </div>
+          <div class="panel-subtitle">
+            <b>Bloqueos principales:</b> ${(co.motivos || []).map(([m, n]) => `${escapeHtml(m)} (${n})`).join(' · ')}
+          </div>
+        `;
+      } else {
+        gpsr.innerHTML = '<span class="panel-subtitle">Sin datos de cobertura de gramática.</span>';
+      }
+
+      // 8. SIMULATION REGRESSION
+      const sim = document.getElementById('sim-content');
+      const s = d.escenarios;
+      if (s && s.filas && s.filas.length) {
+        const passCount = s.filas.filter(f => f.ok).length;
+        sim.innerHTML = `
+          <div style="padding:10px 14px;background:var(--surface);border-bottom:1px solid var(--border);font-size:13px;font-weight:600">
+            ${passCount}/${s.filas.length} escenarios completados en la última corrida
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Escenario</th>
+                <th>Estado</th>
+                <th>Error TCP</th>
+                <th>Detalle</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${s.filas.map(f => `
+                <tr>
+                  <td><b>${escapeHtml(f.nombre)}</b></td>
+                  <td><span class="badge ${f.ok ? 'robot' : 'falta'}">${f.ok ? '✔ Pasó' : '✖ Falló'}</span></td>
+                  <td>${f.cm != null ? f.cm + ' cm' : '—'}</td>
+                  <td style="color:var(--tx-muted);font-size:12px">${escapeHtml(f.detalle || '—')}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `;
+      } else {
+        sim.innerHTML = '<div style="padding:16px;color:var(--tx-muted)">Sin resultados previos: se calculan al correr <code>simulation/scripts/sim_escenarios.py</code>.</div>';
+      }
+
+      // 9. PROCESSES LIST
+      const procsList = document.getElementById('procs-list');
+      const pEntries = Object.entries(d.vivo && d.vivo.procesos ? d.vivo.procesos : {});
+      if (pEntries.length > 0) {
+        procsList.innerHTML = pEntries.map(([name, dom]) => `
+          <div class="proc-tag">
+            <span style="color:#10b981">●</span>
+            <span>${escapeHtml(name)}</span>
+            <span style="color:var(--tx-dim)">(domain ${escapeHtml(dom)})</span>
+          </div>
+        `).join('');
+      } else {
+        procsList.innerHTML = '<span style="color:var(--tx-muted);font-size:13px">Ningún nodo de navegación ni ejecutor corriendo ahora mismo.</span>';
+      }
+    }
+
+    function renderCapsTable() {
+      if (!D || !D.capacidades) return;
+      const tbody = document.querySelector('#caps-table tbody');
+      const term = searchTerm.toLowerCase();
+
+      const filtered = D.capacidades.filter(c => {
+        // Stage filter
+        if (selectedStageFilter === 'funcionales') {
+          if (c.etapa !== 'robot' && c.etapa !== 'gazebo') return false;
+        } else if (selectedStageFilter !== 'todas' && c.etapa !== selectedStageFilter) {
+          return false;
+        }
+        // Text search
+        if (term) {
+          const matchName = (c.nombre || '').toLowerCase().includes(term);
+          const matchArea = (c.area || '').toLowerCase().includes(term);
+          const matchFalta = (c.falta || '').toLowerCase().includes(term);
+          const matchFiles = (c.archivos || []).some(f => f.toLowerCase().includes(term));
+          if (!matchName && !matchArea && !matchFalta && !matchFiles) return false;
+        }
+        return true;
+      });
+
+      if (filtered.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;padding:24px;color:var(--tx-muted)">No hay capacidades que coincidan con los filtros seleccionados.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = filtered.map(c => {
+        const stage = STAGE_CONFIG[c.etapa] || { label: c.etapa, icon: '', color: '#94a3b8' };
+        const hasChanged = c.cambio && c.cambio.length > 0;
+        return `
+          <tr>
+            <td>
+              <div style="font-weight:600;color:#fff;display:flex;align-items:center">
+                ${escapeHtml(c.nombre)}
+                ${hasChanged ? `<span class="warn-badge" title="Archivos modificados tras última prueba: ${c.cambio.join(', ')}">⚠ modificado</span>` : ''}
+              </div>
+              ${c.archivos && c.archivos.length ? `<div style="font-size:11px;font-family:monospace;color:var(--tx-dim);margin-top:2px">${escapeHtml(c.archivos[0])}${c.archivos.length > 1 ? ` +${c.archivos.length - 1}` : ''}</div>` : ''}
+            </td>
+            <td><span class="badge area">${escapeHtml(c.area)}</span></td>
+            <td><span class="badge ${c.etapa}">${stage.icon} ${stage.label}</span></td>
+            <td>
+              <div style="color:${c.etapa === 'robot' ? 'var(--c-robot)' : 'var(--tx-muted)'};font-size:13px">
+                ${escapeHtml(c.falta || 'Completado y verificado')}
+              </div>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    function setCompTab(k) {
+      selectedCompTab = k;
+      render();
+    }
+
+    function setStageFilter(k) {
+      selectedStageFilter = (selectedStageFilter === k && k !== 'todas') ? 'todas' : k;
+      render();
+    }
+
+    document.getElementById('cap-search').addEventListener('input', e => {
+      searchTerm = e.target.value;
+      renderCapsTable();
+    });
+
+    async function pollState() {
+      try {
+        const res = await fetch('/api/state');
+        if (res.ok) {
+          const newState = await res.json();
+          if (D && D.pagina !== newState.pagina) {
+            location.reload();
+            return;
+          }
+          D = newState;
+          render();
+        }
+      } catch (err) {
+        document.getElementById('hora-info').textContent = '⚠️ Sin conexión con el servidor debug';
+      }
+    }
+
+    if (D) render();
+    pollState();
+    setInterval(pollState, 4000);
+  </script>
+</body>
+</html>
