@@ -1,0 +1,846 @@
+================================================================================
+INVESTIGACION EXHAUSTIVA DE GPSR: REGLAMENTO, GRAMATICA, OTROS EQUIPOS Y PLAN DE INTEGRACION
+================================================================================
+Proyecto: Base@Home (UruBots) — RoboCup@Home Open Platform League (OPL)
+Tarea: HOME-82 (Investigacion GPSR: gramatica, parser, ejecutor y habilidades)
+Fecha: 2026-11-06
+Autor: Antigravity (dispatched worker para tarea HOME-82)
+Workspace: /home/athome/orca/workspaces/base_athome_ws/antigravity-gpsr
+Rama: ShiiSuii/antigravity-gpsr
+Commit base de trabajo: a119f61569ffe821357186f2c5e0c7071c2b9e6a
+Archivo de entrega: docs/INVESTIGACION_GPSR.txt
+
+================================================================================
+1. RESUMEN EJECUTIVO
+================================================================================
+El presente documento contiene la investigacion integral sobre la prueba General Purpose
+Service Robot (GPSR) de RoboCup@Home para el robot Base@Home, en el marco de la liga Open
+Platform League (OPL) bajo el reglamento normativo vigente 2026.2.
+
+HALLAZGOS PRINCIPALES:
+1. DESCONEXION PARSER-EJECUTOR EN BASE@HOME:
+   - En nuestro repositorio existen actualmente DOS parsers desconectados:
+     * tools/gpsr_parser (GPSRParser determinista offline basado en regex y CompetitionTemplate)
+       que genera un plan JSON con vocabulario formal de 12 acciones, probado sobre 500 comandos
+       del CommandGenerator.
+     * src/base_athome_skills/base_athome_skills/mission/command_parser.py (usado por el nodo
+       commander para pedidos de usuario en lenguaje natural en ingles/espanol), el cual rechaza
+       explícitamente comandos de seguir/guiar personas y responder preguntas con errores de "no implementado".
+   - Existe una funcion puente ya escrita pero no utilizada en
+     src/base_athome_skills/base_athome_skills/mission/plan.py denominada 'from_gpsr', la cual
+     traduce acciones de tools/gpsr_parser a pasos de Plan de Base@Home, pero carece de mapeo
+     para las acciones 'count' y 'describe', y sus pasos generados son rechazados al validar
+     porque las skills 'find_person', 'follow_person', 'guide_person', 'deliver_object' y
+     'answer_question' estan registradas como UNAVAILABLE en mission/skills.py.
+
+2. GRAMATICA OFICIAL Y RE-FRASEO CON LLM:
+   - El generador oficial RoboCupAtHome/CommandGenerator (commit fa8b9adf52c876042b81b7dbfd0e50fc00ef5cc6)
+     estructura GPSR en 22 plantillas principales de comandos y 13 plantillas de seguimiento (followup).
+   - Novedad normativa 2026.2 (RuleBook tasks/GPSR.tex): las ordenes generadas son pasadas por un
+     LLM para re-frasearlas hasta 3 veces con simplificacion progresiva. Por tanto, el robot debe
+     soportar tanto la gramatica estricta como variantes coloquiales re-fraseadas.
+
+3. ARQUITECTURAS DE REFERENCIA EN OTROS EQUIPOS:
+   - RoBorregos @Home (Tecnologico de Monterrey, robot FRIDA, ROS 2):
+     Emplea un filtro LLM de coherencia (is_coherent) para descartar comandos truncados de ASR,
+     un cliente BAML/LLM para estructuracion de planes, un constructor de Behavior Trees
+     (py_trees) y un modulo 'merger' que intercala los 3 comandos para obtener el bonus de
+     200 puntos (Interleaved Task Bonus) con fallback secuencial si la intercalacion falla.
+   - Tech United Eindhoven (TU Eindhoven, robots HERO/AMIGO, OPL):
+     Emplea un modelo HMI/ConversationEngine con gramaticas semanticas formales, maquinas de estado
+     jerarquicas SMACH (robot_smach_states) y el modelo de mundo ED. Gestiona comandos incompletos
+     mediante sub-estados interactivos (_on_request_missing_information) donde el robot pregunta
+     especificamente por la entidad faltante.
+   - SocRob (Instituto Superior Tecnico, Portugal, robot TIAGo, 2.do lugar en GPSR RoboCup 2024):
+     Pipeline End-to-End basado en LLM local (Phi-3 con adaptador LoRA) con decodificacion
+     restringida por gramatica EBNF derivada del mapa semantico, tolerante a tasas de error
+     de palabras (WER) en la transcripcion de voz.
+
+3 RECOMENDACIONES PRINCIPALES:
+1. Unificar el flujo GPSR conectando tools/gpsr_parser con mission/plan.py y mission/executor.py,
+   agregando soporte en _GPSR_MAP para 'count' y 'describe'.
+2. Implementar 'guide_person' y 'deliver_object' como habilidades prioritarias: son de bajo riesgo
+   cinematico, no requieren algoritmos de navegacion dinamica compleja (guide_person reutiliza
+   Nav2 con giros de cabeza pan-tilt para confirmar acompanamiento; deliver_object reutiliza
+   poses de pre_grasp y apertura de pinza con confirmacion verbal o timeout).
+3. Incorporar validacion de completitud de comando (filtro is_coherent offline o heuristico)
+   y un mecanismo de recuperacion verbal limpia ante comandos irrealizables, evitando congelamientos.
+
+LO QUE NO SE PUDO VERIFICAR:
+- Rendimiento real de YOLOv8-World o YOLO-Pose frente a prendas de vestir especificas ("person wearing a red shirt")
+  en la Jetson Orin Nano, ya que no se ejecutan modelos pesados en la sesion actual.
+- Validacion fisica de agarre de objetos domesticos variados con el brazo Piper en hardware real
+  (requiere modo LAB_SUPERVISADO con operador humano).
+
+
+================================================================================
+2. MARCO NORMATIVO DE GPSR EN ROBOCUP@HOME 2026.2
+================================================================================
+Fuente normativa oficial:
+- Repositorio: https://github.com/RoboCupAtHome/RuleBook
+- Tag normativo: 2026.2 (Commit base: b844d5a6d6ebf4307c3250a01d1eca4ba56f8452, HEAD ebdf34d223ddc3ae89ac3f16a23ad28024adfdf6)
+- Archivos evaluados: tasks/GPSR.tex y scoresheets/GPSR.tex.
+
+2.1. OBJETIVO PRINCIPAL Y ENFOQUE TECNICO
+- Enfoque (Focus): Planificacion de tareas (Task planning), deteccion y reconocimiento de objetos
+  y personas (object/people detection and recognition), reconocimiento de caracteristicas de objetos
+  (object feature recognition), y manipulacion de objetos (object manipulation).
+- Meta principal (Main Goal): Ejecutar 3 comandos dictados por el operador profesional (arbitro).
+- Tiempo limite (Time limit): 7 minutos totales.
+- Punto de inicio: Fuera de la arena. El robot detecta la apertura de puerta e ingresa navegando
+  hacia el "Instruction Point" anunciado por los arbitros al menos 2 horas antes de la prueba.
+
+2.2. HOJA DE PUNTAJE OFICIAL (GPSR.tex, maximo 1490 puntos)
+---------------------------------------------------------------------------------------------------
+Rubro / Accion                                  | Puntos Unitarios | Veces | Total Maximo
+---------------------------------------------------------------------------------------------------
+Understand the spoken command                   | 80 pts           | 3     | 240 pts
+Demonstrate a plan has been generated           | 100 pts          | 3     | 300 pts
+Solving the first command                       | 250 pts          | 1     | 250 pts
+Solving the second command                      | 250 pts          | 1     | 250 pts
+Solving the third command                       | 250 pts          | 1     | 250 pts
+Interleaved Task Bonus (ejecucion intercalada)  | 200 pts          | 1     | 200 pts
+---------------------------------------------------------------------------------------------------
+PUNTAJE MAXIMO TEORICO                          |                  |       | 1490 pts
+---------------------------------------------------------------------------------------------------
+
+Penalidades especificas:
+- Using a custom operator: 3 x -20 pts (-60 pts maximo).
+- Request a rephrasing: 6 x -30 pts (-180 pts maximo).
+- Bypassing speech recognition (pantalla/teclado): 3 x -50 pts (-150 pts maximo).
+- Puntuacion parcial: Resolver partes de un comando aplica deducciones proporcionales segun tareas equivalentes.
+
+2.3. NOVEDADES REGLAMENTARIAS CRITICAS EN 2026.2
+1. Re-fraseo mediante Modelos de Lenguaje (LLM Rephrasing, §Additional Rules, Item 3):
+   "Tasks will be generated using the official command generator. Once a command has been generated
+   it will be entered into an LLM to re-generate a similar phrase... Each command may be re-phrased
+   up to 3 times getting simpler with each rephrasing."
+   * Implicancia tecnica: Un parser que dependa exclusivamente de coincidencias rigidas de expresiones
+     regulares o gramaticas libres de contexto estrictas corre serio riesgo de fallar ante variaciones
+     gramaticales introducidas por el LLM. El robot debe poseer flexibilidad semantica, normalizacion
+     de entidades o decodificacion tolerante.
+
+2. Demostracion obligatoria de plan (3 x 100 = 300 pts):
+   * Para adjudicarse estos 300 puntos, el robot debe verbalizar o desplegar formalmente el plan de
+     acciones descompuesto ANTES de comenzar la ejecucion motriz de cada orden.
+   * En Base@Home esto se encuentra previsto conceptualmente en tools/gpsr_parser/parser.py metodo
+     'explain_plan' y en commander_node.py ('plan_to_speech'), pero actualmente no esta integrado
+     al loop de ejecucion de GPSR.
+
+3. Modalidad de entrega de comandos: Uno a uno vs Consecutivos (Interleaved):
+   * El robot decide como se le entregan los comandos (Item 2 de Procedure):
+     a) Uno a uno: El robot recibe 1 comando, lo ejecuta, regresa al Instruction Point, y pide el siguiente.
+     b) Consecutivos (los 3 juntos al inicio): Permite al robot planificar una ruta intercalada que optimice
+        movimientos (por ejemplo, buscar dos objetos en la cocina antes de ir al living), habilitando el
+        Interleaved Task Bonus (+200 pts).
+
+
+================================================================================
+3. GRAMATICA OFICIAL DEL COMMANDGENERATOR Y COBERTURA DE PARSERS LOCALES
+================================================================================
+Fuente oficial:
+- Repositorio: https://github.com/RoboCupAtHome/CommandGenerator
+- Tag/Commit: fa8b9adf52c876042b81b7dbfd0e50fc00ef5cc6
+- Archivo: src/robocupathome_generator/gpsr_commands.py (lineas 15-70 y 106-190).
+
+3.1. ESTRUCTURA DE LA GRAMATICA OFICIAL
+El generador oficial de GPSR divide los comandos en 22 plantillas de inicio (command templates)
+y 13 plantillas de continuacion recursiva (followup templates), organizadas en dos grandes
+categorias ponderadas: Comandos de Personas (person_cmd_list) y Comandos de Objetos (object_cmd_list).
+
+3.2. TABLA DE COBERTURA: TIPO DE COMANDO vs HABILIDADES vs PARSERS
+A continuacion se presenta la matriz exhaustiva de las 22 plantillas principales del CommandGenerator
+y sus cadenas de seguimiento tipicas, comparando su cobertura frente a nuestros dos parsers:
+- tools/gpsr_parser: Parser determinista regex (tools/gpsr_parser/gpsr_parser/parser.py, 832 lineas).
+- mission/command_parser.py: Parser de pedidos del Commander (src/base_athome_skills/.../command_parser.py, 592 lineas).
+
+-----------------------------------------------------------------------------------------------------------------------------------------
+ID | Plantilla CommandGenerator        | Ejemplo de frase oficial                      | Habilidades que requiere         | tools/gpsr_parser | mission/command_parser.py
+-----------------------------------------------------------------------------------------------------------------------------------------
+1  | goToLoc + followup:atLoc          | "go to the kitchen then find a sitting        | navigate_to, find_person,        | PARCIAL           | NO
+   |                                   | person and follow them"                       | follow_person                    | Genera go_to,     | Error: 'seguir personas
+   |                                   |                                               |                                  | find_person,      | todavia no esta
+   |                                   |                                               |                                  | follow            | implementado'
+-----------------------------------------------------------------------------------------------------------------------------------------
+2  | takeObjFromPlcmt +                | "take a cola from the dining table and        | navigate_to, detect_object,      | SI                | SI
+   | followup:hasObj (place/trash)     | place it on the counter"                      | pick_object, place_object        | Genera go_to,     | Compila go, pick,
+   |                                   |                                               |                                  | find_object, pick,| go, place
+   |                                   |                                               |                                  | place             |
+-----------------------------------------------------------------------------------------------------------------------------------------
+3  | takeObjFromPlcmt +                | "take a tea from the kitchen table and        | navigate_to, detect_object,      | SI                | NO
+   | followup:hasObj (deliver)         | deliver it to the sitting person in the hall" | pick_object, find_person,        | Genera go_to,     | Error: 'llevar personas
+   |                                   |                                               | deliver_object                   | find_obj, pick,   | no implementado'
+   |                                   |                                               |                                  | find_prs, deliver |
+-----------------------------------------------------------------------------------------------------------------------------------------
+4  | findPrsInRoom +                   | "find a waving person in the living room      | navigate_to, find_person,        | SI                | NO
+   | followup:foundPers (talkInfo)     | and tell the time"                            | speak                            | Genera go_to,     | Error: 'buscar personas
+   |                                   |                                               |                                  | find_person, say  | no implementado'
+-----------------------------------------------------------------------------------------------------------------------------------------
+5  | findPrsInRoom +                   | "find a standing person in the bedroom        | navigate_to, find_person,        | PARCIAL           | NO
+   | followup:foundPers (follow/guide) | and guide them to the kitchen"                | guide_person                     | Genera go_to,     | Error: 'guiar personas
+   |                                   |                                               |                                  | find_prs, guide   | no implementado'
+-----------------------------------------------------------------------------------------------------------------------------------------
+6  | findObjInRoom +                   | "find a coke in the kitchen then take it      | navigate_to, detect_object,      | SI                | PARCIAL
+   | followup:foundObj (take+place)    | and place it on the table"                    | pick_object, place_object        | Genera go_to,     | Requiere que 'coke'
+   |                                   |                                               |                                  | find_obj, pick,   | este en el mapa
+   |                                   |                                               |                                  | place             | o alias
+-----------------------------------------------------------------------------------------------------------------------------------------
+7  | meetPrsAtBeac +                   | "meet John in the bedroom and guide them      | navigate_to, find_person,        | SI                | NO
+   | followup:foundPers                | to the exit"                                  | guide_person                     | Genera go_to,     | Error: 'guiar personas
+   |                                   |                                               |                                  | find_person, guide| no implementado'
+-----------------------------------------------------------------------------------------------------------------------------------------
+8  | countObjOnPlcmt                   | "tell me how many drinks there are on         | navigate_to, detect_object,      | PARCIAL           | NO
+   |                                   | the kitchen table"                            | count_objects, speak             | Genera go_to,     | No soporta 'how many'
+   |                                   |                                               |                                  | count             | ni conteo
+-----------------------------------------------------------------------------------------------------------------------------------------
+9  | countPrsInRoom                    | "tell me how many sitting persons are         | navigate_to, find_person,        | PARCIAL           | NO
+   |                                   | in the living room"                           | count_people, speak              | Genera go_to,     | No soporta conteo de
+   |                                   |                                               |                                  | count             | personas
+-----------------------------------------------------------------------------------------------------------------------------------------
+10 | countClothPrsInRoom               | "tell me how many people in the kitchen       | navigate_to, find_person,        | PARCIAL           | NO
+   |                                   | are wearing red shirts"                       | classify_clothing, speak         | Genera go_to,     | No soporta atributos
+   |                                   |                                               |                                  | count             | de vestimenta
+-----------------------------------------------------------------------------------------------------------------------------------------
+11 | tellPrsInfoInLoc                  | "tell me the pose of the person in the        | navigate_to, find_person,        | PARCIAL           | NO
+   |                                   | bedroom"                                      | analyze_pose, speak              | Genera go_to,     | No soporta preguntas
+   |                                   |                                               |                                  | find_prs, describe| de estado/postura
+-----------------------------------------------------------------------------------------------------------------------------------------
+12 | tellObjPropOnPlcmt                | "tell me what is the biggest object on        | navigate_to, detect_object,      | PARCIAL           | NO
+   |                                   | the storage rack"                             | compare_objects, speak           | Genera go_to,     | No soporta comparacion
+   |                                   |                                               |                                  | describe          | de atributos
+-----------------------------------------------------------------------------------------------------------------------------------------
+13 | tellCatPropOnPlcmt                | "tell me what is the heaviest drink on        | navigate_to, detect_object,      | PARCIAL           | NO
+   |                                   | the counter"                                  | compare_objects, speak           | Genera go_to,     | No soporta comparacion
+   |                                   |                                               |                                  | describe          |
+-----------------------------------------------------------------------------------------------------------------------------------------
+14 | talkInfoToGestPrsInRoom           | "say what day is today to the waving          | navigate_to, find_person,        | SI                | NO
+   |                                   | person in the office"                         | speak                            | Genera go_to,     | Error: 'llevar/buscar
+   |                                   |                                               |                                  | find_prs, say     | personas'
+-----------------------------------------------------------------------------------------------------------------------------------------
+15 | followNameFromBeacToRoom          | "follow Mary from the kitchen to the hall"    | navigate_to, find_person,        | SI                | NO
+   |                                   |                                               | follow_person                    | Genera go_to,     | Error: 'seguir personas
+   |                                   |                                               |                                  | find_prs, follow  | no implementado'
+-----------------------------------------------------------------------------------------------------------------------------------------
+16 | followPrsAtLoc                    | "follow the person pointing to the left       | navigate_to, find_person,        | SI                | NO
+   |                                   | in the corridor"                              | follow_person                    | Genera go_to,     | Error: 'seguir personas
+   |                                   |                                               |                                  | find_prs, follow  | no implementado'
+-----------------------------------------------------------------------------------------------------------------------------------------
+17 | guideNameFromBeacToBeac           | "guide David from the entrance to the sofa"   | navigate_to, find_person,        | SI                | NO
+   |                                   |                                               | guide_person                    | Genera go_to,     | Error: 'guiar personas
+   |                                   |                                               |                                  | find_prs, guide   | no implementado'
+-----------------------------------------------------------------------------------------------------------------------------------------
+18 | guidePrsFromBeacToBeac            | "guide the standing person from the door      | navigate_to, find_person,        | SI                | NO
+   |                                   | to the kitchen"                               | guide_person                     | Genera go_to,     | Error: 'guiar personas
+   |                                   |                                               |                                  | find_prs, guide   | no implementado'
+-----------------------------------------------------------------------------------------------------------------------------------------
+19 | guideClothPrsFromBeacToBeac       | "guide the person wearing a blue jacket       | navigate_to, find_person,        | SI                | NO
+   |                                   | from the sofa to the dining table"            | guide_person                     | Genera go_to,     | Error: 'guiar personas
+   |                                   |                                               |                                  | find_prs, guide   | no implementado'
+-----------------------------------------------------------------------------------------------------------------------------------------
+20 | bringMeObjFromPlcmt               | "bring me a tea from the sideboard"           | navigate_to, detect_object,      | SI                | PARCIAL
+   |                                   |                                               | pick_object, deliver_object      | Genera go_to,     | Compila pick y
+   |                                   |                                               |                                  | find_obj, pick,   | dice 'Here you are',
+   |                                   |                                               |                                  | deliver_to(me)    | pero no entrega fisica
+-----------------------------------------------------------------------------------------------------------------------------------------
+21 | greetNameInRm /                   | "introduce yourself to Michael in the hall    | navigate_to, find_person,        | SI                | NO
+   | greetClothDscInRm                 | and follow them"                              | speak, follow_person             | Genera go_to,     | Error: 'seguir/buscar
+   |                                   |                                               |                                  | find_prs, say, flw| personas'
+-----------------------------------------------------------------------------------------------------------------------------------------
+22 | tellPrsInfoAtLocToPrsAtLoc        | "tell the gesture of the person at the couch  | navigate_to, find_person,        | SI                | NO
+   |                                   | to the person at the table"                   | analyze_gesture, speak           | Genera 2x go_to,  | No soporta inspeccion
+   |                                   |                                               |                                  | 2x find_prs, say  | de terceros
+-----------------------------------------------------------------------------------------------------------------------------------------
+
+3.3. ANALISIS CRITICO DE LA COBERTURA
+
+1. herramientas/gpsr_parser (tools/gpsr_parser/gpsr_parser/parser.py):
+   - Cobertura sintactica: ALTA sobre los 500 comandos oficiales (500/500 analizados sin excepciones).
+   - Acciones que genera: go_to, find_object, pick, place, deliver_to, find_person, follow, guide, say,
+     answer_question, count, describe (12 acciones en total).
+   - Deficiencia identificada en coordinacion compuesta (revisado por Claude Code en HOME-15b):
+     * Comandos con multiples clausulas coordinadas ('and') pierden pasos intermedios.
+       Ejemplo: "go to the bedroom, find Angel and follow them" -> produce unicamente follow(them),
+       perdiendo el go_to(bedroom) y find_person(Angel).
+     * Las acciones 'count' y 'describe' carecen de mapeo directo en el planificador del robot
+       (_GPSR_MAP en mission/plan.py no las incluye y lanza PlanError).
+
+2. mission/command_parser.py (src/base_athome_skills/.../mission/command_parser.py):
+   - Orientacion: Disenado especificamente para el nodo 'commander' (demostraciones locales en la sala
+     y cualificacion: basura, saludar, llevar objetos simples de mesa a mesa).
+   - Cobertura GPSR: MUY BAJA (~15%).
+   - Bloqueos explicitos en el codigo (lineas 459-467):
+     * "seguir o guiar personas y responder preguntas todavia no esta implementado"
+     * "buscar o llevar personas todavia no esta implementado (find_person, guide_person)"
+   - Conclusion: command_parser.py NO debe utilizarse como motor para GPSR; su proposito es de ordenes
+     domesticas simplificadas y el challenge de la basura. El motor a conectar con mission/executor.py
+     debe ser tools/gpsr_parser enriquecido o un wrapper de LLM estructurado.
+
+
+================================================================================
+4. ARQUITECTURAS DE OTROS EQUIPOS (CONEXION PARSER -> EJECUTOR)
+================================================================================
+
+4.1. ROBORREGOS @HOME (Tecnologico de Monterrey, Robot FRIDA, ROS 2 Jazzy/Humble)
+- Repositorio: https://github.com/RoBorregos/home2
+- Commit verificado: 1a0caeb563546328e64b758811dd3078db8fa81f
+- Archivos clave:
+  * home2/task_manager/scripts/gpsr_task_manager.py
+  * home2/task_manager/task_manager/gpsr/bt_builder.py
+  * home2/task_manager/task_manager/gpsr/merger.py
+  * home2/task_manager/task_manager/subtask_managers/gpsr_tasks.py
+  * home2/hri/packages/nlp/scripts/llm_utils.py
+
+Cadena de conexion en RoBorregos:
+1. Recepcion de audio y filtrado:
+   - El nodo gpsr_task_manager ejecuta una maquina de estados de alto nivel (FSM).
+   - Recibe el texto de ASR mediante el metodo ask_and_confirm(retries=3).
+   - ANTES de parsear, consulta el servicio ROS 2 '/nlp/is_coherent' (check_coherence en hri_tasks.py linea 320).
+     Si el comando esta cortado o es incoherente ("Go to", "Find the"), pide repeticion verbal inmediata.
+2. Extraccion estructurada (BAML + LLM):
+   - Invoca 'command_interpreter' que utiliza un esquema BAML tipado (CommandListLLM) para devolver una lista
+     de objetos de accion fuertemente tipados (GoTo, FindPerson, PickObject, PlaceObject, GuidePersonTo, etc.).
+3. Verbalizacion de plan para puntaje:
+   - Traduce los comandos a texto mediante 'parse_plan_to_text' y hace que Frida verbalice el plan
+     (3 x 100 = 300 pts en la regla §Demonstrate plan).
+4. Optimizador de Tareas Intercaladas (Interleaved Merger):
+   - Si 'interleave_enabled: True', acumula los 3 comandos en 'batched_commands'.
+   - Llama a 'merge()' (en task_manager/gpsr/merger.py), el cual obtiene las coordenadas reales del mapa
+     usando tf_buffer (lookup_transform 'map' -> 'base_link') y el servicio 'retrieve_areas'.
+   - Resuelve el orden de visitas que minimiza la distancia euclidiana total recorrida.
+5. Ejecutor basado en Behavior Trees (py_trees):
+   - 'build_tree()' (en bt_builder.py) construye un Behavior Tree de ejecucion con ramas paralelas/secuenciales.
+   - Cada accion es una hoja (leaf behaviour) vinculada a los subtask_managers (Nav, Vision, Manipulation, HRI).
+   - Incorpora presupuesto global de tiempo (GLOBAL_BUDGET_S = 420 s = 7 min).
+   - Resiliencia y Fallback: Si la ejecucion intercalada falla en algun nodo del arbol, cuenta con un
+     mecanismo de reanudacion secuencial que preserva las acciones exitosas previas (_completed set) para
+     no repetir tareas ya cumplidas.
+
+
+4.2. TECH UNITED EINDHOVEN (TU Eindhoven, Robots HERO / AMIGO, OPL)
+- Repositorio: https://github.com/tue-robotics/tue_robocup
+- Commit verificado: 5bbf7bb13b635e798fc01d03e4a09b7cd6f421a9
+- Archivos clave:
+  * challenge_gpsr/src/gpsr.py
+  * challenge_eegpsr/src/eegpsr.py
+  * robot_smach_states/src/robot_smach_states/navigation/guidance.py
+  * robot_smach_states/src/robot_smach_states/navigation/follow_operator2_0.py
+  * robot_smach_states/src/robot_smach_states/manipulation/manipulation.py
+
+Cadena de conexion en TU Eindhoven:
+1. Speech / HMI con Gramaticas Formales:
+   - Utiliza gramaticas formales CFG/FCFG (.fcfg) asociadas a cada entorno (robocup_knowledge).
+   - El subsistema HMI ('robot.hmi.query') analiza la frase y genera un diccionario semantico estricto
+     con entidades y acciones.
+2. Motor de Conversacion (ConversationEngine):
+   - La clase 'ConversationEngineWithHmi' gestiona el dialogo y la recepcion de comandos.
+   - Si falta informacion (un slot vacio o ambiguo), salta al metodo '_on_request_missing_information'
+     (linea 84 de gpsr.py), donde el robot interactua con el humano mediante preguntas dirigidas para
+     completar los parametros faltantes antes de ejecutar.
+3. Despachador de Tareas y Maquinas de Estado Jerarquicas (SMACH):
+   - Las semanticas son convertidas en instancias de SMACH State Machines provenientes de 'robot_smach_states'.
+   - Cada accion elemental (NavigateToWaypoint, Grab, Place, HandoverToHuman, Guide, Follow) es un estado
+     compuesto que maneja precondiciones, monitoreo, timeouts y transiciones de fallo ('succeeded', 'failed', 'blocked').
+4. Patron de Designadores (Designators):
+   - TU Eindhoven desacopla la definicion de objetivos de su resolucion fisica mediante 'Designators':
+     * EntityByIdDesignator, EdEntityDesignator, ArmDesignator.
+   - El modelo de mundo ED (Environment Descriptor) almacena la estimacion volumetrica continua del entorno.
+     Cuando una maquina de estados necesita agarrar un objeto o guiar a una persona, el Designator resuelve
+     la pose actual en tiempo real justo al momento de ejecutar la transicion.
+
+
+4.3. SOCROB (Instituto Superior Tecnico, Portugal, Robot TIAGo)
+- Repositorio: https://github.com/socrob/llm_gpsr
+- Commit verificado: f8a784b7463d063efd5cdcf7aaba7cf32d33a236
+- Referencia cientifica: "End-to-End Robot Task Planning from Transcriptions of Voice Commands"
+  (2.do lugar en GPSR RoboCup 2024 Eindhoven).
+- Archivos clave:
+  * llm_gpsr/src/llm_gpsr_ros/llm_node/llm_node.py
+  * llm_gpsr/src/llm_gpsr_ros/llm_node/llm_handler.py
+  * llm_gpsr/src/llm_gpsr_ros/grammars/grammar_from_api.py
+
+Cadena de conexion en SocRob:
+1. Manejo de ambiguedad de ASR (ASRNBestList):
+   - El nodo de voz no envia un unico string plano, sino una lista de mejores hipotesis foneticas
+     (socrob_speech_msgs/ASRNBestList).
+2. LLM Fine-Tuned Local (Phi-3-GPSR):
+   - Emplea un modelo liviano Phi-3 con adaptadores LoRA (certafonso/Phi-3-GPSR) corriendo 100% offline
+     a bordo del robot.
+3. Decodificacion Guiada por Gramatica Dinamica (Constrained Decoding):
+   - Antes de generar el plan, extrae el mapa semantico activo del robot (TiagoAPI semantic_map).
+   - Genera dinamicamente una gramatica formal EBNF ('generate_grammar_from_api', linea 59) que restringe
+     el espacio de tokens del LLM: el modelo tiene matematicamente bloqueada la generacion de tokens que
+     no correspondan a ubicaciones reales, objetos presentes o acciones validas.
+4. Salida en flujo continuo de acciones:
+   - A medida que el LLM genera los pasos, los publica directamente en el topico '~actions'
+     (socrob_planning_msgs/action_msg), consumidos por el ejecutor de misiones.
+
+
+================================================================================
+5. TRATAMIENTO DE COMANDOS INCOMPLETOS O IMPOSIBLES (INFEASIBLE / INCOMPLETE COMMANDS)
+================================================================================
+
+5.1. COMANDOS INCOMPLETOS O CON ERRORES DE TRANSCRIPCION (ASR TRUNCATION)
+En competencia real, el operador puede sufrir cortes de audio, volumen bajo, o el reconocedor
+(Whisper / Sherpa-ONNX) puede devolver fragmentos incompletos como "Go to the", "Bring me", "Kitchen".
+
+1. Enfoque RoBorregos @Home (Filtro de Coherencia LLM):
+   - Archivo: home2/hri/packages/nlp/nlp/assets/dialogs.py (linea 334)
+   - Prompt de sistema de 'get_is_coherent_dialog':
+     "Your task is to determine if the given command is complete and not an input error.
+      If a command is cut off or doesn't read as a command, mark it as false.
+      Examples of incomplete: 'Go to', 'Find the', 'Pick up', 'Take', 'The kitchen', 'Apple'."
+   - Comportamiento en runtime (gpsr_task_manager.py lineas 484-490):
+     Si is_coherent == False, Frida verbaliza:
+     "I didn't catch that correctly or the command was incomplete. Please tell me again."
+     Incrementa el contador de intentos y vuelve a escuchar sin bloquearse ni ejecutar acciones a ciegas.
+
+2. Enfoque Tech United Eindhoven (Relleno Activo de Ranuras / Slot Filling):
+   - Archivo: challenge_gpsr/src/gpsr.py (lineas 84-100)
+   - Metodo: '_on_request_missing_information(description, grammar, target)'
+   - Comportamiento: Si el comando carece de un dato esencial (por ejemplo, "Bring me a coke" pero falta
+     desde donde traerlo), el motor no descarta la orden completa; formula una pregunta acotada al operador:
+     "Where should I find the coke? For example: in the kitchen".
+     El HMI activa un sub-reconocedor con gramatica restringida a lugares, recibe la respuesta, completa
+     la semantica y despacha el plan.
+
+3. Enfoque SocRob (Grammar Constraints + Robustez Fonetica):
+   - El LLM fine-tuneado con LoRA fue entrenado explicitamente con transcripciones corrompidas artificialmente
+     (WER 0.1 a 1.0 en resources/corrupted_instructions). Si faltan conectores o una palabra esta deformada
+     por ruido, la decodificacion restringida (EBNF) fuerza al modelo a elegir la entidad mas cercana que
+     cierre un plan sintacticamente valido.
+
+4. Estado actual en Base@Home:
+   - command_parser.py detecta algunas faltas mediante regex (ej: "que objeto busco?", "falta que decir"),
+     pero no tiene dialogo de repregunta: simplemente cancela el pedido con error.
+   - tools/gpsr_parser devuelve PlanResult(success=False) sin informar al operador por voz ni solicitar repeticion.
+
+
+5.2. COMANDOS IMPOSIBLES O NO REALIZABLES (INFEASIBLE / IMPOSSIBLE COMMANDS)
+Un comando puede ser sintacticamente perfecto pero semanticamente irrealizable:
+- La habitacion u objeto ordenado no existe en el mapa de competencia (ej: "bring me the milk from the garage").
+- El objeto fue retirado o no se encuentra en la superficie indicada.
+- La persona objetivo no esta en la habitacion indicada.
+- El brazo no alcanza la profundidad del estante o el peso excede la capacidad del Piper.
+
+1. Enfoque RoBorregos @Home:
+   - Verificacion previa de mapas: En gpsr_task_manager.py ('_resolve_xy'), si la ubicacion no existe
+     en 'retrieve_areas', el planificador degrada la distancia a 'LARGE_M' o solicita aclaracion.
+   - Timeout por hoja de comportamiento: Si un subtask falla (ej. objeto no visto tras 3 barridos),
+     retorna Status.TARGET_NOT_FOUND.
+   - Protocolo de Ayuda Humana (Human Assistance Fallback): Si no puede agarrar o colocar un objeto,
+     solicita ayuda explicita al arbitro/operador (perdiendo puntaje parcial pero evitando el cero total):
+     "I couldn't place the object. Please help me place the object. When you confirm you have grabbed it,
+      I will open my gripper." (gpsr_single_tasks.py linea 433).
+
+2. Enfoque Tech United Eindhoven:
+   - Modelo de Mundo ED: Al llegar al mueble, el estado 'Inspect' ejecuta un barrido 3D con la camara.
+     Si el objeto buscado no aparece en el arbol de entidades de ED, la maquina de estados SMACH
+     transiciona por la salida 'failed', el robot dice: "I could not find the object on the table",
+     cancela limpiamente el sub-comando y prosigue con la siguiente instruccion o regresa al Instruction Point.
+
+3. Estado actual en Base@Home:
+   - Validacion estatica (mission/plan.py metodo 'validate_plan'): Si el lugar no existe en semantic_map.yaml
+     o waypoints.yaml, el plan se rechaza antes de mover ningun motor:
+     "lugar desconocido '{p}' (no esta en el mapa semantico)".
+   - Recuperacion reactiva (mission/executor.py metodo 'run'): Si un paso falla durante la ejecucion
+     (timeout, objeto no detectado, Nav2 bloqueado), el ejecutor evalua 'step.on_failure'. En nuestros
+     planes compilados, on_failure salta a 'avisar', donde el robot dice:
+     "I could not complete the request" y ejecuta 'return_home' de regreso a casa.
+   - Hueco actual: No existe comunicacion hacia el arbitro de EXACTAMENTE que parte fallo ni degradacion
+     graciosa para continuar con los comandos 2 y 3 si falla el comando 1 en ejecucion consecutiva.
+
+
+================================================================================
+6. IMPLEMENTACION DETALLADA DE HABILIDADES CLAVE EN OTROS EQUIPOS
+================================================================================
+
+6.1. HABILIDAD 1: GUIAR PERSONA (guide_person)
+Reglamento: Conducir a un juez o invitado hacia una habitacion o mueble de la arena.
+
+1. RoBorregos @Home (home2/task_manager/task_manager/subtask_managers/gpsr_tasks.py:412):
+   - Metodo: 'guide_person_to(command: GuidePersonTo)'
+   - Secuencia:
+     * Coloca el brazo en postura segura de navegacion ('nav_pose').
+     * Resuelve el waypoint objetivo mediante 'query_location(command.destination_room)'.
+     * Verbaliza la intencion: "Now we will go to the {destination}."
+     * Envia meta de navegacion con Nav2: 'subtask_manager.nav.move_to_location()'.
+     * Al llegar, confirma la llegada: "We have arrived to {destination}!"
+   - Evaluacion: Es una implementacion simple y altamente efectiva. No sobre-complica la deteccion
+     trasera de personas durante la marcha, evitando que el robot se frene por falsos negativos.
+
+2. Tech United Eindhoven (robot_smach_states/src/robot_smach_states/navigation/guidance.py:181):
+   - Metodo: 'ExecutePlanGuidance' (estado SMACH con outcomes ['arrived', 'blocked', 'lost_operator'])
+   - Secuencia:
+     * La cabeza gira hacia atras para mantener al operador en el campo visual de la camara:
+       'robot.head.look_at_point(VectorStamped.from_xyz(-1.0, -0.1, 1.75, ...))'.
+     * Dice al operador: "Keep looking at me while you follow me".
+     * Inicia navegacion hacia el destino.
+     * En bucle a 10 Hz, calcula la distancia recorrida. Cada 1 metro verifica si la persona sigue detras
+       mediante '_detect_operator_behind_robot(distance=1.0, radius=0.5)': proyecta un circulo de 0.5 m
+       a 1 metro detras de la base y consulta al detector de personas de ED.
+     * Si no detecta a nadie, transiciona a 'lost_operator': el robot frena, espera y llama verbalmente
+       al operador antes de continuar.
+   - Evaluacion: Muy robusto y vistoso para el jurado, pero depende de un pan-tilt con rango suficiente
+     para mirar hacia atras y de un tracker continuo confiable.
+
+
+6.2. HABILIDAD 2: SEGUIR PERSONA (follow_person)
+Reglamento: Seguir a una persona que camina libremente por la arena hasta una habitacion o hasta que
+le ordene detenerse.
+
+1. RoBorregos @Home (home2/task_manager/task_manager/subtask_managers/gpsr_tasks.py:177, 236):
+   - Metodos: 'follow_person_until' y '_follow_person_tracking'
+   - Secuencia:
+     * Posiciona el brazo en 'carry_pose' (camara frontal erguida y centrada).
+     * Activa el tracker visual: 'subtask_manager.vision.track_person(True)'.
+     * El nodo de vision publica la coordenada 3D de la persona; el nodo 'person_goal_smoother'
+       convierte esas coordenadas continuas en una meta dinamica de Nav2.
+     * La manipulacion/cabeza ejecuta 'follow_face' para mantener a la persona en el centro del cuadro.
+     * Detencion: Al llegar a la habitacion indicada, al escuchar palabras de parada (stop keywords),
+       o por watchdog maximo de duracion (FOLLOW_MAX_DURATION).
+     * Degradacion elegante (Fallback): Si el tracker no logra enganchar (track_person falla tras 3 intentos),
+       el robot dice "I could not lock onto you, so I cannot follow you", le pregunta a donde desea ir
+       y lo guia caminando hasta alli (reemplaza follow por guide para no quedar congelado).
+
+2. Tech United Eindhoven (robot_smach_states/src/robot_smach_states/navigation/follow_operator2_0.py):
+   - Secuencia con migas de pan (Breadcrumb Navigation):
+     * Estado 'LearnOperator': Registra el perfil laser/RGB-D del operador en el modelo de mundo ED.
+     * Estado 'Track': A medida que el operador camina, el robot registra "migas de pan" (breadcrumbs)
+       cada 0.1 metros. El planificador local de la base navega persiguiendo la hilera de migas.
+     * Control de velocidad interactivo: Si la distancia al operador supera 2.5 metros, el robot emite
+       frases de advertencia: "Not so fast!", "Please slow down.", "You seem to be in a hurry!".
+     * Recuperacion ante perdida: Si el tracker pierde a la persona, el robot navega hasta la ultima miga
+       de pan confirmada y realiza un giro de 360 grados buscando recuperar la firma laser/visual.
+
+
+6.3. HABILIDAD 3: RESPONDER PREGUNTAS (answer_question)
+Reglamento: Escuchar una pregunta del operador o juez, comprenderla y dar la respuesta correcta por voz.
+
+1. RoBorregos @Home (home2/task_manager/task_manager/subtask_managers/gpsr_single_tasks.py:513):
+   - Secuencia:
+     * Dialogo interactivo: 'ask_and_confirm("Please ask your question")'.
+     * Despacho a modulo de conocimiento: Empaqueta la pregunta en SayWithContext y consulta al nodo
+       'knowledge_base.py' (que almacena embeddings de la competencia y LLM wrapper).
+     * Generacion de respuesta: Si la pregunta coincide con hechos de la competencia (datos del equipo,
+       dia, hora, arena), responde con el dato exacto; si es pregunta general de sentido comun, el LLM
+       genera una respuesta concisa de 1 frase.
+     * Verbalizacion por TTS.
+
+2. Tech United Eindhoven (robot_smach_states/src/robot_smach_states/human_interaction/answer_questions.py):
+   - Secuencia determinista basada en tabla de despacho ('assignments'):
+     * Reconoce la pregunta mediante HMI gramatical.
+     * Enrutador por clave de semantica:
+       - 'answer_predefined_questions': Hora actual, fecha, dia de la semana, nombre del robot, afiliacion.
+       - 'answer_crowd_questions': Cuantas personas hay sentadas/paradas (alimentado por 'crowd_data' de perception).
+       - 'compare_sizes' / 'compare_weight': Consulta a la base de datos de objetos oficiales (robocup_knowledge).
+     * El robot dice: "The answer is {ans}".
+
+
+6.4. HABILIDAD 4: ENTREGAR OBJETO (deliver_object)
+Reglamento: Entregar un objeto que el robot sostiene en su pinza a una persona (el operador o un tercero)
+o depositarlo en un lugar designado.
+
+1. RoBorregos @Home (home2/task_manager/task_manager/subtask_managers/gpsr_single_tasks.py:377):
+   - Enfoque de entrega a persona:
+     * Si la entrega es a mueble, intenta 'place()'.
+     * Si la entrega es a persona o si el 'place()' falla tras 3 intentos, salta a asistencia humana:
+       El robot extiende el brazo hacia adelante y dice:
+       "I couldn't place the object / Here is the object. Please help me by taking it. When you confirm
+        you have grabbed the object, I will open my gripper."
+     * Espera confirmacion del usuario ("yes" / "done"), abre la pinza, retrae el brazo a 'nav_pose'
+       y verbaliza agradecimiento.
+
+2. Tech United Eindhoven (robot_smach_states/src/robot_smach_states/manipulation/manipulation.py:149):
+   - Estado 'HandoverToHuman':
+     * 'ArmToJointConfig': Mueve el brazo a la postura cinemática ensenada 'handover_to_human'.
+     * Dice: "I will handover the object now. Please take it and press my gripper."
+     * Estado 'HandOverTo': Monitorea la retroalimentacion de esfuerzo articular o sensor de contacto
+       de los dedos de la pinza (si la persona tira levemente del objeto o ejerce fuerza).
+     * Abre la pinza ('SetGripper(OPEN)'), dice "I will close my gripper now", cierra la pinza vacia
+       y regresa el brazo al estado de reposo ('reset').
+
+
+================================================================================
+7. COMPARACION CON NUESTRA LISTA DE SKILLS EN MISSION/SKILLS.PY Y PLAN.PY
+================================================================================
+
+7.1. REGISTRO OFICIAL DE HABILIDADES EN BASE@HOME
+Archivo: src/base_athome_skills/base_athome_skills/mission/skills.py (lineas 89-157).
+La funcion 'default_registry()' declara formalmente 21 habilidades.
+
+Estado real segun contrato de skills.py:
+---------------------------------------------------------------------------------------------------
+Skill en Base@Home   | Estado en skills.py | Requiere Actuador | Estado Funcional Real (STATUS.md)
+---------------------------------------------------------------------------------------------------
+navigate_to          | AVAILABLE           | Base              | NUC_VERIFIED (Nav2 protegido)
+navigate_sequence    | AVAILABLE           | Base              | NUC_VERIFIED (cliente Nav2)
+return_home          | AVAILABLE           | Base              | NUC_VERIFIED (cliente Nav2)
+speak                | AVAILABLE           | Ninguno           | NUC_VERIFIED (TTS espeak-ng/piper)
+listen               | AVAILABLE           | Ninguno           | JETSON_VERIFIED (WhisperASRNode)
+wait                 | AVAILABLE           | Ninguno           | NUC_VERIFIED (temporizador)
+find_pointed_bag     | AVAILABLE           | Cabeza pan-tilt   | SIM_PASS (tarea de la basura)
+approach_person      | AVAILABLE           | Base + Cabeza     | SIM_PASS (centrado de persona)
+approach_bag         | AVAILABLE           | Base              | SIM_PASS (aproximacion Nav2)
+dock_bag             | AVAILABLE           | Base              | SIM_PASS (tramo final con lidar)
+remember_bag         | AVAILABLE           | Brazo (camara)    | SIM_PASS (medicion de muñeca)
+set_torso            | AVAILABLE           | Elevador          | SIM_PASS (sin ensayo fisico real)
+detect_object        | AVAILABLE           | Brazo (camara)    | SIM_PASS (distancia por bounding box)
+arm_pose             | AVAILABLE           | Brazo Piper       | SIM_PASS / JETSON_VERIFIED (poses MoveIt)
+pick_object          | AVAILABLE           | Brazo Piper       | SIM_PASS (agarre MoveIt; real LAB)
+place_object         | AVAILABLE           | Brazo Piper       | SIM_PASS (suelta en pre_grasp frente a base)
+find_person          | UNAVAILABLE         | Cabeza + Vision   | NO IMPLEMENTADO como skill (esta en receptionist)
+follow_person        | UNAVAILABLE         | Base + Vision     | NO IMPLEMENTADO
+guide_person         | UNAVAILABLE         | Base + Cabeza     | NO IMPLEMENTADO
+deliver_object       | UNAVAILABLE         | Brazo + Dialogo   | NO IMPLEMENTADO
+answer_question      | UNAVAILABLE         | Dialogo + ASR     | NO IMPLEMENTADO
+---------------------------------------------------------------------------------------------------
+
+
+7.2. MAPEO GPSR EN MISSION/PLAN.PY (FUNCION 'from_gpsr')
+Archivo: src/base_athome_skills/base_athome_skills/mission/plan.py (lineas 171-195).
+Existe el diccionario '_GPSR_MAP':
+- "go_to"           -> "navigate_to"    (AVAILABLE)
+- "find_object"     -> "detect_object"  (AVAILABLE)
+- "pick"            -> "pick_object"    (AVAILABLE)
+- "place"           -> "place_object"   (AVAILABLE)
+- "say"             -> "speak"          (AVAILABLE)
+- "deliver_to"      -> "deliver_object" (UNAVAILABLE) -> rechaza el plan en validate_plan()
+- "find_person"     -> "find_person"    (UNAVAILABLE) -> rechaza el plan en validate_plan()
+- "follow"          -> "follow_person"  (UNAVAILABLE) -> rechaza el plan en validate_plan()
+- "guide"           -> "guide_person"   (UNAVAILABLE) -> rechaza el plan en validate_plan()
+- "answer_question" -> "answer_question"(UNAVAILABLE) -> rechaza el plan en validate_plan()
+
+BRECHAS CRITICAS DETECTADAS:
+1. Omision de acciones del parser:
+   - Las acciones 'count' y 'describe', generadas activamente por tools/gpsr_parser al parsear comandos
+     de conteo ("tell me how many...") o comparacion ("what is the biggest..."), NO estan presentes
+     en '_GPSR_MAP'. Si se pasa una orden de conteo a 'from_gpsr', el sistema lanza de inmediato:
+     PlanError("accion GPSR sin equivalente: 'count'").
+2. Rechazo de planes validos:
+   - Actualmente, CUALQUIER comando GPSR que involucre interactuar con personas (guiar, seguir, entregar
+     en mano o responder una pregunta) es rechazado por 'validate_plan(allow_unavailable=False)'
+     debido al estado 'UNAVAILABLE' en skills.py. Esto inhabilita el 80% de los comandos del RuleBook.
+3. Desacople del ciclo de percepcion en manipulacion:
+   - 'from_gpsr' traduce 'find_object' a 'detect_object' y 'pick' a 'pick_object'. Sin embargo, en
+     Base@Home 'detect_object' exige que el brazo ya este en postura de observacion ('pre_grasp').
+     En cambio, un plan proveniente de un parser puro pasa de 'go_to' directamente a 'find_object'
+     sin insertar el paso intermedio de elevar o acomodar el brazo para mirar la mesa.
+
+
+================================================================================
+8. RECOMENDACIONES PRIORIZADAS PARA BASE@HOME
+================================================================================
+
+8.1. RECOMENDACION 1: UNIFICAR EL PARSER GPSR CON EL EJECUTOR (HOME-49 + HOME-15b)
+Objetivo: Conectar el parser formal determinista (tools/gpsr_parser) con el sistema de ejecucion
+de misiones de Base@Home (mission/plan.py y mission/executor.py).
+
+- Archivos a modificar:
+  1. src/base_athome_skills/base_athome_skills/mission/plan.py:
+     * Extender '_GPSR_MAP' para mapear:
+       - 'count' -> skill 'count_entities' o secuencia de deteccion + verbalizacion.
+       - 'describe' -> skill 'describe_property'.
+     * Enriquecer 'from_gpsr(actions)': Al detectar un 'pick' precedido de 'find_object', insertar
+       automaticamente el paso preparatorio 'arm_pose(pre_grasp)' para posicionar el brazo a la altura
+       de observacion de la mesa antes de intentar 'detect_object'.
+  2. tools/gpsr_parser/gpsr_parser/parser.py:
+     * Corregir el analizador de clausulas compuestas ('_parse_clause_sequence' y '_parse_subclause'):
+       Asegurar que oraciones coordinadas como "go to the bedroom, find Angel and follow them"
+       generen la lista completa: [go_to(bedroom), find_person(Angel), follow(Angel)], resolviendo
+       la regresion identificada en HOME-15b.
+  3. src/base_athome_skills/base_athome_skills/mission/commander_node.py (o nuevo nodo gpsr_node.py):
+     * Exponer servicio ROS 2 '/gpsr/parse_and_plan' o enlazar la entrada de ASR para traducir
+       texto -> GPSRParser -> Plan -> /mission/run.
+
+- Como probarlo primero en simulation/:
+  * Correr suite offline de tests:
+    `pytest tools/gpsr_parser/tests/ -v`
+  * Ejecutar el benchmark contra los 500 comandos de data/commands.jsonl midiendo la correccion exacta
+    del plan (exact-plan accuracy).
+  * Probar en el entorno de simulación liviano con dominio ROS_DOMAIN_ID=77:
+    Lanzar 'mission_executor' en sim y enviar planes GPSR mediante un script de test, confirmando
+    que 'validate_plan()' devuelva cero errores.
+
+- Evaluacion de riesgo:
+  * Riesgo en Hardware: NINGUNO. Es logica pura de transformacion de datos en Python (Nivel A).
+  * Riesgo en Navegacion: NINGUNO. No toca ningun archivo protegido ni cambia parametros de Nav2.
+
+
+8.2. RECOMENDACION 2: IMPLEMENTAR 'guide_person' Y 'deliver_object' (HABILIDADES DE ALTO RETORNO)
+Objetivo: Habilitar dos habilidades fundamentales de GPSR y HRI con minima complejidad mecanica.
+
+- Justificacion de seleccion:
+  * 'follow_person' requiere seguimiento dinamico continuo con personas en movimiento y reactividad
+    alta de la base para no perder al anfitrión (riesgo de penalidad de -50 a -150 pts si se pierde).
+  * En contraste, 'guide_person' utiliza la navegacion autonoma Nav2 existente hacia un waypoint
+    estatico de la habitacion, agregando solo dialogo TTS ("Please follow me...") y giros de cabeza
+    para mirar hacia atras.
+  * 'deliver_object' no requiere complejas trayectorias de colocacion en estantes milimetricos;
+    consiste en aproximarse a la persona, extender el brazo al frente en postura segura ('pre_grasp'),
+    pedir que tomen el objeto por TTS, esperar y abrir la pinza.
+
+- Archivos a modificar:
+  1. src/base_athome_skills/base_athome_skills/mission/skills.py:
+     * Modificar 'guide_person' y 'deliver_object', cambiando 'status=UNAVAILABLE' a 'status=AVAILABLE'.
+     * Definir sus argumentos requeridos y opcionales:
+       - guide_person: required=("place",), optional=("person",)
+       - deliver_object: optional=("person", "place")
+  2. src/base_athome_skills/base_athome_skills/mission/executor.py / handlers:
+     * Handler de 'guide_person':
+       - Ejecuta TTS: "Please follow me to the {place}."
+       - Publica meta a Nav2 mediante cliente 'navigate_to_pose'.
+       - Durante el trayecto, comanda al pan-tilt mirar a +60°/-60° de forma suave para simular
+         atencion al operador detras.
+       - Al llegar, ejecuta TTS: "We have arrived at the {place}."
+     * Handler de 'deliver_object':
+       - Comanda el brazo a postura 'pre_grasp' (extendido al frente).
+       - Ejecuta TTS: "Here is your object. Please take it from my gripper."
+       - Temporizador de espera de 3.0 s (o deteccion de apertura).
+       - Abre la pinza a 105.0 mm.
+       - Ejecuta TTS: "You are welcome!"
+       - Retrae el brazo a la postura 'home'.
+
+- Como probarlo primero en simulation/:
+  * En simulación (sim_scene.py / MoveIt falso / Nav2 simulado):
+    - Ejecutar mision con paso: {"skill": "guide_person", "args": {"place": "kitchen"}}.
+      Confirmar que Nav2 recibe la meta, el log registra el avance y termina en SUCCEEDED.
+    - Ejecutar mision con paso: {"skill": "deliver_object", "args": {"person": "operator"}}.
+      Confirmar que el brazo virtual se mueve a pre_grasp, abre pinza y regresa a home.
+
+- Evaluacion de riesgo:
+  * Riesgo en Hardware:
+    - guide_person: NINGUNO (la base navega por Nav2 como en cualquier waypoint).
+    - deliver_object: MEDIO en el robot real. Exige sesion LAB_SUPERVISADO con operador atento
+      para confirmar que la pinza no colisione con el cuerpo humano al extenderse. La energizacion
+      y movimiento fisico real siempre requiere autorizacion humana especifica (Nivel C).
+
+
+8.3. RECOMENDACION 3: FILTRO DE COHERENCIA Y RECUPERACION ANTE COMANDOS IMPOSIBLES
+Objetivo: Evitar penalizaciones por inaccion, timeouts o bloqueos ante ordenes ruidosas del arbitro.
+
+- Archivos a modificar:
+  1. tools/gpsr_parser/gpsr_parser/parser.py o modulo nuevo de coherencia:
+     * Implementar regla de coherencia previa (inspirado en 'is_coherent' de RoBorregos):
+       - Si la transcripcion de audio tiene menos de 3 palabras ("go to", "find the"), o termina
+         en conectores sueltos ("bring me a"), marcar de inmediato 'is_complete = False'.
+       - En ese caso, el robot responde verbalmente de inmediato:
+         "I did not catch the complete command. Could you please rephrase or repeat?"
+         (Aprovecha los 3 intentos permitidos por el reglamento antes de pedir custom operator).
+  2. src/base_athome_skills/base_athome_skills/mission/executor.py:
+     * En caso de comando irrealizable (lugar no existente en el mapa semantico o timeout de busqueda
+       de objeto tras 2 intentos):
+       - El robot debe anunciar verbalmente el motivo del fallo:
+         "I could not find the {target} in the {place}. Returning to instruction point."
+       - En lugar de detenerse con error generico o intentar indefinidamente, transicionar de forma
+         limpia a 'return_home' hacia el Instruction Point para no perder el turno ni el tiempo
+         de los siguientes comandos.
+
+- Como probarlo primero en simulation/:
+  * Escribir pruebas unitarias en pytest inyectando cadenas corruptas ("go to", "bring the", "locate"):
+    Verificar que el validador las rechace con bandera explicita de reintento.
+  * Inyectar en simulador una orden hacia un lugar ficticio ("go to the garden"):
+    Verificar que el ejecutor avise por TTS el error y regrese a casa sin congelar el hilo de ROS.
+
+- Evaluacion de riesgo:
+  * Riesgo en Hardware: NINGUNO (100% logica de software y gestion de strings).
+
+
+================================================================================
+9. TABLA DE EVIDENCIA Y REGISTRO DE VERIFICACION
+================================================================================
+
+9.1. FUENTES DE EVIDENCIA EXTERNAS (REPOSITORIOS CLONADOS Y LEIDOS)
+-----------------------------------------------------------------------------------------------------------------------------------------
+Repositorio / Proyecto         | Commit SHA                               | Archivo y lineas consultadas         | Estado
+-----------------------------------------------------------------------------------------------------------------------------------------
+RoboCupAtHome/RuleBook         | ebdf34d223ddc3ae89ac3f16a23ad28024adfdf6 | tasks/GPSR.tex:1-91                  | VERIFICADO
+RoboCupAtHome/RuleBook         | ebdf34d223ddc3ae89ac3f16a23ad28024adfdf6 | scoresheets/GPSR.tex:1-24            | VERIFICADO
+RoboCupAtHome/CommandGenerator | fa8b9adf52c876042b81b7dbfd0e50fc00ef5cc6 | src/.../gpsr_commands.py:15-70       | VERIFICADO
+RoboCupAtHome/CommandGenerator | fa8b9adf52c876042b81b7dbfd0e50fc00ef5cc6 | src/.../gpsr_commands.py:106-190     | VERIFICADO
+RoboCupAtHome/CommandGenerator | fa8b9adf52c876042b81b7dbfd0e50fc00ef5cc6 | src/.../llm.py:47-95                 | VERIFICADO
+RoBorregos/home2               | 1a0caeb563546328e64b758811dd3078db8fa81f | task_manager/scripts/gpsr_task_manager.py:63-125   | VERIFICADO
+RoBorregos/home2               | 1a0caeb563546328e64b758811dd3078db8fa81f | task_manager/scripts/gpsr_task_manager.py:305-370  | VERIFICADO
+RoBorregos/home2               | 1a0caeb563546328e64b758811dd3078db8fa81f | task_manager/scripts/gpsr_task_manager.py:453-535  | VERIFICADO
+RoBorregos/home2               | 1a0caeb563546328e64b758811dd3078db8fa81f | task_manager/task_manager/gpsr/merger.py:1-120     | VERIFICADO
+RoBorregos/home2               | 1a0caeb563546328e64b758811dd3078db8fa81f | hri/packages/nlp/nlp/assets/dialogs.py:334-355     | VERIFICADO
+RoBorregos/home2               | 1a0caeb563546328e64b758811dd3078db8fa81f | .../subtask_managers/gpsr_tasks.py:177-320 (follow)| VERIFICADO
+RoBorregos/home2               | 1a0caeb563546328e64b758811dd3078db8fa81f | .../subtask_managers/gpsr_tasks.py:412-453 (guide) | VERIFICADO
+RoBorregos/home2               | 1a0caeb563546328e64b758811dd3078db8fa81f | .../gpsr_single_tasks.py:377-440 (place/handover)  | VERIFICADO
+RoBorregos/home2               | 1a0caeb563546328e64b758811dd3078db8fa81f | .../gpsr_single_tasks.py:513-565 (answer_question) | VERIFICADO
+tue-robotics/tue_robocup       | 5bbf7bb13b635e798fc01d03e4a09b7cd6f421a9 | challenge_gpsr/src/gpsr.py:22-100   | VERIFICADO
+tue-robotics/tue_robocup       | 5bbf7bb13b635e798fc01d03e4a09b7cd6f421a9 | .../navigation/guidance.py:19-50, 181-230          | VERIFICADO
+tue-robotics/tue_robocup       | 5bbf7bb13b635e798fc01d03e4a09b7cd6f421a9 | .../navigation/follow_operator2_0.py:39-80         | VERIFICADO
+tue-robotics/tue_robocup       | 5bbf7bb13b635e798fc01d03e4a09b7cd6f421a9 | .../human_interaction/answer_questions.py:12-75   | VERIFICADO
+tue-robotics/tue_robocup       | 5bbf7bb13b635e798fc01d03e4a09b7cd6f421a9 | .../manipulation/manipulation.py:149-195 (handover)| VERIFICADO
+socrob/llm_gpsr                | f8a784b7463d063efd5cdcf7aaba7cf32d33a236 | src/llm_gpsr_ros/llm_node/llm_node.py:33-100       | VERIFICADO
+socrob/llm_gpsr                | f8a784b7463d063efd5cdcf7aaba7cf32d33a236 | src/.../grammars/grammar_from_api.py:1-80          | VERIFICADO
+-----------------------------------------------------------------------------------------------------------------------------------------
+
+
+9.2. EVIDENCIA DE SIMBOLOS Y CODIGO EN BASE@HOME (COMPROBADO CON GREP)
+-----------------------------------------------------------------------------------------------------------------------------------------
+Archivo en base_athome_ws                              | Simbolo / Funcion verificada con grep          | Linea | Estado
+-----------------------------------------------------------------------------------------------------------------------------------------
+tools/gpsr_parser/gpsr_parser/parser.py                | class GPSRParser                               | 71    | VERIFICADO
+tools/gpsr_parser/gpsr_parser/parser.py                | def parse                                      | 160   | VERIFICADO
+tools/gpsr_parser/gpsr_parser/parser.py                | def _parse_command_internal                    | 204   | VERIFICADO
+tools/gpsr_parser/gpsr_parser/parser.py                | def explain_plan                               | 757   | VERIFICADO
+src/.../mission/command_parser.py                      | def find_place                                 | 107   | VERIFICADO
+src/.../mission/command_parser.py                      | def compile_command                            | 564   | VERIFICADO
+src/.../mission/command_parser.py                      | Bloqueo explicito 'seguir/guiar/responder'     | 459   | VERIFICADO
+src/.../mission/plan.py                                | def parse_plan                                 | 63    | VERIFICADO
+src/.../mission/plan.py                                | def validate_plan                              | 108   | VERIFICADO
+src/.../mission/plan.py                                | _GPSR_MAP (diccionario de mapeo GPSR)          | 171   | VERIFICADO
+src/.../mission/plan.py                                | def from_gpsr                                  | 186   | VERIFICADO
+src/.../mission/skills.py                              | class SkillRegistry                            | 61    | VERIFICADO
+src/.../mission/skills.py                              | def default_registry                           | 89    | VERIFICADO
+src/.../mission/skills.py                              | Skills UNAVAILABLE (find/follow/guide/deliver) | 137   | VERIFICADO
+src/.../mission/executor.py                            | class MissionExecutor                          | 89    | VERIFICADO
+src/.../mission/executor.py                            | def run                                        | 138   | VERIFICADO
+src/.../mission/commander_node.py                      | class Commander(Node)                          | 74    | VERIFICADO
+src/.../mission/node.py                                | class MissionExecutorNode(Node)                | 64    | VERIFICADO
+jetson_head/src/audio_asr/audio_asr/whisper_node.py    | class WhisperASRNode(Node)                     | 54    | VERIFICADO
+src/.../base_athome_perception/scene_analysis.py       | def choose_seat                                | 108   | VERIFICADO
+src/.../base_athome_perception/scene_analysis.py       | def face_tracking_step                         | 195   | VERIFICADO
+src/.../scripts/hri_receptionist_challenge.py          | def move_head_smooth                           | 1132  | VERIFICADO
+src/.../scripts/hri_receptionist_challenge.py          | def move_head_to                               | 1140  | VERIFICADO
+src/.../scripts/hri_receptionist_challenge.py          | def scan_seats                                 | 1399  | VERIFICADO
+src/.../base_athome_perception/arm_manipulation.py     | def gripper                                    | 222   | VERIFICADO
+src/.../base_athome_perception/arm_manipulation.py     | def go_to_blocking                             | 352   | VERIFICADO
+src/.../base_athome_perception/arm_manipulation.py     | def pick_blocking                              | 440   | VERIFICADO
+src/.../base_athome_perception/arm_manipulation.py     | def place_blocking                             | 481   | VERIFICADO
+-----------------------------------------------------------------------------------------------------------------------------------------
+
+
+9.3. DECLARACION FORMAL DE ESTADOS: VERIFICADO, INFERIDO, NO ENCONTRADO, POR CONFIRMAR
+1. VERIFICADO:
+   - Que tools/gpsr_parser cubre sintacticamente los 500 comandos generados, pero su salida no se ejecuta
+     porque '_GPSR_MAP' en plan.py carece de soporte para 'count'/'describe' y mapea a skills 'UNAVAILABLE'.
+   - Que mission/command_parser.py rechaza formalmente en tiempo de ejecucion cualquier comando de guiar,
+     seguir, encontrar personas o responder preguntas (lineas 459-467).
+   - Que RoBorregos utiliza un Behavior Tree jerarquico con BAML, filtro is_coherent y optimizador 'merger'
+     para ejecucion intercalada de comandos ganando +200 puntos.
+   - Que Tech United Eindhoven gestiona comandos incompletos interactuando con el usuario mediante
+     '_on_request_missing_information' en su maquina de estados.
+   - Que SocRob demostro en RoboCup 2024 un pipeline End-to-End con LLM local Phi-3 restringido por
+     gramaticas EBNF generadas desde el mapa semantico.
+
+2. INFERIDO:
+   - Se infiere que la decision de marcar 'follow_person', 'guide_person', 'deliver_object' y 'answer_question'
+     como UNAVAILABLE en mission/skills.py fue adoptada preventivamente para cumplir con la regla de
+     honestidad tecnica de AGENTS.md §8 ("no publicar estados medidos falsos ni fingir habilidades no validadas"),
+     ya que dichas rutinas existian de forma monolitica dentro de 'hri_receptionist_challenge.py' pero
+     aun no habian sido modularizadas como contratos desacoplados del ejecutor.
+
+3. NO ENCONTRADO:
+   - NO ENCONTRADO: Ningun nodo ROS 2 wrapper ni publicador/suscriptor para tools/gpsr_parser dentro de 'src/'.
+     Actualmente tools/gpsr_parser es una herramienta aislada en Python puro dentro del directorio tools/.
+   - NO ENCONTRADO: Ningun modulo de navegacion reactiva de seguimiento de personas ('person follower')
+     enlazado activamente a Nav2 en Base@Home (a diferencia de RoBorregos que posee 'person_goal_smoother').
+
+4. POR CONFIRMAR:
+   - POR CONFIRMAR: Tasa de comprension de WhisperASRNode corriendo en la Jetson Orin Nano cuando el arbitro
+     emite comandos re-fraseados por un LLM externo en ambiente acustico ruidoso de arena.
+   - POR CONFIRMAR: Desempeno fisico del agarre y entrega del brazo Piper con objetos reales de competencia
+     (latas de Red Bull, tubos de Pringles, botellas de agua), el cual requiere sesion presencial LAB_SUPERVISADO
+     y decision humana de energizacion.
