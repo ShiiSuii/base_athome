@@ -79,12 +79,14 @@ Antes de empezar: E-stop a mano, zona despejada y otra persona atenta. Bolsa liv
 
 ## 2d. La misión de la basura en Gazebo (2026-11-05)
 
-- **Correr:** `GAZEBO=1 GZ_GUI=1 ATHOME_SIM_BAG=1.5,1.2,0.30 ATHOME_SIM_PERSON=2.6,0.3 ATHOME_SIM_OBJECT_LABEL=handbag src/base_athome_skills/scripts/sim_commander.sh "take out the trash"`. Sin `GZ_GUI` corre sin ventana.
+- **Correr:** `GAZEBO=1 GZ_GUI=1 ATHOME_SIM_BAG=1.5,1.2,0.30 ATHOME_SIM_PERSON=2.6,0.3 ATHOME_SIM_OBJECT_LABEL=handbag simulation/scripts/sim_commander.sh "take out the trash"`. Sin `GZ_GUI` corre sin ventana. Guía para el equipo: `simulation/README.md`.
 - **Qué viene de Gazebo:** física, lidar, RealSense con profundidad, cámara de muñeca, bolsa (cae y se engancha con una unión al cerrar la pinza). **Sigue siendo simplificado:** Nav2 falso, base movida por velocidad y sin gravedad (no simula ruedas), detector por color, persona con keypoints simulados, voz simulada, sin simular el firmware real.
 - **Resultado:** 1 corrida completa en pantalla, pinza a 1.7 cm del nudo, con la pose real de piso. Antes fallaron 6, cada una por un problema distinto.
 - **Arreglos que valen para el robot real:** la cabeza centra la bolsa antes de medirla; se vuelve a medir 30 cm antes del tramo final; el tramo final se guía por la bolsa medida, no por 40 cm fijos (Nav2 real tiene 18 cm de tolerancia); frena 4 cm antes del límite de alcance.
 - **Alcance con la pose del 05/11 19:05:** con esa orientación a z = 0.20 m, x = 0.55 m llega con y ≥ 9 cm; x = 0.57 m solo con y ≥ 15 cm; x = 0.60 m nunca (IK numérica). Enseñar la pose más cerca da más margen.
-- **Sin probar:** nada en el robot real ni una sola tanda de repetición en Gazebo.
+- **Clon limpio:** en esta NUC, clon nuevo de `development` (`b296808`), con `HOME` vacío y sin escenarios previos: compila y completa la misión, pinza a 1.6 cm. No prueba una máquina distinta: los paquetes de sistema ya estaban instalados y el entorno de ROS podría heredar algo del workspace principal.
+- **Carpeta:** todo lo propio de simulación pasó a `simulation/`; el código del robot sigue en `src/` y es el mismo.
+- **Sin probar:** nada en el robot real. En Gazebo hay 2 corridas completas, sin una tanda de repetición ni los escenarios de falla.
 
 ## 3. Cómo retomar la teleoperación con el Quest (pendiente: prueba completa en el brazo real)
 
