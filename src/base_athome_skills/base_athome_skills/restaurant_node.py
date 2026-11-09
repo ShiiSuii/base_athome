@@ -69,6 +69,7 @@ class RestaurantNode(Node):
         )
 
         auto_start = self.get_parameter("auto_start").get_parameter_value().bool_value
+        self._exit_when_done = auto_start
         menu_param = self.get_parameter("menu").get_parameter_value().string_array_value or list(rest.DEFAULT_MENU)
         timeout_s = self.get_parameter("timeout_s").get_parameter_value().double_value
         use_tray = self.get_parameter("tray").get_parameter_value().bool_value
@@ -180,6 +181,9 @@ class RestaurantNode(Node):
             self.get_logger().info(f"Mision Restaurant terminada. Resultado: {ok}")
         except Exception as e:
             self.get_logger().error(f"Error inesperado en sesion Restaurant: {e}")
+        finally:
+            if self._exit_when_done:     # prueba automatica: al terminar se cierra el nodo y con el la sesion
+                rclpy.try_shutdown()
 
     # ------------------------------------------------------------------ Callbacks e Interfaces
     def _on_costmap(self, msg: OccupancyGrid) -> None:

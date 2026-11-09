@@ -261,8 +261,8 @@ def test_no_customers_detected():
     session = harness.make_session()
     ok = session.run()
 
-    assert ok is True
-    assert session.state == SessionState.SUCCEEDED
+    assert ok is False                       # sin clientes no se hizo la prueba: no es un exito
+    assert session.state == SessionState.FAILED
     assert "I do not see any customers calling." in harness.spoken
     # No debe haber navegado hacia ningun comensal
     assert len(harness.nav_goals) == 0

@@ -314,8 +314,8 @@ class RestaurantSession:
 
         if not customers_list:
             self._speak("I do not see any customers calling.")
-            self._set_state(SessionState.SUCCEEDED, {"reason": "no_customers"})
-            return True
+            self._set_state(SessionState.FAILED, {"reason": "no_customers"})   # sin clientes no se hizo la prueba
+            return False
 
         self.customers = customers_list[: self.max_customers]
         n_cust = len(self.customers)

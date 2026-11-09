@@ -15,7 +15,8 @@ import yaml
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, OpaqueFunction
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import LifecycleNode, Node
 
@@ -87,20 +88,16 @@ def _setup(context):
     nav_params_file = _prepare_nav_params(use_sim_time)
     slam_params_file = _prepare_slam_params(use_sim_time)
 
-    # 1. SLAM Toolbox Asincrono
-    slam_toolbox_node = LifecycleNode(
-        package="slam_toolbox",
-        executable="async_slam_toolbox_node",
-        name="slam_toolbox",
-        namespace="",
-        output="screen",
-        parameters=[
-            slam_params_file,
-            {
-                "use_lifecycle_manager": False,   # se activa solo: con el gestor, este lo configuraba antes de que el nodo estuviera listo y SLAM nunca arrancaba
-                "use_sim_time": use_sim_time,
-            },
-        ],
+    # 1. SLAM Toolbox asincrono, con su launch oficial: configura y activa el nodo solo (autostart).
+    #    Lanzado a mano como LifecycleNode quedaba "unconfigured": sin mapa ni TF map -> odom, y RViz no mostraba nada.
+    slam_toolbox_node = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(os.path.join(get_package_share_directory("slam_toolbox"), "launch", "online_async_launch.py")),
+        launch_arguments={
+            "slam_params_file": slam_params_file,
+            "use_sim_time": "true" if use_sim_time else "false",
+            "autostart": "true",
+            "use_lifecycle_manager": "false",
+        }.items(),
     )
 
     lifecycle_slam_node = Node(
