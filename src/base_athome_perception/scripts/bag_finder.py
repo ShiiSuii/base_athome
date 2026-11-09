@@ -302,11 +302,11 @@ class BagFinder(Node):
                     if rgb is not None:
                         people = self._poses(rgb, cam)
                         for person in people:
-                            spot = None
-                            if depth is not None and cam is not None and self.K is not None:
+                            # En simulacion los puntos del cuerpo no coinciden con el modelo dibujado: la profundidad del
+                            # torso caia en la pared de atras (~2x de distancia). Ahi se usa la posicion de la persona simulada.
+                            spot = self._sim_person_spot(person, cam) if SIM else None
+                            if spot is None and depth is not None and cam is not None and self.K is not None:
                                 spot = bv.person_map_position(person, depth, cam[0], cam[1], self.K)
-                            if spot is None and SIM:
-                                spot = self._sim_person_spot(person, cam)
                             if spot is not None:
                                 aggregator.update_observation(spot, keypoints=person[1], conf=person[2])
                 time.sleep(0.12)

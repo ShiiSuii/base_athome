@@ -124,6 +124,7 @@ class RestaurantSession:
         self.menu = tuple(menu)
         self.max_time_s = float(max_time_s)
         self.standoff_dist = float(standoff_dist)
+        self.served = 0
         self.use_tray = bool(use_tray)
         self.max_customers = int(max_customers)
 
@@ -373,6 +374,7 @@ class RestaurantSession:
 
             # Entregar orden
             self._speak("Here is your order, please take it from my tray.")
+            self.served += 1
 
         # 4. Regreso final al kitchen bar
         if self._is_timeout():
@@ -382,8 +384,12 @@ class RestaurantSession:
 
         self._set_state(SessionState.RETURNING_TO_BAR_FINAL)
         self.navigate_fn(self.bar_pose[0], self.bar_pose[1], self.bar_pose[2])
+        if not self.served:     # volver a la barra sin haber atendido a nadie no es un exito
+            self._speak("I could not serve any customer.")
+            self._set_state(SessionState.FAILED, {"reason": "no_customer_served"})
+            return False
         self._speak("Mission complete. I am back at the kitchen bar.")
-        self._set_state(SessionState.SUCCEEDED)
+        self._set_state(SessionState.SUCCEEDED, {"served": self.served})
         return True
 
     def start(self) -> bool:

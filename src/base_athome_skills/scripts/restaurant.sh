@@ -19,7 +19,7 @@ if pgrep -f 'commander' >/dev/null; then
   echo "Hay una sesion de commander abierta. Cerrala antes."
   exit 1
 fi
-if pgrep -f 'restaurant_node' >/dev/null; then
+if pgrep -f 'lib/base_athome_skills/restaurant_node' >/dev/null; then   # el ejecutable, no cualquier linea que lo nombre
   echo "Ya hay un restaurant_node abierto. Cerralo antes."
   exit 1
 fi
@@ -41,7 +41,7 @@ if [ "${SIM:-0}" = 1 ]; then
   export ROS_DOMAIN_ID=${SIM_DOMAIN:-42}
   export ATHOME_SIM=1
   export ATHOME_SIM_NAV2=1      # la navegacion la hace Nav2 + SLAM, no el simulador
-  export ATHOME_SIM_CUSTOMERS="${ATHOME_SIM_CUSTOMERS:-2.0,1.5;3.0,-1.0}"
+  export ATHOME_SIM_CUSTOMERS="${ATHOME_SIM_CUSTOMERS:-1.5,2.3,right,seated;2.5,-2.4,left,seated}"   # sentados en las mesas 1 y 3 de restaurant.sdf
   [ -f "$HOME/cyclonedds_local.xml" ] && export CYCLONEDDS_URI=file://$HOME/cyclonedds_local.xml
 
   echo "============================================================"
