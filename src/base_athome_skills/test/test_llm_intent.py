@@ -32,3 +32,11 @@ def test_a_place_the_map_does_not_have_is_rejected_by_the_compiler():
 
 def test_without_server_there_is_no_answer_and_no_error():
     assert li.ask("go to the kitchen", ["kitchen"], ["cup"], url="http://127.0.0.1:9/none", timeout_s=0.5) == []
+
+
+def test_commander_skips_the_llm_for_unknown_places():
+    """Con la gramatica, la LLM cambiaria un lugar desconocido por uno conocido: el commander no le pregunta."""
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "base_athome_skills" / "mission" / "commander_node.py").read_text()
+    assert 'unknown_place = any("no conozco el lugar" in e for e in c.errors)' in src
+    assert "and not unknown_place" in src

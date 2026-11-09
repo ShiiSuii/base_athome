@@ -130,7 +130,10 @@ class Commander(Node):
             official = gpsr_actions(text)
             if official:
                 c = compile_gpsr_actions(official, places, objects=objects, tables=tables)
-        if not c.ok and not c.cancel:     # lo ultimo: la LLM local, que solo propone. El plan pasa por lo mismo y pide "yes"
+        # Lo ultimo: la LLM local, que solo propone. El plan pasa por lo mismo y pide "yes". No si el problema es un lugar que no
+        # existe: la gramatica la obliga a elegir uno conocido y "go to the garage" terminaba en otro lugar.
+        unknown_place = any("no conozco el lugar" in e for e in c.errors)
+        if not c.ok and not c.cancel and not unknown_place:
             names = [k.replace("_", " ") for k in places if not k.startswith("object:")]
             labels = list(OBJECT_ALIASES) + [o.get("label", "") for o in objects]
             guess = llm_intent.ask(text, names, labels)
