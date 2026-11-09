@@ -1248,3 +1248,253 @@ ninguna referencia inventada o simulada.
   "The Marathon 2: A Navigation System" (Nav2).
   IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS 2020) / arXiv:2003.00368.
   URL: https://arxiv.org/abs/2003.00368
+
+
+================================================================================
+IDEA 21: Ciclo cerrado de verificación multiagente para software robótico
+================================================================================
+Fecha: 2026-11-09. Numeración global: sigue a las 20 ideas AIM/IROS anteriores.
+Título tentativo: "Multi-Agent Closed-Loop Verification of a ROS 2 Service Robot:
+A Repository-Grounded Case Study". Nombre operativo: CCVM; en inglés,
+Multi-Agent Closed-Loop Verification. Estudio retrospectivo + experimento propuesto.
+[VERIFICADO] Corte H=fc7dc61caf5d05b1fa5725e6d2aad45c50e9188e, rama codex/paper-agentes;
+git rev-parse HEAD; git branch --show-current. No se incluyen commits de otras ramas.
+[VERIFICADO] significa dato recalculado o afirmación localizada en ese corte; cuando
+la fuente es STATUS, verifica el registro histórico, no repite el ensayo. [INFERENCIA]
+identifica interpretación/hipótesis. No se demuestra que los agentes "aprendieron todo".
+
+1. Evidencia cuantitativa y cómo reproducirla (solo repositorio)
+[VERIFICADO] 291 commits únicos alcanzables desde H; 285 sin merges, 6 merges.
+Fuente: git rev-list --count H; git rev-list --count --no-merges H (sustituir H por el SHA).
+[VERIFICADO] Commits por día de autor, convertidos a America/Sao_Paulo (UTC-3):
+  09/10:1; 16/10:8; 20/10:1; 22/10:2; 23/10:11; 24/10:10; 26/10:9; 27/10:13;
+  29/10:20; 30/10:56; 03/11:25; 04/11:13; 05/11:46; 06/11:34; 09/11:42 (2026).
+  Son 15 días activos; entre 03/11 y 09/11 hay 160. No equivalen a horas trabajadas.
+[VERIFICADO] Un único nombre de autor Git (anonimizado A01): 291 commits. 172 contienen
+  trailer Co-Authored-By; los 172 nombran Claude. No hay trailers Codex/Gemini/Fable.
+  Mensajes completos, por coincidencia sin distinguir mayúsculas: "Written by Codex"=5,
+  Antigravity=12, Gemini=7, Fable=0. Son menciones, no cuotas de autoría ni productividad;
+  las categorías se superponen (los 5 de Codex también llevan coautoría Claude).
+Receta de recuento sin imprimir nombres personales ni correos (Python estándar):
+  python3 - <<'PY'
+  import subprocess as s, collections as c, datetime as d, re
+  from zoneinfo import ZoneInfo
+  H='fc7dc61caf5d05b1fa5725e6d2aad45c50e9188e'; days=c.Counter(); authors=c.Counter()
+  marks=c.Counter(); trailers=c.Counter(); both=0
+  for rec in s.check_output(['git','log',H,'--format=%aI%x09%an%x09%B%x00'],text=True).split('\0'):
+      if not rec.strip(): continue
+      stamp,name,body=rec.lstrip('\n').split('\t',2); authors[name]+=1
+      days[d.datetime.fromisoformat(stamp).astimezone(ZoneInfo('America/Sao_Paulo')).date().isoformat()]+=1
+      for tag in ['Written by Codex','Antigravity','Gemini','Fable']:
+          marks[tag]+=bool(re.search(re.escape(tag),body,re.I))
+      co=re.findall(r'^Co-Authored-By:\s*(.+)$',body,re.I|re.M)
+      trailers['commits']+=bool(co); trailers['Claude']+=sum('claude' in x.lower() for x in co)
+      both+=bool(re.search('Written by Codex',body,re.I) and co)
+  print(sorted(days.items())); print('autores anonimizados:',sorted(authors.values(),reverse=True))
+  print(dict(marks),dict(trailers),'Codex con trailer:',both)
+  PY
+[VERIFICADO] Los 5 "Written by Codex": 67481af, 61f377f, 1cd28ae, 6bd06ad, 7f9d97b.
+  Fuente individual: git show -s --format=%B SHA (filtrar trailers antes de mostrarlo).
+  Fable aparece en STATUS.md:211. Rama/coordinador no identifican al implementador.
+
+[VERIFICADO] Inventario AST, sin importar/ejecutar los tests: crecimiento de 154 a 804
+  definiciones test_* (+650; 5,22 veces) y de 34 a 78 archivos. Cierre diario de la
+  línea de integración: git rev-list --first-parent -1 --before=FECHAT23:59:59-03:00 H.
+  Fecha       SHA          Archivos  Definiciones
+  2026-10-30  01ecbf7       34        154
+  2026-11-03  e5527a6       45        267
+  2026-11-04  be42ea4       49        350
+  2026-11-05  b296808       54        433
+  2026-11-06  12445d7       67        604
+  2026-11-09  fc7dc61       78        804
+  Definición: test_*.py en test/ o tests/, más tools/agents y tools/debug_dashboard;
+  incluye estilo, excluye scripts manuales externos. Cuenta funciones/métodos, no
+  parametrizaciones, cobertura ni aprobados. Los 78 archivos parsearon sin SyntaxError.
+Receta para cada SHA S de la tabla; no importa paquetes del robot:
+  python3 - <<'PY'
+  import ast, pathlib as p, subprocess as s
+  for S in ['01ecbf7','e5527a6','be42ea4','b296808','12445d7','fc7dc61']:
+      files=[]; count=0
+      for path in s.check_output(['git','ls-tree','-r','--name-only',S],text=True).splitlines():
+          q=p.PurePosixPath(path)
+          if not(q.suffix=='.py' and q.name.startswith('test_')): continue
+          if not({'test','tests'} & set(q.parts[:-1]) or str(q.parent) in ['tools/agents','tools/debug_dashboard']): continue
+          files.append(path); tree=ast.parse(s.check_output(['git','show',S+':'+path],text=True))
+          count+=sum(isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef)) and n.name.startswith('test_') for n in ast.walk(tree))
+      print(S,len(files),count)
+  PY
+[VERIFICADO] capacidades.yaml:7-40: 34 capacidades: robot=2, gazebo=6, simulador=5,
+  tests=9, parcial=5, falta=7. Fuente: tools/debug_dashboard/capacidades.yaml.
+  Etiquetas manuales; "navegar" advierte cambio del 09/11 sin ensayo físico (:7).
+[VERIFICADO] 16 docs/INVESTIGACION_*.txt, 10.928 líneas: wc -l docs/INVESTIGACION_*.txt.
+  Despachos documentados: INVESTIGACION_SIM_REALISTA.txt:3-5, INVESTIGACION_GPSR.txt:7,
+  INVESTIGACION_LLM_VLM.txt:5-7. El volumen documental no mide exactitud ni aprendizaje.
+[VERIFICADO] STATUS.md:135,212 registra 121/500 -> 285/500 comandos GPSR compilables
+  (24,2% -> 57,0%, +32,8 puntos); fuente completa docs/collab/STATUS.md. Es compilación,
+  no éxito de misión. El corpus tiene una sola incorporación en la historia de H:
+  git log H -- tools/gpsr_parser/data/commands.jsonl (55d40e0).
+[VERIFICADO] STATUS.md:139-173: LLM local 14/16 frases y 0/8 órdenes falsas; VLM 4/4
+  imágenes de prueba, ~5 s, 835 MiB. Esos modelos de ejecución del robot no son los
+  agentes de programación: no usar sus aciertos para medir a Claude/Codex/Antigravity.
+
+2. Fallas concretas y procedencia de la detección
+[VERIFICADO] Costmaps sin lidar: STATUS.md:175-187 dice que scan sin max_obstacle_height
+  admitía altura 0,0 y descartaba el lidar a 0,38 m. En Gazebo, distancia mínima al
+  centro de una persona: perfil anterior 0,06 m, solo altura 0,87 m, eval 1,04 m.
+  Tras la corrección autorizada del perfil operativo: 0,88 m (:196-201, e4e3204).
+  Una corrida por caso; no son distancias al borde del cuerpo ni pruebas físicas.
+  Código de la métrica: simulation/scripts/nav_eval.py:52-63,86-88; no se ejecutó aquí.
+[VERIFICADO] Regresión del arreglo: STATUS.md:203-210 registra autorretornos a 116-130°,
+  0,30-0,34 m y "Start occupied". 7f9d97b atribuye el filtro a Codex y revisión a Claude.
+  Regresión codificada: src/base_athome_bringup/test/test_scan_self_filter.py:10-32,93-102;
+  elimina cuerpo/sectores traseros y conserva obstáculos frontales. Hardware pendiente.
+[VERIFICADO] SLAM unconfigured: STATUS.md:212 y comentario de causa en
+  src/base_athome_skills/launch/restaurant_nav.launch.py:102-110. 278c50d reemplaza
+  el LifecycleNode manual por online_async_launch.py; faltaban mapa y TF map->odom.
+  Intentos: git show --stat 8d71710 cd2ab34 278c50d.
+[VERIFICADO] Revisión propia de Codex: el cuerpo de 61f377f dice "Written by Codex
+  from its own review, reviewed and committed by Claude." Corrige sensores obsoletos
+  y obstáculos del corredor. src/base_athome_skills/test/test_dock_safety.py:11-27,77-126
+  codifica frescura y frenado con reloj/publicador falsos (no es un ensayo real).
+[VERIFICADO] Revisión de navegación asíncrona: 6bd06ad enumera cancelación de goals
+  tardíos/timeout, stop por voz, elevador sin movimiento, rechazo de stack duplicado,
+  TF ausente y deadline global. Atribuye implementación Codex/revisión Claude.
+[VERIFICADO] Revisión adversaria de Antigravity: STATUS.md:108-113 y 6e510c6 registran
+  objetivo pisado por otro detector, falso "listo" y gesto inestable; la regresión
+  final conserva explícitamente una falla ocasional del caso "lejos".
+[VERIFICADO] Actor de diálogo simulado: fc7dc61 añade una guarda para no pedir de nuevo
+  durante entrega/fin (simulation/scripts/restaurant_actor.py:23-39). Es el interlocutor
+  del banco; el validador también necesitó corrección.
+[VERIFICADO] Restaurant: STATUS.md:211 registra dos clientes atendidos en dos mundos
+  (8x6 m y 12x9 m), una corrida por mundo, voz simulada; atribuye el ajuste a Fable.
+[VERIFICADO] Contraejemplo de calidad documental: INVESTIGACION_RESTAURANT.txt:5-20
+  corrige INVESTIGACION_LLM_VLM por confundir master del reglamento con tag 2026.2.
+  Contraejemplo del banco: un test vació waypoints reales (STATUS.md:270).
+[INFERENCIA] El origen por agente está atribuido explícitamente en la revisión propia
+  de 61f377f y la adversaria de Antigravity; no hay trazas completas que excluyan una
+  pista humana previa. En costmaps, SLAM y actor se prueba el defecto/arreglo histórico,
+  pero no quién lo detectó primero. No contarlos como "descubiertos sin humanos".
+[INFERENCIA] "14 hallazgos de Codex": no se localizó informe ni lista con ese total en
+  las fuentes consultadas. git log --all -i --grep='14 hallazgos' no devuelve commits;
+  rg -n 'Codex|14 hallazgos' docs/collab/STATUS.md tampoco respalda ese número.
+  Pendiente de Claude: recuperar reporte original e identificar cada defecto/duplicado.
+
+3. Analogía con RL: formulación y límites [INFERENCIA]
+Entorno de ingeniería = repo, dependencias, middleware, banco de tests, simulador y
+restricciones; el robot real es una etapa separada y con autorización humana.
+Acción = parche, prueba, revisión, despacho o escalamiento; no implica mover el robot.
+Observación = feedback parcial; "recompensa" = fallas, invariantes, hallazgos confirmados,
+tiempo y tokens; un test verde aislado no representa utilidad ni seguridad.
+"Política" = modelos + roles + instrucciones + contexto/memorias recuperadas. El repo
+documenta cambios de artefactos/contexto; no documenta entrenamiento de sus pesos.
+Formalización propuesta: x_t=(repo, pruebas, configuración, memoria, cola, restricciones);
+o_t=Observe(x_t); a_t~pi_theta(.|o_0:t,m_t); e_t=Validate(Apply(x_t,a_t)).
+Si fallan controles requeridos, Reject(e_t) genera nuevas tareas; si pasan y se cuenta
+con las autorizaciones aplicables, Admit integra. m_(t+1)=Curate(m_t,e_t).
+Validate devuelve un vector y trazas; una etapa no realizada queda PENDIENTE.
+Este esquema describe realimentación y búsqueda iterativa sobre artefactos. La dinámica
+cambia al editar el banco o las instrucciones; no se establece un MDP estacionario,
+una función de retorno esperado ni una regla de mejora de política derivada de él.
+Ausencia de gradientes NO excluye RL (también hay métodos sin gradientes); recompensa
+vectorial y humano en el lazo tampoco lo excluyen. La limitación aquí es la falta de
+evidencia de un algoritmo de aprendizaje por recompensa, no esas características solas.
+Reflexion usa "verbal reinforcement learning" sin cambiar pesos [B2]; no prueba RL en
+este repo. Eureka sí entrena políticas [B10].
+Reclamo defendible: "los agentes reparan software con feedback de verificadores y
+revisión cruzada, bajo controles humanos". "Conocen completamente el sistema" exigiría
+evaluar transferencia a tareas inéditas y límites de conocimiento; hoy no está probado.
+
+4. Bibliografía primaria: 13 citas verificadas en línea el 2026-11-09
+Se comprobó título/año y resumen/método pertinente; sin replicación ni revisión sistemática.
+[B1, VERIFICADO] Madaan et al. (2023), Self-Refine: Iterative Refinement with Self-Feedback.
+  https://arxiv.org/abs/2303.17651 — generar/criticar/refinar con un mismo modelo,
+  sin entrenamiento adicional; comparación directa para la ablation de auto-revisión.
+[B2, VERIFICADO] Shinn et al. (2023), Reflexion: Language Agents with Verbal Reinforcement Learning.
+  https://arxiv.org/abs/2303.11366 — feedback lingüístico y memoria episódica entre intentos.
+[B3, VERIFICADO] Chen et al. (2023, preprint), Teaching Large Language Models to Self-Debug.
+  https://arxiv.org/abs/2304.05128 — explicación de código y resultados de ejecución.
+[B4, VERIFICADO] Yang et al. (2024), SWE-agent: Agent-Computer Interfaces Enable Automated Software Engineering.
+  https://arxiv.org/abs/2405.15793 — edición de repos y ejecución de tests; antecedente
+  para controlar el efecto de las herramientas frente al número de agentes.
+[B5, VERIFICADO] Qian et al. (ACL 2024; preprint 2023), ChatDev: Communicative Agents for Software Development.
+  https://arxiv.org/abs/2307.07924 — roles y comunicación durante diseño/código/testing.
+[B6, VERIFICADO] Hong et al. (ICLR 2024; preprint 2023), MetaGPT: Meta Programming for A Multi-Agent Collaborative Framework.
+  https://arxiv.org/abs/2308.00352 — procedimientos y validación de resultados intermedios.
+  Publicación: https://proceedings.iclr.cc/paper_files/paper/2024/file/6507b115562bb0a305f1958ccc87355a-Paper-Conference.pdf
+[B7, VERIFICADO] Liang et al. (2022, preprint), Code as Policies: Language Model Programs for Embodied Control.
+  https://arxiv.org/abs/2209.07753 — programas que consumen percepción y llaman APIs del
+  robot; distinguir generación de conducta de mantenimiento del stack completo.
+[B8, VERIFICADO] Chen et al. (2024, preprint), RoboScript: Code Generation for Free-Form Manipulation Tasks across Real and Simulation.
+  https://arxiv.org/abs/2402.14623 — interfaz ROS, control de sintaxis y validación Gazebo;
+  antecedente cercano: generar código y validarlo en simulación ya existe.
+[B9, VERIFICADO] Wang et al. (ICML 2024; preprint 2023), RoboGen: Towards Unleashing Infinite Data for Automated Robot Learning via Generative Simulation.
+  https://arxiv.org/abs/2311.01455 — ciclo de proponer tareas, generar escenas y aprender
+  habilidades; usa RL/planificación/optimización, distinto de reparar software del robot.
+[B10, VERIFICADO] Ma et al. (ICLR 2024; preprint 2023), Eureka: Human-Level Reward Design via Coding Large Language Models.
+  https://arxiv.org/abs/2310.12931 — optimiza código de recompensa con feedback de
+  entrenamiento en simulación; hay RL de políticas robóticas, no demostrado aquí.
+[B11, VERIFICADO] McAleese et al. (2024), LLM Critics Help Catch LLM Bugs.
+  https://arxiv.org/abs/2407.00215 — críticos de código; documenta también bugs alucinados:
+  obliga a medir falsos positivos y adjudicar hallazgos, no contar comentarios.
+[B12, VERIFICADO] Vijayvergiya et al. (AIware 2024), AI-Assisted Assessment of Coding Practices in Modern Code Review.
+  https://arxiv.org/abs/2405.13565 — AutoCommenter; evaluación de revisión en uso industrial,
+  con foco en buenas prácticas, que no equivale a validar comportamiento robótico.
+[B13, VERIFICADO] Chen et al. (2025), Collaborative LLM agents for flexible software development of intelligent industrial robot control systems.
+  https://doi.org/10.1007/s40747-025-02051-z — IRCSAD/LISP: colaboración, optimización
+  iterativa de prompts y pruebas con FSM, simulación y máquina real; antecedente directo.
+[INFERENCIA] La novedad NO puede ser "multiagentes + simulación". Contribución candidata:
+  trazabilidad de defectos entre tests/sim/revisión en ROS 2, validación del propio banco,
+  controles humanos explícitos y ablaciones con presupuesto comparable. B8/B13 exigen
+  comparar protocolos y resultados antes de afirmar una diferencia científica.
+Balance: 13/13 verificadas en línea; 0 [SIN VERIFICAR EN LÍNEA]; bibliografía previa excluida.
+
+5. Diseño experimental y registro desde ahora [INFERENCIA / PROPUESTA]
+Hipótesis primaria: revisión cruzada + simulación reduce escapes frente a un agente
+con tests, con igual presupuesto. Secundarias: efecto de etapa, costo/latencia y
+transferencia de memoria a tareas inéditas (sin afirmar aprendizaje total).
+Unidades: tarea y defecto adjudicado, nunca commit, comentario o caso parametrizado.
+Condiciones: A) un agente + tests; B) mismo agente + tests + auto-revisión + simulación;
+C) coordinador + implementador + revisor independiente + tests + simulación. Añadir
+ablaciones de C sin simulación, sin revisor o sin memoria, y baseline humano+CI si
+hay recursos. Igualar versiones/modelos, herramientas, contexto inicial y límites de
+tokens/tiempo; comparar también curvas éxito/costo, porque más agentes consumen más.
+Rejugar bugs históricos y sembrar fallas solo en copias offline; guardar el arreglo
+oculto. Separar por familias y tiempo tareas de desarrollo/held-out; retirar docs e
+historia que revelen la solución. Evaluador independiente y pruebas ocultas congeladas.
+Piloto propuesto: 24 tareas de cuatro familias (config/lifecycle, asincronía/frescura,
+percepción/diálogo y banco/datos), al menos tres repeticiones por condición. Orden y
+semillas aleatorizados; tamaño final según potencia y variabilidad observada.
+Medir por etapa (test, simulación, revisión, robot real): defectos únicos detectados
+primero, gravedad, confirmados/rechazados, duplicados, reparados, reabiertos y escapados;
+tiempo desde introducción conocida hasta primera alerta y confirmación, tiempo hasta
+reparación, intentos y regresiones nuevas. En bugs orgánicos, separar inicio de tarea
+de introducción desconocida. Precisión=TP/(TP+FP); recall solo con universo conocido
+(fallas sembradas/adjudicadas); no tratar defectos todavía invisibles como cero.
+Tokens de entrada/salida/cache por agente e intento, tiempo de herramientas/simulación,
+intervenciones/minutos humanos (pista, corrección, aprobación), bloqueos y tareas fallidas.
+Registrar NA si falta telemetría; commits no permiten reconstruir tokens ni tiempo humano.
+Desde ya: eventos JSONL/CSV inmutables con task/run/defect/parent IDs, UTC+reloj monotónico,
+SHA base/parche/suite/simulador/fixtures, estado sucio, rol/modelo/versión e instrucciones
+hasheadas, herramienta+salida sanitizada, semilla, etapa, detector (agente/test/humano),
+primera alerta, evidencia, adjudicación ciega, solución, tokens y control humano aplicado.
+Deduplicar por causa raíz y conservar fallos/timeouts; versionar el actor y el oráculo.
+No registrar conversaciones, imágenes, voces, nombres de personas ni credenciales.
+Evaluación final: éxito en tests/escenarios ocultos y defectos escapados, con intervalos
+de confianza por tarea y costos/latencias completos; no usar cada test como réplica.
+Amenazas: un robot/equipo, selección de éxitos, autor Git compartido, documentación
+retrospectiva, pistas humanas no registradas, deriva de modelos, cómputo desigual,
+tests escritos por el mismo generador, contaminación del benchmark y brecha sim-real.
+El actor corregido y el test que vació waypoints muestran que el oráculo puede fallar.
+Toda validación física futura requiere sesión humana específica; no está autorizada
+por este diseño. No ejecutar condiciones debilitadas contra hardware ni dominio 10.
+
+6. Venues posibles y entrega
+[INFERENCIA] RoboCup Symposium: estudio de sistema reproducible; IROS: si se demuestra
+aporte robótico experimental; MSR: si el aporte principal es minería/trazabilidad.
+[VERIFICADO] Alcances oficiales consultados, sin fechas de convocatoria:
+https://robocup.org/symposium ; https://www.ieee-ras.org/conferences-workshops/financially-co-sponsored/iros/
+https://www.msrconf.org/ . Entrega a Claude: solo docs/PAPERS_IDEAS.txt ampliado.
+Validación de esta tarea: inventarios Git/AST y diff; sin ejecutar ROS, Gazebo ni robot,
+sin cambios de host/servicios/navegación, sin staging/commit/push ni publicación.
+Rollback: quitar únicamente esta sección. Integrador: registrar cierre en STATUS.md
+(AGENTS.md §6.2 reserva ese archivo a Claude), revisar fuentes y recuperar los 14 hallazgos.
