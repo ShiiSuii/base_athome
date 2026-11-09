@@ -92,6 +92,7 @@ def _setup(context):
         package="slam_toolbox",
         executable="async_slam_toolbox_node",
         name="slam_toolbox",
+        namespace="",
         output="screen",
         parameters=[
             slam_params_file,

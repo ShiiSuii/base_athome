@@ -50,7 +50,6 @@ class RestaurantNode(Node):
 
         # Parametros
         self.declare_parameter("auto_start", False)
-        self.declare_parameter("use_sim_time", False)
         self.declare_parameter("menu", list(rest.DEFAULT_MENU))
         self.declare_parameter("timeout_s", 900.0)
         self.declare_parameter("tray", True)
