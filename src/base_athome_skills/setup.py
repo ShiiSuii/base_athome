@@ -28,6 +28,7 @@ setup(
             'mission_executor = base_athome_skills.mission.node:main',
             'mission_run = base_athome_skills.mission.cli:main',
             'commander = base_athome_skills.mission.commander_node:main',
+            'restaurant_node = base_athome_skills.restaurant_node:main',
         ],
     },
 )
