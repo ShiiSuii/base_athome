@@ -1,142 +1,178 @@
 \documentclass[runningheads,a4paper]{llncs}
 
-\usepackage[utf8]{inputenc}
-\usepackage[T1]{fontenc}
-\usepackage[english]{babel}
+% XeLaTeX support
+\usepackage{ifxetex}
+\ifxetex%
+	\usepackage{fontspec}
+	\usepackage{polyglossia}
+	\setmainlanguage{english}
+\else
+	\usepackage[utf8]{inputenc}
+	\usepackage[T1]{fontenc}
+	\usepackage[english]{babel}
+\fi
+
+% Common packages
 \usepackage{amsmath}
 \usepackage{amssymb}
+\setcounter{tocdepth}{3}
 \usepackage{url}
-\usepackage{graphicx}
+\usepackage{float}
+\usepackage{titling}
 \usepackage{wrapfig}
 \usepackage{booktabs}
-\usepackage{color}
-\usepackage{microtype}
+\usepackage{csquotes}
+\usepackage{fancyhdr}
+\usepackage{graphicx}
+\usepackage{lastpage}
+\usepackage[all]{nowidow}
+\usepackage[inline]{enumitem}
+\usepackage[usenames,dvipsnames]{xcolor}
 
+% Referencing packages
+\usepackage{varioref}
+\usepackage[hidelinks]{hyperref}
+\usepackage[noabbrev,nameinlink]{cleveref}
+
+\usepackage{microtype}
 \input{macros}
 
 \begin{document}
 
 \mainmatter
 
-\title{Base@Home: A Low-Cost Distributed ROS 2 Domestic Robot with Deterministic Voice-to-Mission Compilation and Prismatic Torso-Arm Coordination for RoboCup@Home OPL}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Title and Authors
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\title{UruBots 2027 Team Description Paper}
 
-\titlerunning{Base@Home: Distributed ROS 2 Robot for RoboCup@Home OPL}
+\titlerunning{UruBots 2027 Team Description Paper}
 
-\author{[TBD \#1: Author List, Order, and Affiliations]\thanks{Team UruBots, RoboCup@Home 2027 Qualification.}}
+\author{[TBD \#1: Author List, Order, and Affiliations]\thanks{Team UruBots, RoboCup@Home 2027 Open Platform League Qualification.}}
 \authorrunning{UruBots Team}
 
 \institute{UruBots Team, [TBD \#1: Official University / Faculty / Institute, City, Uruguay]\\
-\email{[TBD \#1: Institutional contact email]}\\
+\email{[TBD \#1: contact@urubots.uy]}\\
 \url{https://urubots.uy} \quad \texttt{https://github.com/ShiiSuii/base\_athome}}
 
 \maketitle
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Abstract
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{abstract}
-We present Base@Home [TBD \#2], the custom open-platform domestic service robot developed by team UruBots (Uruguay) for the RoboCup@Home Open Platform League (OPL). Built to maximize mechanical reach and reproducibility on a constrained budget, the platform combines a differential-drive base powered by repurposed 6.5-inch brushless hub motors with custom Field-Oriented Control (FOC) firmware, a $0.60\,\text{m}$ working-stroke NEMA 23 prismatic torso elevator, a side-mounted 6-DOF AgileX Piper manipulator with an eye-in-hand Orbbec DaBai DC1 camera, and a 2-DOF Dynamixel pan-tilt head carrying an Intel RealSense D435 RGB-D sensor and a directional shotgun microphone. Computation is distributed across an Intel Core i3-1220P mini-PC (NUC) and an NVIDIA Jetson Orin Nano 8\,GB Super linked via point-to-point Gigabit Ethernet running ROS 2 Jazzy and unicast CycloneDDS. This paper details four core engineering contributions: (1) a deterministic bilingual natural-language compiler and supervised mission executor (\texttt{commander} and \texttt{mission\_executor}) paired with a streaming Silero VAD and Whisper ASR pipeline, augmented by a grammar-bounded local LLM fallback (Qwen2.5 1.5B), an on-device VLM (SmolVLM 500M) for visual question answering, and official GPSR grammar compilation (189/500 commands); (2) a unified fixed-frame floor-to-table perception and manipulation architecture (\texttt{bag\_vision}) combining 3D pointing-gesture raycasting, volumetric head RGB-D refinement, wrist bounding-box center to mid-height plane intersection, cross-camera belief association, live TF base conversion, prismatic elevator positioning, and multi-orientation MoveIt 2 inverse kinematics; (3) a dynamic obstacle costmap parameter analysis for protected differential navigation diagnosing and resolving default blind spots in ROS 2 Jazzy; and (4) a hardware-safety-first actuator control layer and closed-loop z-buffer visual simulation stack (\texttt{base\_athome\_sim} and \texttt{sim\_scene}) verified by over 400 automated unit and simulation tests. We report on-device perceptual and acoustic benchmarks alongside closed-loop Gazebo evaluations and delineate physical hardware validations in progress.
+The present document is the Team Description Paper of team UruBots (Uruguay) for qualification in the RoboCup@Home Open Platform League (OPL) 2027. We introduce our custom domestic service robot Base@Home [TBD \#2], developed to maximize physical manipulation reach and engineering reproducibility on an accessible budget. The platform integrates a differential-drive mobile base with custom FOC firmware, a $0.60\,\text{m}$ prismatic torso elevator, a side-mounted 6-DOF AgileX Piper arm with an eye-in-hand Orbbec DaBai camera, a 2-DOF pan-tilt head with an Intel RealSense D435 sensor and directional shotgun microphone, and distributed computing across an Intel NUC and NVIDIA Jetson Orin Nano connected via point-to-point Gigabit Ethernet with unicast CycloneDDS (detailed in Annex~\ref{sec:annex-OPL}).
 
-\keywords{RoboCup@Home, Open Platform League, Deterministic Mission Planning, Prismatic Torso, AgileX Piper, Mobile Manipulation, ROS 2 Jazzy}
+To overcome the fragility and hallucination risks of unconstrained generative models in domestic service, our research focuses on two core lines: (1) a deterministic bilingual voice-to-mission compiler paired with streaming Silero VAD / Whisper ASR, augmented by official GPSR grammar compilation (189/500 commands verified) and a grammar-bounded local LLM fallback (Qwen2.5 1.5B, 14/16 correct intents) alongside an on-device VLM (SmolVLM 500M) for visual question answering; and (2) a unified fixed-frame 3D perception and mobile manipulation architecture for pointed objects, combining 3D pointing raycasting, volumetric RGB-D head filtering, live TF base conversion, monocular wrist mid-height plane intersection, prismatic elevator positioning, and multi-orientation MoveIt 2 inverse kinematics.
+
+We additionally contribute an analysis of ROS 2 Jazzy costmap obstacle height parameters that eliminates dynamic obstacle blind spots in mobile navigation, an actuator safety-first control architecture with single-owner joint states, and a closed-loop z-buffer visual simulator. We report extensive on-device hardware benchmarks and Gazebo evaluations across over 400 automated repository tests, establishing verified empirical baselines for pending physical trials.
+
+\keywords{RoboCup@Home, Open Platform League, Deterministic Mission Planning, Edge AI, Prismatic Torso, Mobile Manipulation, Pointed-Object Perception}
 \end{abstract}
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Introduction}
 \label{sec:intro}
-Domestic robots operating in unstructured human environments must integrate safe indoor navigation, spoken language interaction, 3D scene understanding, and mobile manipulation across a wide vertical workspace ranging from floor level to tabletops and shelves. Within the RoboCup@Home Open Platform League (OPL)~\cite{robocup_rulebook_2026,robocup_cfp_2027}, teams face the dual challenge of achieving high system reliability under strict time and safety constraints while keeping custom hardware maintainable and reproducible. While recent OPL entries have explored high-compute foundation-model pipelines requiring off-board GPUs~\cite{memmesheimer2024nimbro} or modular ROS 2 task architectures~\cite{roborregos_frida_cortex}, operating reliably on low-cost onboard hardware without cloud connectivity requires tight integration between deterministic planning, geometric perception, and hardware-level safety interlocks.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+Domestic service robots operating in home environments must reliably combine indoor navigation, human-robot spoken interaction, 3D visual perception, and dexterous manipulation across vertical workspaces ranging from the floor to tables and shelves. Within the RoboCup@Home Open Platform League (OPL)~\cite{robocup_rulebook_2026,robocup_cfp_2027}, teams are tasked with solving complex benchmark tests (such as General Purpose Service Robot, Storing Groceries, Trash Disposal, Receptionist, and Restaurant) under strict execution time limits, stringent safety protocols, and a total ban on external wireless hotspots. While recent entries have demonstrated foundation-model task planners, they frequently rely on cloud connectivity~\cite{memmesheimer2024nimbro} or lack formal execution guarantees. Operating reliably on low-cost onboard hardware demands tight coordination between deterministic planning, geometric computer vision, and hardware safety interlocks.
 
-Team UruBots [TBD \#2: 2--3 sentences on team background, institution, and prior competitions] developed Base@Home as a modular, open-source ROS 2 Jazzy platform designed around three foundational engineering principles:
+Team UruBots [TBD \#2: 2--3 sentences detailing team founding year, institution, and prior robotics initiatives] was founded to foster autonomous service robotics research in Uruguay and Latin America. In accordance with RoboCup@Home qualification guidelines, we summarize our team experience and achievements. UruBots unites faculty, engineers, and students with experience in autonomous vehicles, mobile robotics, and regional competitions [TBD \#2: local and regional tournament achievements]. In preparing for our initial qualification in RoboCup@Home OPL, the team designed and implemented an end-to-end open-source software stack encompassing bilingual speech recognition, GPSR command compilation, open-vocabulary pointed-object grasping, frontal LiDAR docking, and closed-loop visual simulation, validated by over 400 automated unit and simulation tests in our public repository.
+
+Our research and system design are guided by three foundational engineering principles:
 \begin{enumerate}
-    \item \textbf{Measure first, correct second, and demonstrate with explicit evidence:} No software component is assumed functional without reproducible test evidence. In this paper and across our codebase, we strictly separate verified onboard hardware benchmarks (\texttt{NUC\_VERIFIED}, \texttt{JETSON\_VERIFIED}) and unit tests (\texttt{UNIT\_PASS}) from closed-loop multi-node simulations (\textbf{SIMULATION}, \texttt{SIM\_PASS}) and pending physical validations (\texttt{PENDIENTE}).
-    \item \textbf{Deterministic safety in the mission control loop:} Rather than connecting generative neural networks directly to motor setpoints, mission logic and language understanding are handled by a deterministic compiler that enforces preflight validations, semantic map constraints, and operator confirmation before moving actuators. When local language models are employed for fallback query resolution, their action generation is bounded by formal grammars and submitted to operator confirmation.
-    \item \textbf{Peripheral-local distributed computing:} Every sensor and actuator driver runs on the onboard computer physically closest to its electrical interface, joined by a point-to-point wired network with unicast DDS, strictly complying with the competition zero-hotspot rule.
+    \item \textbf{Measure first, correct second, and demonstrate with explicit evidence:} No component is claimed functional without verifiable empirical test logs. We strictly separate verified on-device hardware benchmarks (\texttt{NUC\_VERIFIED}, \texttt{JETSON\_VERIFIED}) and unit tests (\texttt{UNIT\_PASS}) from multi-node simulation (\texttt{SIM\_PASS}) and pending physical validation (\texttt{PENDIENTE}).
+    \item \textbf{Deterministic safety in the mission control loop:} Rather than piping probabilistic neural network predictions directly into motor targets, spoken instructions are parsed into deterministic Directed Acyclic Graphs (DAGs) that enforce precondition checks, semantic map constraints, and operator confirmation before moving actuators. Local edge AI models are strictly constrained by formal grammars.
+    \item \textbf{Peripheral-local distributed edge computing:} All sensor and motor drivers run on the host computer physically connected to their electrical interfaces, linked via a point-to-point wired Gigabit Ethernet cable and unicast CycloneDDS, operating 100\% onboard without cloud dependencies or WiFi hotspots.
 \end{enumerate}
 
-\section{Robot Platform and Hardware Architecture}
-\label{sec:hardware}
+In compliance with the official RoboCup@Home TDP guidelines (which request leaving platform specifications to the appendix), comprehensive mechanical dimensions, electrical schematics, sensor listings, and software packages are presented in Annex~\ref{sec:annex-OPL}. The remainder of this paper is organized as follows: Section~\ref{sec:background} outlines the background and architectural trade-offs; Sections~\ref{sec:compiler} and~\ref{sec:perception} detail our two main research contributions; Section~\ref{sec:other_contributions} presents our secondary contributions; Section~\ref{sec:experiments} reports experimental results and verified benchmarks; and Section~\ref{sec:conclusions} outlines conclusions and future work.
 
-\begin{figure}[tb]
-\centering
-\includegraphics[width=0.75\textwidth]{images/robot.jpg}
-\caption{Base@Home robot overview and hardware distribution. Left: side-mounted 6-DOF AgileX Piper arm and prismatic torso column. Right: distributed compute topology linking CHUWI NUC and NVIDIA Jetson Orin Nano via 1\,Gbps wired Ethernet. [TBD \#4: Replace with annotated hardware photo and block diagram].}
-\label{fig:robot_overview}
-\end{figure}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Background}
+\label{sec:background}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+RoboCup@Home OPL challenges robots to act autonomously in human-centered, unstructured environments. In benchmark tasks like GPSR, Storing Groceries, and Receptionist, failures frequently stem not from algorithmic limitations in isolation, but from unexpected edge cases at the boundaries between subsystems: speech transcription errors leading to nonsensical goals, latency in coordinate frame transformations causing manipulator collisions, or dynamic obstacles missed by navigation costmaps.
 
-\subsection{Mechanical Structure, Mobile Base, and Prismatic Elevator}
-Base@Home is built on a square chassis measuring $0.48\,\text{m} \times 0.48\,\text{m}$ in footprint and $0.22\,\text{m}$ in height ($0.04\,\text{m}$ ground clearance, \texttt{base\_footprint} $0.06\,\text{m}$ below \texttt{base\_link}). Differential traction is provided by two 6.5-inch brushless DC (BLDC) hub motors with integrated Hall-effect sensors (15 pole pairs $\times$ 6 states = 90 ticks per revolution), calibrated to an effective wheel radius of $0.0853\,\text{m}$ and track width of $0.5620\,\text{m}$ ($5.95\,\text{mm}$ per Hall tick). Rear support is provided by a passive caster wheel of $0.04\,\text{m}$ radius at $x = -0.20\,\text{m}$. The motors are driven by an STM32F103 controller board running custom Field-Oriented Control (FOC) firmware~\cite{feru2024hoverboard} over a 115200 baud UART link at 50\,Hz.
-
-To enable manipulation both on the floor (e.g., picking up garbage bags) and on standard furniture without an excessively heavy arm, a $1.30\,\text{m}$ vertical aluminum column ($0.06\,\text{m}$ profile width) is mounted at the chassis center. A NEMA 23 stepper motor (1600 steps/rev with $1/8$ microstepping) controlled by an ESP32-S3 microcontroller drives a vertical carriage (\texttt{torso\_lift\_link}) equipped with dual hardware limit switches: top (GPIO 7) and bottom (GPIO 8) endstops with two-stage hardware debounce ($500\,\mu\text{s} + 1\,\text{ms}$) and automatic cutoff. The calibrated working stroke between endstops is $0.60\,\text{m}$ (positioning the torso prism between $0.40\,\text{m}$ and $1.00\,\text{m}$ above the floor, with $\sim 0.75\,\text{m}$ maximum mechanical stroke). Mounted on the carriage is a $0.25\,\text{m} \times 0.35\,\text{m} \times 0.35\,\text{m}$ structural torso prism carrying a front-facing $0.26\,\text{m} \times 0.18\,\text{m}$ facial expression display and speaker.
-
-\subsection{Side-Mounted 6-DOF Manipulator and Eye-in-Hand Sensor}
-An AgileX Piper 6-DOF robotic arm ($1.5\,\text{kg}$ payload, $\sim 626\,\text{mm}$ reach, parallel gripper) is mounted sideways on the left ($+Y$) vertical face of the moving torso prism (\texttt{cube\_to\_arm\_joint} offset $xyz = (-0.15, 0.175, -0.11)\,\text{m}$, $rpy = (-\pi/2, 0, 0)\,\text{rad}$), such that the arm base $Z$-axis points outward ($+Y$) and its $Y$-axis points downward ($-Z$) [TBD \#5]. With the elevator at its top endstop (\texttt{torso\_lift\_joint} = $0.0\,\text{m}$), the shoulder origin \texttt{arm\_base\_link} is located at $(0.005, 0.175, 1.065)\,\text{m}$ in \texttt{base\_link} ($1.125\,\text{m}$ above floor) and descends linearly down to $z = 0.465\,\text{m}$ at $-0.60\,\text{m}$ stroke. This lateral mounting allows the arm to hang vertically alongside the torso in its natural gravity rest pose ($[86.97, 172.87, -162.63, -99.89, -0.68, 44.98]^\circ$) while keeping the front corridor clear during navigation.
-
-An Orbbec DaBai DC1 camera is mounted in an eye-in-hand configuration on \texttt{gripper\_base} ($25\,\text{mm}$ along $+X$, $56\,\text{mm}$ above the approach axis, $80\,\text{mm}$ behind the fingertips \texttt{tcp\_link} at $+0.1358\,\text{m}$ from \texttt{link6}). Because the DaBai DC1 optical depth minimum is $\sim 0.30\,\text{m}$, close-range wrist perception relies on calibrated monocular geometry and center-ray mid-height plane intersection (Section~\ref{sec:perception}) rather than raw depth.
-
-\subsection{Pan-Tilt Head, LiDAR, and Audio Hardware}
-At the top of the torso assembly ($0.12\,\text{m}$ above the prism), a 2-DOF pan-tilt unit driven by two Robotis Dynamixel XL430-W250 servos over a 1\,Mbaud U2D2 interface (Protocol 2.0, IDs 1 and 2, multi-turn position mode) carries an Intel RealSense D435 RGB-D camera operating at $640\times 480$ @ 15\,Hz (firmware 5.17.0.10) for person pose estimation, face recognition, and 3D floor pointing-gesture localization. Planar obstacle detection and localization are handled by a front Hokuyo UST-05LX 2D LiDAR ($270^\circ$ FOV, $0.06$--$5.0\,\text{m}$, 40\,Hz) mounted at $x = 0.22\,\text{m}$ with beam height $0.38\,\text{m}$. Spoken interaction uses a directional supercardioid R\O{}DE VideoMic GO II USB shotgun microphone mounted on the head assembly [TBD \#5: battery/BMS/fuse/E-stop power architecture per RuleBook \S 3.3.2].
-
-\subsection{Distributed Onboard Compute and Wired Networking}
-Computation is partitioned across two onboard Ubuntu 24.04 LTS hosts running ROS 2 Jazzy Jalisco with \texttt{rmw\_cyclonedds\_cpp} (\texttt{ROS\_DOMAIN\_ID=10} in real operation):
+In recent years, the robotics community has increasingly embraced Large Language Models (LLMs) and Vision-Language Models (VLMs) for high-level reasoning and open-vocabulary understanding~\cite{memmesheimer2024nimbro,roborregos_frida_cortex}. However, deploying foundation models directly in domestic physical environments introduces two major hurdles:
 \begin{itemize}
-    \item \textbf{Primary Host (CHUWI LarkBox S NUC):} Intel Core i3-1220P (10 cores / 12 threads), 15\,GiB RAM, 468\,GB NVMe SSD, Ubuntu 24.04.3. Hosts protected Nav2/AMCL navigation, Hokuyo LiDAR driver, hoverboard UART driver, ESP32-S3 elevator controller, RealSense D435 driver, mission compiler/executor, MoveIt 2 planning server, local LLM/VLM servers, and facial display.
-    \item \textbf{Secondary Host (NVIDIA Jetson Orin Nano 8\,GB Super Dev Kit):} 6-core Arm Cortex-A78AE CPU, Ampere GPU with CUDA 13.2 and TensorRT 10.16.2, 7.4\,GiB shared RAM, Ubuntu 24.04.4 / JetPack 7.2.1. Managed by systemd, it executes the 50\,Hz SocketCAN Piper arm controller, 20\,Hz Dynamixel pan-tilt node, Orbbec DaBai wrist stream, FP16 TensorRT YOLOv8 inference, and streaming Whisper ASR node.
-\end{itemize}
-The two computers communicate over a point-to-point 1\,Gbps Ethernet link (measured RTT $0.2\,\text{ms}$, throughput $\ge 660\,\text{Mbps}$, NTP offset $-11.9\,\text{ms}$). CycloneDDS is configured in explicit unicast mode with multicast disabled, completely avoiding WiFi hotspots in compliance with RuleBook \S 3.2.8.
-
-\section{Distributed ROS 2 Software Architecture, Safety, and Simulation}
-\label{sec:software}
-
-\subsection{Single-Owner Joint States and Hardware Safety Interlocks}
-In multi-process robotic systems, publishing synthetic zero joint positions when an actuator is unpowered corrupts TF trees and motion planners. Base@Home enforces a strict single-owner \texttt{/joint\_states} architecture: \texttt{piper\_arm\_controller} publishes \texttt{/arm/joint\_states} (50\,Hz), \texttt{pan\_tilt\_node} publishes \texttt{/pan\_tilt/joint\_states} (20\,Hz), and \texttt{torso\_state} publishes \texttt{/torso/joint\_states} (5\,Hz), aggregated by \texttt{joint\_state\_publisher}, while commanded arm targets are separated onto \texttt{/arm/joint\_states\_cmd} for visualization only.
-
-All actuator drivers implement hardware-level safety guards:
-\begin{itemize}
-    \item \texttt{piper\_arm\_controller}: Starts with \texttt{auto\_enable=False}. It refuses to enable motors unless fresh CAN feedback has arrived within $0.5\,\text{s}$, preventing snapping to a zero-radian setpoint when unpowered. Any trajectory received while disabled is discarded, disabling flushes active trajectories, and commands outside URDF joint limits ($j_1: \pm 154^\circ$, $j_2: 0..195^\circ$, $j_3: -175..0^\circ$, $j_4: \pm 110^\circ$, $j_5: \pm 80^\circ$, $j_6: \pm 180^\circ$) are rejected in full. A \texttt{FollowJointTrajectory} action server aborts if tracking error exceeds $15.0^\circ$ and confirms goal arrival within $2.0^\circ$ (\texttt{JETSON\_VERIFIED}; 32 unit tests).
-    \item \texttt{pan\_tilt\_node}: Starts with \texttt{auto\_torque=False}, applies multi-turn unwrapping on the tilt axis, and limits PWM (\texttt{pwm\_limit=600}, P-gain 450) to prevent mechanical overload against stops.
-    \item \texttt{torso\_state}: Opens the ESP32-S3 serial port with \texttt{DTR=False} and \texttt{RTS=False} to prevent resets, polls telemetry at 5\,Hz, and refuses to publish joint states or execute motions unless the elevator is calibrated and \texttt{allow\_motion:=True} is explicitly set.
+    \item \textbf{Connectivity and latency constraints:} Cloud-based APIs introduce variable network latency (often several seconds per query) and violate the strict RoboCup@Home zero-hotspot rule (RuleBook \S 3.2.8), which prohibits external wireless networks in the competition arena.
+    \item \textbf{Unconstrained action hallucination:} Generative language models lack intrinsic spatial awareness and may generate invalid, unsafe, or out-of-order action sequences (e.g., commanding a grasp before reaching a table, or attempting to navigate through closed doors).
 \end{itemize}
 
-\subsection{Multi-Fidelity and Closed-Loop Visual Simulation (\texttt{base\_athome\_sim})}
-To enable testing without risking hardware or interfering with the real robot (\texttt{ROS\_DOMAIN\_ID=10}), \texttt{base\_athome\_sim} provides an interface-compatible simulation in \texttt{ROS\_DOMAIN\_ID=42} (or 77 for isolated tests) activated by \texttt{ATHOME\_SIM=1}. It emulates the Piper arm (\texttt{SimArm} cosine interpolation and trajectory action server), pan-tilt head ($90^\circ/\text{s}$), prismatic elevator, Whisper ASR (\texttt{SimMicrophone}), Hokuyo raycasting, and mock navigation.
+To address these challenges, our approach decouples high-level natural language understanding from low-level physical execution through a formal compiler architecture. We restrict foundation models to edge deployment on local hardware and bound their generative outputs using formal grammars tied directly to our verified semantic environment map. This ensures that every generated action sequence is structurally valid, geometrically bounded, and confirmed by an operator before physical actuation occurs.
 
-Crucially, rather than feeding perception nodes synthetic coordinates, \texttt{sim\_scene.py} closes the visual loop by rendering $640\times 480$ RGB and aligned depth ($16\text{UC}1$ in mm with per-pixel z-buffer and Gaussian depth noise $\sigma = 5\,\text{mm}$) from the live TF poses of both head and wrist cameras wrt \texttt{map}. The rendered scene includes a checkerboard floor, a 3D human model with 3D COCO keypoints that points toward targets (with configurable pointing offset $\pm 0.15\,\text{m}$ and sway), primary and distractor bags, wrist gripper finger polygons, and false-positive gripper self-detections. The real \texttt{bag\_finder}, \texttt{bag\_vision}, \texttt{mission\_executor}, and \texttt{arm\_manipulation} run in closed loop against these rendered images. All results from \texttt{base\_athome\_sim} are strictly \textbf{SIMULATION (\texttt{SIM\_PASS})}: they validate closed-loop geometry and state machines, not physical safety or deformable-object grasping.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Deterministic Voice-to-Mission Compilation and Grammar GPSR (Main Research)}
+\label{sec:compiler}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+Spoken language interaction in Base@Home is organized as a multi-tier pipeline that prioritizes deterministic compilation over probabilistic guessing, incorporating local edge AI exclusively as a constrained fallback:
 
-\section{Key Technical Contributions}
-\label{sec:contributions}
-
-\subsection{Deterministic Voice-to-Mission Compilation, Grammar GPSR, and Local Foundation Models}
-Free-form outputs from probabilistic language models must never directly command robot actuators. Instead, spoken instructions are processed by a multi-tiered pipeline combining deterministic parsing, grammar compilation, and strictly bounded local foundation models:
 \begin{enumerate}
-    \item \textbf{Request-Indexed Streaming ASR:} \texttt{whisper\_node} continuously captures 48\,kHz audio from the R\O{}DE microphone, downsamples to 16\,kHz in 32\,ms blocks, and runs streaming Silero VAD ($0.34\,\text{ms}$ per block on Orin CPU). Each request carries a unique \texttt{id}, a task-specific \texttt{initial\_prompt}, and configurable endpointing ($8.0\,\text{s}$ start timeout, $1.1\,\text{s}$ end silence, weak-voice gate Silero $\ge 0.12$ with RMS $\ge 4\times$ noise). While speaking (\texttt{/voice/mute=True}), incoming audio is zeroed and timers pause. Transcription runs serialized via \texttt{faster-whisper} (\texttt{base.en} int8 on CPU, beam 3) with hallucination and repetition filters, always emitting explicit terminal events on \texttt{/voice/result}.
-    \item \textbf{Bilingual Deterministic Command Compiler (\texttt{command\_parser.py}):} The compiler (592 lines, pure Python) parses compound natural-language requests in English and Spanish into a structured \texttt{Plan} DAG without probabilistic guessing. It injects required implicit preconditions (arm to \texttt{pre\_grasp} before object detection; \texttt{detect} before \texttt{pick}; expanding \textit{"take out the trash"} into a 10-step sequence), resolves conditional branches (\texttt{if: \{step: id, state: FAILED\}}), validates numbered objects and furniture approach poses against \texttt{semantic\_map.yaml}, appends recovery blocks, and rejects ambiguous commands.
-    \item \textbf{Official GPSR Grammar Compilation (\texttt{gpsr\_parser}, \texttt{gpsr\_plan.py}):} For the General Purpose Service Robot category, Base@Home provides a specialized competition runner (\texttt{commander gpsr:=true}) that awaits the official door opening signal (\texttt{/start\_signal/door\_open}), drives to the instruction location, and processes up to three spoken orders. Using the official RoboCup@Home GPSR grammar parser, 189 out of 500 official benchmark commands compile directly into valid execution DAGs using currently available skills (121/166 in \textit{objects}, 57/167 in \textit{mixed}, 11/167 in \textit{people}) (\texttt{UNIT\_PASS}). Unimplemented capabilities (recognizing persons by name/clothing, open QA) are rejected deterministically before execution.
-    \item \textbf{Grammar-Bounded Local LLM Fallback (\texttt{llm\_intent.py}):} When spoken instructions fall outside the deterministic grammar, the system queries a local LLM server running Qwen2.5 1.5B (Q4 quantization on NUC \texttt{127.0.0.1:8771}, consuming 1.9\,GiB RAM, median latency $0.4\,\text{s}$, max $3.2\,\text{s}$). Output generation is constrained via a formal grammar to our verified semantic places, objects, and skills. The structured plan is then validated by \texttt{validate\_plan()} and submitted for spoken confirmation. In benchmark trials on the NUC, the model correctly structured 14/16 fallback intents with 0/8 false positive commands triggered (\texttt{NUC\_VERIFIED}).
-    \item \textbf{On-Device VLM for Visual Question Answering (\texttt{vlm.py}, \texttt{vlm\_server.py}):} To support queries about the scene (e.g., \textit{"what do you see"}, \textit{"how many cups are on the counter"}), Base@Home integrates a local server running SmolVLM 500M Instruct (Q8 quantization with \texttt{mmproj}, 835\,MiB RAM, $\sim 5\,\text{s}$ latency on NUC). As a pure observation skill (\texttt{describe\_view}), it queries the head RealSense camera and speaks the description without moving actuators. It answered 4/4 benchmark test images correctly (\texttt{NUC\_VERIFIED}; live camera evaluation pending).
-    \item \textbf{Supervised Execution and Confirmation:} \texttt{validate\_plan()} checks step count ($\le 50$), unique IDs, retry bounds, and skill availability. In voice mode, the robot summarizes the plan and asks \textit{"Should I do it?"}; execution only starts upon affirmative response, while \textit{"stop"} triggers immediate cancellation with active Nav2 goal abortion.
+    \item \textbf{Request-Indexed Streaming ASR:} \texttt{whisper\_node} captures continuous 48\,kHz audio from the head-mounted R\O{}DE shotgun microphone, downsamples to 16\,kHz in 32\,ms blocks, and executes streaming Silero Voice Activity Detection (VAD) requiring only $0.34\,\text{ms}$ per block on the Jetson CPU. Each interaction carries a unique request \texttt{id}, a task-specific \texttt{initial\_prompt}, and configurable endpointing parameters ($8.0\,\text{s}$ start timeout, $1.1\,\text{s}$ trailing silence, weak-voice gate Silero $\ge 0.12$ with RMS $\ge 4\times$ background noise). Audio input is hardware-muted during robot speech (\texttt{/voice/mute=True}) to prevent self-triggering. Speech transcription executes via \texttt{faster-whisper} (\texttt{base.en} int8 on CPU, beam 3) with repetition and hallucination filters, always emitting explicit terminal status events on \texttt{/voice/result}.
+
+    \item \textbf{Bilingual Deterministic Command Compiler (\texttt{command\_parser.py}):} Spoken requests in English and Spanish are compiled into a structured \texttt{Plan} DAG without probabilistic guessing. The compiler (592 lines of pure Python) injects mandatory physical preconditions (e.g., commanding arm to \texttt{pre\_grasp} before visual detection; requiring object detection before grasping; expanding compound requests such as \textit{"take out the trash"} into a verified 10-step sequence), resolves conditional failure branches (\texttt{if: \{step: id, state: FAILED\}}), validates target objects and furniture approach poses against \texttt{semantic\_map.yaml}, appends recovery routines, and rejects ambiguous commands with spoken clarification requests.
+
+    \item \textbf{Official GPSR Grammar Compilation (\texttt{gpsr\_parser}, \texttt{gpsr\_plan.py}):} For the General Purpose Service Robot category, Base@Home provides an automated runner (\texttt{commander gpsr:=true}) that awaits the official door opening trigger (\texttt{/start\_signal/door\_open}), traverses to \texttt{instruction\_point}, and processes up to three spoken orders. Using the official RoboCup@Home GPSR grammar parser, 189 out of 500 official benchmark commands compile directly into executable DAGs of verified skills (121/166 in \textit{objects}, 57/167 in \textit{mixed}, 11/167 in \textit{people}) (\texttt{UNIT\_PASS}). Capabilities not yet supported (e.g., person recognition by clothing or name) are rejected deterministically before execution.
+
+    \item \textbf{Grammar-Bounded Local LLM Fallback (\texttt{llm\_intent.py}):} When spoken instructions fall outside the deterministic grammar, the system queries an onboard local LLM server running Qwen2.5 1.5B (Q4 quantization on NUC \texttt{127.0.0.1:8771}, consuming 1.9\,GiB RAM, median latency $0.4\,\text{s}$, maximum $3.2\,\text{s}$). Action generation is formally constrained via grammar sampling exclusively to our registered semantic locations, objects, and skills. The structured plan is then validated by \texttt{validate\_plan()} and submitted for spoken confirmation. In benchmark trials on the NUC, the model correctly structured 14/16 fallback intents with 0/8 false positive commands triggered (\texttt{NUC\_VERIFIED}).
+
+    \item \textbf{On-Device VLM for Scene Understanding (\texttt{vlm.py}, \texttt{vlm\_server.py}):} To support open visual queries (e.g., \textit{"what do you see on the table?"}, \textit{"how many cups are in the kitchen?"}), Base@Home hosts an onboard VLM server running SmolVLM 500M Instruct (Q8 quantization with \texttt{mmproj}, 835\,MiB RAM, $\sim 5\,\text{s}$ latency on NUC). As a pure observation skill (\texttt{describe\_view}), it queries the head RealSense camera and speaks the description without moving actuators. It answered 4/4 benchmark test images correctly (\texttt{NUC\_VERIFIED}; live camera evaluation pending).
+
+    \item \textbf{Supervised Execution and Operator Confirmation:} \texttt{validate\_plan()} enforces safety bounds (step count $\le 50$, unique IDs, retry limits, skill availability). In voice mode, the robot summarizes the compiled plan and asks \textit{"Should I do it?"}; execution begins only upon explicit affirmative response, while \textit{"stop"} triggers immediate mission cancellation and aborts active Nav2 goals.
 \end{enumerate}
 
-\subsection{Unified Pointed-Bag 3D Perception and Torso-Arm Coordination}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{3D Pointed-Object Perception and Torso-Arm Coordination (Main Research)}
 \label{sec:perception}
-Domestic tasks such as trash disposal require locating a bag on the floor pointed at by a user and grasping it safely. Base@Home unifies all person-pointing and bag geometry in a single pure-Python module, \texttt{bag\_vision.py}:
-\begin{enumerate}
-    \item \textbf{Fixed-Frame 3D Raycasting and Volumetric Head Measurement:} All measurements are computed in a fixed frame (\texttt{map} or \texttt{base\_footprint}, $z=0$ at floor). When approaching a person, the pan-tilt head tracks the torso center ($0.6$ gain, $3.0^\circ$ deadband) using YOLOv8n-pose, accepting measurements only when stationary ($\le 3^\circ/\text{s}$). In pointed-bag mode, \texttt{pointed\_target()} deprojects shoulder, wrist, and hip keypoints; \texttt{is\_pointing()} requires arm-torso angle $\ge 25.0^\circ$, and \texttt{pointed\_floor\_point()} intersects the pointing ray with $z=0$ up to $6.0\,\text{m}$. Aiming the head at the median floor hit, \texttt{BagDetector} runs YOLOv8s-worldv2~\cite{cheng2024yoloworld} with explicit background distractor classes, sampling a depth grid inside the box ($\ge 12$ points in $0.3$--$6.0\,\text{m}$), removing floor points ($z \le 0.04\,\text{m}$), taking the 95th percentile as handle height \texttt{top\_z}, and recovering the true 3D center. A rolling median belief filter associates observations within $0.35\,\text{m}$.
-    \item \textbf{Live TF Base Conversion and Wrist Mid-Height Intersection:} Converting map coordinates into the robot frame previously used the last \texttt{/amcl\_pose} message, which lags between AMCL updates and caused a 7--9\,cm grasp error; \texttt{\_pose\_now()} now queries live $\texttt{map} \to \texttt{base\_footprint}$ transforms via \texttt{tf2\_ros}. After docking by $0.40\,\text{m}$ using odometry and front LiDAR clearance checks, the wrist camera is queried. \texttt{wrist\_measure()} validates that: (i) the box is not clipped within 3\,px of borders; (ii) the optical ray through the 2D bounding-box center points $\ge 20^\circ$ below horizon; and (iii) intersection with the mid-height plane $z = \text{top\_z} / 2.0$ lies within $1.6\,\text{m}$. Finally, the elevator lowers to $\text{torso\_for\_object}(\text{top\_z}) = \max(-0.58, \min(0.0, \text{top\_z} - 0.933))\,\text{m}$ for grasping.
-    \item \textbf{Side-Mounted Kinematics and Multi-Orientation Planning:} Analytical forward kinematics (AgileX Modified DH) was verified against the URDF across 2,000 random configurations ($\le 0.15\,\text{mm}$ position, $\le 0.004^\circ$ orientation error). In MoveIt 2 (TRAC-IK, OMPL), \texttt{\_grasp\_core()} evaluates 17 candidate tool orientations ($0^\circ$ plus tilts of $8^\circ, 16^\circ, 24^\circ, 30^\circ$) with a fast collision-free pre-filter, extending reachable advance from 15\,cm to 25\,cm. Gripper closure verifies physical object capture via CAN measured finger width.
-\end{enumerate}
-
-\subsection{Differential Navigation, Obstacle Costmap Analysis, and Frontal Docking}
-Protected navigation~\cite{macenski2020marathon2} uses AMCL, \texttt{SmacPlanner2D}, and \texttt{RotationShimController} wrapping \texttt{RegulatedPurePursuitController} ($0.38\,\text{m/s}$, lookahead $0.58\,\text{m} > \text{track width}$ to prevent oscillation). The motor driver transmits XOR-checked frames at 50\,Hz with a 0.5\,s watchdog. An application-layer semantic map stores waypoints, furniture zones, and approach poses without modifying protected navigation parameters. For demonstration collection, a Meta Quest 2 connects via USB \texttt{adb reverse} tunnel, streaming 60\,Hz poses to a 25\,Hz adaptive damped least-squares (DLS) IK node.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+Locating and retrieving pointed objects (such as garbage bags placed on the floor or grocery items on tables) requires coordinating wide-angle human gesture perception with precise close-range manipulator targeting. Base@Home unifies gesture geometry and multi-camera spatial estimation in a single module, \texttt{bag\_vision.py}:
 
 \begin{enumerate}
-    \item \textbf{Dynamic Obstacle Costmap Finding and Gazebo Evaluation:} Multi-fidelity Gazebo evaluations revealed an unexpected vulnerability in the baseline ROS 2 Jazzy Nav2 configuration: the 2D LiDAR topic (\texttt{/scan}) omitted an explicit \texttt{max\_obstacle\_height} entry, which defaults to $0.0\,\text{m}$ in Jazzy. Because the Hokuyo LiDAR is mounted at $z = 0.38\,\text{m}$, all scan returns ($z > 0.0\,\text{m}$) were discarded by both global and local costmap obstacle layers. The baseline robot navigated solely against static map geometry and drove through a standing person with a clearance of only $0.06\,\text{m}$.
+    \item \textbf{Fixed-Frame 3D Raycasting and Volumetric Head Measurement:} All spatial calculations are evaluated in a fixed frame (\texttt{map} or \texttt{base\_footprint}, $z=0$ at floor). When approaching a person, the pan-tilt head tracks the user's torso center ($0.6$ proportional gain, $3.0^\circ$ deadband) using YOLOv8n-pose on the Jetson Orin (55.0 FPS in TensorRT FP16), accepting keypoints only when stationary ($\le 3^\circ/\text{s}$). In pointing mode, \texttt{pointed\_target()} deprojects shoulder, wrist, and hip keypoints; \texttt{is\_pointing()} verifies an arm-torso angle $\ge 25.0^\circ$, and \texttt{pointed\_floor\_point()} intersects the pointing vector with the ground plane ($z=0$) up to $6.0\,\text{m}$.
 
-    We evaluated two simulation navigation profiles in Gazebo:
-    \begin{itemize}
-        \item \textbf{Profile \texttt{altura}:} Sets \texttt{max\_obstacle\_height = 2.0}, restoring dynamic obstacle points. In Gazebo, the robot cleared a stationary person in its path at $0.87\,\text{m}$ (\texttt{SIM\_PASS}).
-        \item \textbf{Profile \texttt{eval}:} Combines the height fix with footprint radius $0.36\,\text{m}$, inflation radii $0.75\,\text{m}$ (inner) and $2.5\,\text{m}$ (outer), $5.0\,\text{m}$ local costmap window, 12\,s progress checker, 5\,m AMCL search, and a recovery tree (\texttt{bt\_eval.xml}) that pauses before clearing and reverses $15\,\text{cm}$. In Gazebo, \texttt{eval} cleared the person at $1.04\,\text{m}$, successfully navigated a narrow $0.85\,\text{m}$ door (where baseline and \texttt{altura} failed), and waited for a blocking person in a doorway who moved aside after 12\,s before traversing (\texttt{SIM\_PASS}). Applying these changes to the physical robot requires explicit user authorization and confirmation that the folded arm does not exceed $0.36\,\text{m}$ radius.
-    \end{itemize}
-    \item \textbf{Frontal Docking and Manipulation Routines:} Approaching tables, doors, or walls causes global costmap inflation to abort goals before reaching contact. A dedicated frontal docking module (\texttt{front\_dock.py}) executes closed-loop linear approaches using front LiDAR distance returns and odometry (37 unit tests passing, \texttt{UNIT\_PASS}). Additionally, a kinematic lever door opening routine (\texttt{door\_open.py}) coordinates arm poses with descent and door clearance (6 unit tests, \texttt{UNIT\_PASS}), and a Restaurant challenge module (\texttt{restaurant.py}, \texttt{raised\_hand.py}) detects customer signals for table service (\texttt{UNIT\_PASS}).
+    Aiming the pan-tilt head at the floor intersection, \texttt{BagDetector} runs YOLOv8s-worldv2~\cite{cheng2024yoloworld} with explicit background distractor classes, sampling a depth grid inside the 2D box ($\ge 12$ points in $0.3$--$6.0\,\text{m}$), removing floor points ($z \le 0.04\,\text{m}$), extracting the 95th percentile as handle height \texttt{top\_z}, and recovering the true 3D centroid. A rolling median belief filter associates observations within $0.35\,\text{m}$.
+
+    \item \textbf{Live TF Base Conversion and Wrist Mid-Height Intersection:} Transforming coordinates from \texttt{map} into the robot base frame previously relied on the last received \texttt{/amcl\_pose} message, which lags between AMCL filter updates and caused a 7--9\,cm grasping error; \texttt{\_pose\_now()} now queries live $\texttt{map} \to \texttt{base\_footprint}$ transforms via \texttt{tf2\_ros}. After docking forward by $0.40\,\text{m}$ using odometry and front LiDAR clearance checks, the wrist Orbbec DaBai camera is queried. Because the DaBai DC1 optical depth minimum is $\sim 0.30\,\text{m}$, close-range wrist perception relies on calibrated monocular geometry: \texttt{wrist\_measure()} validates that: (i) the bounding box is not clipped within 3\,px of image borders; (ii) the optical ray through the 2D bounding-box center points $\ge 20^\circ$ below horizon; and (iii) intersection with the mid-height plane $z = \text{top\_z} / 2.0$ lies within $1.6\,\text{m}$. Finally, the elevator carriage lowers to $\text{torso\_for\_object}(\text{top\_z}) = \max(-0.58, \min(0.0, \text{top\_z} - 0.933))\,\text{m}$ for grasping.
+
+    \item \textbf{Side-Mounted Kinematics and Multi-Orientation Grasp Planning:} Analytical forward kinematics (AgileX Modified DH) was verified against the URDF across 2,000 random joint configurations ($\le 0.15\,\text{mm}$ position, $\le 0.004^\circ$ orientation error). In MoveIt 2 (TRAC-IK, OMPL), \texttt{\_grasp\_core()} evaluates 17 candidate tool orientations ($0^\circ$ nominal plus pitch tilts of $8^\circ, 16^\circ, 24^\circ, 30^\circ$) with an analytical collision-free pre-filter, extending reachable advance from 15\,cm to 25\,cm. Gripper closure confirms physical object acquisition via measured CAN finger width.
 \end{enumerate}
 
-\section{Experimental Evaluation and Verification Status}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Other Relevant Contributions}
+\label{sec:other_contributions}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\subsection{Costmap Obstacle Recovery and Navigation Safety}
+During multi-node Gazebo simulations evaluating dynamic obstacle avoidance, we identified a critical issue in default ROS 2 Jazzy Nav2 setups: the 2D LiDAR topic (\texttt{/scan}) omitted an explicit \texttt{max\_obstacle\_height} parameter, which defaults to $0.0\,\text{m}$ in Jazzy. Because the Hokuyo LiDAR is physically mounted at $z = 0.38\,\text{m}$, all scan points ($z > 0.0\,\text{m}$) were discarded by both global and local costmap obstacle layers. The robot navigated purely against static map walls, passing through a standing person with a clearance of only $0.06\,\text{m}$.
+
+We evaluated two corrective simulation profiles in Gazebo:
+\begin{itemize}
+    \item \textbf{Profile \texttt{altura}:} Sets \texttt{max\_obstacle\_height = 2.0}, restoring dynamic obstacle points. In Gazebo, the robot successfully cleared a stationary person at $0.87\,\text{m}$ (\texttt{SIM\_PASS}).
+    \item \textbf{Profile \texttt{eval}:} Combines the height fix with footprint radius $0.36\,\text{m}$, inflation radii $0.75\,\text{m}$ (inner) and $2.5\,\text{m}$ (outer), $5.0\,\text{m}$ local costmap window, 12\,s progress checker, 5\,m AMCL search, and a recovery tree (\texttt{bt\_eval.xml}) that pauses before clearing and reverses $15\,\text{cm}$. In Gazebo, \texttt{eval} cleared the person at $1.04\,\text{m}$, traversed a narrow $0.85\,\text{m}$ doorway, and waited for a blocking person who moved aside after 12\,s before navigating through (\texttt{SIM\_PASS}).
+\end{itemize}
+Following user authorization, these parameters were integrated into the primary robot configuration (\texttt{nav2_params.yaml}: \texttt{max\_obstacle_height: 2.0}, $5\times 5\,\text{m}$ local window, 12\,s progress checker, AMCL range $5.0\,\text{m}$). In Gazebo, the integrated configuration cleared a standing person at $0.88\,\text{m}$ (\texttt{SIM\_PASS}). Physical on-robot verification remains scheduled prior to competition.
+
+\subsection{Frontal LiDAR Docking and Interaction Routines}
+Approaching furniture, doors, or tables causes standard costmap inflation layers to abort navigation goals prematurely. To overcome this, a dedicated frontal docking module (\texttt{front\_dock.py}) executes closed-loop linear approaches using front Hokuyo LiDAR returns and odometry (37 unit tests passing, \texttt{UNIT\_PASS}; Gazebo wall docking achieved $0.27\,\text{m}$ final clearance). Additionally, a kinematic lever door opening routine (\texttt{door\_open.py}) coordinates arm poses with descent and door clearance (6 unit tests, \texttt{UNIT\_PASS}), and a Restaurant challenge module (\texttt{restaurant.py}, \texttt{raised\_hand.py}) detects customer hand-raising signals for table service (\texttt{UNIT\_PASS}).
+
+\subsection{Single-Owner Joint States and Actuator Safety Interlocks}
+In multi-computer distributed architectures, publishing synthetic zero joint angles when an actuator is powered off corrupts TF trees and motion planners. Base@Home enforces a strict single-owner \texttt{/joint\_states} architecture: \texttt{piper\_arm\_controller} publishes \texttt{/arm/joint\_states} (50\,Hz), \texttt{pan\_tilt\_node} publishes \texttt{/pan\_tilt/joint\_states} (20\,Hz), and \texttt{torso\_state} publishes \texttt{/torso/joint\_states} (5\,Hz), aggregated by \texttt{joint\_state\_publisher}, while commanded targets are separated onto \texttt{/arm/joint\_states\_cmd}.
+
+Actuator drivers enforce hardware-level interlocks:
+\begin{itemize}
+    \item \texttt{piper\_arm\_controller}: Starts with \texttt{auto\_enable=False}, refusing to power motors unless fresh CAN feedback arrived within $0.5\,\text{s}$. Commands outside URDF limits are rejected in full, active trajectories are flushed upon disable, and a \texttt{FollowJointTrajectory} action server aborts if tracking error exceeds $15.0^\circ$ (\texttt{JETSON\_VERIFIED}; 32 unit tests).
+    \item \texttt{pan\_tilt\_node}: Starts with \texttt{auto\_torque=False}, performs multi-turn position unwrapping, and enforces a PWM limit (\texttt{pwm\_limit=600}, P-gain 450) to prevent mechanical overload.
+    \item \texttt{torso\_state}: Opens the ESP32-S3 serial port with \texttt{DTR=False} and \texttt{RTS=False} to prevent resets, polls telemetry at 5\,Hz, and refuses motion unless the elevator is calibrated and \texttt{allow\_motion:=True} is set.
+\end{itemize}
+
+\subsection{Multi-Fidelity and Visual Simulation Stack}
+To enable safe testing without hardware risk, \texttt{base\_athome\_sim} provides an interface-compatible simulation running in an isolated domain (\texttt{ROS\_DOMAIN\_ID=42}). In addition to emulating motor actions, \texttt{sim\_scene.py} closes the visual perception loop by rendering $640\times 480$ RGB and aligned depth ($16\text{UC}1$ in mm with per-pixel z-buffer and Gaussian noise $\sigma = 5\,\text{mm}$) directly from the live TF poses of head and wrist cameras wrt \texttt{map}. The scene models a checkerboard floor, 3D pointing human avatars with COCO keypoints, target and distractor bags, and wrist finger polygons. The entire repository is covered by over 400 pytest automated unit and simulation tests.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Experiments and Results}
 \label{sec:experiments}
-In accordance with our engineering policy, Table~\ref{tab:benchmarks} reports verified measurements and explicitly distinguishes between onboard hardware benchmarks (\texttt{NUC\_VERIFIED}, \texttt{JETSON\_VERIFIED}), closed-loop simulation (\textbf{SIMULATION}, \texttt{SIM\_PASS}), and offline unit tests (\texttt{UNIT\_PASS}). No physical actuator success rates are claimed where \texttt{HARDWARE\_VERIFIED} trials remain pending.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+In accordance with our engineering policy, Table~\ref{tab:benchmarks} summarizes our verified subsystem measurements, strictly separating onboard hardware benchmarks (\texttt{NUC\_VERIFIED}, \texttt{JETSON\_VERIFIED}) and unit tests (\texttt{UNIT\_PASS}) from closed-loop multi-node simulation (\textbf{SIMULATION}, \texttt{SIM\_PASS}) and pending physical validation (\texttt{PENDIENTE}).
 
 \begin{table}[tb]
 \caption{Summary of Verified Subsystem Benchmarks, Simulation Evaluations, and Test Suites (as of 2026-11-09).}
@@ -150,7 +186,7 @@ In accordance with our engineering policy, Table~\ref{tab:benchmarks} reports ve
 Jetson YOLOv8n TensorRT FP16 & 55.0 FPS end-to-end ($\sim 18\,\text{ms}$) vs 5.2 CPU & \texttt{JETSON\_VERIFIED} \\
 Whisper ASR Comparison (17 phrases) & \texttt{base.en} int8: $1.50\,\text{s}$, 15/17 exact; \texttt{small}: $4.5\,\text{s}$ & \texttt{JETSON\_VERIFIED} \\
 ASR Pipeline w/ Real Mic Noise & 16/16 understood at 100\%, 25\%, 8\% gain; med. $2.5\,\text{s}$ & \texttt{JETSON\_VERIFIED} \\
-Live Human Speech to R\O{}DE Mic & 3 phrases transcribed ($\sim 1.4\,\text{s}$); false trigger check & Partial \texttt{JETSON\_VER.} [TBD \#6] \\
+Live Human Speech to R\O{}DE Mic & 3 phrases transcribed ($\sim 1.4\,\text{s}$); false trigger check & Partial \texttt{JETSON\_VER.} [TBD \#9] \\
 Local LLM Fallback (Qwen2.5 1.5B Q4) & 14/16 intents correct, 0/8 false orders; med. $0.4\,\text{s}$, 1.9\,GiB & \texttt{NUC\_VERIFIED} \\
 Local VLM Visual QA (SmolVLM 500M Q8) & 4/4 test images; 835\,MiB RAM, $\sim 5\,\text{s}$ latency & \texttt{NUC\_VERIFIED} [cam \texttt{PEND.}] \\
 GPSR Official Grammar Compilation & 189/500 commands compile (121 obj, 57 mix, 11 ppl) & \texttt{UNIT\_PASS} \\
@@ -158,29 +194,45 @@ YOLO-World Bag Detection & 17/24 bags detected w/ distractors vs 6/24 solo & \te
 Closed-Loop Pointed-Bag Grasp & TCP err: $1.6\,\text{cm}$ nom, $2.0\,\text{cm}$ sway, $1.9\,\text{cm}$ dist. & \textbf{SIMULATION ONLY} (\texttt{SIM\_PASS}) \\
 MoveIt Multi-Angle Grasp Reach & Reach $22$--$25\,\text{cm}$ w/ tilts; 4/4 at 80\% drop & \texttt{UNIT\_PASS} \& \textbf{SIM\_PASS} \\
 Nav2 Costmap Dynamic Clearance & Baseline: $0.06\,\text{m}$ (collision); \texttt{altura}: $0.87\,\text{m}$; \texttt{eval}: $1.04\,\text{m}$ & \textbf{SIMULATION} (\texttt{SIM\_PASS}) \\
+Nav2 Costmap Integrated Robot Nav & Robot config clears standing person at $0.88\,\text{m}$ & \textbf{SIMULATION} (\texttt{SIM\_PASS}) \\
 Nav2 Narrow Door \& Clearing Obstacle & Baseline: fail; \texttt{altura}: fail; \texttt{eval}: pass $0.85\,\text{m}$ door & \textbf{SIMULATION} (\texttt{SIM\_PASS}) \\
 Frontal Docking \& Lever Door Routines & 37 tests (front dock) + 6 tests (door open) passing & \texttt{UNIT\_PASS} \\
 Restaurant Challenge State Machine & Raised-hand detection \& order workflow tests & \texttt{UNIT\_PASS} \\
 WebXR Quest 2 Teleop Chain & $10\,\text{mm}$ / $80\,\text{ms}$ lag at $12\,\text{cm/s}$; $39.7\,\text{mm}$ step & \textbf{SIMULATION} (domain 42) \\
 Repository Test Suites (pytest) & Perception, Skills, Sim, URDF: $>400$ tests passing & \texttt{UNIT\_PASS} \& \textbf{SIM\_PASS} \\
-Full Physical Robot Actuator Trials & Supervised real trial series ($N \ge 10$) scheduled & \texttt{PENDIENTE} [TBD \#6] \\
+Full Physical Robot Actuator Trials & Supervised real trial series ($N \ge 10$) scheduled & \texttt{PENDIENTE} [TBD \#9] \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-In multi-node Gazebo simulations evaluating dynamic obstacle handling (Table~\ref{tab:benchmarks}), the baseline Nav2 configuration failed to avoid a stationary person placed in the corridor ($0.06\,\text{m}$ clearance) because the unconfigured \texttt{max\_obstacle\_height} caused scan rays to be discarded. The height-corrected \texttt{altura} profile cleared the person at $0.87\,\text{m}$, while the tuned \texttt{eval} profile achieved $1.04\,\text{m}$ clearance. In narrow passage tests through an $0.85\,\text{m}$ doorway, both baseline and \texttt{altura} aborted due to conservative costmap inflation; the \texttt{eval} profile successfully traversed the doorway, and in dynamic trials waited for a blocking person who moved aside after 12\,s before navigating through. We emphasize that all navigation obstacle tests were conducted in Gazebo (\texttt{SIM\_PASS}); physical hardware deployment remains pending on-robot validation.
+\textbf{Perceptual and Acoustic Benchmarks:} Onboard the Jetson Orin Nano, YOLOv8n TensorRT FP16 achieves 55.0 FPS, providing smooth 20\,Hz visual tracking for the pan-tilt head. Whisper \texttt{base.en} int8 on CPU transcribed 17 benchmark phrases in a median of $1.50\,\text{s}$ (15/17 exact matches), outperforming \texttt{small} ($4.5\,\text{s}$). Under acoustic playback through the physical R\O{}DE shotgun microphone with real ambient noise, 16/16 command phrases were correctly recognized across 100\%, 25\%, and 8\% volume levels. On the NUC, local Qwen2.5 1.5B Q4 structured 14/16 fallback intents correctly (median latency $0.4\,\text{s}$), triggering zero false positive commands. SmolVLM 500M Q8 answered 4/4 test images accurately in $\sim 5\,\text{s}$.
 
-In closed-loop pointed-bag manipulation simulations (\texttt{sim\_scene.py} with $6.0\,\text{cm}$ capture threshold), nominal pointed-bag missions achieved $1.6\,\text{cm}$ 3D TCP error, $2.0\,\text{cm}$ with person sway, $1.9\,\text{cm}$ with distractor bags, $3.4\,\text{cm}$ with $3^\circ$ wrist camera tilt error, and $5.6\,\text{cm}$ with a distant person ($>2.2\,\text{m}$). Out-of-bounds pointing gestures ($1.4\,\text{m}$ miss) were correctly rejected. \textbf{Limitation:} None of the pointed-bag missions have been executed on the physical robot with real bags yet (\texttt{PENDIENTE}).
+\textbf{Closed-Loop Simulation Evaluations:} In multi-node Gazebo navigation tests, correcting \texttt{max\_obstacle\_height} restored LiDAR obstacle tracking, widening clearance around a standing person from $0.06\,\text{m}$ (baseline collision) to $0.87\,\text{m}$ (\texttt{altura}) and $0.88\,\text{m}$ (integrated robot configuration). In narrow doorway trials ($0.85\,\text{m}$), the tuned \texttt{eval} profile successfully traversed the opening and dynamically waited for a blocking obstacle that moved aside after 12\,s. In closed-loop pointed-bag manipulation simulations (\texttt{sim\_scene.py} with $6.0\,\text{cm}$ capture threshold), nominal pointed-bag missions achieved $1.6\,\text{cm}$ 3D TCP error, $2.0\,\text{cm}$ with person sway, $1.9\,\text{cm}$ with distractor bags, and $3.4\,\text{cm}$ with $3^\circ$ wrist camera tilt error.
 
+\textbf{Limitations and Physical Verification Roadmap:} In accordance with our safety policy, all mobile manipulation, frontal docking, and navigation obstacle avoidance tests have been validated in simulation and unit test suites. Series trials ($N \ge 10$) on the physical robot in \texttt{LAB\_SUPERVISADO} remain scheduled prior to competition (\texttt{PENDIENTE}, [TBD \#9]).
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Conclusions and Future Work}
 \label{sec:conclusions}
-We have presented Base@Home, an open-source ROS 2 Jazzy domestic robot for RoboCup@Home OPL. By combining a deterministic bilingual mission compiler, a grammar-bounded local LLM fallback, an on-device VLM for visual QA, official GPSR grammar compilation, fixed-frame 3D perception (\texttt{bag\_vision}), a $0.60\,\text{m}$ prismatic torso elevator, a side-mounted 6-DOF manipulator, hardware safety guards, and a closed-loop visual simulator, the platform provides a verifiable foundation for service tasks without relying on unconstrained LLM hallucinations. Immediate work prior to competition focuses on completing supervised physical trials (\texttt{HARDWARE\_VERIFIED}) for Receptionist, Trash Disposal, Tabletop Manipulation, and Lever Door Opening, alongside hardware verification of the navigation obstacle height parameters. All code is public at \url{https://github.com/ShiiSuii/base_athome}.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+We have presented the 2027 Team Description Paper for Base@Home, developed by team UruBots for RoboCup@Home OPL. By combining a deterministic bilingual mission compiler, official GPSR grammar compilation, grammar-bounded local edge AI (Qwen2.5 1.5B and SmolVLM 500M), unified fixed-frame 3D pointed-object perception, a $0.60\,\text{m}$ prismatic torso elevator, side-mounted 6-DOF manipulation, navigation obstacle height correction, and single-owner actuator safety interlocks, the platform establishes a dependable, verifiable architecture for domestic service tasks operating 100\% onboard without cloud dependencies.
 
+Future work prior to competition focuses on completing supervised physical hardware trial series in \texttt{LAB\_SUPERVISADO} for Receptionist, Trash Disposal, Tabletop Manipulation, and Lever Door Opening, alongside filming the official qualification video and publishing the codebase under an approved open-source license [TBD \#5]. All code, models, and simulation environments are publicly available at \url{https://github.com/ShiiSuii/base_athome}.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Bibliography
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \bibliographystyle{unsrt}
 \bibliography{bibliography}
 
 \clearpage
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Robot Specifications Annex
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \robospecs{}
 \input{RobotDescriptionOPL}
+
+\nocite{*}
 
 \end{document}
