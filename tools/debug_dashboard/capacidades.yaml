@@ -15,7 +15,7 @@ capacidades:
   - {id: vlm, nombre: "VLM: describir lo que ve", area: Voz, etapa: tests, probado_en: e3b3aae, archivos: [src/base_athome_skills/base_athome_skills/mission/vlm.py, src/base_athome_skills/scripts/vlm_server.py, src/base_athome_skills/base_athome_skills/mission/node.py], falta: "Conectado al commander: medido en la NUC con 4 imágenes (5 s, 835 MiB). Falta con la cámara real y por voz."}
   - {id: responder, nombre: "Responder preguntas", area: Voz, etapa: falta, falta: "HOME-100 sin entrega confirmada."}
   - {id: intercalar, nombre: "Intercalar tareas de varios comandos", area: Voz, etapa: falta, items: ["3.4"], falta: "Hoy hace las órdenes de a una."}
-  - {id: reconocer_personas, nombre: "Reconocer personas por nombre, gesto o ropa", area: Personas, etapa: falta, falta: "Es lo que más comandos oficiales bloquea."}
+  - {id: reconocer_personas, nombre: "Reconocer personas por nombre, gesto o ropa", area: Personas, etapa: tests, falta: "Gesto, postura y ropa: código y tests (Codex). Sin probar con cámara. Nombres: falta."}
   - {id: seguir, nombre: "Seguir a una persona", area: Personas, etapa: gazebo, probado_en: cab68b5, items: ["1.11"], archivos: [src/base_athome_skills/base_athome_skills/mission/follow_logic.py], falta: "Sin reidentificación; velocidades sin calibrar."}
   - {id: guiar, nombre: "Guiar a un lugar", area: Personas, etapa: simulador, probado_en: 9d8c6a0, archivos: [src/base_athome_skills/base_athome_skills/mission/command_parser.py], falta: "No comprueba que lo sigan."}
   - {id: receptionist, nombre: "Receptionist completo", area: Personas, etapa: parcial, probado_en: a9622e8, items: ["1.4", "1.8", "1.9"], archivos: [src/base_athome_perception/scripts/hri_receptionist_challenge.py], falta: "Correrlo entero en el robot tras los últimos cambios."}
@@ -37,7 +37,7 @@ capacidades:
   - {id: estop, nombre: "E-stop común a todos los actuadores", area: Seguridad, etapa: falta, falta: "Exigido por el reglamento: falta comprobarlo."}
   - {id: esquivar, nombre: "Esquivar personas y pasar puertas de 85 cm", area: Base, etapa: simulador, falta: "Perfil nav2_params_eval.yaml solo en simulación. Para el robot: decisión del usuario y medir el brazo."}
   - {id: docking_frontal, nombre: "Acercarse a lo que tiene adelante (pared, puerta cerrada, mesa)", area: Base, etapa: gazebo, archivos: [src/base_athome_skills/base_athome_skills/mission/front_dock.py], falta: "Skill dock_front: en Gazebo frenó a 27 cm de una pared (pedido 25). Sin probar con puerta cerrada, persona ni en el robot."}
-  - {id: restaurant, nombre: "Restaurant: clientes que levantan la mano, pedidos y entrega", area: Personas, etapa: tests, archivos: [src/base_athome_skills/base_athome_skills/mission/restaurant.py, src/base_athome_perception/base_athome_perception/raised_hand.py], falta: "Borrador: el plan no espera el pedido real y usa mesas que no existen. Exige SLAM sin mapa previo."}
+  - {id: restaurant, nombre: "Restaurant: clientes que levantan la mano, pedidos y entrega", area: Personas, etapa: simulador, archivos: [src/base_athome_skills/base_athome_skills/mission/restaurant.py, src/base_athome_perception/base_athome_perception/raised_hand.py], falta: "Gazebo: ve a los dos clientes y SLAM anda; no llega porque el lidar se ve a sí mismo (filtro en curso). Seguridad de navegación y stop por voz corregidos (tests)."}
 pruebas:
   HRI: "Human-Robot Interaction"
   PP: "Pick and Place"
