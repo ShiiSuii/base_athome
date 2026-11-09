@@ -200,6 +200,11 @@ Antes de empezar: E-stop a mano, zona despejada y otra persona atenta. Bolsa liv
 - **Gazebo con esta configuración:** persona quieta en el camino → la rodea a 0.88 m de su centro (antes la atravesaba). Persona en la puerta de 0.85 m → no llega (el radio). Una corrida por caso.
 - **Sin probar en el robot real.** Primera prueba sugerida: Nav2 con el robot quieto y RViz en `/local_costmap/costmap`; pararse a 1 m adelante y verificar que se marca. Rollback: `git revert` de este commit.
 
+## 2r. AVISO: con el lidar en los costmaps, el robot se ve a sí mismo (2026-11-09)
+
+- **Medido en Gazebo:** el lidar ve el costado izquierdo del robot (rayos a 116–130°, 0.30–0.34 m; en base_link x≈0.0–0.08, y≈0.24–0.30). Con `max_obstacle_height: 2.0` eso marca al robot como obstáculo y Nav2 responde "Start occupied". **No usar Nav2 en el robot real hasta integrar el filtro** (`/scan_nav`, en curso con Codex) o confirmar con el lidar real que no pasa.
+- Restaurant en Gazebo: SLAM activo con el launch oficial de slam_toolbox, RViz con mapa, clientes sentados visibles, barrido suave de 15°/s. Ve a los dos clientes; no llega por el punto anterior.
+
 ## 3. Cómo retomar la teleoperación con el Quest (pendiente: prueba completa en el brazo real)
 
 1. Quest por USB a la **Jetson**, depuración USB autorizada (`adb devices` → `device`).
