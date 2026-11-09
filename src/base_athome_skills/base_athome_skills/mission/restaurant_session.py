@@ -84,6 +84,17 @@ def compute_approach_pose(
     return (round(tx, 3), round(ty, 3), round(tyaw, 4))
 
 
+# Valor que Nav2 publica en OccupancyGrid para INSCRIBED_INFLATED_OBSTACLE (costo 253): con footprint
+# circular el inflado ya contiene el radio del robot y SmacPlanner2D descarta toda celda >= este valor.
+NAV2_INSCRIBED_VALUE = 99
+NAV2_LETHAL_VALUE = 100
+# Distancias al centro del cliente sentado. A 0.8-1.1 m entre centros, con medio ancho de chasis de
+# ~0.3 m y ~0.25 m de cuerpo sentado, quedan 0.25-0.55 m libres: zona personal, se le habla de frente
+# sin invadirlo. Mas cerca no entra el robot junto a la silla; mas lejos el ASR pierde la voz.
+APPROACH_RADII = (0.8, 1.0, 1.1)
+APPROACH_ANGLES = 24
+
+
 def approach_candidates(
     customer_xy: Sequence[float],
     robot_pose: Tuple[float, float, float],
@@ -91,12 +102,17 @@ def approach_candidates(
     standoff_dist: float = 0.9,
     robot_radius: float = 0.3,
 ) -> List[Tuple[float, float, float]]:
-    """Ordena poses libres hacia el cliente, sin importar ROS ni modificar la grilla.
+    """Ordena poses de aproximacion validas para Nav2, sin importar ROS ni modificar la grilla.
 
-    Recibe un objeto con los campos de OccupancyGrid. Comprueba todas las celdas
-    del radio circular, incluso con origen rotado; desconocido/fuera = ocupado.
-    Sin grilla utilizable o sin candidatos libres conserva la pose rectilinea.
-    El fallback es la unica entrada: nunca se usa como alternativa de reintento.
+    Recibe un objeto con los campos de OccupancyGrid (el /global_costmap/costmap de Nav2).
+    Una pose es candidata si su celda central esta por debajo del costo inscrito (la misma
+    condicion con la que SmacPlanner2D acepta una celda con footprint circular: el inflado ya
+    contiene el radio de 0.44 m) y si todo el disco del chasis (robot_radius) esta observado;
+    desconocido/fuera de la grilla = no candidata. Volver a exigir costo bajo en todo el disco
+    contaria dos veces el footprint y descartaria las poses junto a un cliente contra la pared.
+    Se ordenan por distancia al robot penalizada por el costo (prefiere poses mas despejadas).
+    Sin grilla utilizable o sin candidatos conserva la pose rectilinea, que nunca se usa como
+    alternativa de reintento.
     """
     fallback = compute_approach_pose(customer_xy, robot_pose, standoff_dist)
     if grid is None:
@@ -111,9 +127,16 @@ def approach_candidates(
     co, si = math.cos(yaw), math.sin(yaw)
     res = info.resolution
 
-    def free(pose):
+    def cost(pose) -> Optional[int]:
+        """Costo de la celda central, o None si la pose no es valida para Nav2."""
         dx, dy = pose[0] - info.origin.position.x, pose[1] - info.origin.position.y
         x, y = co * dx + si * dy, -si * dx + co * dy
+        cix, ciy = math.floor(x / res), math.floor(y / res)
+        if not (0 <= cix < info.width and 0 <= ciy < info.height):
+            return None
+        center = grid.data[ciy * info.width + cix]
+        if not 0 <= center < NAV2_INSCRIBED_VALUE:
+            return None
         for iy in range(math.floor((y - robot_radius) / res), math.floor((y + robot_radius) / res) + 1):
             for ix in range(math.floor((x - robot_radius) / res), math.floor((x + robot_radius) / res) + 1):
                 nx = max(ix * res - x, 0, x - (ix + 1) * res)
@@ -121,23 +144,66 @@ def approach_candidates(
                 if math.hypot(nx, ny) > robot_radius:
                     continue
                 if not (0 <= ix < info.width and 0 <= iy < info.height):
-                    return False
-                if not 0 <= grid.data[iy * info.width + ix] < 50:
-                    return False
-        return True
+                    return None
+                # El inflado del centro ya separa el footprint: el disco solo exige celdas observadas.
+                if not 0 <= grid.data[iy * info.width + ix] < NAV2_LETHAL_VALUE:
+                    return None
+        return center
 
     cx, cy = float(customer_xy[0]), float(customer_xy[1])
     angle = math.atan2(robot_pose[1] - cy, robot_pose[0] - cx)
-    candidates = []
-    for radius in dict.fromkeys((standoff_dist, 0.8, 1.1)):
-        for i in range(12):
-            a = angle + i * math.tau / 12
+    scored = []
+    for radius in dict.fromkeys((standoff_dist,) + APPROACH_RADII):
+        for i in range(APPROACH_ANGLES):
+            a = angle + i * math.tau / APPROACH_ANGLES
             x, y = cx + radius * math.cos(a), cy + radius * math.sin(a)
             pose = (x, y, math.atan2(cy - y, cx - x))
-            if free(pose):
-                candidates.append(pose)
-    candidates.sort(key=lambda p: math.hypot(p[0] - robot_pose[0], p[1] - robot_pose[1]))
-    return candidates or [fallback]
+            c = cost(pose)
+            if c is not None:
+                # 1 m de penalizacion por costo casi inscrito: entre dos poses parecidas, la despejada.
+                score = math.hypot(x - robot_pose[0], y - robot_pose[1]) + c / NAV2_INSCRIBED_VALUE
+                scored.append((score, pose))
+    scored.sort(key=lambda sp: sp[0])
+    return [pose for _, pose in scored] or [fallback]
+
+
+def path_length(points: Sequence[Sequence[float]]) -> float:
+    """Largo de una polilinea (x, y)."""
+    return sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(points, points[1:]))
+
+
+def validate_with_planner(
+    candidates: Sequence[Tuple[float, float, float]],
+    plan_fn: Optional[Callable[[Tuple[float, float, float]], Optional[float]]],
+    clock_fn: Callable[[], float] = time.monotonic,
+    budget_s: float = 10.0,
+    max_valid: int = 3,
+    max_checks: int = 16,
+) -> Tuple[List[Tuple[float, float, float]], bool]:
+    """Pide a Nav2 un plan a cada candidata (en el orden dado) y devuelve (poses, validadas).
+
+    plan_fn(pose) devuelve el largo del plan, None si el planner no encontro camino, o lanza si el
+    planner no esta disponible. Se guardan hasta max_valid poses con plan, ordenadas por largo
+    del plan (el camino real, no la recta). Si el planner no responde, se conservan las candidatas
+    sin validar (validadas=False) para no empeorar el comportamiento previo.
+    """
+    if plan_fn is None or not candidates:
+        return list(candidates), False
+    end = clock_fn() + budget_s
+    valid = []
+    for checks, pose in enumerate(candidates):
+        if checks >= max_checks or len(valid) >= max_valid or clock_fn() >= end:
+            break
+        try:
+            length = plan_fn(pose)
+        except Exception:
+            if not valid:
+                return list(candidates), False
+            break
+        if length is not None and math.isfinite(length):
+            valid.append((length, checks, pose))
+    valid.sort(key=lambda v: (v[0], v[1]))
+    return [pose for _, _, pose in valid], True
 
 
 class RestaurantSession:
@@ -166,7 +232,9 @@ class RestaurantSession:
         get_costmap_fn: Optional[Callable[[], Any]] = None,
         nav_aborted_fn: Optional[Callable[[], bool]] = None,
         pose_timeout_s: float = 5.0,
+        plan_fn: Optional[Callable[[Tuple[float, float, float]], Optional[float]]] = None,
     ):
+        self.plan_fn = plan_fn
         self.get_costmap_fn = get_costmap_fn or (lambda: None)
         self.nav_aborted_fn = nav_aborted_fn or (lambda: False)
         self.navigate_fn = navigate_fn
@@ -396,11 +464,27 @@ class RestaurantSession:
                 return self._handle_pose_failure()
             candidates = approach_candidates(
                 c_xy, robot_pose, self.get_costmap_fn(), self.standoff_dist)
+            n_free = len(candidates)
+            candidates, validated = validate_with_planner(
+                candidates, self.plan_fn, self.clock_fn, budget_s=min(10.0, self.remaining_s()))
+            if self.stopped:
+                return self._handle_stop()
+            if self._is_timeout():
+                return self._handle_timeout()
+            if not candidates:
+                # Nav2 no tiene camino a ninguna pose junto al cliente: no se manda un goal imposible.
+                self._set_state(SessionState.APPROACHING_CUSTOMER,
+                                {"customer_index": idx, "customer_xy": list(c_xy),
+                                 "candidates": n_free, "reachable": 0})
+                self._speak("I could not reach the customer.")
+                continue
             candidate_idx = 0
             approach_pose = candidates[candidate_idx]
 
             # Acercarse al cliente
-            self._set_state(SessionState.APPROACHING_CUSTOMER, {"target": approach_pose, "customer_index": idx})
+            self._set_state(SessionState.APPROACHING_CUSTOMER,
+                            {"target": approach_pose, "customer_index": idx, "customer_xy": list(c_xy),
+                             "candidates": n_free, "reachable": len(candidates) if validated else None})
             nav_ok = self._navigate_to(approach_pose)
             if (not nav_ok and not self.stopped and not self._is_timeout()
                     and self.nav_aborted_fn() and len(candidates) > 1):

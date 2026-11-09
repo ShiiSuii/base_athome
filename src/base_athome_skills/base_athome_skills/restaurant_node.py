@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import Vector3
-from nav2_msgs.action import NavigateToPose
+from nav2_msgs.action import ComputePathToPose, NavigateToPose
 from nav_msgs.msg import OccupancyGrid
 import rclpy
 from rclpy.action import ActionClient
@@ -40,7 +40,7 @@ from base_athome_perception.voice_client import VoiceClient
 from .mission import restaurant as rest
 from .mission import vlm
 from .mission.restaurant_navigation import NavigationStopMonitor, RestaurantNavigation
-from .mission.restaurant_session import RestaurantSession
+from .mission.restaurant_session import RestaurantSession, path_length
 
 
 class RestaurantNode(Node):
@@ -84,6 +84,8 @@ class RestaurantNode(Node):
         # Nav2 Action Client
         self.nav_client = ActionClient(self, NavigateToPose, "navigate_to_pose", callback_group=self.cb_group)
         self._navigation = RestaurantNavigation(self.nav_client, warn_fn=self.get_logger().warn)
+        # Solo consulta al planner (no mueve el robot): valida que exista camino antes de mandar el goal.
+        self.plan_client = ActionClient(self, ComputePathToPose, "compute_path_to_pose", callback_group=self.cb_group)
 
         # Deteccion de comensales (/bag_finder)
         self.pub_bag_request = self.create_publisher(String, "/bag_finder/request", 5)
@@ -141,6 +143,7 @@ class RestaurantNode(Node):
             standoff_dist=standoff,
             use_tray=use_tray,
             max_customers=max_cust,
+            plan_fn=self._plan,
         )
 
         self._session_thread: Optional[threading.Thread] = None
@@ -222,6 +225,42 @@ class RestaurantNode(Node):
         finally:
             monitor.close()
 
+    def _plan(self, pose: Tuple[float, float, float], timeout_s: float = 2.0) -> Optional[float]:
+        """Largo del plan de Nav2 desde la pose actual, None sin camino; lanza si no hay planner."""
+        if not self.plan_client.wait_for_server(timeout_sec=1.0):
+            raise RuntimeError("compute_path_to_pose no disponible")
+        goal = ComputePathToPose.Goal()
+        goal.goal.header.frame_id = "map"
+        goal.goal.header.stamp = self.get_clock().now().to_msg()
+        goal.goal.pose.position.x = float(pose[0])
+        goal.goal.pose.position.y = float(pose[1])
+        goal.goal.pose.orientation.z = math.sin(pose[2] / 2.0)
+        goal.goal.pose.orientation.w = math.cos(pose[2] / 2.0)
+        goal.use_start = False
+        done = threading.Event()
+        send = self.plan_client.send_goal_async(goal)
+        send.add_done_callback(lambda _: done.set())
+        if not done.wait(timeout_s):
+            raise RuntimeError("compute_path_to_pose no respondio")
+        handle = send.result()
+        if handle is None or not handle.accepted:
+            raise RuntimeError("compute_path_to_pose rechazo el pedido")
+        done.clear()
+        res_future = handle.get_result_async()
+        res_future.add_done_callback(lambda _: done.set())
+        if not done.wait(timeout_s):
+            handle.cancel_goal_async()
+            raise RuntimeError("compute_path_to_pose sin resultado")
+        res = res_future.result()
+        poses = res.result.path.poses if res is not None else []
+        ok = (res is not None and res.status == GoalStatus.STATUS_SUCCEEDED
+              and res.result.error_code == 0 and len(poses) > 0)
+        length = path_length([(p.pose.position.x, p.pose.position.y) for p in poses]) if ok else None
+        self.get_logger().info(
+            f"Plan a x={pose[0]:.2f}, y={pose[1]:.2f}: "
+            + (f"{length:.2f} m" if ok else f"sin camino (error {res.result.error_code if res else '?'})"))
+        return length
+
     def _cancel_nav(self) -> None:
         """Marca stop incluso antes de recibir un handle; _navigate espera su fin."""
         self._navigation.cancel()
@@ -281,6 +320,8 @@ class RestaurantNode(Node):
             return []
 
         customers = res_data.get("customers", [])
+        for c in customers:
+            self.get_logger().info(f"Cliente detectado: xy={c.get('xy')} range_m={c.get('range_m')}")
         return customers
 
     def _on_bag_result(self, msg: String):

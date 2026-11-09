@@ -130,7 +130,7 @@ def test_restaurant_sdf_header_documentation():
     with open(RESTAURANT_SDF, encoding="utf-8") as f:
         header = f.read(2048)
 
-    assert "x = -1.0" in header or "-1.0" in header, "Debe documentar pose de arranque del robot"
+    assert "x = 0.0, y = 0.0" in header, "Debe documentar pose de arranque del robot (start_pose de sim_robot)"
     assert "barra" in header.lower(), "Debe mencionar la barra"
     assert "ATHOME_SIM_CUSTOMERS" in header, "Debe documentar la variable ATHOME_SIM_CUSTOMERS"
     assert "mesa" in header.lower(), "Debe documentar mesas o clientes sugeridos"

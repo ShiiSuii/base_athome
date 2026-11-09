@@ -28,8 +28,11 @@ from base_athome_skills.mission.restaurant_navigation import (
 from base_athome_skills.mission.restaurant_session import (
     RestaurantSession,
     SessionState,
+    NAV2_INSCRIBED_VALUE,
     approach_candidates,
     compute_approach_pose,
+    path_length,
+    validate_with_planner,
 )
 
 
@@ -442,13 +445,23 @@ def test_seated_customer_approach_clears_restaurant_table(customer, table):
         assert yaw == pytest.approx(math.atan2(customer[1] - y, customer[0] - x))
 
 
-@pytest.mark.parametrize('value,allowed', [(49, True), (50, False), (-1, False)])
-def test_entire_robot_radius_must_have_known_cost_below_50(value, allowed):
+@pytest.mark.parametrize('value,allowed', [(98, True), (99, True), (100, False), (-1, False)])
+def test_entire_robot_radius_must_be_known_and_not_lethal(value, allowed):
     grid = make_grid()
     # Center of nearest candidate (0.9, 0) stays free; an adjacent cell intersects its radius.
     grid.data[42 * grid.info.width + 29] = value
     nearest = approach_candidates((2., 0.), (0., 0., 0.), grid)[0]
     assert (math.hypot(nearest[0] - 0.9, nearest[1]) < 1e-6) == allowed
+
+
+@pytest.mark.parametrize('value,allowed', [(98, True), (99, False), (100, False), (-1, False)])
+def test_center_cell_must_be_below_nav2_inscribed_cost(value, allowed):
+    grid = make_grid()
+    for iy, ix in ((39, 28), (39, 29), (40, 28), (40, 29)):   # celdas en torno al centro de (0.9, 0)
+        grid.data[iy * grid.info.width + ix] = value
+    poses = approach_candidates((2., 0.), (0., 0., 0.), grid)
+    assert any(math.hypot(x - 0.9, y) < 1e-6 for x, y, _ in poses) == allowed
+    assert math.hypot(poses[0][0] - 0.9, poses[0][1]) > 1e-6    # costo alto: nunca la preferida
 
 
 def test_rotated_costmap_origin_preserves_candidate_geometry():
@@ -463,7 +476,7 @@ def test_rotated_costmap_origin_preserves_candidate_geometry():
     assert poses[0][:2] == pytest.approx((5. - expected[0][1], 6. + expected[0][0]))
 
 
-@pytest.mark.parametrize('value', [-1, 50, 100])
+@pytest.mark.parametrize('value', [-1, 99, 100])
 def test_no_free_candidate_falls_back(value):
     from base_athome_skills.mission.restaurant_session import approach_candidates
     assert approach_candidates((2., 0.), (0., 0., 0.), make_grid(value)) == [compute_approach_pose((2., 0.), (0., 0., 0.))]
@@ -963,3 +976,208 @@ def test_restaurant_script_rejects_existing_navigation_before_starting_real_stac
     assert 'ros2 param get /slam_toolbox mode' in script
     assert 'ros2 lifecycle get /slam_toolbox' in script
     assert real.index('wait_restaurant_nav || exit 1') < real.index('ros2 run base_athome_skills restaurant_node')
+
+
+# ------------------------------------------------------------------------------
+# Aproximacion contra un costmap como el de Nav2 en restaurant.sdf
+# ------------------------------------------------------------------------------
+# Rectangulos (xmin, xmax, ymin, ymax) que el LiDAR ve. NARROW: restaurant.sdf hasta 2026-11-09
+# (8 x 6 m, pasillos de 0.25-0.65 m junto a los clientes); es el caso dificil que se conserva.
+NARROW_RESTAURANT = [
+    (-3.0, 5.0, 2.95, 3.05), (-3.0, 5.0, -3.05, -2.95), (4.95, 5.05, -3., 3.), (-3.05, -2.95, -3., 3.),
+    (-2.3, -1.7, -1.5, 1.5),                                          # barra
+    (1.1, 1.9, 0.9, 2.1), (3.1, 3.9, 0.9, 2.1), (2.1, 2.9, -2.2, -0.8),   # mesas 1, 2, 3
+    (1.275, 1.725, 2.075, 2.525), (1.275, 1.725, 0.475, 0.925),       # sillas mesa 1
+    (3.275, 3.725, 2.075, 2.525), (3.275, 3.725, 0.475, 0.925),       # sillas mesa 2
+    (2.275, 2.725, -0.825, -0.375), (2.275, 2.725, -2.625, -2.175),   # sillas mesa 3
+]
+# LARGE: restaurant.sdf actual (12 x 9 m, pasillos >= 1.3 m).
+LARGE_RESTAURANT = [
+    (-3.0, 9.0, 4.45, 4.55), (-3.0, 9.0, -4.55, -4.45), (8.95, 9.05, -4.5, 4.5), (-3.05, -2.95, -4.5, 4.5),
+    (-2.3, -1.7, -1.5, 1.5),                                                # barra
+    (1.6, 2.4, 1.4, 2.6), (4.1, 4.9, 1.4, 2.6), (2.6, 3.4, -2.7, -1.3),     # mesas 1, 2, 3
+    (1.775, 2.225, 2.575, 3.025), (1.775, 2.225, 0.975, 1.425),             # sillas mesa 1
+    (4.275, 4.725, 2.575, 3.025), (4.275, 4.725, 0.975, 1.425),             # sillas mesa 2
+    (2.775, 3.225, -1.325, -0.875), (2.775, 3.225, -3.125, -2.675),         # sillas mesa 3
+]
+
+
+def nav2_value(dist, inscribed=0.44, inflation=0.59, scaling=4.0):
+    """Valor OccupancyGrid que publica Nav2 (inflado de nav2_params.yaml) a dist del obstaculo."""
+    if dist <= 0.0:
+        cost = 254
+    elif dist <= inscribed:
+        cost = 253
+    elif dist <= inflation:
+        cost = int(252 * math.exp(-scaling * (dist - inscribed)))
+    else:
+        cost = 0
+    return {254: 100, 253: 99, 0: 0}.get(cost, 1 + (97 * (cost - 1)) // 251)
+
+
+def rect_dist(x, y, r):
+    return math.hypot(max(r[0] - x, 0., x - r[1]), max(r[2] - y, 0., y - r[3]))
+
+
+def restaurant_costmap(obstacles, res=0.05):
+    x0, y0 = min(r[0] for r in obstacles) - 0.05, min(r[2] for r in obstacles) - 0.05
+    w = int((max(r[1] for r in obstacles) + 0.05 - x0) / res)
+    h = int((max(r[3] for r in obstacles) + 0.05 - y0) / res)
+    grid = NS(info=NS(width=w, height=h, resolution=res,
+                      origin=NS(position=NS(x=x0, y=y0), orientation=NS(x=0., y=0., z=0., w=1.))),
+              data=[0] * (w * h))
+    for iy in range(h):
+        y = y0 + (iy + 0.5) * res
+        for ix in range(w):
+            x = x0 + (ix + 0.5) * res
+            grid.data[iy * w + ix] = nav2_value(min(rect_dist(x, y, r) for r in obstacles))
+    return grid
+
+
+def grid_value(grid, x, y):
+    i = grid.info
+    return grid.data[math.floor((y - i.origin.position.y) / i.resolution) * i.width
+                     + math.floor((x - i.origin.position.x) / i.resolution)]
+
+
+@pytest.fixture(scope="module")
+def restaurant_grid():
+    return restaurant_costmap(NARROW_RESTAURANT)
+
+
+@pytest.fixture(scope="module")
+def large_restaurant_grid():
+    return restaurant_costmap(LARGE_RESTAURANT)
+
+
+@pytest.mark.parametrize('customer,table,straight_blocked', [
+    ((1.5, 2.3), (1.1, 1.9, 0.9, 2.1), True),      # mesa 1: detectado en Gazebo en (1.5, 2.3)
+    ((2.5, -2.4), (2.1, 2.9, -2.2, -0.8), True),
+    # Mesa 3 detectada en Gazebo en (2.25, -2.15): la recta pasaba por casualidad (por eso
+    # el robot si llegaba a la mesa 3 y no a la 1).
+    ((2.25, -2.15), (2.1, 2.9, -2.2, -0.8), False),
+])
+def test_restaurant_costmap_customers_get_nav2_valid_candidates(restaurant_grid, customer, table,
+                                                                 straight_blocked):
+    """Regresion de Restaurant en Gazebo: la pose rectilinea cae dentro del inflado inscrito
+    (Nav2: 'no valid path found') y el filtro anterior (costo < 50 en un disco de 0.3 m) no dejaba
+    ninguna pose junto a un cliente sentado contra la pared, asi que se usaba la rectilinea."""
+    straight = compute_approach_pose(customer, (0., 0., 0.))
+    assert (grid_value(restaurant_grid, *straight[:2]) >= NAV2_INSCRIBED_VALUE) == straight_blocked
+    poses = approach_candidates(customer, (0., 0., 0.), restaurant_grid)
+    assert straight not in poses and len(poses) >= 3
+    for x, y, yaw in poses:
+        assert grid_value(restaurant_grid, x, y) < NAV2_INSCRIBED_VALUE
+        assert min(rect_dist(x, y, r) for r in NARROW_RESTAURANT) > 0.44 - 0.05
+        assert rect_dist(x, y, table) > 0.44 - 0.05
+        assert 0.8 - 1e-6 <= math.hypot(x - customer[0], y - customer[1]) <= 1.1 + 1e-6
+        assert yaw == pytest.approx(math.atan2(customer[1] - y, customer[0] - x))
+
+
+@pytest.mark.parametrize('customer,table', [
+    ((2.0, 2.8), (1.6, 2.4, 1.4, 2.6)),
+    ((3.0, -2.9), (2.6, 3.4, -2.7, -1.3)),
+])
+def test_large_restaurant_customers_get_clear_candidates(large_restaurant_grid, customer, table):
+    """Con pasillos >= 1.3 m la mejor pose queda fuera de todo inflado (costo 0) y a 0.8-1.1 m."""
+    poses = approach_candidates(customer, (0., 0., 0.), large_restaurant_grid)
+    assert len(poses) >= 6
+    x, y, _ = poses[0]
+    assert grid_value(large_restaurant_grid, x, y) == 0
+    assert min(rect_dist(x, y, r) for r in LARGE_RESTAURANT) > 0.59 - 0.05
+    for x, y, _ in poses:
+        assert grid_value(large_restaurant_grid, x, y) < NAV2_INSCRIBED_VALUE
+        assert rect_dist(x, y, table) > 0.44 - 0.05
+
+
+def test_candidates_prefer_lower_cost_at_similar_distance():
+    grid = make_grid()
+    # Costo alto (pero valido para Nav2) alrededor de la candidata recta (0.9, 0) del cliente (2, 0).
+    for iy in range(37, 44):
+        for ix in range(26, 33):
+            grid.data[iy * grid.info.width + ix] = 98
+    first = approach_candidates((2., 0.), (0., 0., 0.), grid)[0]
+    assert grid_value(grid, *first[:2]) == 0
+
+
+def test_path_length():
+    assert path_length([(0, 0), (3, 0), (3, 4)]) == pytest.approx(7.0)
+    assert path_length([(1, 1)]) == 0.0
+
+
+def test_planner_validation_keeps_reachable_sorted_by_path_length():
+    plans = {(1, 0, 0): None, (2, 0, 0): 5.0, (3, 0, 0): 2.0, (4, 0, 0): 3.0, (5, 0, 0): 1.0}
+    calls = []
+
+    def plan(pose):
+        calls.append(pose)
+        return plans[pose]
+    poses, validated = validate_with_planner(list(plans), plan, max_valid=3)
+    assert validated and poses == [(3, 0, 0), (4, 0, 0), (2, 0, 0)]
+    assert (5, 0, 0) not in calls      # se detiene al juntar max_valid
+
+
+def test_planner_validation_none_reachable_returns_empty():
+    poses, validated = validate_with_planner([(1, 0, 0), (2, 0, 0)], lambda p: None)
+    assert validated and poses == []
+
+
+def test_planner_unavailable_keeps_unvalidated_candidates():
+    def plan(pose):
+        raise RuntimeError("compute_path_to_pose no disponible")
+    poses, validated = validate_with_planner([(1, 0, 0), (2, 0, 0)], plan)
+    assert not validated and poses == [(1, 0, 0), (2, 0, 0)]
+    assert validate_with_planner([(1, 0, 0)], None) == ([(1, 0, 0)], False)
+
+
+def test_planner_failure_after_valid_keeps_validated_ones():
+    answers = iter([None, 4.0])
+
+    def plan(pose):
+        try:
+            return next(answers)
+        except StopIteration:
+            raise RuntimeError("timeout")
+    poses, validated = validate_with_planner([(1, 0, 0), (2, 0, 0), (3, 0, 0)], plan)
+    assert validated and poses == [(2, 0, 0)]
+
+
+def test_planner_validation_respects_time_budget_and_check_limit():
+    t = [0.0]
+
+    def plan(pose):
+        t[0] += 1.0
+        return None
+    validate_with_planner([(i, 0, 0) for i in range(30)], plan, clock_fn=lambda: t[0], budget_s=4.0)
+    assert t[0] == 4.0
+    t[0] = 0.0
+    validate_with_planner([(i, 0, 0) for i in range(30)], plan, clock_fn=lambda: t[0], budget_s=100.)
+    assert t[0] == 16.0
+
+
+def test_session_navigates_only_to_planner_validated_candidate(restaurant_grid):
+    h = FakeRestaurantHarness(customers=[{'xy': [1.5, 2.3]}], speech_script=['water', 'ready'])
+    planned = []
+
+    def plan(pose):
+        planned.append(pose)
+        return None if len(planned) == 1 else 3.0   # la primera candidata no tiene camino
+    session = h.make_session(get_costmap_fn=lambda: restaurant_grid, plan_fn=plan)
+    assert session.run()
+    assert h.nav_goals[0] == tuple(round(v, n) for v, n in zip(planned[1], (3, 3, 4)))
+    assert h.nav_goals[2] == h.nav_goals[0]   # la entrega vuelve a la pose validada
+    approach = [s for s in h.states if s["state"] == "APPROACHING_CUSTOMER"][0]["info"]
+    assert approach["customer_xy"] == [1.5, 2.3] and approach["reachable"] >= 1
+
+
+def test_session_skips_customer_without_any_planned_approach(restaurant_grid):
+    h = FakeRestaurantHarness(customers=[{'xy': [1.5, 2.3]}, {'xy': [2.5, -2.4]}],
+                              speech_script=['water', 'ready'])
+
+    def plan(pose):
+        return None if pose[1] > 0 else 4.0      # el cliente 1 no tiene camino, el 2 si
+    session = h.make_session(get_costmap_fn=lambda: restaurant_grid, plan_fn=plan)
+    assert session.run()
+    assert "I could not reach the customer." in h.spoken
+    assert all(goal[1] <= 0 for goal in h.nav_goals)   # nunca un goal sin plan
+    assert len(h.nav_goals) == 4                       # cliente 2, barra, entrega, barra final
