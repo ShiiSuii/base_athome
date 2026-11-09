@@ -179,6 +179,10 @@ LOOK_RE = re.compile(r"^(?:tell me |decime )?(?:what (?:do|can) you see(?: now| 
                      r"look around(?: and (?:tell me|describe)(?: what you see)?)?|"
                      r"que (?:ves|estas viendo|hay (?:adelante|enfrente)(?: tuyo)?)|describi (?:lo que ves|el lugar|la habitacion)|"
                      r"mira y deci(?:me)? (?:lo )?que ves)$")
+DOCK_RE = re.compile(r"^(?:get close to|move closer to|approach|dock (?:to|at)|acercate (?:a|al)|arrimate (?:a|al))\s+"
+                     r"(?:the |la |el )?(wall|door|table|surface|pared|puerta|mesa)$")
+DOCK_TARGETS = {"wall": "wall", "pared": "wall", "door": "door", "puerta": "door", "table": "table", "mesa": "table",
+                "surface": "surface"}
 HOW_MANY_SEE_RE = re.compile(r"^(?:tell me )?how many (.+?) (?:do|can) you see(?: now| here)?$")
 REQUEST_PREFIX_RE = re.compile(r"^(?:quiero que|necesito que|podes|podrias|i want you to|i need you to|can you|could you|"
                                r"would you|you should|por favor|please)\s+")
@@ -464,6 +468,11 @@ def _clause(c: _Ctx, raw: str, quotes: Dict[str, str]) -> None:
     t = REQUEST_PREFIX_RE.sub("", t).strip()
     if LOOK_RE.match(t):
         _look(c, None)
+        return
+    dock = DOCK_RE.match(t)
+    if dock:
+        target = DOCK_TARGETS[dock.group(1)]
+        c.add("dock_front", {"target": target}, f"acercarme con el lidar ({target})", recover=False, timeout=40)
         return
     many = HOW_MANY_SEE_RE.match(t)
     if many:

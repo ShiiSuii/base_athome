@@ -187,6 +187,12 @@ Antes de empezar: E-stop a mano, zona despejada y otra persona atenta. Bolsa liv
 - **Sin probar:** en el robot; el radio 0.36 supone que el brazo no sobresale del chasis (medirlo). Una sola corrida por caso.
 - **Antigravity (integrado, solo tests):** `front_dock.py` (HOME-101, 37 tests; concluye seguir con lógica propia y no `opennav_docking`), Restaurant (HOME-102: `raised_hand.py`, `restaurant.py`; Restaurant sí está en el RuleBook 2026.2 §5.5, exige SLAM sin mapa previo) y la pestaña "Resumen" del tablero (HOME-103). El plan de Restaurant es un borrador: usa mesas que no existen y anuncia un pedido antes de escucharlo.
 
+## 2p. Docking frontal en el ejecutor (2026-11-09)
+
+- Skill `dock_front` (usa `front_dock.py` de HOME-101): "approach the wall", "acercate a la puerta", "get close to the table". Mueve la base con `cmd_vel` lento como `dock_table`, tope 1.5 m, y pide "yes".
+- **Gazebo (mundo `nav_eval`):** después de Nav2 avanzó 0.45 m y frenó con el lidar a 0.29 m de la pared, o sea 0.27 m del frente del chasis (pedido 0.25). **Sin probar:** puerta cerrada, persona delante y robot real.
+- No se integró el chequeo trasero propuesto para salir de la mesa: el lidar está adelante y no ve detrás del chasis; daría una seguridad falsa.
+
 ## 3. Cómo retomar la teleoperación con el Quest (pendiente: prueba completa en el brazo real)
 
 1. Quest por USB a la **Jetson**, depuración USB autorizada (`adb devices` → `device`).

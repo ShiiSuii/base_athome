@@ -35,7 +35,7 @@ from sensor_msgs.msg import Image, LaserScan
 from std_msgs.msg import Bool, Float64, String
 from std_srvs.srv import Trigger
 
-from . import bag_task, follow_logic, table_dock, vlm
+from . import bag_task, follow_logic, front_dock, table_dock, vlm
 from .executor import MissionExecutor, SkillContext
 from .places import home_place, load_places, resolve
 from .plan import PlanError, parse_plan, validate_plan
@@ -50,7 +50,8 @@ except ImportError:  # pragma: no cover
 NAV_SUCCEEDED, NAV_CANCELED, NAV_ABORTED = 4, 5, 6
 DOCK_TURN_RPS = 0.3
 TABLE_UNDOCK_MIN_M = 0.25   # lo que hace falta para salir del inflado de Nav2 aunque casi no se haya avanzado
-TABLE_DOCK_MAX_M = 0.60     # Nav2 deja lejos, pero no tanto: mas que esto es que no mira una mesa
+TABLE_DOCK_MAX_M = 0.60
+FRONT_DOCK_MAX_M = 1.50     # avance maximo del docking frontal: mas es que no miraba lo que creia     # Nav2 deja lejos, pero no tanto: mas que esto es que no mira una mesa
 CAMERA_TOPIC = "/camera/camera/color/image_raw"   # RealSense de la cabeza
 FOLLOW_SEARCH_S = 12.0      # buscando a la persona antes de darla por perdida: la cabeza tarda en barrer
 DOCK_SPEED_MPS = 0.08      # tramo final hasta la bolsa
@@ -129,6 +130,7 @@ class MissionExecutorNode(Node):
 
         self.registry = default_registry()
         handlers = dict(navigate_to=self.h_navigate_to, navigate_sequence=self.h_navigate_sequence,
+                        dock_front=self.h_dock_front,
                         describe_view=self.h_describe_view,
                         return_home=self.h_return_home, speak=self.h_speak, listen=self.h_listen, wait=self.h_wait,
                         detect_object=self.h_detect, pick_object=self.h_pick, follow_person=self.h_follow_person, dock_table=self.h_dock_table, undock_table=self.h_undock_table, receive_bag=self.h_receive_bag, give_object=self.h_give, place_object=self.h_place,
@@ -438,6 +440,43 @@ class MissionExecutorNode(Node):
                 self.pub_cmd_vel.publish(msg)
                 time.sleep(0.05)
             return SkillResult.failure("blocked", "el acercamiento a la mesa no termino a tiempo")
+        finally:
+            self._stop_base()
+
+    def h_dock_front(self, ctx: SkillContext) -> SkillResult:
+        """Despues de Nav2: acercarse con el lidar a una pared, una puerta o una mesa. Frena ante una puerta cerrada o una persona."""
+        target = str(ctx.args.get("target") or "auto")
+        standoff = float(ctx.args["standoff_m"]) if ctx.args.get("standoff_m") is not None else None
+        start, reason = self.odom_xy, "sin lidar"
+        try:
+            while not ctx.cancel.is_set() and ctx.remaining() > 0.5:
+                scan = self.last_scan
+                if scan is None or self.odom_xy is None or start is None:
+                    time.sleep(0.05)
+                    start = start or self.odom_xy
+                    continue
+                angles = [scan.angle_min + i * scan.angle_increment for i in range(len(scan.ranges))]
+                action, amount = front_dock.front_dock_step(angles, list(scan.ranges), target=target, target_distance_m=standoff)
+                done = math.hypot(self.odom_xy[0] - start[0], self.odom_xy[1] - start[1])
+                if action == "done":
+                    return SkillResult.success(f"frente a {amount} (avance {done:.2f} m)", what=str(amount), advanced_m=done)
+                if action == "fail":
+                    self._stop_base()
+                    reason = str(amount)
+                    code = reason if reason in ("door_closed", "blocked", "nothing_ahead", "too_far", "no_scan") else "blocked"
+                    return SkillResult.failure(code, f"no me acerco: {reason}", advanced_m=done)
+                if done > FRONT_DOCK_MAX_M:
+                    return SkillResult.failure("too_far", f"ya avance {done:.2f} m sin llegar")
+                msg = Twist()
+                if action == "turn":
+                    msg.angular.z = max(-DOCK_TURN_RPS, min(DOCK_TURN_RPS, 1.5 * float(amount)))
+                else:
+                    msg.linear.x = min(DOCK_SPEED_MPS, max(0.03, float(amount)))
+                self.pub_cmd_vel.publish(msg)
+                time.sleep(0.05)
+            if ctx.cancel.is_set():
+                return SkillResult.failure(ERR_CANCELED, "acercamiento cancelado")
+            return SkillResult.failure("blocked", f"el acercamiento no termino a tiempo ({reason})")
         finally:
             self._stop_base()
 

@@ -41,6 +41,8 @@ def plan_to_speech(plan: Dict[str, Any], objects: Optional[List[Dict[str, Any]]]
             continue
         elif skill == "speak":
             phrase = f"say: {args.get('text')}"
+        elif skill == "dock_front":
+            phrase = f"get close to the {args.get('target', 'thing')} in front of me"
         elif skill == "describe_view":
             phrase = "look and tell you what I see"
         elif skill == "wait":

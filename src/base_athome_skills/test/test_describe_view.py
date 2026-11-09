@@ -38,3 +38,12 @@ def test_official_count_and_describe_go_first_and_never_name_people():
     assert c.ok and skills(c.plan) == ["navigate_to", "describe_view"]
     c = compile_gpsr_actions([dict(action="describe", params=dict(target="person", property="name"))], PLACES)
     assert not c.ok
+
+
+def test_dock_phrases_move_and_ask_for_yes():
+    reg = default_registry()
+    for text, target in (("approach the wall", "wall"), ("acercate a la puerta", "door"), ("get close to the table", "table")):
+        c = compile_command(text, PLACES)
+        assert c.ok and c.plan["steps"][0]["skill"] == "dock_front", text
+        assert c.plan["steps"][0]["args"]["target"] == target
+        assert needs_confirmation(c.plan, reg)
