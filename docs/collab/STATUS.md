@@ -193,6 +193,13 @@ Antes de empezar: E-stop a mano, zona despejada y otra persona atenta. Bolsa liv
 - **Gazebo (mundo `nav_eval`):** después de Nav2 avanzó 0.45 m y frenó con el lidar a 0.29 m de la pared, o sea 0.27 m del frente del chasis (pedido 0.25). **Sin probar:** puerta cerrada, persona delante y robot real.
 - No se integró el chequeo trasero propuesto para salir de la mesa: el lidar está adelante y no ve detrás del chasis; daría una seguridad falsa.
 
+## 2q. Navegación del robot: lidar en los costmaps (2026-11-09, autorizado por el usuario)
+
+- `nav2_params.yaml`: `max_obstacle_height: 2.0` en la fuente `scan` de los dos costmaps, costmap local 5 x 5 m, progress checker 12 s, AMCL `laser_max_range` 5.0. `base_athome_bt.xml`: espera 3 s antes de limpiar el costmap local y 4 s (antes 1) antes de los reintentos.
+- **Sin cambiar** (falta medir el brazo): `robot_radius` 0.44 e inflado. Sigue sin pasar puertas de 0.85 m.
+- **Gazebo con esta configuración:** persona quieta en el camino → la rodea a 0.88 m de su centro (antes la atravesaba). Persona en la puerta de 0.85 m → no llega (el radio). Una corrida por caso.
+- **Sin probar en el robot real.** Primera prueba sugerida: Nav2 con el robot quieto y RViz en `/local_costmap/costmap`; pararse a 1 m adelante y verificar que se marca. Rollback: `git revert` de este commit.
+
 ## 3. Cómo retomar la teleoperación con el Quest (pendiente: prueba completa en el brazo real)
 
 1. Quest por USB a la **Jetson**, depuración USB autorizada (`adb devices` → `device`).

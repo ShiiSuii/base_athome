@@ -12,13 +12,17 @@
         </RateController>
         <RecoveryNode number_of_retries="2" name="FollowPath">
           <FollowPath path="{path}" controller_id="FollowPath"/>
-          <ClearEntireCostmap name="ClearLocalCostmap-Context" service_name="local_costmap/clear_entirely_local_costmap"/>
+          <Sequence name="EsperarYLimpiarLocal">
+            <!-- una persona delante: esperar a que se corra; limpiar con alguien delante no sirve -->
+            <Wait wait_duration="3.0"/>
+            <ClearEntireCostmap name="ClearLocalCostmap-Context" service_name="local_costmap/clear_entirely_local_costmap"/>
+          </Sequence>
         </RecoveryNode>
       </PipelineSequence>
       <Sequence name="ClearingActions">
         <ClearEntireCostmap name="ClearLocalCostmap-Subtree" service_name="local_costmap/clear_entirely_local_costmap"/>
         <ClearEntireCostmap name="ClearGlobalCostmap-Subtree" service_name="global_costmap/clear_entirely_global_costmap"/>
-        <Wait wait_duration="1.0"/>
+        <Wait wait_duration="4.0"/>
       </Sequence>
     </RecoveryNode>
   </BehaviorTree>
