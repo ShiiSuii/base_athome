@@ -280,6 +280,7 @@ class SweepHarness:
         self.node._send_head = self.send_head
         self.node._move_head = self.send_head      # la rampa suave se prueba aparte (test_head_ramp_is_slow_and_ends_on_target)
         self.node._frames = self.frames
+        self.node._publish_debug = lambda *args: None   # la imagen de debug no se prueba aca
         self.node._cam = lambda *args: object()
         self.node._poses = self.poses
         self.node._sim_person_spot = lambda person, cam: person[0]
@@ -464,6 +465,7 @@ def test_find_person_reuses_sweep_and_map_positions_without_ros(sim, fresh_frame
         return (*images, node.rgb_stamp) if with_stamp else images
     node._frames = frames
     node._poses = lambda *args: [([0, 0, 100, 300], points, conf)]
+    node._publish_debug = lambda *args: None
     node._cam = lambda *args: (None, None)
     node.K = (1., 1., 0., 0.)
     node.head, node.head_stamp = (0., 0.), now[0]

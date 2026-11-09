@@ -28,7 +28,7 @@ from tf2_ros import Buffer, TransformListener
 
 from base_athome_perception import bag_vision as bv
 from base_athome_perception import scene_analysis as scene
-from base_athome_perception.raised_hand import RaisedHandsAggregator
+from base_athome_perception.raised_hand import RaisedHandsAggregator, classify_raised_hand
 from base_athome_perception.person_search import PersonSearch, valid_descriptor
 from base_athome_perception.person_attributes import extract_person_attributes
 from base_athome_perception.wrist_detector import make_bag_detector
@@ -73,6 +73,7 @@ class BagFinder(Node):
         self.create_subscription(String, "/bag_finder/request", self._request, 5)
         self.pub = self.create_publisher(String, "/bag_finder/result", 5)
         self.pub_people = self.create_publisher(String, "/bag_finder/people", 5)
+        self.pub_debug = self.create_publisher(Image, "/bag_finder/debug_image", 2)   # lo que detecta, para RViz
         self.rgb_stamp = None
         self.follow_stop = False
         self.pub_head = self.create_publisher(Vector3, "/pan_tilt/target_degrees", 5)
@@ -122,6 +123,32 @@ class BagFinder(Node):
                 t0, h0 = self._head_prev
                 self.head_speed = math.hypot(self.head[0] - h0[0], self.head[1] - h0[1]) / (now - t0)
                 self._head_prev = (now, self.head)
+
+    def _publish_debug(self, bgr, people, stamp):
+        """Imagen con cada persona: esqueleto, caja y si levanta la mano. Solo si alguien la mira (RViz)."""
+        if self.pub_debug.get_subscription_count() == 0:
+            return
+        import cv2
+        img = bgr.copy()
+        for person in people:
+            box, kps, conf = person[0], person[1], person[2]
+            hand = classify_raised_hand(kps, conf)
+            color = (0, 200, 0) if hand.is_raised else (0, 160, 255)
+            x0, y0, x1, y1 = [int(v) for v in box]
+            cv2.rectangle(img, (x0, y0), (x1, y1), color, 2)
+            for (x, y), c in zip(kps, conf):
+                if c >= 0.4:
+                    cv2.circle(img, (int(x), int(y)), 3, color, -1)
+            label = f"MANO {hand.state}" if hand.is_raised else "sin mano levantada"
+            cv2.putText(img, label, (x0, max(15, y0 - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+        cv2.putText(img, f"personas: {len(people)}  cabeza pan={self.head[0]:.0f} tilt={self.head[1]:.0f}", (8, 22),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        msg = Image()
+        msg.header.frame_id = "camera_color_optical_frame"
+        msg.height, msg.width = img.shape[:2]
+        msg.encoding, msg.step = "bgr8", img.shape[1] * 3
+        msg.data = img.tobytes()
+        self.pub_debug.publish(msg)
 
     def _head_still(self):
         """Con la cabeza en movimiento la imagen y el TF no son del mismo instante: esa medicion se descarta."""
@@ -337,8 +364,14 @@ class BagFinder(Node):
                     break
                 time.sleep(0.05)
             else:
-                self.get_logger().warn(f"Barrido: sin feedback fresco en pan={pan}")
-                continue
+                # La cabeza no llego (pan-tilt trabado o sin torque). Si hay feedback fresco y esta quieta, se mira igual
+                # desde donde esta: el TF usa la posicion medida, asi que la proyeccion sigue siendo correcta.
+                if time.time() - self.head_stamp < 0.5 and self._head_still():
+                    self.get_logger().warn(f"Barrido: la cabeza no llego a pan={pan:.0f} (esta en pan={self.head[0]:.0f}, "
+                                           f"tilt={self.head[1]:.0f}); miro desde ahi")
+                else:
+                    self.get_logger().warn(f"Barrido: sin feedback fresco en pan={pan}")
+                    continue
             view_end = min(end, time.time() + RAISED_HANDS_VIEW_S)
             # Solo imagenes nuevas despues de llegar; una imagen congelada no cuenta
             # de nuevo al cambiar de pan ni se proyecta con el TF de otra vista.
@@ -372,6 +405,7 @@ class BagFinder(Node):
                         if search is not None:
                             # La misma imagen no cuenta varias veces como evidencia temporal.
                             search.update_frame(candidates)
+                        self._publish_debug(rgb, people, stamp)
                 time.sleep(0.12)
 
             # Si ya se cubrio el barrido completo al menos una vez y hay clientes confirmados, se devuelve
