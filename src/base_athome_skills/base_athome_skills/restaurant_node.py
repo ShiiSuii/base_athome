@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import Vector3
 from nav2_msgs.action import NavigateToPose
+from nav_msgs.msg import OccupancyGrid
 import rclpy
 from rclpy.action import ActionClient
 from rclpy.callback_groups import ReentrantCallbackGroup
@@ -55,6 +56,17 @@ class RestaurantNode(Node):
         self.declare_parameter("tray", True)
         self.declare_parameter("max_customers", 2)
         self.declare_parameter("standoff_dist", 0.9)
+        self.declare_parameter("navigation_timeout_s", 90.0)
+        self.navigation_timeout_s = float(self.get_parameter("navigation_timeout_s").value)
+        if not math.isfinite(self.navigation_timeout_s) or self.navigation_timeout_s <= 0:
+            raise ValueError("navigation_timeout_s must be positive and finite")
+        self._nav_aborted = False
+        self._costmap = None
+        self.create_subscription(
+            OccupancyGrid, "/global_costmap/costmap", self._on_costmap,
+            QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
+            callback_group=self.cb_group,
+        )
 
         auto_start = self.get_parameter("auto_start").get_parameter_value().bool_value
         menu_param = self.get_parameter("menu").get_parameter_value().string_array_value or list(rest.DEFAULT_MENU)
@@ -111,6 +123,8 @@ class RestaurantNode(Node):
         # Instanciar sesion
         self.session = RestaurantSession(
             navigate_fn=self._navigate,
+            get_costmap_fn=lambda: self._costmap,
+            nav_aborted_fn=lambda: self._nav_aborted,
             speak_fn=self._speak,
             listen_fn=self._listen,
             detect_customers_fn=self._detect_customers,
@@ -168,8 +182,13 @@ class RestaurantNode(Node):
             self.get_logger().error(f"Error inesperado en sesion Restaurant: {e}")
 
     # ------------------------------------------------------------------ Callbacks e Interfaces
+    def _on_costmap(self, msg: OccupancyGrid) -> None:
+        if msg.header.frame_id == "map":
+            self._costmap = msg
+
     def _navigate(self, x: float, y: float, yaw: float) -> bool:
         """Navega hacia (x, y, yaw) en el frame map usando Nav2."""
+        self._nav_aborted = False
         self.get_logger().info(f"Nav2 -> x={x:.2f}, y={y:.2f}, yaw={yaw:.2f}")
         if not self.nav_client.wait_for_server(timeout_sec=5.0):
             self.get_logger().error("Servidor Nav2 (navigate_to_pose) no disponible.")
@@ -223,13 +242,16 @@ class RestaurantNode(Node):
         result_future = goal_handle.get_result_async()
         result_future.add_done_callback(_result_cb)
 
-        # Espera hasta 180 s por goal
-        done_event.wait(timeout=180.0)
+        completed = done_event.wait(timeout=self.navigation_timeout_s)
+        if not completed:
+            self.get_logger().warn(f"Timeout de navegacion ({self.navigation_timeout_s}s); cancelando goal.")
+            goal_handle.cancel_goal_async()
+        self._nav_aborted = completed and result_status == GoalStatus.STATUS_ABORTED
 
         with self._nav_lock:
             self._active_nav_goal_handle = None
 
-        return result_status == GoalStatus.STATUS_SUCCEEDED
+        return completed and result_status == GoalStatus.STATUS_SUCCEEDED
 
     def _cancel_nav(self) -> None:
         """Cancela inmediatamente el goal activo de Nav2."""

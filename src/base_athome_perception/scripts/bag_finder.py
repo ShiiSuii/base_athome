@@ -35,6 +35,8 @@ SIM = os.environ.get("ATHOME_SIM") == "1"
 FRAME = "camera_color_optical_frame"
 SEARCH_PANS = (0.0, 30.0, -30.0, 60.0, -60.0)
 RAISED_HANDS_PANS = (-60.0, -30.0, 0.0, 30.0, 60.0)
+RAISED_HANDS_VIEW_S = 2.0
+RAISED_HANDS_SETTLE_S = 1.5
 SEARCH_TILT = 0.0
 SEARCH_VIEW_S = 1.5
 LOST_PERSON_S = 1.5
@@ -60,6 +62,7 @@ class BagFinder(Node):
         self.rgb_stamp = None
         self.follow_stop = False
         self.pub_head = self.create_publisher(Vector3, "/pan_tilt/target_degrees", 5)
+        self.head_stamp = 0.0
         self.head = (0.0, 0.0)                 # posicion MEDIDA, en grados
         self.cli_torque = self.create_client(SetBool, "/pan_tilt/set_torque")
         self.create_subscription(JointState, "/pan_tilt/joint_states", self._head_state, 10)
@@ -98,6 +101,7 @@ class BagFinder(Node):
         if "pan_joint" in d and "tilt_joint" in d:
             self.head = (math.degrees(d["pan_joint"]), math.degrees(d["tilt_joint"]))
             now = time.time()
+            self.head_stamp = now
             if self._head_prev is None:
                 self._head_prev = (now, self.head)
             elif now - self._head_prev[0] >= 0.2:
@@ -289,16 +293,28 @@ class BagFinder(Node):
             pan_idx += 1
             self._send_head(pan, SEARCH_TILT)
 
-            remaining = end - time.time()
-            dwell_s = min(SEARCH_VIEW_S, max(0.8, remaining / max(1, len(sweep_pans) - (pan_idx % len(sweep_pans)))))
-            view_end = min(end, time.time() + dwell_s)
-
-            time.sleep(0.2)
+            settle_end = min(end, time.time() + RAISED_HANDS_SETTLE_S)
+            while time.time() < settle_end:
+                if (time.time() - self.head_stamp < 0.5
+                        and abs(self.head[0] - pan) < 3.0
+                        and abs(self.head[1] - SEARCH_TILT) < 3.0 and self._head_still()):
+                    break
+                time.sleep(0.05)
+            else:
+                self.get_logger().warn(f"Barrido: sin feedback fresco en pan={pan}")
+                continue
+            view_end = min(end, time.time() + RAISED_HANDS_VIEW_S)
+            # Solo imagenes nuevas despues de llegar; una imagen congelada no cuenta
+            # de nuevo al cambiar de pan ni se proyecta con el TF de otra vista.
+            last_stamp = self.rgb_stamp
 
             while time.time() < view_end:
-                if self._head_still():
+                stamp = self.rgb_stamp
+                if (self._head_still() and time.time() - self.head_stamp < 0.5
+                        and stamp is not None and stamp != last_stamp):
+                    last_stamp = stamp
                     rgb, depth = self._frames()
-                    cam = self._cam()
+                    cam = self._cam(stamp)
                     if rgb is not None:
                         people = self._poses(rgb, cam)
                         for person in people:

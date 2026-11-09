@@ -83,6 +83,62 @@ def compute_approach_pose(
     return (round(tx, 3), round(ty, 3), round(tyaw, 4))
 
 
+def approach_candidates(
+    customer_xy: Sequence[float],
+    robot_pose: Tuple[float, float, float],
+    grid: Optional[Any] = None,
+    standoff_dist: float = 0.9,
+    robot_radius: float = 0.3,
+) -> List[Tuple[float, float, float]]:
+    """Ordena poses libres hacia el cliente, sin importar ROS ni modificar la grilla.
+
+    Recibe un objeto con los campos de OccupancyGrid. Comprueba todas las celdas
+    del radio circular, incluso con origen rotado; desconocido/fuera = ocupado.
+    Sin grilla utilizable o sin candidatos libres conserva la pose rectilinea.
+    El fallback es la unica entrada: nunca se usa como alternativa de reintento.
+    """
+    fallback = compute_approach_pose(customer_xy, robot_pose, standoff_dist)
+    if grid is None:
+        return [fallback]
+    info = grid.info
+    if (not math.isfinite(info.resolution) or info.resolution <= 0
+            or info.width <= 0 or info.height <= 0
+            or len(grid.data) != info.width * info.height):
+        return [fallback]
+    q = info.origin.orientation
+    yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
+    co, si = math.cos(yaw), math.sin(yaw)
+    res = info.resolution
+
+    def free(pose):
+        dx, dy = pose[0] - info.origin.position.x, pose[1] - info.origin.position.y
+        x, y = co * dx + si * dy, -si * dx + co * dy
+        for iy in range(math.floor((y - robot_radius) / res), math.floor((y + robot_radius) / res) + 1):
+            for ix in range(math.floor((x - robot_radius) / res), math.floor((x + robot_radius) / res) + 1):
+                nx = max(ix * res - x, 0, x - (ix + 1) * res)
+                ny = max(iy * res - y, 0, y - (iy + 1) * res)
+                if math.hypot(nx, ny) > robot_radius:
+                    continue
+                if not (0 <= ix < info.width and 0 <= iy < info.height):
+                    return False
+                if not 0 <= grid.data[iy * info.width + ix] < 50:
+                    return False
+        return True
+
+    cx, cy = float(customer_xy[0]), float(customer_xy[1])
+    angle = math.atan2(robot_pose[1] - cy, robot_pose[0] - cx)
+    candidates = []
+    for radius in dict.fromkeys((standoff_dist, 0.8, 1.1)):
+        for i in range(12):
+            a = angle + i * math.tau / 12
+            x, y = cx + radius * math.cos(a), cy + radius * math.sin(a)
+            pose = (x, y, math.atan2(cy - y, cx - x))
+            if free(pose):
+                candidates.append(pose)
+    candidates.sort(key=lambda p: math.hypot(p[0] - robot_pose[0], p[1] - robot_pose[1]))
+    return candidates or [fallback]
+
+
 class RestaurantSession:
     """Maquina de estados pura con interfaces inyectadas para la mision Restaurant."""
 
@@ -106,7 +162,11 @@ class RestaurantSession:
         standoff_dist: float = 0.9,
         use_tray: bool = True,
         max_customers: int = 2,
+        get_costmap_fn: Optional[Callable[[], Any]] = None,
+        nav_aborted_fn: Optional[Callable[[], bool]] = None,
     ):
+        self.get_costmap_fn = get_costmap_fn or (lambda: None)
+        self.nav_aborted_fn = nav_aborted_fn or (lambda: False)
         self.navigate_fn = navigate_fn
         self.speak_fn = speak_fn
         self.listen_fn = listen_fn
@@ -243,7 +303,7 @@ class RestaurantSession:
             return self._handle_stop()
 
         self._set_state(SessionState.DETECTING_CUSTOMERS)
-        raw_cust = self.detect_customers_fn(10.0, 3)
+        raw_cust = self.detect_customers_fn(18.0, 3)
 
         customers_list: List[Dict[str, Any]] = []
         if isinstance(raw_cust, dict):
@@ -279,13 +339,25 @@ class RestaurantSession:
             c_xy = cust.get("xy")
             if not c_xy:
                 c_xy = (cust.get("x", 0.0), cust.get("y", 0.0))
-            approach_pose = compute_approach_pose(c_xy, self.get_pose_fn(), self.standoff_dist)
+            candidates = approach_candidates(
+                c_xy, self.get_pose_fn(), self.get_costmap_fn(), self.standoff_dist)
+            candidate_idx = 0
+            approach_pose = candidates[candidate_idx]
 
             # Acercarse al cliente
             self._set_state(SessionState.APPROACHING_CUSTOMER, {"target": approach_pose, "customer_index": idx})
             nav_ok = self.navigate_fn(approach_pose[0], approach_pose[1], approach_pose[2])
+            if (not nav_ok and not self.stopped and not self._is_timeout()
+                    and self.nav_aborted_fn() and len(candidates) > 1):
+                candidate_idx += 1
+                approach_pose = candidates[candidate_idx]
+                self._set_state(SessionState.APPROACHING_CUSTOMER,
+                                {"target": approach_pose, "customer_index": idx, "retry": 1})
+                nav_ok = self.navigate_fn(*approach_pose)
             if self.stopped:
                 return self._handle_stop()
+            if self._is_timeout():
+                return self._handle_timeout()
             if not nav_ok:
                 self._speak("I could not reach the customer.")
                 continue
@@ -366,8 +438,17 @@ class RestaurantSession:
             # Regresar al cliente
             self._set_state(SessionState.DELIVERING_TO_CUSTOMER)
             nav_back_ok = self.navigate_fn(approach_pose[0], approach_pose[1], approach_pose[2])
+            if (not nav_back_ok and not self.stopped and not self._is_timeout()
+                    and self.nav_aborted_fn() and candidate_idx + 1 < len(candidates)):
+                candidate_idx += 1
+                approach_pose = candidates[candidate_idx]
+                self._set_state(SessionState.DELIVERING_TO_CUSTOMER,
+                                {"target": approach_pose, "customer_index": idx, "retry": 1})
+                nav_back_ok = self.navigate_fn(*approach_pose)
             if self.stopped:
                 return self._handle_stop()
+            if self._is_timeout():
+                return self._handle_timeout()
             if not nav_back_ok:
                 self._speak("I could not return to the customer.")
                 continue

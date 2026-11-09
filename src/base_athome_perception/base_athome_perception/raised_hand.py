@@ -432,7 +432,8 @@ class TrackedCustomer:
                 self.last_state = cls.state
 
         confirmed, dominant = self.filter.update(keypoints, conf=conf)
-        self.is_confirmed = confirmed
+        # Este tracker vive una peticion: N de M basta en una sola vista del barrido.
+        self.is_confirmed = self.is_confirmed or confirmed
         if confirmed:
             self.dominant_hand = dominant if dominant != RaisedHandState.NONE else self.last_state
         return self.is_confirmed

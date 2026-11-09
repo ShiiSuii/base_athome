@@ -117,3 +117,22 @@ Demo `missions/demo_a_b_voice_c_home.yaml` (A → B → voz → C → casa). Con
 Pruebas: `python3 -m pytest -q src/base_athome_skills/test` (8 puerta + 21 misiones) — `UNIT_PASS`.
 `SIM_PASS` 2026-11-03 con `base_athome_sim`: demo completa 41,4 s; timeout + reintento + recuperación;
 cancelación a mitad de navegación (goal cancelado, base quieta). Con Nav2 real: `PENDIENTE`.
+
+## Restaurant: aproximación y barrido
+
+`restaurant_node` consume `/global_costmap/costmap` (`nav_msgs/OccupancyGrid`,
+transient local, marco `map`). La sesión evalúa 12 ángulos por radio (standoff,
+0.8 y 1.1 m), ordenados por distancia al robot, con radio circular de 0.3 m:
+toda celda intersectada debe tener costo conocido menor que 50. Sin candidato
+libre o sin grilla conserva la aproximación por la recta. No garantiza un camino:
+Nav2 lo resuelve; ante `ABORTED` intenta una sola alternativa libre por visita
+(también al entregar). No reintenta ante rechazo, cancelación o timeout.
+`navigation_timeout_s` (positivo, por defecto 90 s) limita la espera del resultado
+por goal y solicita cancelación al vencer; no cambia parámetros de Nav2.
+
+La petición raised_hands dura hasta 18 s. Conserva los pans -60/-30/0/30/60°,
+espera hasta 1.5 s por feedback fresco de `/pan_tilt/joint_states` en el ángulo
+objetivo y luego observa 2 s contando imágenes distintas posteriores a la llegada,
+con TF del instante de la imagen. Cada cliente que
+cumplió N de M queda confirmado hasta terminar esa petición, aunque luego baje
+la mano. Verificación de ambos clientes en Gazebo y hardware: pendiente.

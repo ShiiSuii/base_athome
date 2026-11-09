@@ -19,6 +19,7 @@ from base_athome_skills.mission import restaurant as rest
 from base_athome_skills.mission.restaurant_session import (
     RestaurantSession,
     SessionState,
+    approach_candidates,
     compute_approach_pose,
 )
 
@@ -381,3 +382,204 @@ def test_never_speaks_order_before_listening():
         assert "order" not in phrase.lower() or "what would you like" in phrase.lower(), (
             f"Frase sospechosa previa al listen: '{phrase}'"
         )
+
+
+def make_grid(value=0):
+    from types import SimpleNamespace as NS
+    return NS(info=NS(width=80, height=80, resolution=0.1,
+                     origin=NS(position=NS(x=-2., y=-4.),
+                               orientation=NS(x=0., y=0., z=0., w=1.))),
+              data=[value] * 6400)
+
+
+def test_approach_avoids_table_and_faces_customer():
+    from base_athome_skills.mission.restaurant_session import approach_candidates
+    grid = make_grid()
+    # Table across the straight approach at x=1.1, including footprint margins.
+    for iy in range(35, 46):
+        for ix in range(26, 35):
+            grid.data[iy*80+ix] = 100
+    poses = approach_candidates((2., 0.), (0., 0., 0.), grid)
+    assert poses[0] != compute_approach_pose((2., 0.), (0., 0., 0.))
+    x, y, yaw = poses[0]
+    assert abs(y) > 0.7
+    assert yaw == pytest.approx(math.atan2(-y, 2-x))
+    assert [math.hypot(p[0], p[1]) for p in poses] == sorted(math.hypot(p[0], p[1]) for p in poses)
+
+
+@pytest.mark.parametrize('customer,table', [
+    ((1.5, 2.3), (1.1, 1.9, 0.9, 2.1)),
+    ((2.5, -2.4), (2.1, 2.9, -2.2, -0.8)),
+])
+def test_seated_customer_approach_clears_restaurant_table(customer, table):
+    grid = make_grid()
+    xmin, xmax, ymin, ymax = table
+    for iy in range(grid.info.height):
+        y = grid.info.origin.position.y + (iy + 0.5) * grid.info.resolution
+        for ix in range(grid.info.width):
+            x = grid.info.origin.position.x + (ix + 0.5) * grid.info.resolution
+            if xmin <= x <= xmax and ymin <= y <= ymax:
+                grid.data[iy * grid.info.width + ix] = 100
+    poses = approach_candidates(customer, (0., 0., 0.), grid)
+    for x, y, yaw in poses:
+        # Distance from the robot center to the rectangular tabletop footprint.
+        assert math.hypot(max(xmin - x, 0., x - xmax),
+                          max(ymin - y, 0., y - ymax)) >= 0.3
+        assert 0.8 - 1e-6 <= math.hypot(x - customer[0], y - customer[1]) <= 1.1 + 1e-6
+        assert yaw == pytest.approx(math.atan2(customer[1] - y, customer[0] - x))
+
+
+@pytest.mark.parametrize('value,allowed', [(49, True), (50, False), (-1, False)])
+def test_entire_robot_radius_must_have_known_cost_below_50(value, allowed):
+    grid = make_grid()
+    # Center of nearest candidate (0.9, 0) stays free; an adjacent cell intersects its radius.
+    grid.data[42 * grid.info.width + 29] = value
+    nearest = approach_candidates((2., 0.), (0., 0., 0.), grid)[0]
+    assert (math.hypot(nearest[0] - 0.9, nearest[1]) < 1e-6) == allowed
+
+
+def test_rotated_costmap_origin_preserves_candidate_geometry():
+    grid = make_grid()
+    expected = approach_candidates((2., 0.), (0., 0., 0.), grid)
+    # Rotate the map and the scene 90 degrees, then translate by (5, 6).
+    grid.info.origin.position.x, grid.info.origin.position.y = 9., 4.
+    grid.info.origin.orientation.z = math.sin(math.pi / 4)
+    grid.info.origin.orientation.w = math.cos(math.pi / 4)
+    poses = approach_candidates((5., 8.), (5., 6., math.pi / 2), grid)
+    assert len(poses) == len(expected)
+    assert poses[0][:2] == pytest.approx((5. - expected[0][1], 6. + expected[0][0]))
+
+
+@pytest.mark.parametrize('value', [-1, 50, 100])
+def test_no_free_candidate_falls_back(value):
+    from base_athome_skills.mission.restaurant_session import approach_candidates
+    assert approach_candidates((2., 0.), (0., 0., 0.), make_grid(value)) == [compute_approach_pose((2., 0.), (0., 0., 0.))]
+
+
+def test_aborted_navigation_retries_next_candidate_once():
+    h = FakeRestaurantHarness(customers=[{'xy': [2., 0.]}], speech_script=['water', 'ready'])
+    session = h.make_session(get_costmap_fn=make_grid, nav_aborted_fn=lambda: True)
+    original = h.navigate
+    def navigate(*pose):
+        original(*pose)
+        return len(h.nav_goals) != 1
+    session.navigate_fn = navigate
+    assert session.run()
+    assert h.nav_goals[0] != h.nav_goals[1]
+    assert h.nav_goals[3] == h.nav_goals[1]  # Delivery uses successful approach.
+
+
+def test_non_aborted_navigation_does_not_retry():
+    h = FakeRestaurantHarness(customers=[{'xy': [2., 0.]}], nav_success=False)
+    session = h.make_session(get_costmap_fn=make_grid, nav_aborted_fn=lambda: False)
+    assert not session.run()
+    assert len(h.nav_goals) == 2  # Approach and final bar only.
+
+
+def test_unknown_navigation_failure_does_not_assume_abort():
+    h = FakeRestaurantHarness(customers=[{'xy': [2., 0.]}], nav_success=False)
+    assert not h.make_session(get_costmap_fn=make_grid).run()
+    assert len(h.nav_goals) == 2
+
+
+def test_aborted_navigation_is_retried_at_most_once():
+    h = FakeRestaurantHarness(customers=[{'xy': [2., 0.]}], nav_success=False)
+    assert not h.make_session(get_costmap_fn=make_grid, nav_aborted_fn=lambda: True).run()
+    assert len(h.nav_goals) == 3  # Two candidates, then final bar.
+
+
+def test_aborted_fallback_has_no_free_candidate_to_retry():
+    h = FakeRestaurantHarness(customers=[{'xy': [2., 0.]}], nav_success=False)
+    assert not h.make_session(get_costmap_fn=lambda: make_grid(100), nav_aborted_fn=lambda: True).run()
+    assert len(h.nav_goals) == 2
+
+
+@pytest.mark.parametrize('timeout_s', [37., 90.])
+@pytest.mark.parametrize('completed,status,expected,cancelled', [
+    (False, None, False, True), (False, 4, False, True), (False, 6, False, True),
+    (True, 4, True, False), (True, 6, False, False), (True, 5, False, False),
+])
+def test_node_navigation_timeout_and_abort(completed, status, expected, cancelled, timeout_s):
+    # Compile the actual method with fake action messages/events, without starting ROS.
+    import ast
+    from pathlib import Path
+    from types import SimpleNamespace as NS
+    path = Path(__file__).parents[1] / 'base_athome_skills/restaurant_node.py'
+    tree = ast.parse(path.read_text())
+    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'RestaurantNode')
+    method = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == '_navigate')
+    waits, cancels, pending = [], [], []
+
+    def deliver_result():
+        pending.pop()(Future(NS(status=status)))
+
+    class Event:
+        def set(self): pass
+        def wait(self, timeout):
+            waits.append(timeout)
+            if len(waits) == 1:
+                return True
+            if completed:
+                deliver_result()
+            return completed
+    class Future:
+        def __init__(self, result, delayed=False):
+            self.value, self.delayed = result, delayed
+        def result(self): return self.value
+        def add_done_callback(self, cb):
+            if self.delayed:
+                pending.append(cb)
+            else:
+                cb(self)
+
+    def cancel():
+        cancels.append(True)
+        # Model a result racing with the cancellation after the wait expired.
+        deliver_result()
+
+    goal = NS(accepted=True, get_result_async=lambda: Future(NS(status=status), delayed=True),
+              cancel_goal_async=cancel)
+    def message():
+        return NS(pose=NS(header=NS(), pose=NS(position=NS(), orientation=NS())))
+    import threading
+    env = dict(math=math, threading=NS(Event=Event), NavigateToPose=NS(Goal=message),
+               GoalStatus=NS(STATUS_SUCCEEDED=4, STATUS_ABORTED=6))
+    exec(compile(ast.Module(body=[method], type_ignores=[]), str(path), 'exec'), env)
+    node = NS(get_logger=lambda: NS(info=lambda _: None, warn=lambda _: None),
+              nav_client=NS(wait_for_server=lambda **_: True, send_goal_async=lambda _: Future(goal)),
+              get_clock=lambda: NS(now=lambda: NS(to_msg=lambda: None)),
+              _nav_lock=threading.Lock(), navigation_timeout_s=timeout_s)
+    assert env['_navigate'](node, 1., 2., 0.) == expected
+    assert waits == [10., timeout_s]
+    assert bool(cancels) == cancelled
+    assert node._nav_aborted == (completed and status == 6)
+
+
+def test_delivery_aborted_retries_other_free_candidate():
+    h = FakeRestaurantHarness(customers=[{'xy': [2., 0.]}], speech_script=['water', 'ready'])
+    session = h.make_session(get_costmap_fn=make_grid, nav_aborted_fn=lambda: True)
+    original = h.navigate
+    def navigate(*pose):
+        original(*pose)
+        return len(h.nav_goals) != 3
+    session.navigate_fn = navigate
+    assert session.run()
+    assert h.nav_goals[2] != h.nav_goals[3]
+    assert len(h.nav_goals) == 5
+
+
+def test_delivery_abort_does_not_retry_an_unchecked_fallback():
+    h = FakeRestaurantHarness(customers=[{'xy': [2., 0.]}], speech_script=['water', 'ready'])
+    session = h.make_session(nav_aborted_fn=lambda: True)
+    original = h.navigate
+
+    def navigate(*pose):
+        original(*pose)
+        if len(h.nav_goals) == 3:
+            h.robot_pose = (1., 1., 0.)  # Nav2 aborted partway to the customer.
+            return False
+        return True
+
+    session.navigate_fn = navigate
+    assert not session.run()
+    assert len(h.nav_goals) == 4  # No free alternatives without a costmap.
