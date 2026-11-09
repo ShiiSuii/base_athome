@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tono local de 150 ms cada 5 s; no inicia ROS ni compite con el TTS."""
+"""Bip breve cada 5 s para que el parlante Bluetooth no se apague; si se desconecto, lo reconecta. No compite con el TTS."""
 
 import argparse
 import json
@@ -11,16 +11,16 @@ import subprocess
 import threading
 import time
 
-from base_athome_perception.audio_lock import playback_lock
+from base_athome_perception.audio_lock import playback_lock, reconnect_bluetooth_speaker
 
 
 def quiet_tone(rate=16000):
-    """PCM s16le mono, 220 Hz a 0.3 % de amplitud, con rampas anticlick de 10 ms."""
+    """PCM s16le mono, 440 Hz al 6 % de amplitud (bip suave pero audible: al 0.3 % no se oia), con rampas de 10 ms."""
     samples = int(rate * 0.15)
     ramp = rate * 0.01
     return b"".join(struct.pack("<h", round(
-        32767 * 0.003 * min(1.0, i / ramp, (samples - 1 - i) / ramp)
-        * math.sin(math.tau * 220 * i / rate))) for i in range(samples))
+        32767 * 0.06 * min(1.0, i / ramp, (samples - 1 - i) / ramp)
+        * math.sin(math.tau * 440 * i / rate))) for i in range(samples))
 
 
 def idle_sink(run_fn=subprocess.run):
@@ -29,6 +29,10 @@ def idle_sink(run_fn=subprocess.run):
                  capture_output=True, text=True, check=True, timeout=1.0)
     sinks = json.loads(res.stdout)
     target = next((s for s in sinks if "bluez_output" in s["name"]), None)
+    if target is None and reconnect_bluetooth_speaker():     # se apago o se desconecto: volver a conectarlo
+        sinks = json.loads(run_fn(["pactl", "--format=json", "list", "sinks"],
+                                  capture_output=True, text=True, check=True, timeout=1.0).stdout)
+        target = next((s for s in sinks if "bluez_output" in s["name"]), None)
     if target is None:
         default = run_fn(["pactl", "get-default-sink"], capture_output=True,
                          text=True, check=True, timeout=1.0).stdout.strip()
@@ -48,7 +52,7 @@ def play_if_idle(run_fn=subprocess.run, lock_fn=playback_lock):
             return False
         run_fn(["paplay", "--device", sink, "--raw", "--rate=16000",
                 "--channels=1", "--format=s16le"], input=quiet_tone(),
-               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, timeout=2.0)
+               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, timeout=5.0)   # un parlante recien despierto tarda
         return True
 
 

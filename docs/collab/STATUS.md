@@ -218,7 +218,7 @@ Antes de empezar: E-stop a mano, zona despejada y otra persona atenta. Bolsa liv
 - **No detectaba la mano levantada:** el pan-tilt queda trabado en pan 27°, tilt -6° y el barrido salteaba todas las vistas. Ahora mira desde donde está la cabeza. Además, **al empezar gira la base** +90°, -180° y +90° con el Spin de Nav2 (la cabeza recta) y busca manos en cada orientación.
 - **Visual:** RViz se abre solo con mapa, costmaps, lidar completo y filtrado, plan, cámara y la pestaña "Detecciones OpenPose (pose y manos)" (`/bag_finder/debug_image`, esqueleto COCO de YOLOv8-pose).
 - **Arranque y cierre:** Ctrl-C cierra todos los nodos (KILL a los 10 s solo de la sesión); los restos de una corrida muerta se cierran y se espera a que salgan del grafo; los chequeos buscan el programa real, no cualquier línea con "commander".
-- **Bluetooth:** tono de 150 ms cada 5 s para que el parlante no se apague, salteado mientras el robot habla.
+- **Bluetooth:** el parlante se desconectaba en cada pausa: WirePlumber suspendía el sink, fallaba al liberar el transporte ("Failed to release transport") y el parlante cortaba ("Connection reset by peer"). Arreglo de raíz: `~/.config/wireplumber/bluetooth.lua.d/51-base-athome-no-suspend.lua` (copia en `src/base_athome_perception/config/wireplumber/`; instalar copiándolo y `systemctl --user restart wireplumber`). Comprobado: 30 s después de sonar sigue conectado y RUNNING. Además, bip suave (6 %) cada 5 s y reconexión automática del parlante emparejado si se cae.
 - **Sin probar en el robot:** el giro inicial, la ventana móvil y el keepalive (tests y revisión). El pan-tilt trabado hay que revisarlo físicamente.
 
 ## 3. Cómo retomar la teleoperación con el Quest (pendiente: prueba completa en el brazo real)

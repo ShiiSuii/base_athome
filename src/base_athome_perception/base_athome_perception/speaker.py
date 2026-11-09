@@ -114,8 +114,12 @@ class RoboCupSpeaker:
 
     @staticmethod
     def ensure_bluetooth_sink() -> Optional[str]:
-        """Detecta y activa el parlante Bluetooth como sink predeterminado de audio."""
+        """Detecta y activa el parlante Bluetooth como sink predeterminado de audio; si se desconecto, lo reconecta."""
         try:
+            from base_athome_perception.audio_lock import reconnect_bluetooth_speaker
+            res = subprocess.run(["pactl", "list", "sinks", "short"], stdout=subprocess.PIPE, text=True, timeout=1)
+            if "bluez_output" not in res.stdout and reconnect_bluetooth_speaker():
+                time.sleep(2.0)     # PipeWire tarda en crear el sink despues de conectar
             res = subprocess.run(["pactl", "list", "sinks", "short"], stdout=subprocess.PIPE, text=True, timeout=1)
             for line in res.stdout.splitlines():
                 parts = line.split()

@@ -82,12 +82,12 @@ def test_invalid_interval_rejected(interval):
         keepalive.AudioKeepalive(interval)
 
 
-def test_tone_is_150_ms_quiet_pcm_with_smooth_endpoints():
+def test_tone_is_150_ms_soft_but_audible_pcm_with_smooth_endpoints():
     tone = keepalive.quiet_tone()
     samples = struct.unpack('<' + 'h' * (len(tone) // 2), tone)
     assert len(samples) == 2400
     assert samples[0] == samples[-1] == 0
-    assert 0 < max(abs(v) for v in samples) <= 99
+    assert 1000 < max(abs(v) for v in samples) <= 2000      # ~6 %: al 0.3 % no se oia
 
 
 def test_prefers_bluetooth_and_plays_generated_tone():
@@ -96,7 +96,7 @@ def test_prefers_bluetooth_and_plays_generated_tone():
     args, kwargs = audio.calls[-1]
     assert args[:3] == ['paplay', '--device', 'bluez_output.speaker']
     assert kwargs['input'] == keepalive.quiet_tone()
-    assert kwargs['timeout'] == 2.
+    assert kwargs['timeout'] == 5.          # un parlante recien despierto tarda
 
 
 def test_fallback_to_default_sink_without_bluetooth():
@@ -198,3 +198,25 @@ def test_speaker_holds_lock_through_tts_synthesis_and_playback(monkeypatch, tmp_
     player._worker_loop()
     assert len(calls) == 1
     assert not player.is_speaking
+
+
+def test_reconnects_a_paired_speaker_that_dropped():
+    """El parlante se apaga solo: si esta emparejado y desconectado, se le pide reconectar."""
+    from types import SimpleNamespace as NS
+    from base_athome_perception import audio_lock
+    calls = []
+
+    def run(cmd, **_):
+        calls.append(cmd)
+        if cmd[:3] == ["bluetoothctl", "devices", "Paired"]:
+            return NS(stdout="Device 32:16:82:08:30:02 PPA 205\nDevice AA:BB:CC:DD:EE:FF Phone\n")
+        if cmd[:2] == ["bluetoothctl", "info"]:
+            if cmd[2].startswith("32:"):
+                return NS(stdout="Connected: no\n\tUUID: Audio Sink (0000110b-0000-1000-8000-00805f9b34fb)\n")
+            return NS(stdout="Connected: yes\n\tUUID: Handsfree (0000111e-0000-1000-8000-00805f9b34fb)\n")
+        if cmd[:2] == ["bluetoothctl", "connect"]:
+            return NS(stdout="Attempting to connect\nConnection successful\n")
+        raise AssertionError(cmd)
+    assert audio_lock.reconnect_bluetooth_speaker(run)
+    assert ["bluetoothctl", "connect", "32:16:82:08:30:02"] in calls
+    assert ["bluetoothctl", "connect", "AA:BB:CC:DD:EE:FF"] not in calls      # el telefono no es un parlante
