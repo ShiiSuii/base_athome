@@ -969,13 +969,17 @@ def test_restaurant_script_never_enables_torso_motion():
 def test_restaurant_script_rejects_existing_navigation_before_starting_real_stack():
     script = (Path(__file__).parents[1] / 'scripts/restaurant.sh').read_text()
     real = script.split('export ROS_DOMAIN_ID=10', 1)[1]
-    assert real.index('restaurant_graph_idle || exit 1') < real.index('session_init ')
+    assert real.index('session_init ') < real.index('restaurant_graph_idle || exit 1')
     assert real.index('restaurant_graph_idle || exit 1') < real.index('session_start ')
     assert 'if nav_up; then' not in script
     assert 'amcl|map_server|slam_toolbox|' in script
     assert 'ros2 param get /slam_toolbox mode' in script
     assert 'ros2 lifecycle get /slam_toolbox' in script
     assert real.index('wait_restaurant_nav || exit 1') < real.index('ros2 run base_athome_skills restaurant_node')
+    sim = script.split('if [ "${SIM:-0}" = 1 ]; then', 1)[1].split('export ROS_DOMAIN_ID=10', 1)[0]
+    for mode in (sim, real):
+        assert mode.index('session_init ') < mode.index('restaurant_graph_idle || exit 1')
+        assert 'session_run_terminal ros2 run base_athome_skills restaurant_node' in mode
 
 
 # ------------------------------------------------------------------------------

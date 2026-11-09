@@ -18,6 +18,7 @@ import time
 import numpy as np
 import rclpy
 from geometry_msgs.msg import Vector3
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
@@ -28,7 +29,8 @@ from tf2_ros import Buffer, TransformListener
 
 from base_athome_perception import bag_vision as bv
 from base_athome_perception import scene_analysis as scene
-from base_athome_perception.raised_hand import RaisedHandsAggregator, classify_raised_hand
+from base_athome_perception.raised_hand import RaisedHandsAggregator
+from base_athome_perception.pose_debug import draw_pose_debug
 from base_athome_perception.person_search import PersonSearch, valid_descriptor
 from base_athome_perception.person_attributes import extract_person_attributes
 from base_athome_perception.wrist_detector import make_bag_detector
@@ -97,6 +99,9 @@ class BagFinder(Node):
             self.pose_model.predict(blank, verbose=False, device="cpu")
             self.bags.detect(blank)
         self.get_logger().info("bag_finder listo" + (" (simulacion)" if SIM else "; detector de bolsas: YOLO-World"))
+        # Grupo separado: inferir no bloquea los callbacks de RGB/depth/feedback.
+        self.debug_timer = self.create_timer(1.0 / 3.0, self._debug_tick,
+                                            callback_group=MutuallyExclusiveCallbackGroup())
 
     def _sim_people(self, m):
         self.sim_people = json.loads(m.data)["people"]
@@ -128,27 +133,31 @@ class BagFinder(Node):
         """Imagen con cada persona: esqueleto, caja y si levanta la mano. Solo si alguien la mira (RViz)."""
         if self.pub_debug.get_subscription_count() == 0:
             return
-        import cv2
-        img = bgr.copy()
-        for person in people:
-            box, kps, conf = person[0], person[1], person[2]
-            hand = classify_raised_hand(kps, conf)
-            color = (0, 200, 0) if hand.is_raised else (0, 160, 255)
-            x0, y0, x1, y1 = [int(v) for v in box]
-            cv2.rectangle(img, (x0, y0), (x1, y1), color, 2)
-            for (x, y), c in zip(kps, conf):
-                if c >= 0.4:
-                    cv2.circle(img, (int(x), int(y)), 3, color, -1)
-            label = f"MANO {hand.state}" if hand.is_raised else "sin mano levantada"
-            cv2.putText(img, label, (x0, max(15, y0 - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-        cv2.putText(img, f"personas: {len(people)}  cabeza pan={self.head[0]:.0f} tilt={self.head[1]:.0f}", (8, 22),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        img = draw_pose_debug(bgr, people, head=self.head)
         msg = Image()
         msg.header.frame_id = "camera_color_optical_frame"
+        if stamp is not None:
+            msg.header.stamp = stamp
         msg.height, msg.width = img.shape[:2]
         msg.encoding, msg.step = "bgr8", img.shape[1] * 3
         msg.data = img.tobytes()
         self.pub_debug.publish(msg)
+
+    def _debug_tick(self):
+        """Pose a ~3 Hz solo para espectadores; las busquedas reutilizan su propio debug."""
+        if self.pub_debug.get_subscription_count() == 0 or not self.serve_lock.acquire(blocking=False):
+            return
+        try:
+            # Solo requiere RGB: no depende de profundidad, TF ni feedback de cabeza.
+            with self.lock:
+                rgb = None if self.rgb is None else self.rgb.copy()
+                stamp = self.rgb_stamp
+            if rgb is not None:
+                self._publish_debug(rgb, self._poses(rgb), stamp)
+        except Exception as exc:
+            self.get_logger().warn(f"No se pudo actualizar debug de pose: {exc}")
+        finally:
+            self.serve_lock.release()
 
     def _head_still(self):
         """Con la cabeza en movimiento la imagen y el TF no son del mismo instante: esa medicion se descarta."""
@@ -536,9 +545,12 @@ class BagFinder(Node):
 
 
 def main():
+    import cv2
+    cv2.setNumThreads(2)
     if not SIM:
         import torch
         torch.set_num_threads(2)      # no quitarle CPU a Nav2 ni a los controladores
+        torch.set_num_interop_threads(1)
     rclpy.init()
     node = BagFinder()
     ex = MultiThreadedExecutor(num_threads=3)

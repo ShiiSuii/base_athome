@@ -11,20 +11,6 @@ set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 WS=$(cd "$HERE/../../.." && pwd)
 
-# Los chequeos buscan el programa que corre, no cualquier linea que lo nombre (un agente o un editor con ese texto no cuenta)
-if pgrep -f 'python3? [^ ]*hri_receptionist[^ ]*\.py|lib/base_athome_perception/hri_receptionist' >/dev/null; then
-  echo "El receptionist esta corriendo: usa el mismo microfono. Cerralo antes."
-  exit 1
-fi
-if pgrep -f 'lib/base_athome_skills/commander( |$)|^/bin/bash [^ ]*scripts/commander\.sh' >/dev/null; then
-  echo "Hay una sesion de commander abierta. Cerrala antes."
-  exit 1
-fi
-if pgrep -f 'lib/base_athome_skills/restaurant_node' >/dev/null; then   # el ejecutable, no cualquier linea que lo nombre
-  echo "Ya hay un restaurant_node abierto. Cerralo antes."
-  exit 1
-fi
-
 set +u
 source /opt/ros/jazzy/setup.bash
 if [ -f "$WS/install/setup.bash" ]; then
@@ -43,22 +29,60 @@ start_rviz() {
   session_start rviz env DISPLAY="${DISPLAY:-:1}" nice -n 5 rviz2 -d "$WS/src/base_athome_skills/config/restaurant.rviz"
 }
 
+restaurant_processes_idle() {
+  # Se busca el programa que corre, no cualquier linea que lo nombre (un agente o un editor con ese texto no cuenta)
+  if pgrep -f 'python3? [^ ]*hri_receptionist[^ ]*\.py|lib/base_athome_perception/hri_receptionist' >/dev/null; then
+    echo "El receptionist esta corriendo: usa el mismo microfono. Cerralo antes."
+    exit 1
+  fi
+  if pgrep -f 'lib/base_athome_skills/commander( |$)|^/bin/bash [^ ]*scripts/commander\.sh' >/dev/null; then
+    echo "Hay una sesion de commander abierta. Cerrala antes."
+    exit 1
+  fi
+  if pgrep -f 'lib/base_athome_skills/restaurant_node' >/dev/null; then   # el ejecutable, no cualquier linea que lo nombre
+    echo "Ya hay un restaurant_node abierto. Cerralo antes."
+    exit 1
+  fi
+}
+
+restaurant_graph_snapshot() {
+  # Equivalente a node list --no-daemon, incluyendo acciones en la MISMA vista DDS.
+  # Jazzy no ofrece --no-daemon en `ros2 action list`.
+  timeout "$1" python3 - <<'PYTHON'
+from argparse import Namespace
+from ros2cli.node.direct import DirectNode
+with DirectNode(Namespace(spin_time=1.0)) as node:
+    for name, namespace in node.get_node_names_and_namespaces():
+        print("node " + namespace.rstrip("/") + "/" + name)
+    for name, _ in node.get_action_names_and_types():
+        print("action " + name)
+PYTHON
+}
+
 restaurant_graph_idle() {
-  local nodes actions
-  nodes=$(timeout 6 ros2 node list 2>/dev/null) || {
-    echo "No se pudo comprobar la configuracion ROS activa; inicio rechazado."
-    return 1
-  }
-  if echo "$nodes" | grep -Eq '(^|/)(amcl|map_server|slam_toolbox|planner_server|controller_server|behavior_server|bt_navigator|lifecycle_manager_navigation|lifecycle_manager_localization|lifecycle_manager_slam)$'; then
-    echo "Hay navegacion, localizacion o un mapa activos. Restaurant requiere su propio SLAM nuevo."
-    echo "Inicio rechazado; no se reutiliza ni se detiene el stack existente."
-    return 1
-  fi
-  actions=$(timeout 6 ros2 action list 2>/dev/null) || return 1
-  if echo "$actions" | grep -Eq '(^|/)navigate_to_pose$'; then
-    echo "Hay una accion de navegacion activa; inicio Restaurant rechazado."
-    return 1
-  fi
+  local graph conflicts='' remaining deadline=$SECONDS
+  # Solo se concede la espera de descubrimiento cuando acabamos de cerrar huerfanos.
+  [ "${SESSION_ORPHANS_STOPPED:-0}" -gt 0 ] && deadline=$((SECONDS + 20))
+  while :; do
+    remaining=$((deadline - SECONDS))
+    # No iniciar otra consulta de 6 s si ya se agoto la espera de 20 s.
+    [ "$remaining" -gt 0 ] || [ -z "$conflicts" ] || break
+    [ "$remaining" -gt 0 ] || remaining=6
+    [ "$remaining" -le 6 ] || remaining=6
+    graph=$(restaurant_graph_snapshot "$remaining" 2>/dev/null) || {
+      echo "No se pudo comprobar la configuracion ROS activa; inicio rechazado."
+      [ -z "$conflicts" ] || echo "Ultimos conflictos encontrados: $conflicts"
+      return 1
+    }
+    conflicts=$(echo "$graph" | grep -E '(^node /(.*/)?(amcl|map_server|slam_toolbox|planner_server|controller_server|behavior_server|bt_navigator|lifecycle_manager_navigation|lifecycle_manager_localization|lifecycle_manager_slam)$|^action /(.*/)?navigate_to_pose$)')
+    [ -n "$conflicts" ] || return 0
+    [ "$SECONDS" -lt "$deadline" ] || break
+    sleep 1
+  done
+  echo "Hay navegacion, localizacion o un mapa activos. Restaurant requiere su propio SLAM nuevo."
+  echo "$conflicts"
+  echo "Inicio rechazado; no se reutiliza ni se detiene el stack existente."
+  return 1
 }
 
 restaurant_nav_ready() {
@@ -91,8 +115,9 @@ if [ "${SIM:-0}" = 1 ]; then
   export ATHOME_SIM_NAV2=1      # la navegacion la hace Nav2 + SLAM, no el simulador
   export ATHOME_SIM_CUSTOMERS="${ATHOME_SIM_CUSTOMERS:-2.0,2.8,right,seated;3.0,-2.9,left,seated}"   # sentados en las mesas 1 y 3 de restaurant.sdf (12 x 9 m)
   [ -f "$HOME/cyclonedds_local.xml" ] && export CYCLONEDDS_URI=file://$HOME/cyclonedds_local.xml
+  session_init "${RESTAURANT_LOG_DIR:-/tmp}/restaurant_$$" || exit 1
   restaurant_graph_idle || exit 1
-  session_init "${RESTAURANT_LOG_DIR:-/tmp}/restaurant_$$"
+  restaurant_processes_idle
 
   echo "============================================================"
   echo "MODO SIMULACION: ROS_DOMAIN_ID=$ROS_DOMAIN_ID (Gazebo)"
@@ -115,6 +140,7 @@ if [ "${SIM:-0}" = 1 ]; then
   echo "Esperando arranque de Gazebo..."
   sleep 15
 
+  export OMP_NUM_THREADS=2
   session_start bag_finder python3 "$WS/src/base_athome_perception/scripts/bag_finder.py"
 
   LLM_PY=$HOME/.local/share/llm-venv/bin/python
@@ -130,8 +156,8 @@ if [ "${SIM:-0}" = 1 ]; then
 
   echo "Iniciando restaurant_node..."
   AUTO_ARG=(); [ "${AUTO:-0}" = 1 ] && AUTO_ARG=(-p auto_start:=true)   # AUTO=1: sin esperar ENTER (pruebas automaticas)
-  ros2 run base_athome_skills restaurant_node --ros-args "${AUTO_ARG[@]}"
-  exit 0     # al terminar la mision se cierra toda la sesion: quedarse esperando dejaba SLAM y Gazebo abiertos
+  session_run_terminal ros2 run base_athome_skills restaurant_node --ros-args "${AUTO_ARG[@]}"
+  exit $?     # al terminar la mision se cierra toda la sesion: quedarse esperando dejaba SLAM y Gazebo abiertos
 fi
 
 # ------------------------------------------------------------------------------
@@ -139,10 +165,9 @@ fi
 # ------------------------------------------------------------------------------
 export ROS_DOMAIN_ID=10
 # Procesos de una corrida anterior que murio sin limpiar: se cierran antes de decidir si hay otro stack activo.
-export BASE_ATHOME_SESSION=$$
-session_stop_orphans
+session_init "${RESTAURANT_LOG_DIR:-/tmp}/restaurant_$$" || exit 1
 restaurant_graph_idle || exit 1
-session_init "${RESTAURANT_LOG_DIR:-/tmp}/restaurant_$$"
+restaurant_processes_idle
 
 echo "============================================================"
 echo "ROBOT REAL: se mueve solo; E-stop a mano"
@@ -191,7 +216,7 @@ session_start nav ros2 launch base_athome_skills restaurant_nav.launch.py
 wait_restaurant_nav || exit 1
 start_rviz
 
-# 9. Nodo Restaurant en primer plano
+# 9. Nodo visible con stdin preservado; wait permite ejecutar los traps inmediatamente
 echo "Iniciando nodo Restaurant..."
-ros2 run base_athome_skills restaurant_node
-wait
+AUTO_ARG=(); [ "${AUTO:-0}" = 1 ] && AUTO_ARG=(-p auto_start:=true)
+session_run_terminal ros2 run base_athome_skills restaurant_node --ros-args "${AUTO_ARG[@]}"
