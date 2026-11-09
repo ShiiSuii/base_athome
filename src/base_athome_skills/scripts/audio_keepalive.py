@@ -29,7 +29,9 @@ def idle_sink(run_fn=subprocess.run):
                  capture_output=True, text=True, check=True, timeout=1.0)
     sinks = json.loads(res.stdout)
     target = next((s for s in sinks if "bluez_output" in s["name"]), None)
-    if target is None and reconnect_bluetooth_speaker():     # se apago o se desconecto: volver a conectarlo
+    if target is None and os.environ.get("AUDIO_SPEAKER", "auto") != "bluetooth":
+        return None     # sin Bluetooth (parlante por cable): no hace falta mantener nada despierto, no se bipea
+    if target is None and reconnect_bluetooth_speaker():     # AUDIO_SPEAKER=bluetooth: se apago o se desconecto, reconectar
         sinks = json.loads(run_fn(["pactl", "--format=json", "list", "sinks"],
                                   capture_output=True, text=True, check=True, timeout=1.0).stdout)
         target = next((s for s in sinks if "bluez_output" in s["name"]), None)

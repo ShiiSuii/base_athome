@@ -118,7 +118,10 @@ class RoboCupSpeaker:
         try:
             from base_athome_perception.audio_lock import reconnect_bluetooth_speaker
             res = subprocess.run(["pactl", "list", "sinks", "short"], stdout=subprocess.PIPE, text=True, timeout=1)
-            if "bluez_output" not in res.stdout and reconnect_bluetooth_speaker():
+            # Reconectar solo si se eligio el parlante Bluetooth (AUDIO_SPEAKER=bluetooth). Con cable no se intenta:
+            # bloquearia cada frase hasta 10 s y podria mandar la voz al Bluetooth.
+            if ("bluez_output" not in res.stdout and os.environ.get("AUDIO_SPEAKER", "auto") == "bluetooth"
+                    and reconnect_bluetooth_speaker()):
                 time.sleep(2.0)     # PipeWire tarda en crear el sink despues de conectar
             res = subprocess.run(["pactl", "list", "sinks", "short"], stdout=subprocess.PIPE, text=True, timeout=1)
             for line in res.stdout.splitlines():

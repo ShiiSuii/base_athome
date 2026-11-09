@@ -99,7 +99,17 @@ def test_prefers_bluetooth_and_plays_generated_tone():
     assert kwargs['timeout'] == 5.          # un parlante recien despierto tarda
 
 
-def test_fallback_to_default_sink_without_bluetooth():
+def test_no_beep_on_a_wired_speaker(monkeypatch):
+    """Con el parlante por cable no hay nada que mantener despierto: no se bipea."""
+    monkeypatch.delenv('AUDIO_SPEAKER', raising=False)
+    audio = FakeAudio([{'name': 'alsa_output.default', 'state': 'IDLE'}])
+    assert not keepalive.play_if_idle(audio.run, free_lock)
+    assert not any(c[0][0] == 'paplay' for c in audio.calls)
+
+
+def test_bluetooth_mode_reconnects_then_falls_back_to_default(monkeypatch):
+    monkeypatch.setenv('AUDIO_SPEAKER', 'bluetooth')
+    monkeypatch.setattr(keepalive, 'reconnect_bluetooth_speaker', lambda: False)
     audio = FakeAudio([{'name': 'alsa_output.default', 'state': 'IDLE'}])
     assert keepalive.play_if_idle(audio.run, free_lock)
     assert audio.calls[-1][0][:3] == ['paplay', '--device', audio.default]
