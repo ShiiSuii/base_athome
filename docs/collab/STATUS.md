@@ -212,6 +212,15 @@ Antes de empezar: E-stop a mano, zona despejada y otra persona atenta. Bolsa liv
 - También: SLAM con el launch oficial de slam_toolbox (antes quedaba sin configurar), barrido del pan-tilt a 15°/s en pasos de 1.5°, Nav2 cancelado de forma segura y "stop" por voz durante la navegación (Codex), elevador bloqueado en Restaurant, GPSR por gesto/postura/ropa (285/500 comandos compilan).
 - **Sin probar en el robot real.** Antes: confirmar el filtro con el lidar real y que Nav2 planifique desde la posición inicial.
 
+## 2t. Restaurant en el robot real: arreglos del primer intento (2026-11-09)
+
+- **No llegaba a los clientes:** Nav2 decía "Robot is out of bounds of the costmap" en (0,0): el costmap global de Restaurant tomaba el tamaño del mapa SLAM recién empezado. Ahora es una ventana móvil de 20 x 20 m (solo en `nav2_restaurant.yaml`). `/scan_nav` se publica reliable.
+- **No detectaba la mano levantada:** el pan-tilt queda trabado en pan 27°, tilt -6° y el barrido salteaba todas las vistas. Ahora mira desde donde está la cabeza. Además, **al empezar gira la base** +90°, -180° y +90° con el Spin de Nav2 (la cabeza recta) y busca manos en cada orientación.
+- **Visual:** RViz se abre solo con mapa, costmaps, lidar completo y filtrado, plan, cámara y la pestaña "Detecciones OpenPose (pose y manos)" (`/bag_finder/debug_image`, esqueleto COCO de YOLOv8-pose).
+- **Arranque y cierre:** Ctrl-C cierra todos los nodos (KILL a los 10 s solo de la sesión); los restos de una corrida muerta se cierran y se espera a que salgan del grafo; los chequeos buscan el programa real, no cualquier línea con "commander".
+- **Bluetooth:** tono de 150 ms cada 5 s para que el parlante no se apague, salteado mientras el robot habla.
+- **Sin probar en el robot:** el giro inicial, la ventana móvil y el keepalive (tests y revisión). El pan-tilt trabado hay que revisarlo físicamente.
+
 ## 3. Cómo retomar la teleoperación con el Quest (pendiente: prueba completa en el brazo real)
 
 1. Quest por USB a la **Jetson**, depuración USB autorizada (`adb devices` → `device`).

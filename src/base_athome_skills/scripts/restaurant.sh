@@ -166,8 +166,8 @@ fi
 export ROS_DOMAIN_ID=10
 # Procesos de una corrida anterior que murio sin limpiar: se cierran antes de decidir si hay otro stack activo.
 session_init "${RESTAURANT_LOG_DIR:-/tmp}/restaurant_$$" || exit 1
-session_start audio_keepalive python3 "$HERE/audio_keepalive.py"   # sonido breve cada 5 s: el parlante Bluetooth no se apaga
 restaurant_graph_idle || exit 1
+session_start audio_keepalive python3 "$HERE/audio_keepalive.py"   # sonido breve cada 5 s: el parlante Bluetooth no se apaga
 restaurant_processes_idle
 
 echo "============================================================"
