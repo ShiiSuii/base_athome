@@ -10,11 +10,16 @@
       --card-bg: #111722;
       --card-hover: #161f2e;
       --surface: #182232;
+      --surface-subtle: #131c2a;
       --border: #233145;
+      --border-subtle: #1c2738;
       --border-focus: #3b82f6;
+      --tx-title: #ffffff;
       --tx-main: #f1f5f9;
       --tx-muted: #94a3b8;
       --tx-dim: #64748b;
+      --code-bg: #090d13;
+      --th-bg: #0f151f;
 
       --c-robot: #10b981;
       --c-robot-bg: rgba(16, 185, 129, 0.15);
@@ -29,9 +34,132 @@
       --c-falta: #ef4444;
       --c-falta-bg: rgba(239, 68, 68, 0.15);
       --c-neutral: #475569;
+
+      --alert-warn-bg: rgba(245, 158, 11, 0.12);
+      --alert-warn-border: #f59e0b;
+      --alert-warn-tx: #fef3c7;
+      --alert-warn-pill: #fbbf24;
+      --shadow-card: 0 4px 20px rgba(0, 0, 0, 0.25);
+    }
+
+    @media (prefers-color-scheme: light) {
+      :root:not([data-theme="dark"]) {
+        --bg: #f8fafc;
+        --card-bg: #ffffff;
+        --card-hover: #f1f5f9;
+        --surface: #f1f5f9;
+        --surface-subtle: #f8fafc;
+        --border: #cbd5e1;
+        --border-subtle: #e2e8f0;
+        --border-focus: #2563eb;
+        --tx-title: #0f172a;
+        --tx-main: #1e293b;
+        --tx-muted: #475569;
+        --tx-dim: #64748b;
+        --code-bg: #e2e8f0;
+        --th-bg: #f1f5f9;
+
+        --c-robot: #059669;
+        --c-robot-bg: rgba(5, 150, 105, 0.12);
+        --c-gazebo: #2563eb;
+        --c-gazebo-bg: rgba(37, 99, 235, 0.12);
+        --c-sim: #4f46e5;
+        --c-sim-bg: rgba(79, 70, 229, 0.12);
+        --c-tests: #9333ea;
+        --c-tests-bg: rgba(147, 51, 234, 0.12);
+        --c-parcial: #d97706;
+        --c-parcial-bg: rgba(217, 119, 6, 0.15);
+        --c-falta: #dc2626;
+        --c-falta-bg: rgba(220, 38, 38, 0.12);
+        --c-neutral: #64748b;
+
+        --alert-warn-bg: #fffbeb;
+        --alert-warn-border: #f59e0b;
+        --alert-warn-tx: #92400e;
+        --alert-warn-pill: #b45309;
+        --shadow-card: 0 2px 10px rgba(0, 0, 0, 0.06);
+      }
+    }
+
+    [data-theme="light"] {
+      --bg: #f8fafc;
+      --card-bg: #ffffff;
+      --card-hover: #f1f5f9;
+      --surface: #f1f5f9;
+      --surface-subtle: #f8fafc;
+      --border: #cbd5e1;
+      --border-subtle: #e2e8f0;
+      --border-focus: #2563eb;
+      --tx-title: #0f172a;
+      --tx-main: #1e293b;
+      --tx-muted: #475569;
+      --tx-dim: #64748b;
+      --code-bg: #e2e8f0;
+      --th-bg: #f1f5f9;
+
+      --c-robot: #059669;
+      --c-robot-bg: rgba(5, 150, 105, 0.12);
+      --c-gazebo: #2563eb;
+      --c-gazebo-bg: rgba(37, 99, 235, 0.12);
+      --c-sim: #4f46e5;
+      --c-sim-bg: rgba(79, 70, 229, 0.12);
+      --c-tests: #9333ea;
+      --c-tests-bg: rgba(147, 51, 234, 0.12);
+      --c-parcial: #d97706;
+      --c-parcial-bg: rgba(217, 119, 6, 0.15);
+      --c-falta: #dc2626;
+      --c-falta-bg: rgba(220, 38, 38, 0.12);
+      --c-neutral: #64748b;
+
+      --alert-warn-bg: #fffbeb;
+      --alert-warn-border: #f59e0b;
+      --alert-warn-tx: #92400e;
+      --alert-warn-pill: #b45309;
+      --shadow-card: 0 2px 10px rgba(0, 0, 0, 0.06);
+    }
+
+    [data-theme="dark"] {
+      --bg: #090d13;
+      --card-bg: #111722;
+      --card-hover: #161f2e;
+      --surface: #182232;
+      --surface-subtle: #131c2a;
+      --border: #233145;
+      --border-subtle: #1c2738;
+      --border-focus: #3b82f6;
+      --tx-title: #ffffff;
+      --tx-main: #f1f5f9;
+      --tx-muted: #94a3b8;
+      --tx-dim: #64748b;
+      --code-bg: #090d13;
+      --th-bg: #0f151f;
+
+      --c-robot: #10b981;
+      --c-robot-bg: rgba(16, 185, 129, 0.15);
+      --c-gazebo: #3b82f6;
+      --c-gazebo-bg: rgba(59, 130, 246, 0.15);
+      --c-sim: #6366f1;
+      --c-sim-bg: rgba(99, 102, 241, 0.15);
+      --c-tests: #a855f7;
+      --c-tests-bg: rgba(168, 85, 247, 0.15);
+      --c-parcial: #f59e0b;
+      --c-parcial-bg: rgba(245, 158, 11, 0.15);
+      --c-falta: #ef4444;
+      --c-falta-bg: rgba(239, 68, 68, 0.15);
+      --c-neutral: #475569;
+
+      --alert-warn-bg: rgba(245, 158, 11, 0.12);
+      --alert-warn-border: #f59e0b;
+      --alert-warn-tx: #fef3c7;
+      --alert-warn-pill: #fbbf24;
+      --shadow-card: 0 4px 20px rgba(0, 0, 0, 0.25);
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      max-width: 100vw;
+      overflow-x: hidden;
+    }
     body {
       background: var(--bg);
       color: var(--tx-main);
@@ -39,6 +167,7 @@
       font-size: 14px;
       line-height: 1.5;
       padding-bottom: 40px;
+      transition: background 0.2s ease, color 0.2s ease;
     }
 
     /* HEADER */
@@ -65,7 +194,7 @@
       font-size: 18px;
       font-weight: 700;
       letter-spacing: -0.3px;
-      color: #fff;
+      color: var(--tx-title);
     }
     .live-dot {
       width: 10px;
@@ -92,23 +221,80 @@
       border-radius: 999px;
       border: 1px solid var(--border);
       background: var(--surface);
+      color: var(--tx-main);
       display: inline-flex;
       align-items: center;
       gap: 6px;
+      text-decoration: none;
     }
-    .pill.robot-real { background: rgba(239,68,68,0.18); border-color: var(--c-falta); color: #fca5a5; }
-    .pill.simulacion { background: rgba(59,130,246,0.18); border-color: var(--c-gazebo); color: #93c5fd; }
+    .pill.robot-real { background: rgba(239,68,68,0.18); border-color: var(--c-falta); color: var(--c-falta); }
+    .pill.simulacion { background: rgba(59,130,246,0.18); border-color: var(--c-gazebo); color: var(--c-gazebo); }
     .pill.apagado { background: var(--surface); color: var(--tx-muted); }
-    .pill.git { font-family: monospace; color: #cbd5e1; }
-    .pill.dirty { border-color: var(--c-parcial); color: #fde047; }
+    .pill.git { font-family: monospace; color: var(--tx-main); }
+    .pill.dirty { border-color: var(--c-parcial); color: var(--c-parcial); }
+    .theme-toggle-btn {
+      cursor: pointer;
+      font-family: inherit;
+      transition: all 0.2s;
+    }
+    .theme-toggle-btn:hover {
+      background: var(--card-hover);
+      border-color: var(--tx-dim);
+    }
+
+    /* SELECTOR DE VISTAS (PESTAÑAS PRINCIPALES) */
+    .view-switch-container {
+      display: flex;
+      justify-content: flex-start;
+      align-items: center;
+      margin-bottom: 2px;
+    }
+    .view-switch-bar {
+      display: inline-flex;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      padding: 4px;
+      border-radius: 10px;
+      gap: 4px;
+      max-width: 100%;
+    }
+    .view-switch-btn {
+      background: transparent;
+      border: none;
+      color: var(--tx-muted);
+      padding: 8px 18px;
+      border-radius: 7px;
+      font-size: 13.5px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
+      font-family: inherit;
+    }
+    .view-switch-btn:hover {
+      color: var(--tx-title);
+    }
+    .view-switch-btn.active {
+      background: #2563eb;
+      color: #ffffff;
+      box-shadow: 0 2px 10px rgba(37, 99, 235, 0.35);
+    }
 
     /* LAYOUT */
     main {
       max-width: 1560px;
-      margin: 24px auto;
+      margin: 20px auto;
       padding: 0 24px;
       display: grid;
-      gap: 24px;
+      gap: 20px;
+    }
+
+    .view-panel {
+      display: grid;
+      gap: 20px;
     }
 
     /* CARDS & PANELS */
@@ -117,7 +303,7 @@
       border: 1px solid var(--border);
       border-radius: 12px;
       padding: 20px 24px;
-      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+      box-shadow: var(--shadow-card);
     }
     .panel-header {
       display: flex;
@@ -130,7 +316,7 @@
     .panel-header h2 {
       font-size: 16px;
       font-weight: 700;
-      color: #fff;
+      color: var(--tx-title);
       display: flex;
       align-items: center;
       gap: 8px;
@@ -138,9 +324,191 @@
     .panel-subtitle {
       font-size: 13px;
       color: var(--tx-muted);
+      line-height: 1.4;
     }
 
-    /* HERO STATS */
+    /* RESUMEN: AVISO VISIBLE DE CÓDIGO MODIFICADO */
+    .resumen-warn-card {
+      background: var(--alert-warn-bg);
+      border: 1px solid var(--alert-warn-border);
+      border-left: 5px solid var(--alert-warn-border);
+      border-radius: 10px;
+      padding: 14px 18px;
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+      color: var(--alert-warn-tx);
+      box-shadow: var(--shadow-card);
+    }
+    .resumen-warn-icon {
+      font-size: 24px;
+      line-height: 1;
+      flex-shrink: 0;
+    }
+    .resumen-warn-body {
+      flex: 1;
+    }
+    .resumen-warn-title {
+      font-weight: 700;
+      font-size: 14px;
+      margin-bottom: 4px;
+      color: var(--alert-warn-tx);
+    }
+    .resumen-warn-text {
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .resumen-warn-text code {
+      background: rgba(0, 0, 0, 0.15);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 12px;
+    }
+
+    /* RESUMEN: FRASES DE PUNTOS POR PRUEBA */
+    .puntos-phrases-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 12px;
+    }
+    .puntos-phrase-item {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .puntos-phrase-title {
+      font-size: 13.5px;
+      font-weight: 700;
+      color: var(--tx-title);
+    }
+    .puntos-phrase-desc {
+      font-size: 13px;
+      color: var(--tx-main);
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+    .pts-tag-robot {
+      color: var(--c-robot);
+      font-weight: 700;
+    }
+    .pts-tag-avance {
+      color: var(--c-parcial);
+      font-weight: 700;
+    }
+    .pts-tag-falta {
+      color: var(--c-falta);
+      font-weight: 700;
+    }
+
+    /* RESUMEN: CARDS POR PRUEBA Y COLUMNAS */
+    .resumen-cards-stack {
+      display: grid;
+      gap: 20px;
+    }
+    .resumen-prueba-card {
+      padding: 18px 20px;
+    }
+    .resumen-cols-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+    }
+    .resumen-col {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+    }
+    .resumen-col.col-robot {
+      border-top: 3px solid var(--c-robot);
+    }
+    .resumen-col.col-avance {
+      border-top: 3px solid var(--c-parcial);
+    }
+    .resumen-col.col-falta {
+      border-top: 3px solid var(--c-falta);
+    }
+    .resumen-col-header {
+      font-size: 13px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid var(--border-subtle);
+      color: var(--tx-title);
+    }
+    .col-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      display: inline-block;
+      flex-shrink: 0;
+    }
+    .col-dot.robot-dot { background: var(--c-robot); box-shadow: 0 0 6px var(--c-robot); }
+    .col-dot.avance-dot { background: var(--c-parcial); box-shadow: 0 0 6px var(--c-parcial); }
+    .col-dot.falta-dot { background: var(--c-falta); box-shadow: 0 0 6px var(--c-falta); }
+    .col-count {
+      font-size: 12px;
+      color: var(--tx-muted);
+      font-weight: 500;
+    }
+    .resumen-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .resumen-item {
+      padding: 6px 0;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .resumen-item:last-child {
+      border-bottom: none;
+    }
+    .resumen-line {
+      font-size: 13px;
+      line-height: 1.45;
+      color: var(--tx-main);
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+    .resumen-cap-name {
+      font-weight: 700;
+      color: var(--tx-title);
+    }
+    .resumen-cap-falta {
+      color: var(--tx-muted);
+    }
+    .col-robot .resumen-cap-falta {
+      color: var(--c-robot);
+    }
+    .resumen-empty {
+      font-size: 12.5px;
+      font-style: italic;
+      color: var(--tx-dim);
+      padding: 8px 0;
+    }
+    .resumen-mini-badge {
+      font-size: 10.5px;
+      padding: 1px 6px;
+      vertical-align: middle;
+      font-weight: 600;
+      border-radius: 999px;
+    }
+
+    /* HERO STATS (VISTA TÉCNICA) */
     .hero-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -201,13 +569,13 @@
     }
     .run-title {
       font-weight: 600;
-      color: #fff;
+      color: var(--tx-title);
       display: flex;
       align-items: center;
       gap: 8px;
     }
     .run-cmd {
-      background: #090d13;
+      background: var(--code-bg);
       border: 1px solid var(--border);
       padding: 5px 10px;
       border-radius: 6px;
@@ -240,7 +608,7 @@
     .badge.tests { background: var(--c-tests-bg); color: #c084fc; border: 1px solid rgba(168,85,247,0.3); }
     .badge.parcial { background: var(--c-parcial-bg); color: var(--c-parcial); border: 1px solid rgba(245,158,11,0.3); }
     .badge.falta { background: var(--c-falta-bg); color: var(--c-falta); border: 1px solid rgba(239,68,68,0.3); }
-    .badge.area { background: var(--surface); color: #94a3b8; border: 1px solid var(--border); }
+    .badge.area { background: var(--surface); color: var(--tx-muted); border: 1px solid var(--border); }
 
     /* COMPETITION BARS */
     .comp-grid {
@@ -258,7 +626,7 @@
       display: flex;
       justify-content: space-between;
       font-weight: 700;
-      color: #fff;
+      color: var(--tx-title);
       margin-bottom: 8px;
     }
     .progress-bar {
@@ -275,6 +643,8 @@
       color: var(--tx-muted);
       display: flex;
       justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 4px;
     }
 
     /* FILTERS & SEARCH */
@@ -307,12 +677,13 @@
       font-weight: 600;
       cursor: pointer;
       transition: all 0.2s;
+      font-family: inherit;
     }
-    .tab-btn:hover { color: #fff; border-color: var(--tx-dim); }
+    .tab-btn:hover { color: var(--tx-title); border-color: var(--tx-dim); }
     .tab-btn.active {
       background: #2563eb;
       border-color: #2563eb;
-      color: #fff;
+      color: #ffffff;
     }
 
     /* TABLES */
@@ -327,7 +698,7 @@
       text-align: left;
     }
     th {
-      background: #0f151f;
+      background: var(--th-bg);
       color: var(--tx-muted);
       font-size: 12px;
       font-weight: 600;
@@ -341,27 +712,29 @@
       border-bottom: 1px solid var(--border);
       vertical-align: middle;
       font-size: 13px;
+      color: var(--tx-main);
     }
     tr:last-child td { border-bottom: none; }
-    tr:hover td { background: rgba(255, 255, 255, 0.02); }
+    tr:hover td { background: var(--card-hover); }
     .warn-badge {
       background: rgba(245, 158, 11, 0.2);
-      color: #fbbf24;
+      color: var(--c-parcial);
       padding: 2px 6px;
       border-radius: 4px;
       font-size: 11px;
       font-weight: bold;
       margin-left: 6px;
+      display: inline-block;
     }
 
     /* ALERTS */
     .alert-box {
-      background: rgba(245, 158, 11, 0.1);
+      background: var(--alert-warn-bg);
       border-left: 4px solid var(--c-parcial);
       padding: 12px 16px;
       border-radius: 6px;
       margin-bottom: 14px;
-      color: #fef3c7;
+      color: var(--alert-warn-tx);
       font-size: 13px;
     }
 
@@ -379,10 +752,33 @@
       gap: 6px;
     }
 
+    @media (max-width: 900px) {
+      .resumen-cols-grid {
+        grid-template-columns: 1fr;
+        gap: 12px;
+      }
+    }
+
     @media (max-width: 768px) {
-      header { padding: 12px 16px; }
-      main { padding: 0 14px; }
-      .search-input { width: 100%; }
+      header { padding: 10px 16px; gap: 10px; }
+      main { padding: 0 14px; gap: 16px; }
+      .search-input { width: 100%; min-width: unset; }
+    }
+
+    @media (max-width: 480px) {
+      header { padding: 10px 12px; }
+      .brand h1 { font-size: 15px; }
+      .meta-bar { gap: 6px; }
+      .pill { font-size: 11px; padding: 3px 8px; max-width: 100%; }
+      .pill.git { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      main { padding: 0 10px; margin: 12px auto; gap: 14px; }
+      .panel { padding: 14px 12px; }
+      .view-switch-container { width: 100%; }
+      .view-switch-bar { width: 100%; display: grid; grid-template-columns: 1fr 1fr; }
+      .view-switch-btn { justify-content: center; padding: 8px 6px; font-size: 12.5px; }
+      .hero-grid, .run-grid, .comp-grid, .puntos-phrases-grid { grid-template-columns: 1fr; }
+      .resumen-warn-card { padding: 12px; gap: 10px; }
+      .resumen-warn-icon { font-size: 20px; }
     }
   </style>
 </head>
@@ -398,141 +794,183 @@
       <span id="git-info" class="pill git">Git: ...</span>
       <span id="dirty-info" class="pill dirty" style="display:none">0 sin commitear</span>
       <span id="hora-info" class="pill">...</span>
+      <button id="theme-toggle" class="pill theme-toggle-btn" onclick="toggleTheme()" type="button" title="Alternar modo claro / oscuro">☀️ Modo claro</button>
       <a class="pill" href="/grafo" target="_blank" rel="noopener" style="text-decoration:none;color:inherit">Grafo del código</a>
     </div>
   </header>
 
   <main>
 
-    <!-- RESUMEN EJECUTIVO / QUÉ ESTÁ FUNCIONAL -->
-    <section class="panel">
-      <div class="panel-header">
-        <div>
-          <h2>📊 Madurez de Capacidades</h2>
-          <span class="panel-subtitle">Diagnóstico visual de qué está listo para competir, qué funciona en simulador y qué falta.</span>
-        </div>
+    <!-- SELECTOR DE VISTAS (PESTAÑAS PRINCIPALES) -->
+    <div class="view-switch-container">
+      <div class="view-switch-bar">
+        <button id="btn-view-resumen" class="view-switch-btn active" onclick="switchMainView('resumen')" type="button">
+          📋 Resumen
+        </button>
+        <button id="btn-view-tecnico" class="view-switch-btn" onclick="switchMainView('tecnico')" type="button">
+          🔬 Vista Técnica Detallada
+        </button>
       </div>
-      <div class="hero-grid" id="hero-metrics">
-        <!-- Rellenado por JS -->
-      </div>
-    </section>
-
-    <!-- QUÉ PUEDO PROBAR YA MISMO -->
-    <section class="panel">
-      <div class="panel-header">
-        <div>
-          <h2>🚀 Listos para Ejecutar</h2>
-          <span class="panel-subtitle">Módulos verificados y comandos directos que podés lanzar ahora mismo.</span>
-        </div>
-      </div>
-      <div class="run-grid">
-        <div class="run-card">
-          <div class="run-title">🗺️ Navegación Autónoma 2D</div>
-          <div class="run-desc">Nav2 completo con AMCL, costmaps, evasión de obstáculos y waypoint navigator.</div>
-          <div class="run-cmd"><span>alias:</span> <code>navegacion</code> / <code>rviznav</code></div>
-        </div>
-        <div class="run-card">
-          <div class="run-title">🗑️ Misión Sacar la Basura</div>
-          <div class="run-desc">Visión RealSense, cálculo de agarre de bolsa fina, aproximación y drop point.</div>
-          <div class="run-cmd"><span>simulación:</span> <code>sim_basura</code></div>
-        </div>
-        <div class="run-card">
-          <div class="run-title">🚪 Apertura de Puerta de Palanca</div>
-          <div class="run-desc">Rutina de palanca enseñada a mano, calibrador de agarre y cinemática MoveIt/Piper.</div>
-          <div class="run-cmd"><span>calibrador:</span> <code>abrir_puerta</code></div>
-        </div>
-        <div class="run-card">
-          <div class="run-title">🗣️ Sesión GPSR & Voice Dialog</div>
-          <div class="run-desc">Arranque por puerta, diálogo con Whisper, LLM local Qwen 1.5B y ejecutor.</div>
-          <div class="run-cmd"><span>robot/sim:</span> <code>gpsr</code> / <code>commander</code></div>
-        </div>
-        <div class="run-card">
-          <div class="run-title">👁️ Servidor VLM (SmolVLM)</div>
-          <div class="run-desc">Inferencia de lenguaje y visión local en CPU para describir objetos y escenas.</div>
-          <div class="run-cmd"><span>puerto:</span> <code>127.0.0.1:8772</code> (vlm.py)</div>
-        </div>
-        <div class="run-card">
-          <div class="run-title">📐 Editor Semántico de Mapas</div>
-          <div class="run-desc">Editor web para zonas, waypoints y mesas de pick & place en tiempo real.</div>
-          <div class="run-cmd"><span>editor:</span> <code>mapa_zonas</code> (:8080)</div>
-        </div>
-      </div>
-    </section>
-
-    <!-- MATRIZ DE REGLAS Y PUNTOS DE COMPETICIÓN -->
-    <section class="panel">
-      <div class="panel-header">
-        <div>
-          <h2>🏆 Pruebas RoboCup@Home (OPL)</h2>
-          <span class="panel-subtitle">Distribución de puntos oficiales según la matriz de habilidades.</span>
-        </div>
-      </div>
-      <div class="comp-grid" id="comp-cards">
-        <!-- Rellenado por JS -->
-      </div>
-      <div style="margin-top: 18px;">
-        <div class="filter-bar" id="comp-tabs"></div>
-        <div class="table-wrap">
-          <table id="comp-items-table"></table>
-        </div>
-      </div>
-    </section>
-
-    <!-- MATRIZ DETALLADA DE CAPACIDADES -->
-    <section class="panel">
-      <div class="panel-header">
-        <div>
-          <h2>📋 Qué Sabe y Qué Falta (Matriz Completa)</h2>
-          <span class="panel-subtitle">Estado granular de cada módulo del robot con advertencias automáticas de desincronización.</span>
-        </div>
-      </div>
-      <div id="alerts-container"></div>
-      <div class="filter-bar">
-        <input type="text" id="cap-search" class="search-input" placeholder="🔍 Buscar por nombre, área o archivo...">
-        <div id="stage-filters" style="display:flex;gap:6px;flex-wrap:wrap"></div>
-      </div>
-      <div class="table-wrap">
-        <table id="caps-table">
-          <thead>
-            <tr>
-              <th style="width:24%">Capacidad</th>
-              <th style="width:12%">Área</th>
-              <th style="width:14%">Estado</th>
-              <th style="width:50%">Qué falta para validar</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
-    </section>
-
-    <!-- GPSR COVERAGE & REGRESIÓN -->
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:24px">
-      <section class="panel">
-        <div class="panel-header">
-          <h2>💬 Cobertura Gramatical GPSR</h2>
-          <span class="panel-subtitle">Comandos oficiales evaluados sin LLM</span>
-        </div>
-        <div id="gpsr-content"></div>
-      </section>
-
-      <section class="panel">
-        <div class="panel-header">
-          <h2>🔬 Regresión en Simulación</h2>
-          <span class="panel-subtitle">Últimas corridas contra escenarios</span>
-        </div>
-        <div id="sim-content" class="table-wrap"></div>
-      </section>
     </div>
 
-    <!-- PROCESOS ACTIVOS -->
-    <section class="panel">
-      <div class="panel-header">
-        <h2>⚡ Procesos Corriendo Ahora</h2>
-        <span class="panel-subtitle">Inspección directa de /proc y ROS_DOMAIN_ID</span>
+    <!-- PESTAÑA 1: RESUMEN SIMPLE (SE VE PRIMERO) -->
+    <div id="view-resumen" class="view-panel">
+      <!-- AVISO DE CÓDIGO MODIFICADO TRAS LA ÚLTIMA PRUEBA -->
+      <div id="resumen-alerta-cambios" style="display:none;"></div>
+
+      <!-- FRASE POR PRUEBA CON PUNTOS (ARRIBA) -->
+      <section class="panel">
+        <div class="panel-header">
+          <div>
+            <h2>🏆 Puntos en Juego por Prueba</h2>
+            <span class="panel-subtitle">Resumen de puntos oficiales según el reglamento y la matriz de habilidades de RoboCup@Home:</span>
+          </div>
+        </div>
+        <div class="puntos-phrases-grid" id="resumen-puntos-frases">
+          <!-- Rellenado por JS -->
+        </div>
+      </section>
+
+      <!-- SECCIONES POR PRUEBA (HRI, PICK AND PLACE, GPSR, LAUNDRY, RESTAURANT, FINAL) + GENERAL -->
+      <div id="resumen-pruebas-container" class="resumen-cards-stack">
+        <!-- Rellenado por JS -->
       </div>
-      <div id="procs-list" style="display:flex;gap:8px;flex-wrap:wrap"></div>
-    </section>
+    </div>
+
+    <!-- PESTAÑA 2: VISTA TÉCNICA DETALLADA (NO SE ROMPE NI PIERDE NADA) -->
+    <div id="view-tecnico" class="view-panel" style="display:none;">
+
+      <!-- RESUMEN EJECUTIVO / QUÉ ESTÁ FUNCIONAL -->
+      <section class="panel">
+        <div class="panel-header">
+          <div>
+            <h2>📊 Madurez de Capacidades</h2>
+            <span class="panel-subtitle">Diagnóstico visual de qué está listo para competir, qué funciona en simulador y qué falta.</span>
+          </div>
+        </div>
+        <div class="hero-grid" id="hero-metrics">
+          <!-- Rellenado por JS -->
+        </div>
+      </section>
+
+      <!-- QUÉ PUEDO PROBAR YA MISMO -->
+      <section class="panel">
+        <div class="panel-header">
+          <div>
+            <h2>🚀 Listos para Ejecutar</h2>
+            <span class="panel-subtitle">Módulos verificados y comandos directos que podés lanzar ahora mismo.</span>
+          </div>
+        </div>
+        <div class="run-grid">
+          <div class="run-card">
+            <div class="run-title">🗺️ Navegación Autónoma 2D</div>
+            <div class="run-desc">Nav2 completo con AMCL, costmaps, evasión de obstáculos y waypoint navigator.</div>
+            <div class="run-cmd"><span>alias:</span> <code>navegacion</code> / <code>rviznav</code></div>
+          </div>
+          <div class="run-card">
+            <div class="run-title">🗑️ Misión Sacar la Basura</div>
+            <div class="run-desc">Visión RealSense, cálculo de agarre de bolsa fina, aproximación y drop point.</div>
+            <div class="run-cmd"><span>simulación:</span> <code>sim_basura</code></div>
+          </div>
+          <div class="run-card">
+            <div class="run-title">🚪 Apertura de Puerta de Palanca</div>
+            <div class="run-desc">Rutina de palanca enseñada a mano, calibrador de agarre y cinemática MoveIt/Piper.</div>
+            <div class="run-cmd"><span>calibrador:</span> <code>abrir_puerta</code></div>
+          </div>
+          <div class="run-card">
+            <div class="run-title">🗣️ Sesión GPSR & Voice Dialog</div>
+            <div class="run-desc">Arranque por puerta, diálogo con Whisper, LLM local Qwen 1.5B y ejecutor.</div>
+            <div class="run-cmd"><span>robot/sim:</span> <code>gpsr</code> / <code>commander</code></div>
+          </div>
+          <div class="run-card">
+            <div class="run-title">👁️ Servidor VLM (SmolVLM)</div>
+            <div class="run-desc">Inferencia de lenguaje y visión local en CPU para describir objetos y escenas.</div>
+            <div class="run-cmd"><span>puerto:</span> <code>127.0.0.1:8772</code> (vlm.py)</div>
+          </div>
+          <div class="run-card">
+            <div class="run-title">📐 Editor Semántico de Mapas</div>
+            <div class="run-desc">Editor web para zonas, waypoints y mesas de pick & place en tiempo real.</div>
+            <div class="run-cmd"><span>editor:</span> <code>mapa_zonas</code> (:8080)</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- MATRIZ DE REGLAS Y PUNTOS DE COMPETICIÓN -->
+      <section class="panel">
+        <div class="panel-header">
+          <div>
+            <h2>🏆 Pruebas RoboCup@Home (OPL)</h2>
+            <span class="panel-subtitle">Distribución de puntos oficiales según la matriz de habilidades.</span>
+          </div>
+        </div>
+        <div class="comp-grid" id="comp-cards">
+          <!-- Rellenado por JS -->
+        </div>
+        <div style="margin-top: 18px;">
+          <div class="filter-bar" id="comp-tabs"></div>
+          <div class="table-wrap">
+            <table id="comp-items-table"></table>
+          </div>
+        </div>
+      </section>
+
+      <!-- MATRIZ DETALLADA DE CAPACIDADES -->
+      <section class="panel">
+        <div class="panel-header">
+          <div>
+            <h2>📋 Qué Sabe y Qué Falta (Matriz Completa)</h2>
+            <span class="panel-subtitle">Estado granular de cada módulo del robot con advertencias automáticas de desincronización.</span>
+          </div>
+        </div>
+        <div id="alerts-container"></div>
+        <div class="filter-bar">
+          <input type="text" id="cap-search" class="search-input" placeholder="🔍 Buscar por nombre, área o archivo...">
+          <div id="stage-filters" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+        </div>
+        <div class="table-wrap">
+          <table id="caps-table">
+            <thead>
+              <tr>
+                <th style="width:24%">Capacidad</th>
+                <th style="width:12%">Área</th>
+                <th style="width:14%">Estado</th>
+                <th style="width:50%">Qué falta para validar</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- GPSR COVERAGE & REGRESIÓN -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:24px">
+        <section class="panel">
+          <div class="panel-header">
+            <h2>💬 Cobertura Gramatical GPSR</h2>
+            <span class="panel-subtitle">Comandos oficiales evaluados sin LLM</span>
+          </div>
+          <div id="gpsr-content"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <h2>🔬 Regresión en Simulación</h2>
+            <span class="panel-subtitle">Últimas corridas contra escenarios</span>
+          </div>
+          <div id="sim-content" class="table-wrap"></div>
+        </section>
+      </div>
+
+      <!-- PROCESOS ACTIVOS -->
+      <section class="panel">
+        <div class="panel-header">
+          <h2>⚡ Procesos Corriendo Ahora</h2>
+          <span class="panel-subtitle">Inspección directa de /proc y ROS_DOMAIN_ID</span>
+        </div>
+        <div id="procs-list" style="display:flex;gap:8px;flex-wrap:wrap"></div>
+      </section>
+
+    </div>
 
   </main>
 
@@ -550,11 +988,78 @@
     let selectedCompTab = 'HRI';
     let selectedStageFilter = 'todas';
     let searchTerm = '';
+    let currentMainView = 'resumen';
 
     function escapeHtml(s) {
       return String(s ?? '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
     }
 
+    /* GESTIÓN DE TEMA CLARO / OSCURO */
+    function initTheme() {
+      let saved = null;
+      try {
+        saved = localStorage.getItem('base_athome_theme');
+      } catch (e) {}
+      if (saved === 'light' || saved === 'dark') {
+        document.documentElement.setAttribute('data-theme', saved);
+        updateThemeBtn(saved);
+      } else {
+        const isLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
+        updateThemeBtn(isLight ? 'light' : 'dark');
+      }
+    }
+
+    function toggleTheme() {
+      const current = document.documentElement.getAttribute('data-theme');
+      let next = 'light';
+      if (current === 'light') {
+        next = 'dark';
+      } else if (current === 'dark') {
+        next = 'light';
+      } else {
+        const isLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
+        next = isLight ? 'dark' : 'light';
+      }
+      document.documentElement.setAttribute('data-theme', next);
+      try {
+        localStorage.setItem('base_athome_theme', next);
+      } catch (e) {}
+      updateThemeBtn(next);
+    }
+
+    function updateThemeBtn(theme) {
+      const btn = document.getElementById('theme-toggle');
+      if (!btn) return;
+      if (theme === 'light') {
+        btn.textContent = '🌙 Modo oscuro';
+      } else {
+        btn.textContent = '☀️ Modo claro';
+      }
+    }
+
+    /* SELECTOR DE PESTAÑAS PRINCIPALES */
+    function switchMainView(view) {
+      currentMainView = view;
+      const vResumen = document.getElementById('view-resumen');
+      const vTecnico = document.getElementById('view-tecnico');
+      const bResumen = document.getElementById('btn-view-resumen');
+      const bTecnico = document.getElementById('btn-view-tecnico');
+      if (!vResumen || !vTecnico) return;
+
+      if (view === 'resumen') {
+        vResumen.style.display = 'grid';
+        vTecnico.style.display = 'none';
+        if (bResumen) bResumen.classList.add('active');
+        if (bTecnico) bTecnico.classList.remove('active');
+      } else {
+        vResumen.style.display = 'none';
+        vTecnico.style.display = 'grid';
+        if (bResumen) bResumen.classList.remove('active');
+        if (bTecnico) bTecnico.classList.add('active');
+      }
+    }
+
+    /* RENDERIZADO GENERAL */
     function render() {
       if (!D) return;
       const d = D;
@@ -577,7 +1082,227 @@
 
       document.getElementById('hora-info').textContent = `⏱️ ${d.hora || ''}`;
 
-      // 2. HERO METRICS (MADUREZ)
+      // 2. RENDER VISTA RESUMEN SIMPLE
+      renderResumen(d);
+
+      // 3. RENDER VISTA TÉCNICA DETALLADA
+      renderTechnical(d);
+    }
+
+    /* RENDER DE LA PESTAÑA RESUMEN */
+    function renderResumen(d) {
+      if (!d) return;
+
+      // 1. Aviso de advertencia si alguna capacidad cambió código tras la última prueba
+      const alertaDiv = document.getElementById('resumen-alerta-cambios');
+      const changedCaps = (d.capacidades || []).filter(c => c.cambio && c.cambio.length > 0);
+      if (changedCaps.length > 0) {
+        alertaDiv.style.display = 'block';
+        alertaDiv.innerHTML = `
+          <div class="resumen-warn-card">
+            <div class="resumen-warn-icon">⚠</div>
+            <div class="resumen-warn-body">
+              <div class="resumen-warn-title">¡Ojo! Código modificado después de la última prueba</div>
+              <div class="resumen-warn-text">
+                Se detectaron archivos modificados en <b>${changedCaps.length} capacidad${changedCaps.length > 1 ? 'es' : ''}</b> tras su última validación:
+                ${changedCaps.map(c => `<code>${escapeHtml(c.nombre)}</code>`).join(', ')}.
+                Conviene volver a correr las pruebas antes de dar por válidos los resultados en el robot.
+              </div>
+            </div>
+          </div>
+        `;
+      } else {
+        alertaDiv.style.display = 'none';
+        alertaDiv.innerHTML = '';
+      }
+
+      // 2. Frase por prueba con puntos en robot / en camino / faltan (arriba)
+      const frasesContainer = document.getElementById('resumen-puntos-frases');
+      const pruebas = d.pruebas || {};
+      const sinDesglose = d.sin_desglose || {};
+
+      const pConfigs = [
+        { key: 'HRI', label: 'HRI (Interacción Humano-Robot)', icon: '👥' },
+        { key: 'PP', label: 'Pick and Place (Manipulación)', icon: '🦾' },
+        { key: 'GPSR', label: 'GPSR (Órdenes de voz)', icon: '🗣️' },
+        { key: 'LAUNDRY', label: 'Laundry (Hacer la colada)', icon: '🧺' },
+        { key: 'Restaurant', label: 'Restaurant', icon: '🍽️', sinDesglose: true },
+        { key: 'Final', label: 'Final', icon: '🏁', sinDesglose: true }
+      ];
+
+      frasesContainer.innerHTML = pConfigs.map(cfg => {
+        if (cfg.sinDesglose) {
+          const nota = sinDesglose[cfg.key] || 'Sin desglosar en la matriz todavía.';
+          return `
+            <div class="puntos-phrase-item">
+              <div class="puntos-phrase-title">${cfg.icon} <b>${escapeHtml(cfg.label)}:</b></div>
+              <div class="puntos-phrase-desc">
+                Sin puntaje desglosado en la matriz todavía. <span style="color:var(--tx-muted)">(${escapeHtml(nota)})</span>
+              </div>
+            </div>
+          `;
+        }
+        const p = pruebas[cfg.key] || { robot: 0, avance: 0, falta: 0, total: 0, sin_desglosar: 0 };
+        const robotPts = (p.robot || 0).toLocaleString('es-AR');
+        const avancePts = (p.avance || 0).toLocaleString('es-AR');
+        const faltaPts = (p.falta || 0).toLocaleString('es-AR');
+        const totalPts = (p.total || 0).toLocaleString('es-AR');
+        const extra = p.sin_desglosar ? `; ${(p.sin_desglosar).toLocaleString('es-AR')} pts sin desglosar en la matriz` : '';
+        return `
+          <div class="puntos-phrase-item">
+            <div class="puntos-phrase-title">${cfg.icon} <b>${escapeHtml(cfg.label)}:</b></div>
+            <div class="puntos-phrase-desc">
+              <span class="pts-tag-robot">${robotPts} pts en robot</span>,
+              <span class="pts-tag-avance">${avancePts} pts en camino</span> y
+              <span class="pts-tag-falta">${faltaPts} pts faltan</span>
+              <span style="color:var(--tx-muted)">(de ${totalPts} pts totales${extra}).</span>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      // 3. Agrupación de capacidades por prueba
+      // Pruebas: HRI, Pick and Place, GPSR, Laundry, Restaurant, Final y General
+      const testMap = { '1': 'HRI', '2': 'Pick and Place', '3': 'GPSR', '4': 'Laundry' };
+      const groups = {
+        'HRI': { title: '👥 HRI (Interacción Humano-Robot)', caps: [], desc: 'Recepción de invitados, apertura de puerta, seguimiento de anfitrión y diálogo.' },
+        'Pick and Place': { title: '🦾 Pick and Place', caps: [], desc: 'Reconocimiento y agarre de objetos en mesas y estantes.' },
+        'GPSR': { title: '🗣️ GPSR (General Purpose Service Robot)', caps: [], desc: 'Comprensión de voz libre, planificación y resolución de órdenes compuestas.' },
+        'Laundry': { title: '🧺 Laundry (Doing Laundry)', caps: [], desc: 'Manipulación de ropa, interacción con lavarropas y doblado.' },
+        'Restaurant': { title: '🍽️ Restaurant', caps: [], desc: 'Navegación en espacio no mapeado previamente, detección de clientes y atención de mesas.' },
+        'Final': { title: '🏁 Final', caps: [], desc: 'Demostración abierta ante el jurado combinando las mejores habilidades del robot.' },
+        'General': { title: '⚙️ General (Capacidades del robot sin prueba asignada)', caps: [], desc: 'Habilidades transversales de navegación, mapas, visión, IA y seguridad.' }
+      };
+
+      const caps = d.capacidades || [];
+      for (const c of caps) {
+        const items = c.items || [];
+        const assignedTests = new Set();
+        for (const it of items) {
+          const prefix = String(it).split('.')[0];
+          if (testMap[prefix]) {
+            assignedTests.add(testMap[prefix]);
+          }
+        }
+        if (assignedTests.size === 0) {
+          groups['General'].caps.push(c);
+        } else {
+          for (const t of assignedTests) {
+            if (groups[t]) {
+              groups[t].caps.push(c);
+            }
+          }
+        }
+      }
+
+      // 4. Renderizar las listas cortas para cada prueba
+      const container = document.getElementById('resumen-pruebas-container');
+      container.innerHTML = Object.entries(groups).map(([groupKey, grp]) => {
+        const cList = grp.caps;
+        const robotCaps = cList.filter(c => c.etapa === 'robot');
+        const avanceCaps = cList.filter(c => ['gazebo', 'simulador', 'tests', 'parcial'].includes(c.etapa));
+        const faltaCaps = cList.filter(c => c.etapa === 'falta');
+
+        return `
+          <section class="panel resumen-prueba-card">
+            <div class="panel-header" style="margin-bottom:12px;">
+              <div>
+                <h2>${escapeHtml(grp.title)}</h2>
+                <span class="panel-subtitle">${escapeHtml(grp.desc)}</span>
+              </div>
+              <div style="font-size:12px;color:var(--tx-muted)">
+                ${cList.length} capacidad${cList.length === 1 ? '' : 'es'}
+              </div>
+            </div>
+
+            <div class="resumen-cols-grid">
+              <!-- LISTA 1: YA FUNCIONA EN EL ROBOT -->
+              <div class="resumen-col col-robot">
+                <div class="resumen-col-header">
+                  <span class="col-dot robot-dot"></span>
+                  <b>Ya funciona en el robot</b>
+                  <span class="col-count">(${robotCaps.length})</span>
+                </div>
+                <div class="resumen-col-body">
+                  ${robotCaps.length === 0 ? `
+                    <div class="resumen-empty">${groupKey === 'Restaurant' || groupKey === 'Final' ? 'Sin capacidades asignadas todavía.' : 'Todavía no hay ninguna capacidad validada en el robot real.'}</div>
+                  ` : `
+                    <ul class="resumen-list">
+                      ${robotCaps.map(c => renderCapLine(c, 'robot')).join('')}
+                    </ul>
+                  `}
+                </div>
+              </div>
+
+              <!-- LISTA 2: EN CAMINO -->
+              <div class="resumen-col col-avance">
+                <div class="resumen-col-header">
+                  <span class="col-dot avance-dot"></span>
+                  <b>En camino</b>
+                  <span class="col-count">(${avanceCaps.length})</span>
+                </div>
+                <div class="resumen-col-body">
+                  ${avanceCaps.length === 0 ? `
+                    <div class="resumen-empty">${groupKey === 'Restaurant' || groupKey === 'Final' ? 'Sin capacidades asignadas todavía.' : 'Ninguna capacidad en desarrollo para esta prueba.'}</div>
+                  ` : `
+                    <ul class="resumen-list">
+                      ${avanceCaps.map(c => renderCapLine(c, 'avance')).join('')}
+                    </ul>
+                  `}
+                </div>
+              </div>
+
+              <!-- LISTA 3: FALTA -->
+              <div class="resumen-col col-falta">
+                <div class="resumen-col-header">
+                  <span class="col-dot falta-dot"></span>
+                  <b>Falta</b>
+                  <span class="col-count">(${faltaCaps.length})</span>
+                </div>
+                <div class="resumen-col-body">
+                  ${faltaCaps.length === 0 ? `
+                    <div class="resumen-empty">${groupKey === 'Restaurant' || groupKey === 'Final' ? 'Sin capacidades asignadas todavía.' : 'No hay pendientes sin empezar en esta prueba.'}</div>
+                  ` : `
+                    <ul class="resumen-list">
+                      ${faltaCaps.map(c => renderCapLine(c, 'falta')).join('')}
+                    </ul>
+                  `}
+                </div>
+              </div>
+            </div>
+          </section>
+        `;
+      }).join('');
+    }
+
+    function renderCapLine(c, colType) {
+      const hasChanged = c.cambio && c.cambio.length > 0;
+      const stageCfg = STAGE_CONFIG[c.etapa];
+      const stageLabel = stageCfg ? stageCfg.label : c.etapa;
+
+      const stageBadge = colType === 'avance'
+        ? ` <span class="resumen-mini-badge badge ${c.etapa}">${stageCfg ? stageCfg.icon : ''} ${escapeHtml(stageLabel)}</span>`
+        : '';
+
+      const warnBadge = hasChanged
+        ? ` <span class="warn-badge" title="Archivos modificados tras última prueba: ${c.cambio.join(', ')}">⚠ código cambiado</span>`
+        : '';
+
+      const faltaText = c.falta ? escapeHtml(c.falta) : (colType === 'robot' ? 'Listo y comprobado en el robot.' : 'Sin detalle.');
+
+      return `
+        <li class="resumen-item">
+          <div class="resumen-line">
+            <span class="resumen-cap-name">${escapeHtml(c.nombre)}</span>${stageBadge}${warnBadge}:
+            <span class="resumen-cap-falta">${faltaText}</span>
+          </div>
+        </li>
+      `;
+    }
+
+    /* RENDER DE LA VISTA TÉCNICA (ORIGINAL COMPLETA) */
+    function renderTechnical(d) {
+      // 1. HERO METRICS (MADUREZ)
       const totalCaps = d.capacidades ? d.capacidades.length : 0;
       const c = d.conteo || {};
       const heroMetrics = document.getElementById('hero-metrics');
@@ -599,7 +1324,7 @@
         `;
       }).join('');
 
-      // 3. COMPETITION CARDS
+      // 2. COMPETITION CARDS
       const compCards = document.getElementById('comp-cards');
       const pruebas = d.pruebas || {};
       const nombresPruebas = d.nombres || {};
@@ -670,7 +1395,7 @@
         `;
       }
 
-      // 4. ALERTS
+      // 3. ALERTS
       const alerts = document.getElementById('alerts-container');
       let alertHtml = '';
       const changedCaps = (d.capacidades || []).filter(c => c.cambio && c.cambio.length > 0);
@@ -685,7 +1410,7 @@
       }
       alerts.innerHTML = alertHtml;
 
-      // 5. STAGE FILTER BUTTONS
+      // 4. STAGE FILTER BUTTONS
       const stageFilters = document.getElementById('stage-filters');
       stageFilters.innerHTML = [
         ['todas', 'Todas las Capacidades'],
@@ -702,10 +1427,10 @@
         </button>
       `).join('');
 
-      // 6. CAPABILITIES TABLE
+      // 5. CAPABILITIES TABLE
       renderCapsTable();
 
-      // 7. GPSR COVERAGE
+      // 6. GPSR COVERAGE
       const gpsr = document.getElementById('gpsr-content');
       const co = d.cobertura;
       if (co && co.total) {
@@ -722,7 +1447,7 @@
             ${cats.map(k => `
               <div style="background:var(--surface);padding:10px;border-radius:6px;border:1px solid var(--border)">
                 <div style="font-size:12px;color:var(--tx-muted)">${escapeHtml(k)}</div>
-                <div style="font-weight:700;font-size:16px;color:#fff">${co.ok[k] || 0} / ${co.total[k]}</div>
+                <div style="font-weight:700;font-size:16px;color:var(--tx-title)">${co.ok[k] || 0} / ${co.total[k]}</div>
               </div>
             `).join('')}
           </div>
@@ -734,7 +1459,7 @@
         gpsr.innerHTML = '<span class="panel-subtitle">Sin datos de cobertura de gramática.</span>';
       }
 
-      // 8. SIMULATION REGRESSION
+      // 7. SIMULATION REGRESSION
       const sim = document.getElementById('sim-content');
       const s = d.escenarios;
       if (s && s.filas && s.filas.length) {
@@ -768,7 +1493,7 @@
         sim.innerHTML = '<div style="padding:16px;color:var(--tx-muted)">Sin resultados previos: se calculan al correr <code>simulation/scripts/sim_escenarios.py</code>.</div>';
       }
 
-      // 9. PROCESSES LIST
+      // 8. PROCESSES LIST
       const procsList = document.getElementById('procs-list');
       const pEntries = Object.entries(d.vivo && d.vivo.procesos ? d.vivo.procesos : {});
       if (pEntries.length > 0) {
@@ -790,13 +1515,11 @@
       const term = searchTerm.toLowerCase();
 
       const filtered = D.capacidades.filter(c => {
-        // Stage filter
         if (selectedStageFilter === 'funcionales') {
           if (c.etapa !== 'robot' && c.etapa !== 'gazebo') return false;
         } else if (selectedStageFilter !== 'todas' && c.etapa !== selectedStageFilter) {
           return false;
         }
-        // Text search
         if (term) {
           const matchName = (c.nombre || '').toLowerCase().includes(term);
           const matchArea = (c.area || '').toLowerCase().includes(term);
@@ -818,7 +1541,7 @@
         return `
           <tr>
             <td>
-              <div style="font-weight:600;color:#fff;display:flex;align-items:center">
+              <div style="font-weight:600;color:var(--tx-title);display:flex;align-items:center">
                 ${escapeHtml(c.nombre)}
                 ${hasChanged ? `<span class="warn-badge" title="Archivos modificados tras última prueba: ${c.cambio.join(', ')}">⚠ modificado</span>` : ''}
               </div>
@@ -868,6 +1591,7 @@
       }
     }
 
+    initTheme();
     if (D) render();
     pollState();
     setInterval(pollState, 4000);
