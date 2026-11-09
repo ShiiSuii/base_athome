@@ -301,7 +301,7 @@ class SweepHarness:
             if not self.frozen_image:
                 self.node.rgb_stamp = int((self.now - 100.) * 5)  # 5 distinct images/s
 
-    def send_head(self, pan, tilt):
+    def send_head(self, pan, tilt, **kwargs):
         self.commands.append(pan)
         self.target = pan
 
@@ -448,7 +448,7 @@ def test_find_person_reuses_sweep_and_map_positions_without_ros(sim, fresh_frame
         node.head_stamp = now[0]
         if fresh_frames:
             node.rgb_stamp = now[0]
-    scope = dict(json=json, time=SimpleNamespace(time=lambda: now[0], sleep=sleep),
+    scope = dict(math=math, json=json, time=SimpleNamespace(time=lambda: now[0], sleep=sleep),
                  PersonSearch=PersonSearch, valid_descriptor=valid_descriptor,
                  RaisedHandsAggregator=RaisedHandsAggregator, classify_raised_hand=classify_raised_hand,
                  RAISED_HANDS_PANS=(-60., -30., 0., 30., 60.), SEARCH_TILT=0.,
@@ -522,3 +522,25 @@ def test_bag_finder_imports_what_the_sweep_uses():
     builtins_ = set(dir(__builtins__)) if isinstance(__builtins__, dict) is False else set(__builtins__)
     missing = sorted(used - imported - defined - builtins_ - {"print"})
     assert missing == [], f"nombres usados sin importar en bag_finder.py: {missing}"
+
+
+@pytest.mark.parametrize('field, value', [(f, v) for f in ('head_dps', 'view_s') for v in (None, True, '6', float('nan'), float('inf'), 0, 31)])
+def test_invalid_sweep_timing_is_rejected_before_torque(field, value):
+    h = SweepHarness()
+    h.node._ensure_torque = lambda: pytest.fail('invalid request enabled torque')
+    result = h.node._find_raised_hands({field: value})
+    assert result['error'] == 'invalid_' + field
+    assert not h.commands
+
+
+def test_slow_sweep_stops_on_first_confirmed_customer():
+    h = SweepHarness(always_visible=True)
+    moves = []
+    def move(pan, tilt, dps):
+        moves.append(dps)
+        h.send_head(pan, tilt)
+    h.node._move_head = move
+    result = h.node._find_raised_hands(dict(timeout_s=80., head_dps=6., view_s=3., stop_on_first=True))
+    assert result['ok'] and len(result['customers']) == 1
+    assert h.commands == [-60.] and moves == [6.]
+    assert h.now < 106.

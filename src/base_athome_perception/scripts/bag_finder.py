@@ -228,7 +228,10 @@ class BagFinder(Node):
         """Busca una persona barriendo con la cabeza. Devuelve (persona, rgb, depth) o None."""
         self._ensure_torque()
         for pan in SEARCH_PANS:
-            self._move_head(pan, SEARCH_TILT)
+            if "head_dps" in head_options:
+                self._move_head(pan, SEARCH_TILT, dps=head_options["head_dps"])
+            else:
+                self._move_head(pan, SEARCH_TILT)
             view_end = min(end, time.time() + SEARCH_VIEW_S)
             while time.time() < view_end:
                 rgb, depth = self._frames()
@@ -352,6 +355,14 @@ class BagFinder(Node):
         req_id = req.get("id", "raised_hands")
         timeout_s = float(req.get("timeout_s", 20.0))
         min_frames = int(req.get("min_frames", 3))
+        head_options = {}
+        for name, low, high in (("head_dps", 2.0, 30.0), ("view_s", 0.5, 10.0)):
+            if name in req:
+                value = req[name]
+                if (isinstance(value, bool) or not isinstance(value, (int, float))
+                        or not math.isfinite(value) or not low <= value <= high):
+                    return {"id": req_id, "ok": False, "customers": [], "error": "invalid_" + name}
+                head_options[name] = float(value)
         end = time.time() + timeout_s
 
         # pans opcional en grados: Restaurant usa [0.0] mientras orienta la base.
@@ -371,7 +382,10 @@ class BagFinder(Node):
         while time.time() < end:
             pan = sweep_pans[pan_idx % len(sweep_pans)]
             pan_idx += 1
-            self._move_head(pan, SEARCH_TILT)
+            if "head_dps" in head_options:
+                self._move_head(pan, SEARCH_TILT, dps=head_options["head_dps"])
+            else:
+                self._move_head(pan, SEARCH_TILT)
 
             settle_end = min(end, time.time() + RAISED_HANDS_SETTLE_S)
             while time.time() < settle_end:
@@ -389,7 +403,7 @@ class BagFinder(Node):
                 else:
                     self.get_logger().warn(f"Barrido: sin feedback fresco en pan={pan}")
                     continue
-            view_end = min(end, time.time() + RAISED_HANDS_VIEW_S)
+            view_end = min(end, time.time() + head_options.get("view_s", RAISED_HANDS_VIEW_S))
             # Solo imagenes nuevas despues de llegar; una imagen congelada no cuenta
             # de nuevo al cambiar de pan ni se proyecta con el TF de otra vista.
             last_stamp = self.rgb_stamp
@@ -426,6 +440,9 @@ class BagFinder(Node):
                             # La misma imagen no cuenta varias veces como evidencia temporal.
                             search.update_frame(candidates)
                         self._publish_debug(rgb, people, stamp)
+                        if (search is None and req.get("stop_on_first") is True
+                                and aggregator.get_confirmed_customers(self._robot_pos())):
+                            return aggregator.build_response(req_id, robot_pos=self._robot_pos())
                 time.sleep(0.12)
 
             # Si ya se cubrio el barrido completo al menos una vez y hay clientes confirmados, se devuelve

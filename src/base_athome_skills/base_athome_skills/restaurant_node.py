@@ -133,7 +133,6 @@ class RestaurantNode(Node):
         # Instanciar sesion
         self.session = RestaurantSession(
             navigate_fn=self._navigate,
-            spin_fn=self._spin,
             get_costmap_fn=lambda: self._costmap,
             nav_aborted_fn=lambda: self._nav_aborted,
             speak_fn=self._speak,
@@ -332,7 +331,9 @@ class RestaurantNode(Node):
         req_data = json.dumps({
             "id": req_id,
             "mode": "raised_hands",
-            "pans": [0.0],  # La base orienta la mirada; la cabeza permanece recta.
+            "head_dps": 6.0,
+            "view_s": 3.0,
+            "stop_on_first": True,
             "timeout_s": float(timeout_s),
             "min_frames": int(min_frames),
         })

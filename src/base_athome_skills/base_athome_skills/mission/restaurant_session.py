@@ -2,7 +2,7 @@
 
 Estrategia:
   1. Inicio junto al kitchen bar: registra pose inicial como 'kitchen_bar'.
-  2. Mira alrededor con Spin (+90, -180, +90 grados), detecta y fusiona clientes en map.
+  2. Barre con la cabeza, con la base quieta, hasta confirmar un cliente.
   3. Informa cuantos clientes vio ("I see one customer" / "I see two customers").
   4. Por cada cliente (hasta 2, en orden de cercania):
      - Navega a un punto a ~0.9 m del cliente mirandolo de frente (orientacion hacia el comensal).
@@ -35,6 +35,9 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from . import restaurant as rest
 from . import vlm
 from .restaurant_navigation import is_stop_command
+
+
+HEAD_LOOK_AROUND_TIMEOUT_S = 80.0
 
 
 class SessionState(str, Enum):
@@ -344,7 +347,7 @@ class RestaurantSession:
             if self.stopped or self._is_timeout():
                 break
             self._set_state(SessionState.DETECTING_CUSTOMERS)
-            raw = self.detect_customers_fn(min(14.0 if self.spin_fn else 40.0, self.remaining_s()), 3)   # 8 s era poco con YOLO en la CPU
+            raw = self.detect_customers_fn(min(14.0 if self.spin_fn else HEAD_LOOK_AROUND_TIMEOUT_S, self.remaining_s()), 3)   # 8 s era poco con YOLO en la CPU
             view = (raw.get("customers", []) if raw.get("ok", True) else []) if isinstance(raw, dict) else raw
             if isinstance(view, list):
                 for customer in view:

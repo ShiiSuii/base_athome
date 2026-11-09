@@ -1346,3 +1346,12 @@ def test_look_around_stops_at_the_first_customer_and_goes_there():
     assert spins == [math.pi / 2] and len(looks) == 1          # no siguio con -180 ni +90
     assert [c['xy'] for c in session.customers] == [[3., 1.]]
     assert h.nav_goals, "tiene que navegar hacia la persona detectada"
+
+
+def test_default_head_scan_has_eighty_second_budget():
+    h = FakeRestaurantHarness()
+    session = h.make_session()
+    assert session.spin_fn is None
+    session.deadline_s = h.clock() + 900.0
+    session._look_around()
+    assert ('detect_customers', (80.0, 3)) in h.events
