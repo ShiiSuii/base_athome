@@ -97,7 +97,7 @@ def _setup(context):
         parameters=[
             slam_params_file,
             {
-                "use_lifecycle_manager": True,
+                "use_lifecycle_manager": False,   # se activa solo: con el gestor, este lo configuraba antes de que el nodo estuviera listo y SLAM nunca arrancaba
                 "use_sim_time": use_sim_time,
             },
         ],
@@ -177,7 +177,7 @@ def _setup(context):
 
     return [
         slam_toolbox_node,
-        lifecycle_slam_node,
+        # lifecycle_slam_node: no hace falta, slam_toolbox se activa solo (ver use_lifecycle_manager)
         planner_server_node,
         controller_server_node,
         behavior_server_node,

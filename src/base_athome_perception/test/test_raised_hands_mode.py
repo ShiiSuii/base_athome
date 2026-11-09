@@ -278,6 +278,7 @@ class SweepHarness:
         self.node.K = None
         self.node._ensure_torque = lambda: self.advance(0.5)
         self.node._send_head = self.send_head
+        self.node._move_head = self.send_head      # la rampa suave se prueba aparte (test_head_ramp_is_slow_and_ends_on_target)
         self.node._frames = self.frames
         self.node._cam = lambda *args: object()
         self.node._poses = self.poses
@@ -338,3 +339,17 @@ def test_sweep_without_measured_feedback_does_not_confirm_customers():
 def test_sweep_does_not_count_one_frozen_image_across_pan_positions():
     h = SweepHarness(frozen_image=True, always_visible=True)
     assert not h.run()["ok"]
+
+
+def test_head_ramp_is_slow_and_ends_on_target():
+    """El barrido de la cabeza va de a pasos parejos a la velocidad pedida y termina en el objetivo."""
+    src = (Path(__file__).resolve().parents[1] / "scripts" / "bag_finder.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "head_ramp")
+    ns = {"math": math}
+    exec(compile(ast.Module(body=[fn], type_ignores=[]), "bag_finder", "exec"), ns)
+    pts = ns["head_ramp"]((0.0, 0.0), (-60.0, 0.0), 15.0, 0.1)
+    assert pts[-1] == (-60.0, 0.0)
+    assert len(pts) == 40                      # 60 grados a 15 grados/s = 4 s = 40 pasos de 0.1 s
+    assert max(abs(b[0] - a[0]) for a, b in zip([(0.0, 0.0)] + pts, pts)) <= 1.5 + 1e-9
+    assert ns["head_ramp"]((10.0, 0.0), (10.0, 0.0), 15.0, 0.1) == [(10.0, 0.0)]

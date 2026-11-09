@@ -286,7 +286,7 @@ class RestaurantNode(Node):
             self.get_logger().warn(f"Error en escucha VoiceClient: {e}")
         return ""
 
-    def _detect_customers(self, timeout_s: float = 10.0, min_frames: int = 3) -> List[Dict[str, Any]]:
+    def _detect_customers(self, timeout_s: float = 45.0, min_frames: int = 3) -> List[Dict[str, Any]]:
         """Pide a /bag_finder detectar clientes con la mano alzada."""
         req_id = f"rest_cust_{int(time.time() * 1000)}"
         ev = threading.Event()

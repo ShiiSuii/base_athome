@@ -39,11 +39,21 @@ RAISED_HANDS_VIEW_S = 2.0
 RAISED_HANDS_SETTLE_S = 1.5
 SEARCH_TILT = 0.0
 SEARCH_VIEW_S = 1.5
+HEAD_SWEEP_DPS = 15.0      # velocidad del barrido de la cabeza: lento y parejo, sin saltos de 30-120 grados
+HEAD_STEP_S = 0.1
 LOST_PERSON_S = 1.5
 GESTURE_MAX_JUMP_M = 0.8      # el gesto humano tiene 8-15 grados de error: entre vistas salta decimetros
 BAG_VIEWS = 3                 # mediciones coherentes de la bolsa antes de creerla
 BAG_MAX_SPREAD_M = 0.10
 
+
+
+def head_ramp(start, goal, dps, step_s):
+    """Puntos intermedios de (pan, tilt) en grados, a dps grados por segundo, terminando exactamente en goal."""
+    dist = max(abs(goal[0] - start[0]), abs(goal[1] - start[1]))
+    steps = max(1, int(math.ceil(dist / max(1e-3, dps * step_s))))
+    return [(start[0] + (goal[0] - start[0]) * k / steps, start[1] + (goal[1] - start[1]) * k / steps)
+            for k in range(1, steps + 1)]
 
 class BagFinder(Node):
     def __init__(self):
@@ -162,13 +172,22 @@ class BagFinder(Node):
             self._send_head(self.head[0] + dpan, self.head[1] + dtilt)
 
     def _send_head(self, pan, tilt):
-        self.pub_head.publish(Vector3(x=max(-65.0, min(65.0, float(pan))), y=max(-35.0, min(25.0, float(tilt))), z=0.0))
+        pan, tilt = max(-65.0, min(65.0, float(pan))), max(-35.0, min(25.0, float(tilt)))
+        self.head_cmd = (pan, tilt)
+        self.pub_head.publish(Vector3(x=pan, y=tilt, z=0.0))
+
+    def _move_head(self, pan, tilt, dps=HEAD_SWEEP_DPS):
+        """Lleva la cabeza a (pan, tilt) de a pasos chicos a velocidad constante: barrido suave, sin saltos."""
+        start = getattr(self, "head_cmd", None) or (float(self.head[0]), float(self.head[1]))
+        for p, t in head_ramp(start, (pan, tilt), dps, HEAD_STEP_S):
+            self._send_head(p, t)
+            time.sleep(HEAD_STEP_S)
 
     def _search_person(self, end):
         """Busca una persona barriendo con la cabeza. Devuelve (persona, rgb, depth) o None."""
         self._ensure_torque()
         for pan in SEARCH_PANS:
-            self._send_head(pan, SEARCH_TILT)
+            self._move_head(pan, SEARCH_TILT)
             view_end = min(end, time.time() + SEARCH_VIEW_S)
             while time.time() < view_end:
                 rgb, depth = self._frames()
@@ -291,7 +310,7 @@ class BagFinder(Node):
         while time.time() < end:
             pan = sweep_pans[pan_idx % len(sweep_pans)]
             pan_idx += 1
-            self._send_head(pan, SEARCH_TILT)
+            self._move_head(pan, SEARCH_TILT)
 
             settle_end = min(end, time.time() + RAISED_HANDS_SETTLE_S)
             while time.time() < settle_end:
@@ -398,7 +417,7 @@ class BagFinder(Node):
             people = self._poses(rgb, cam) if rgb is not None else []
             if not people and time.time() - last_seen > LOST_PERSON_S:      # barrer: se pudo ir de cuadro al doblar
                 sweep = (sweep + 1) % len(SEARCH_PANS)
-                self._send_head(SEARCH_PANS[sweep], SEARCH_TILT)
+                self._move_head(SEARCH_PANS[sweep], SEARCH_TILT)
                 last_seen = time.time()
             if people and cam is not None and self.K is not None:
                 last_seen = time.time()

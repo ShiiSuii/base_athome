@@ -303,7 +303,7 @@ class RestaurantSession:
             return self._handle_stop()
 
         self._set_state(SessionState.DETECTING_CUSTOMERS)
-        raw_cust = self.detect_customers_fn(18.0, 3)
+        raw_cust = self.detect_customers_fn(40.0, 3)   # el barrido lento de la cabeza tarda unos 25 s
 
         customers_list: List[Dict[str, Any]] = []
         if isinstance(raw_cust, dict):
