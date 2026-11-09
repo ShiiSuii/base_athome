@@ -9,6 +9,7 @@
 import os
 import queue
 import subprocess
+import tempfile
 import threading
 import time
 from typing import Callable, Optional
@@ -41,6 +42,8 @@ class RoboCupSpeaker:
         self._is_speaking = False
         self._current_process: Optional[subprocess.Popen] = None
         self._running = True
+        self._stop_generation = 0
+        self._process_lock = threading.Lock()
 
         # Hilo de reproduccion continua
         self._worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
@@ -105,11 +108,13 @@ class RoboCupSpeaker:
             except Exception:
                 pass
 
-        if self._current_process and self._current_process.poll() is None:
-            try:
-                self._current_process.terminate()
-            except Exception:
-                pass
+        with self._process_lock:
+            self._stop_generation += 1
+            if self._current_process and self._current_process.poll() is None:
+                try:
+                    self._current_process.terminate()
+                except Exception:
+                    pass
         self._is_speaking = False
 
     @staticmethod
@@ -142,28 +147,41 @@ class RoboCupSpeaker:
                 continue
 
             self._is_speaking = True
+            wav_path = None
+            generation = self._stop_generation
             try:
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as wav:
+                    wav_path = wav.name
+                # Finish synthesis before acquiring the playback lock: Bluetooth
+                # must receive a complete WAV without inference-induced underruns.
+                with self._process_lock:
+                    if generation != self._stop_generation:
+                        continue
+                    self._current_process = subprocess.Popen(
+                        [self.piper_bin, "--model", self.model_path, "--output_file", wav_path],
+                        stdin=subprocess.PIPE, text=True,
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    )
+                self._current_process.communicate(input=text)
+                if self._current_process.returncode != 0:
+                    continue
                 with playback_lock():
                     bt_sink = self.ensure_bluetooth_sink()
-                    sink_flag = f"-d {bt_sink} " if bt_sink else ""
-
-                    clean_text = text.replace('"', '\\"').replace("`", "").replace("$", "")
-                    cmd = (
-                        f'echo "{clean_text}" | '
-                        f'"{self.piper_bin}" --model "{self.model_path}" --output-raw 2>/dev/null | '
-                        f'paplay {sink_flag}--raw --rate {self.sample_rate} --channels 1 --format s16le 2>/dev/null'
-                    )
-
-                    self._current_process = subprocess.Popen(
-                        cmd,
-                        shell=True,
-                        executable="/bin/bash",
-                    )
+                    sink_flag = ["-d", bt_sink] if bt_sink else []
+                    with self._process_lock:
+                        if generation != self._stop_generation:
+                            continue
+                        self._current_process = subprocess.Popen(
+                            ["paplay"] + sink_flag + [wav_path],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                        )
                     self._current_process.wait()
             except Exception as e:
                 print(f"[RoboCupSpeaker] Error en reproduccion TTS: {e}")
 
             finally:
+                if wav_path is not None:
+                    os.unlink(wav_path)
                 self._is_speaking = False
                 self._current_process = None
                 try:
