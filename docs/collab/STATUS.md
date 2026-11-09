@@ -5,6 +5,18 @@ recupera por commit (§8). Editado por el integrador (Claude).
 
 **Última actualización:** 2026-11-09 · Claude Code · modo `DESARROLLO` · Restaurant completo en Gazebo (2 clientes); filtro `/scan_nav` para que Nav2 no vea al robot; falta probar en el robot real.
 
+## Restaurant — correcciones 2026-11-09 (Codex)
+
+- Rama `claude/home-41-piper-mission`; base `7c8fecc`; commits `b7da36c` (barrido), `db7cd31` (audio), `10b4233` (base); debug en el commit que contiene esta entrada.
+- `CODIGO`: primer escaneo con base quieta, pan -60..+60 a 6 °/s, vistas de 3 s y presupuesto de 80 s; vuelve al confirmar el primer cliente. GPSR conserva sus valores por defecto.
+- `CODIGO`: Piper completa un WAV temporal antes de tomar el lock de reproducción; `stop()` termina síntesis o reproducción; se borra el WAV. Sin shell ni tubería de audio.
+- Corrección explícita del usuario: **base** `min_steer_raw` 165 → 167 (+1 % redondeado); `angular_scale=260` y pan-tilt `pwm_limit=600` intactos. **No aplicado al driver activo**, sin despliegue Jetson. Para aplicar: cerrar Restaurant con Ctrl-C de forma supervisada, ejecutar `colcon build --symlink-install --packages-select hoverboard_base`, `source install/setup.bash` y relanzar `restaurant` cuando el humano autorice la sesión física.
+- Debug: el executor ya era multihilo y el timer tenía callback group separado; `serve_lock` suprimía el timer durante pedidos. Ahora el timer no depende de ese lock ni de cabeza quieta/profundidad; `pose_lock` serializa el modelo Ultralytics compartido.
+- `UNIT_PASS`: `python3 -m pytest -q src/base_athome_skills/test/test_restaurant_session.py src/base_athome_perception/test/test_raised_hands_mode.py src/base_athome_perception/test/test_speaker.py src/base_athome_perception/test/test_pose_debug.py` → **195 passed**, 5.44 s, exit 0. `STATIC_PASS`: build symlink-install de `base_athome_perception base_athome_skills` → **2 packages finished**, 4.56 s, exit 0; `git diff --check` sin errores.
+- Verificación pasiva dominio 10 del proceso **anterior**: `/bag_finder/debug_image` 2.89–2.99 Hz en reposo. No demuestra el código nuevo durante barrido. Al intentar relanzar únicamente bag_finder, PID 91118 ya no existía; el guard abortó **antes de señalar procesos o lanzar otro**. Sin cambios en hosts/servicios, sin comandos a actuadores, sin validación física, audio Bluetooth ni fuerza real probados. Próximo paso: iniciar sesión supervisada y observar debug en barrido; no iniciar pedidos desde este worker.
+- Archivos propios: restaurant_node/session y tests; bag_finder y tests raised_hands/pose_debug; speaker y test; hoverboard_driver/hoverboard_params; este STATUS y capacidades.yaml. Archivos ajenos de navegación, RViz, calibraciones y TDP conservados sin stagear; única excepción autorizada de navegación: mínimo angular de base solicitado expresamente.
+- Rollback: `git revert <sha-debug>`, `git revert 10b4233`, `git revert db7cd31`, `git revert b7da36c` (revisar conflictos si hay cambios posteriores). Copia previa del script de debug en `/tmp/restaurant_90980/debug_fix_backup/bag_finder.py`; logs originales intactos. `graphify update .`: exit 0, 7008 nodos/14298 aristas; advierte 121 archivos sin extractor.
+
 ## 1. Estado comprobado al pausar
 
 | Ítem | Estado | Evidencia |

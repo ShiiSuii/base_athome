@@ -111,14 +111,14 @@ def test_no_subscriber_means_no_inference():
     assert not node.calls and not node.published
 
 
-def test_active_search_does_not_duplicate_inference():
+def test_active_search_still_publishes_debug():
     node = debug_node()
-    # Ejecuta _serve real: el timer no debe inferir mientras _serve_one tiene el lock.
+    # El lock de un pedido largo no debe bloquear las imagenes de espectadores.
     node._serve_one = lambda _: node._debug_tick()
     node._serve({})
-    assert not node.calls and not node.published
+    assert len(node.calls) == len(node.published) == 1
     node._debug_tick()
-    assert len(node.published) == 1
+    assert len(node.published) == 2
 
 
 def test_missing_rgb_and_inference_failure_release_lock():

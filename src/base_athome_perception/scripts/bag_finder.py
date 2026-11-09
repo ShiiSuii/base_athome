@@ -66,6 +66,7 @@ class BagFinder(Node):
         super().__init__("bag_finder")
         self.lock = threading.Lock()
         self.serve_lock = threading.Lock()
+        self.pose_lock = threading.Lock()
         self.rgb, self.depth, self.K = None, None, None
         self.tf_buf = Buffer()
         self.tf_listener = TransformListener(self.tf_buf, self)
@@ -144,8 +145,8 @@ class BagFinder(Node):
         self.pub_debug.publish(msg)
 
     def _debug_tick(self):
-        """Pose a ~3 Hz solo para espectadores; las busquedas reutilizan su propio debug."""
-        if self.pub_debug.get_subscription_count() == 0 or not self.serve_lock.acquire(blocking=False):
+        """Pose a ~3 Hz incluso durante barridos, sin depender de profundidad o cabeza quieta."""
+        if self.pub_debug.get_subscription_count() == 0:
             return
         try:
             # Solo requiere RGB: no depende de profundidad, TF ni feedback de cabeza.
@@ -156,8 +157,6 @@ class BagFinder(Node):
                 self._publish_debug(rgb, self._poses(rgb), stamp)
         except Exception as exc:
             self.get_logger().warn(f"No se pudo actualizar debug de pose: {exc}")
-        finally:
-            self.serve_lock.release()
 
     def _head_still(self):
         """Con la cabeza en movimiento la imagen y el TF no son del mismo instante: esa medicion se descarta."""
@@ -201,7 +200,9 @@ class BagFinder(Node):
             if cam is None or self.K is None:
                 return []
             return bv.project_people(self.sim_people, cam[0], cam[1], self.K, rgb.shape[1], rgb.shape[0])
-        return bv.yolo_people(self.pose_model.predict(rgb, conf=0.45, verbose=False, device="cpu")[0])
+        # Ultralytics mantiene estado mutable: compartir el modelo exige serializar inferencia.
+        with self.pose_lock:
+            return bv.yolo_people(self.pose_model.predict(rgb, conf=0.45, verbose=False, device="cpu")[0])
 
     def _track(self, person, img_w, img_h):
         """Un paso de seguimiento: lleva el torso de la persona al centro de la imagen."""
