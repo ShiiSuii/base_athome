@@ -40,6 +40,7 @@ session_init "${RESTAURANT_LOG_DIR:-/tmp}/restaurant_$$"
 if [ "${SIM:-0}" = 1 ]; then
   export ROS_DOMAIN_ID=${SIM_DOMAIN:-42}
   export ATHOME_SIM=1
+  export ATHOME_SIM_NAV2=1      # la navegacion la hace Nav2 + SLAM, no el simulador
   export ATHOME_SIM_CUSTOMERS="${ATHOME_SIM_CUSTOMERS:-2.0,1.5;3.0,-1.0}"
   [ -f "$HOME/cyclonedds_local.xml" ] && export CYCLONEDDS_URI=file://$HOME/cyclonedds_local.xml
 
@@ -74,11 +75,12 @@ if [ "${SIM:-0}" = 1 ]; then
   [ -x "$LLM_PY" ] && [ -f "$VLM_MODEL" ] && session_start vlm env -u PYTHONPATH nice -n 10 "$LLM_PY" "$HERE/vlm_server.py"
 
   echo "Levantando navegacion con SLAM (restaurant_nav)..."
-  session_start nav ros2 launch base_athome_skills restaurant_nav.launch.py use_sim_time:=true
+  session_start nav ros2 launch base_athome_skills restaurant_nav.launch.py use_sim_time:=false   # nuestra simulacion publica con la hora real, como nav2_sim.launch.py
   sleep 6
 
-  echo "Iniciando restaurant_node (use_sim_time:=true)..."
-  ros2 run base_athome_skills restaurant_node --ros-args -p use_sim_time:=true
+  echo "Iniciando restaurant_node..."
+  AUTO_ARG=(); [ "${AUTO:-0}" = 1 ] && AUTO_ARG=(-p auto_start:=true)   # AUTO=1: sin esperar ENTER (pruebas automaticas)
+  ros2 run base_athome_skills restaurant_node --ros-args "${AUTO_ARG[@]}"
   wait
   exit 0
 fi
