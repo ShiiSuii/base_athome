@@ -125,6 +125,9 @@ class SimRobot(Node):
         walk = os.environ.get("ATHOME_SIM_PERSON_WALK", "")   # "x,y;x,y": camina al oir que el robot la va a seguir
         self.person_walk = [[float(v) for v in p.split(",")] for p in walk.split(";") if p]
         self.walk_start = None
+        # ATHOME_SIM_PERSON_WALK_AFTER_S: empieza a caminar sola a los N s (sin esperar "follow you"), para probar a Nav2
+        self.walk_after_s = float(os.environ.get("ATHOME_SIM_PERSON_WALK_AFTER_S", "0") or 0)
+        self.t_start = time.time()
         self.person_sway = float(os.environ.get("ATHOME_SIM_PERSON_SWAY_M", "0.0"))
         self.bag2 = [float(v) for v in os.environ["ATHOME_SIM_BAG2"].split(",")] if os.environ.get("ATHOME_SIM_BAG2") else None
         self.wrist_tilt_err = math.radians(float(os.environ.get("ATHOME_SIM_WRIST_TILT_ERR_DEG", "0")))   # montaje real distinto del modelo
@@ -739,6 +742,8 @@ class SimRobot(Node):
         xy = list(self.person_xy)
         if self.person_sway:
             xy[1] += self.person_sway * math.sin(2.0 * math.pi * time.time() / 6.0)
+        if self.walk_after_s and self.person_walk and self.walk_start is None and time.time() - self.t_start > self.walk_after_s:
+            self.walk_start = time.time()
         if self.walk_start is not None:
             xy = self._walked_to(time.time() - self.walk_start, xy)
         if not ahead and self.gz and self.gz_shown_xy is not None and (self.person_sway or self.walk_start is not None):

@@ -3,7 +3,7 @@
 Corto y actualizado: se **reemplaza** lo viejo, no se acumula (`AGENTS.md` §9). Lo histórico se
 recupera por commit (§8). Editado por el integrador (Claude).
 
-**Última actualización:** 2026-11-09 · Claude Code · modo `DESARROLLO` · VLM conectado al commander y LLM con "describe"; falta probarlos por voz en el robot.
+**Última actualización:** 2026-11-09 · Claude Code · modo `DESARROLLO` · **Nav2 del robot descarta el lidar** (max_obstacle_height 0.0): falta la decisión del usuario; perfil de evaluación probado en Gazebo.
 
 ## 1. Estado comprobado al pausar
 
@@ -171,6 +171,21 @@ Antes de empezar: E-stop a mano, zona despejada y otra persona atenta. Bolsa liv
 - **Medido en la NUC:** el VLM ocupa 835 MiB y tarda unos 5 s; respondió bien 4 de 4 imágenes de prueba (no del robot). **Sin probar:** con la cámara real, por voz y con el resto del stack corriendo.
 - **Grafo:** `grafo` (o `debug grafo`) abre el grafo de graphify en `http://127.0.0.1:8780/grafo`. Se regenera con `graphify update .`.
 - **Revisado:** los commits `8e516ab` y `12445d7` de Antigravity (puerta, cliente VLM, tablero). Los tests de puerta y VLM pasan.
+
+## 2o. Navegación: el lidar no llega a los costmaps, perfil de evaluación (2026-11-09)
+
+- **Hallazgo (comprobado en Gazebo):** en `nav2_params.yaml` la fuente `scan` no define `max_obstacle_height`; en Jazzy vale 0.0 y el lidar está a 0.38 m, así que los dos costmaps descartan todos sus puntos. Nav2 solo ve el mapa estático: no marca personas ni muebles movidos. Con una persona en el camino, el robot pasó por su centro (0.06 m). El robot real usa el mismo archivo. Corregirlo toca la navegación protegida: **lo decide el usuario**.
+- **Perfiles solo de simulación** (`simulation/base_athome_sim/config/`, con `ATHOME_NAV_PROFILE`): `altura` (solo esa corrección) y `eval` (corrección, radio 0.36, inflado 0.75/2.5, costmap local 5 m, progress checker 12 s, AMCL 5 m y `bt_eval.xml`, que espera antes de limpiar y retrocede 15 cm).
+- **Mundo `nav_eval`** (puerta de 0.85 m) y `simulation/scripts/nav_eval.py`. Resultados (llegó / distancia mínima al centro de la persona):
+
+| Escenario | robot | altura | eval |
+|---|---|---|---|
+| Persona quieta en el camino | sí, 0.06 m (la atraviesa) | sí, 0.87 m | sí, 1.04 m |
+| Puerta de 0.85 m | no (sin camino) | no | sí |
+| Persona en la puerta que se corre a los 12 s | no | no | sí |
+
+- **Sin probar:** en el robot; el radio 0.36 supone que el brazo no sobresale del chasis (medirlo). Una sola corrida por caso.
+- **Antigravity (integrado, solo tests):** `front_dock.py` (HOME-101, 37 tests; concluye seguir con lógica propia y no `opennav_docking`), Restaurant (HOME-102: `raised_hand.py`, `restaurant.py`; Restaurant sí está en el RuleBook 2026.2 §5.5, exige SLAM sin mapa previo) y la pestaña "Resumen" del tablero (HOME-103). El plan de Restaurant es un borrador: usa mesas que no existen y anuncia un pedido antes de escucharlo.
 
 ## 3. Cómo retomar la teleoperación con el Quest (pendiente: prueba completa en el brazo real)
 

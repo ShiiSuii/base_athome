@@ -12,6 +12,16 @@ from launch_ros.actions import Node
 NODES = ("map_server", "amcl", "planner_server", "controller_server", "behavior_server", "bt_navigator")
 
 
+def _merge(base, extra):
+    """Mezcla extra dentro de base, entrando en los diccionarios. Lo demas lo reemplaza."""
+    for key, value in extra.items():
+        if isinstance(value, dict) and isinstance(base.get(key), dict):
+            _merge(base[key], value)
+        else:
+            base[key] = value
+    return base
+
+
 def _params(map_yaml):
     with open(os.path.join(get_package_share_directory("base_athome_navigation"), "config", "nav2_params.yaml"), encoding="utf-8") as f:
         params = yaml.safe_load(f)
@@ -23,6 +33,13 @@ def _params(map_yaml):
     if "default_nav_to_pose_bt_xml" in bt:
         bt["default_nav_to_pose_bt_xml"] = os.path.join(get_package_share_directory("base_athome_navigation"), "config", "bt_trees",
                                                         os.path.basename(bt["default_nav_to_pose_bt_xml"]))
+    profile = os.environ.get("ATHOME_NAV_PROFILE", "")
+    if profile:     # ATHOME_NAV_PROFILE=eval: aplica config/nav2_params_<perfil>.yaml de esta carpeta encima de los del robot
+        sim_config = os.path.join(get_package_share_directory("base_athome_sim"), "config")
+        with open(os.path.join(sim_config, f"nav2_params_{profile}.yaml"), encoding="utf-8") as f:
+            _merge(params, yaml.safe_load(f))
+        bt["default_nav_to_pose_bt_xml"] = os.path.join(sim_config, os.path.basename(bt["default_nav_to_pose_bt_xml"])) \
+            if not os.path.isabs(bt["default_nav_to_pose_bt_xml"]) else bt["default_nav_to_pose_bt_xml"]
     out = tempfile.NamedTemporaryFile("w", suffix="_nav2_sim.yaml", delete=False, encoding="utf-8")
     yaml.safe_dump(params, out)
     out.close()

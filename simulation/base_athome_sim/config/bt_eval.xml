@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<!-- Arbol de evaluacion, SOLO SIMULACION. Igual al del robot, pero ante un bloqueo espera a que la persona se corra
+     antes de limpiar el costmap (limpiar con alguien delante no sirve: se vuelve a marcar), y al final retrocede 15 cm. -->
+<root BTCPP_format="4" main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <RecoveryNode number_of_retries="6" name="NavigateRecovery">
+      <PipelineSequence name="NavigateWithReplanning">
+        <RateController hz="1.0">
+          <RecoveryNode number_of_retries="1" name="ComputePathToPose">
+            <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
+            <ClearEntireCostmap name="ClearGlobalCostmap-Context" service_name="global_costmap/clear_entirely_global_costmap"/>
+          </RecoveryNode>
+        </RateController>
+        <RecoveryNode number_of_retries="2" name="FollowPath">
+          <FollowPath path="{path}" controller_id="FollowPath"/>
+          <Sequence name="EsperarYLimpiarLocal">
+            <Wait wait_duration="3.0"/>
+            <ClearEntireCostmap name="ClearLocalCostmap-Context" service_name="local_costmap/clear_entirely_local_costmap"/>
+          </Sequence>
+        </RecoveryNode>
+      </PipelineSequence>
+      <Sequence name="ClearingActions">
+        <Wait wait_duration="4.0"/>
+        <ClearEntireCostmap name="ClearLocalCostmap-Subtree" service_name="local_costmap/clear_entirely_local_costmap"/>
+        <ClearEntireCostmap name="ClearGlobalCostmap-Subtree" service_name="global_costmap/clear_entirely_global_costmap"/>
+        <ForceSuccess>
+          <BackUp backup_dist="0.15" backup_speed="0.05"/>
+        </ForceSuccess>
+      </Sequence>
+    </RecoveryNode>
+  </BehaviorTree>
+</root>

@@ -4,7 +4,7 @@
 # probado_en: commit de la ultima prueba. Si 'archivos' cambiaron despues, el tablero avisa solo.
 # items: items de docs/MATRIZ_REGLAS_HABILIDADES.txt que esta capacidad cubre.
 capacidades:
-  - {id: navegar, nombre: "Navegar por el mapa", area: Base, etapa: robot, probado_en: a9622e8, items: ["2.1", "4.1"], archivos: [src/base_athome_navigation/config/nav2_params.yaml], falta: "Lidar a 38 cm: no ve lo bajo."}
+  - {id: navegar, nombre: "Navegar por el mapa", area: Base, etapa: robot, probado_en: a9622e8, items: ["2.1", "4.1"], archivos: [src/base_athome_navigation/config/nav2_params.yaml], falta: "Nav2 descarta el lidar (max_obstacle_height 0.0): no ve personas ni obstáculos nuevos. Lidar a 38 cm."}
   - {id: mapear, nombre: "Mapear y editar el mapa", area: Base, etapa: robot, probado_en: a9622e8, archivos: [src/base_athome_navigation/base_athome_navigation/map_zone_editor.py], falta: "Marcar instruction_point en el mapa real."}
   - {id: obstaculos_bajos, nombre: "Ver obstáculos bajos con la RealSense", area: Base, etapa: tests, probado_en: a9622e8, archivos: [src/base_athome_perception/base_athome_perception/low_obstacles.py], falta: "Sin conectar a Nav2: decisión del usuario."}
   - {id: voz, nombre: "Entender voz con Whisper", area: Voz, etapa: parcial, probado_en: a9622e8, items: ["3.1"], archivos: [jetson_head/src/audio_asr], falta: "Probado con pocas frases reales."}
@@ -35,6 +35,9 @@ capacidades:
   - {id: agarre_esfuerzo, nombre: "Confirmar agarre por esfuerzo", area: Manipulación, etapa: falta, falta: "Hoy solo por ancho de pinza; cambia el nodo de la Jetson."}
   - {id: laundry, nombre: "Doing Laundry", area: Manipulación, etapa: falta, items: ["4.2", "4.3", "4.4", "4.5", "4.6", "4.7", "4.8"], falta: "No priorizado: muy difícil con un brazo."}
   - {id: estop, nombre: "E-stop común a todos los actuadores", area: Seguridad, etapa: falta, falta: "Exigido por el reglamento: falta comprobarlo."}
+  - {id: esquivar, nombre: "Esquivar personas y pasar puertas de 85 cm", area: Base, etapa: simulador, falta: "Perfil nav2_params_eval.yaml solo en simulación. Para el robot: decisión del usuario y medir el brazo."}
+  - {id: docking_frontal, nombre: "Acercarse a lo que tiene adelante (pared, puerta cerrada, mesa)", area: Base, etapa: tests, archivos: [src/base_athome_skills/base_athome_skills/mission/front_dock.py], falta: "Lógica y tests de Antigravity. Falta conectarlo a la base (cmd_vel) y probarlo en Gazebo."}
+  - {id: restaurant, nombre: "Restaurant: clientes que levantan la mano, pedidos y entrega", area: Personas, etapa: tests, archivos: [src/base_athome_skills/base_athome_skills/mission/restaurant.py, src/base_athome_perception/base_athome_perception/raised_hand.py], falta: "Borrador: el plan no espera el pedido real y usa mesas que no existen. Exige SLAM sin mapa previo."}
 pruebas:
   HRI: "Human-Robot Interaction"
   PP: "Pick and Place"

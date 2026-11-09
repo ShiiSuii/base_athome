@@ -1,0 +1,15 @@
+# Perfil minimo, SOLO SIMULACION: el del robot con una sola correccion.
+# max_obstacle_height de la fuente 'scan' vale 0.0 por defecto en Jazzy; el lidar esta a 0.38 m, asi que sin esto
+# los costmaps descartan todos sus puntos y Nav2 no ve personas ni obstaculos nuevos (comprobado en Gazebo, 2026-11-09).
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      obstacle_layer:
+        scan:
+          max_obstacle_height: 2.0
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      obstacle_layer:
+        scan:
+          max_obstacle_height: 2.0
