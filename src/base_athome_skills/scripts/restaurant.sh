@@ -82,8 +82,7 @@ if [ "${SIM:-0}" = 1 ]; then
   echo "Iniciando restaurant_node..."
   AUTO_ARG=(); [ "${AUTO:-0}" = 1 ] && AUTO_ARG=(-p auto_start:=true)   # AUTO=1: sin esperar ENTER (pruebas automaticas)
   ros2 run base_athome_skills restaurant_node --ros-args "${AUTO_ARG[@]}"
-  wait
-  exit 0
+  exit 0     # al terminar la mision se cierra toda la sesion: quedarse esperando dejaba SLAM y Gazebo abiertos
 fi
 
 # ------------------------------------------------------------------------------
