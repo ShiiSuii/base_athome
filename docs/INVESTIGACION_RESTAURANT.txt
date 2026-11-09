@@ -1,0 +1,105 @@
+================================================================================
+INVESTIGACION HOME-102: RESTAURANT CHALLENGE (REGLAMENTO, HARDWARE Y POSE)
+================================================================================
+
+1. RESOLUCION DE CONTRADICCION NORMATIVA (ROADMAP vs INVESTIGACION_LLM_VLM)
+--------------------------------------------------------------------------------
+- Conflicto: ROADMAP.md (linea 27) define Restaurant como prueba activa de Stage II
+  (§5.5, 2360 pts, 15 min), mientras INVESTIGACION_LLM_VLM.txt afirma que en 2026.2
+  esta archivada en tasks/old/Restaurant.tex.
+- Causa identificada tras clonar RuleBook (https://github.com/RoboCupAtHome/RuleBook):
+  * Tag oficial 2026.2 (commit b844d5a, 11-May-2026) [VERIFICADO]:
+    - documents/rulebook.tex:89 incluye \input{tasks/Restaurant}.
+    - documents/scoresheets.tex:122-125 incluye scoresheets/Restaurant.tex.
+    - Constituye la seccion §5.5 (quinta prueba regular, tras Doing Laundry).
+  * Rama master post-2026.2 (commits 7b4880b y d2a8fcf, 30-Aug-2026) [VERIFICADO]:
+    - Restaurant fue movido a tasks/old/Restaurant.tex y scoresheets/old/Restaurant.tex.
+    - Eliminado de documents/rulebook.tex y documents/scoresheets.tex.
+- Conclusion: ROADMAP.md cita fielmente el reglamento oficial publicado (Tag 2026.2).
+  INVESTIGACION_LLM_VLM.txt inspecciono el HEAD de master (commit ebdf34d),
+  confundiendo cambios en borrador post-2026 con la version oficial 2026.2.
+
+2. REGLAS VIGENTES DE RESTAURANT (RuleBook 2026.2 / tasks/old/Restaurant.tex)
+--------------------------------------------------------------------------------
+- Tiempo limite: 15 minutos (scoresheets/old/Restaurant.tex:1) [VERIFICADO].
+- Ubicacion e Inicio: Restaurante real o entorno similar fuera de la arena,
+  desconocido hasta el inicio (Restaurant.tex:22-23). Robot arranca junto al
+  Kitchen-bar mirando a la zona de mesas (Restaurant.tex:24).
+- Descalificacion inmediata: Mapear el entorno previamente (Restaurant.tex:109)
+  o tocar el robot tras la senal de inicio (Restaurant.tex:108).
+- Contacto fisico: Cualquier contacto con personas o muebles detiene la prueba
+  con parada de emergencia inmediata (Restaurant.tex:75).
+- Clientes: Al menos 3 mesas con clientes profesionales y 2 con regulares
+  (Restaurant.tex:30-31). Llaman alzando la mano o saludando ("calling or waving
+  customer", Restaurant.tex:8, 32, 52), incluso simultaneamente.
+- Pedidos: Maximo 2 pedidos puntuados completos (scoresheets/old/Restaurant.tex:3-17).
+  Cada pedido consta exactamente de 2 objetos estandar aleatorios (Restaurant.tex:40).
+- Barman y Kitchen-bar: Miembro del TC como Barman profesional detras del bar
+  (Restaurant.tex:28). El robot dispone de hasta 2 minutos por orden para
+  interactuar (Restaurant.tex:79). Si se solicita, el barman coloca los objetos
+  en una bandeja o canasta (Restaurant.tex:100).
+- Bandeja (Tray): Uso opcional de bandeja independiente ("unattached tray",
+  Restaurant.tex:10, 54, 94). Los objetos deben quedar en la mesa del cliente.
+- Modalidad operativa permitida (Restaurant.tex:86-91):
+  * Tomar y pedir varias ordenes antes de entregar.
+  * Alternar entre tomar orden y servir.
+  * Atender un cliente completo de principio a fin (estrategia elegida en Base@Home).
+- Restart: 1 solo restart permitido (max 2 min, reloj sigue corriendo, puntaje
+  previo se anula y vuelve a cero, Restaurant.tex:57-66).
+
+3. DESGLOSE DE PUNTAJE Y PENALIDADES (scoresheets/old/Restaurant.tex)
+--------------------------------------------------------------------------------
+- Puntaje regular maximo: 1960 pts (2 pedidos x 2 objetos c/u):
+  * Detectar cliente llamando/saludando: 2 x 80 pts = 160 pts (linea 3).
+  * Llegar a la mesa del cliente: 2 x 80 pts = 160 pts (linea 4).
+  * Entender y confirmar el pedido al cliente: 2 x 160 pts = 320 pts (linea 6).
+  * Comunicar el pedido al barman: 2 x 80 pts = 160 pts (linea 9).
+  * Recoger items del Kitchen-bar: 4 x 100 pts + 100 bonus primer agarre = 500 pts (l.10-11).
+  * Regresar a la mesa del cliente: 2 x 80 pts = 160 pts (linea 14).
+  * Servir orden al cliente (en la mesa): 4 x 100 pts + 100 bonus entrega = 500 pts (l.15-16).
+- Recompensa extra:
+  * Usar bandeja no acoplada (unattached tray): 2 x 200 pts = 400 pts (linea 20).
+- TOTAL MAXIMO TEORICO: 1960 + 400 = 2360 pts [VERIFICADO con ROADMAP.md].
+- Penalidades especificas:
+  * No hacer contacto visual al tomar el pedido: -60 pts por cliente (linea 8).
+  * HRI alternativo (pantalla/teclado para la orden): -80 pts por cliente (linea 7).
+  * Asistencia humana (ser guiado a la mesa): -80 pts (linea 5).
+  * Barman entrega el objeto en mano al robot: -100 pts por objeto (linea 12).
+  * Cliente toma el objeto de la mano o bandeja del robot: -100 pts por objeto (linea 17).
+  * No llegar al bar (barman debe salir a interactuar): -60 pts (linea 23).
+  * Pedir confirmacion de direccion: -30 pts (linea 24).
+  * Recibir indicacion senalada de ubicacion mesa/bar: -40 pts (linea 25).
+
+4. COMPARATIVA DE DETECCION DE POSE EN JETSON ORIN NANO (JETPACK 7 / TENSORRT)
+--------------------------------------------------------------------------------
+Plataforma Base@Home: Jetson Orin Nano Super Dev Kit (8 GB LPDDR5 compartida CPU/GPU,
+Ampere 1024 CUDA cores, JetPack 7.2.1, L4T R39.2.1, TensorRT 10.16, CUDA 13.2).
+
++----------------------+--------------------+--------------------+--------------------+
+| Caracteristica       | CMU OpenPose (C++) | NVIDIA trt_pose    | YOLOv8n-pose TRT   |
++----------------------+--------------------+--------------------+--------------------+
+| Arquitectura         | Bottom-up PAFs     | Bottom-up ResNet18 | Top-down Anchor-f. |
+| Formato Keypoints    | BODY_25 (25 kpts)  | COCO-18 / COCO-17  | COCO-17 (17 kpts)  |
+| Compatibilidad JP7   | INVIABLE (Caffe)   | OBSOLETO (TRT <=8) | NATIVA (TRT 10.16) |
+| Latencia / FPS       | ~250 ms / ~4 FPS   | ~20 ms / ~50 FPS   | 18 ms / 55 FPS     |
+| Evidencia FPS        | [INFERENCIA]       | [INFERENCIA]       | [VERIFICADO l.13]  |
+| VRAM requerida       | ~2.8 - 3.5 GiB     | ~0.4 - 0.6 GiB     | ~1.1 GiB           |
+| Evidencia VRAM       | [INFERENCIA]       | [INFERENCIA]       | [VERIFICADO]       |
+| Mantenimiento        | Abandonado         | Inactivo (2021)    | Activo (2024-2026) |
++----------------------+--------------------+--------------------+--------------------+
+
+- Evaluacion tecnica detallada:
+  1. CMU OpenPose: Inviable en JetPack 7 / Ubuntu 24.04. Depende de Caffe legacy y
+     versiones antiguas de CUDA. Compilarlo en GCC 13 y TensorRT 10 requiere parches
+     extensivos y su motor PAF consume >3 GiB de VRAM, provocando OOM-killer inmediato
+     en la Jetson de 8 GB junto a Whisper y CycloneDDS [INFERENCIA FUNDADA].
+  2. NVIDIA trt_pose: Muy eficiente en VRAM, pero abandonado por NVIDIA en TensorRT 8.
+     Sus capas C++ personalizadas (pafprocess) fallan al enlazar con TensorRT 10.16
+     (IPluginV2IOExt deprecado) [VERIFICADO en documentacion de migracion TRT 10].
+  3. YOLOv8n-pose (TensorRT FP16 engine): Solucion actual de Base@Home. Inferencia
+     estable a 55 FPS (18 ms) consumiendo solo 1.1 GiB VRAM en la GPU Ampere [VERIFICADO
+     en docs/INVESTIGACION_SEGUIR_PERSONA.txt y STATUS.md].
+- Recomendacion arquitectonica:
+  Mantener como backend de vision YOLOv8n-pose TensorRT en la Jetson. En la capa de
+  software (raised_hand.py), implementar compatibilidad total con la semantica de
+  OpenPose soportando tanto la entrada nativa COCO-17 como la conversion BODY_25->COCO.
