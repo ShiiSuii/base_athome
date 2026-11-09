@@ -36,6 +36,7 @@ from std_msgs.msg import Bool, Float64, String
 from std_srvs.srv import Trigger
 
 from . import bag_task, follow_logic, front_dock, table_dock, vlm
+from .dock_safety import sensor_freshness_error
 from .executor import MissionExecutor, SkillContext
 from .places import home_place, load_places, resolve
 from .plan import PlanError, parse_plan, validate_plan
@@ -111,6 +112,10 @@ class MissionExecutorNode(Node):
         self.tf_listener = TransformListener(self.tf_buf, self)
         self.robot_pose = None                # (x, y, yaw) en map, de AMCL
         self.odom_xy = None
+        self.last_scan = None
+        self.odom_received_at = None
+        self.scan_received_at = None
+        self._dock_sensor_lock = threading.Lock()
         self.front_range = None
         self.torso_status = {}
         self.bag_results = {}
@@ -124,7 +129,6 @@ class MissionExecutorNode(Node):
         self.create_subscription(String, "/torso/status", self._torso_status, 10)
         self.create_subscription(String, "/bag_finder/result", self._bag_result, 10)
         self.seen_people = None        # ultimo mensaje de /bag_finder/people
-        self.last_scan = None
         self.table_docked_m = 0.0
         self.create_subscription(String, "/bag_finder/people", lambda m: setattr(self, "seen_people", json.loads(m.data)), 5)
 
@@ -406,23 +410,33 @@ class MissionExecutorNode(Node):
             r.error = "not_found"
         return r
 
+    def _dock_sensor_snapshot(self):
+        """Lee cada medición junto a su llegada, sin mezclar callbacks concurrentes."""
+        with self._dock_sensor_lock:
+            return self.last_scan, self.odom_xy, self.scan_received_at, self.odom_received_at
+
     def h_dock_table(self, ctx: SkillContext) -> SkillResult:
         """Nav2 frena lejos de la mesa: acercarse mirando su borde con el lidar. Sin el, el brazo no llega."""
-        start = self.odom_xy
+        start = None
         end = time.time() + 30.0
         reason = "sin lidar"
         try:
             while time.time() < end:
                 if ctx.cancel.is_set():
                     return SkillResult.failure(ERR_CANCELED, "acercamiento cancelado")
-                scan = self.last_scan
-                if scan is None or self.odom_xy is None or start is None:
-                    time.sleep(0.05)
-                    start = start or self.odom_xy
-                    continue
+                scan, odom_xy, scan_t, odom_t = self._dock_sensor_snapshot()
+                sensor_error = sensor_freshness_error(time.monotonic(), scan_t, odom_t)
+                if sensor_error:
+                    return SkillResult.failure(sensor_error, f"no me acerco a la mesa: {sensor_error}")
+                if start is None:
+                    start = odom_xy
                 angles = [scan.angle_min + i * scan.angle_increment for i in range(len(scan.ranges))]
                 action, amount = table_dock.table_dock_step(angles, list(scan.ranges))
-                done = math.hypot(self.odom_xy[0] - start[0], self.odom_xy[1] - start[1])
+                # El cálculo puede consumir tiempo: no mover usando una decisión ya vencida.
+                sensor_error = sensor_freshness_error(time.monotonic(), scan_t, odom_t)
+                if sensor_error:
+                    return SkillResult.failure(sensor_error, f"no me acerco a la mesa: {sensor_error}")
+                done = math.hypot(odom_xy[0] - start[0], odom_xy[1] - start[1])
                 self.table_docked_m = done
                 if action == "done":
                     return SkillResult.success(f"frente a la mesa (avance {done:.2f} m)")
@@ -447,17 +461,21 @@ class MissionExecutorNode(Node):
         """Despues de Nav2: acercarse con el lidar a una pared, una puerta o una mesa. Frena ante una puerta cerrada o una persona."""
         target = str(ctx.args.get("target") or "auto")
         standoff = float(ctx.args["standoff_m"]) if ctx.args.get("standoff_m") is not None else None
-        start, reason = self.odom_xy, "sin lidar"
+        start, reason = None, "sin lidar"
         try:
             while not ctx.cancel.is_set() and ctx.remaining() > 0.5:
-                scan = self.last_scan
-                if scan is None or self.odom_xy is None or start is None:
-                    time.sleep(0.05)
-                    start = start or self.odom_xy
-                    continue
+                scan, odom_xy, scan_t, odom_t = self._dock_sensor_snapshot()
+                sensor_error = sensor_freshness_error(time.monotonic(), scan_t, odom_t)
+                if sensor_error:
+                    return SkillResult.failure(sensor_error, f"no me acerco: {sensor_error}")
+                if start is None:
+                    start = odom_xy
                 angles = [scan.angle_min + i * scan.angle_increment for i in range(len(scan.ranges))]
                 action, amount = front_dock.front_dock_step(angles, list(scan.ranges), target=target, target_distance_m=standoff)
-                done = math.hypot(self.odom_xy[0] - start[0], self.odom_xy[1] - start[1])
+                sensor_error = sensor_freshness_error(time.monotonic(), scan_t, odom_t)
+                if sensor_error:
+                    return SkillResult.failure(sensor_error, f"no me acerco: {sensor_error}")
+                done = math.hypot(odom_xy[0] - start[0], odom_xy[1] - start[1])
                 if action == "done":
                     return SkillResult.success(f"frente a {amount} (avance {done:.2f} m)", what=str(amount), advanced_m=done)
                 if action == "fail":
@@ -483,15 +501,19 @@ class MissionExecutorNode(Node):
     def h_undock_table(self, ctx: SkillContext) -> SkillResult:
         """Volver atras lo que se avanzo hacia la mesa: pegado a ella, Nav2 cree estar dentro del obstaculo y no planifica."""
         back = max(TABLE_UNDOCK_MIN_M, self.table_docked_m)
-        start = self.odom_xy
-        if start is None:
-            return SkillResult.failure("blocked", "sin odometria para separarme de la mesa")
+        start = None
         end = time.time() + back / DOCK_SPEED_MPS * 2.0 + 3.0
         try:
             while time.time() < end:
                 if ctx.cancel.is_set():
                     return SkillResult.failure(ERR_CANCELED, "cancelado")
-                if math.hypot(self.odom_xy[0] - start[0], self.odom_xy[1] - start[1]) >= back:
+                _, odom_xy, scan_t, odom_t = self._dock_sensor_snapshot()
+                sensor_error = sensor_freshness_error(time.monotonic(), scan_t, odom_t)
+                if sensor_error:
+                    return SkillResult.failure(sensor_error, f"no me separo de la mesa: {sensor_error}")
+                if start is None:
+                    start = odom_xy
+                if math.hypot(odom_xy[0] - start[0], odom_xy[1] - start[1]) >= back:
                     self.table_docked_m = 0.0
                     return SkillResult.success(f"separado de la mesa {back:.2f} m")
                 msg = Twist()
@@ -587,11 +609,17 @@ class MissionExecutorNode(Node):
         self.robot_pose = (p.position.x, p.position.y, 2.0 * math.atan2(p.orientation.z, p.orientation.w))
 
     def _odom(self, msg):
-        self.odom_xy = (msg.pose.pose.position.x, msg.pose.pose.position.y)
+        received_at = time.monotonic()
+        with self._dock_sensor_lock:
+            self.odom_xy = (msg.pose.pose.position.x, msg.pose.pose.position.y)
+            self.odom_received_at = received_at
 
     def _scan(self, msg):
         """Lo mas cercano adelante (+-20 grados) o None."""
-        self.last_scan = msg
+        received_at = time.monotonic()
+        with self._dock_sensor_lock:
+            self.last_scan = msg
+            self.scan_received_at = received_at
         best = None
         for i, r in enumerate(msg.ranges):
             angle = msg.angle_min + i * msg.angle_increment

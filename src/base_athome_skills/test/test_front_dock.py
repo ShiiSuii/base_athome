@@ -220,6 +220,54 @@ def test_persona_delante_de_pared_bloquea():
     assert decision.reason == "blocked"
 
 
+@pytest.mark.parametrize("side", [-1, 1])
+@pytest.mark.parametrize("with_wall", [False, True])
+@pytest.mark.parametrize("target", ["auto", "wall"])
+def test_borde_en_corredor_con_centro_afuera_bloquea(side, with_wall, target):
+    """El borde entra 2 cm en el corredor aunque el centro esté a 40 cm del eje."""
+    obstacle = SyntheticSegment((0.70, side * 0.28), (0.70, side * 0.52))
+    objects = [obstacle]
+    if with_wall:
+        objects.append(SyntheticSegment((1.40, -1.00), (1.40, 1.00)))
+    angles, ranges = generate_scan(objects)
+
+    decision = fd.front_dock_step(angles, ranges, target=target)
+
+    assert decision == ("fail", "blocked")
+    assert decision.reason == "blocked"
+
+
+@pytest.mark.parametrize("min_points", [2, 3, 4])
+@pytest.mark.parametrize("target", ["auto", "wall"])
+def test_cluster_minimo_delante_de_pared_bloquea(min_points, target):
+    """Un cluster válido, incluidos tres retornos, basta para impedir el avance."""
+    wall = SyntheticSegment((1.40, -1.00), (1.40, 1.00))
+    angles, ranges = generate_scan([wall])
+    center = min(range(len(angles)), key=lambda i: abs(angles[i]))
+    for i in range(center, center + min_points):
+        ranges[i] = 0.70 / math.cos(angles[i])
+
+    decision = fd.front_dock_step(
+        angles, ranges, target=target,
+        cfg=fd.FrontDockConfig(min_cluster_points=min_points),
+    )
+
+    assert decision == ("fail", "blocked")
+    assert decision.reason == "blocked"
+
+
+@pytest.mark.parametrize("side", [-1, 1])
+def test_obstaculo_fuera_del_corredor_no_impide_avance(side):
+    obstacle = SyntheticSegment((0.70, side * 0.32), (0.70, side * 0.56))
+    wall = SyntheticSegment((1.40, -1.00), (1.40, 1.00))
+    angles, ranges = generate_scan([obstacle, wall])
+
+    decision = fd.front_dock_step(angles, ranges, target="wall")
+
+    assert decision.action == "go"
+    assert decision.value == pytest.approx(1.13, abs=0.02)
+
+
 def test_piernas_humanas_en_el_corredor_bloquea():
     """Dos piernas humanas con separación estrecha devuelven 'blocked'."""
     pierna_izq = SyntheticCylinder((0.70, 0.11), 0.05)

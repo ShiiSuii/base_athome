@@ -295,7 +295,7 @@ def front_dock_step(
     corridor_clusters: List[_LaserCluster] = []
     for c in clusters:
         # Se cruza o reside en el corredor central
-        if abs(c.center_y) <= cfg.corridor_half_width_m or (c.min_y <= 0.0 <= c.max_y):
+        if any(abs(y) <= cfg.corridor_half_width_m for _, y in c.pts):
             corridor_clusters.append(c)
 
     # 6. Caso especial: TARGET == "DOOR" (puerta cerrada vs puerta abierta)
@@ -434,14 +434,13 @@ def _process_surface_dock(
     best_c, norm, d_laser, rmse, inliers = surface_candidates[0]
 
     # Verificar si hay una persona u obstáculo entre el robot y la pared en el corredor
-    for c in clusters:
+    for c in corridor_clusters:
         if c is best_c:
             continue
-        if len(c.pts) >= 4 and abs(c.center_y) <= cfg.corridor_half_width_m:
-            # Distancia ortogonal al plano de avance
-            d_obs = c.min_x
-            if d_obs < d_laser - 0.15:
-                return FrontDockDecision("fail", "blocked", reason="blocked")
+        # Todos estos clusters cumplen min_cluster_points. Basta un punto del
+        # contorno dentro del corredor; el centro puede quedar fuera de él.
+        if c.min_x < d_laser - 0.15:
+            return FrontDockDecision("fail", "blocked", reason="blocked")
 
     yaw_error = math.atan2(norm[1], norm[0])
     d_chassis = d_laser - cfg.chassis_front_offset_m

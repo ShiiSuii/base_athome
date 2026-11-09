@@ -90,6 +90,8 @@ def default_registry() -> SkillRegistry:
     """Vocabulario de Base@Home con el estado REAL de cada habilidad (2026-11-03)."""
     nav_pre = ("accion navigate_to_pose disponible", "lugar definido en semantic_map.yaml/waypoints.yaml")
     nav_err = ("unknown_place", "nav_unavailable", "goal_rejected", "nav_failed", "nav_canceled")
+    dock_sensor_pre = ("lidar y odometria recibidos hace no mas de 0.3 s",)
+    dock_sensor_err = ("no_scan", "no_odom", "stale_scan", "stale_odom")
     return SkillRegistry([
         SkillSpec("navigate_to", "Navegar a un lugar semantico (cliente de navigate_to_pose de Nav2)",
                   required=("place",), default_timeout_s=180.0, preconditions=nav_pre, errors=nav_err,
@@ -145,10 +147,12 @@ def default_registry() -> SkillRegistry:
                   errors=("not_found", "grasp_failed", "grasp_empty", "manipulation_unavailable"),
                   note="SIM_PASS; real requiere allow_manipulation_real:=true y LAB_SUPERVISADO"),
         SkillSpec("dock_table", "Acercarse al borde de la mesa con el lidar: Nav2 frena lejos para el brazo",
-                  default_timeout_s=40.0, moves_hardware=True, errors=("blocked",),
+                  default_timeout_s=40.0, moves_hardware=True, preconditions=dock_sensor_pre,
+                  errors=("blocked", *dock_sensor_err),
                   note="SIM_PASS; sin probar en mesas reales con patas"),
         SkillSpec("undock_table", "Retroceder lo avanzado hacia la mesa, sin mirar atras: despacio y sin nadie detras",
-                  default_timeout_s=30.0, moves_hardware=True, errors=("blocked",),
+                  default_timeout_s=30.0, moves_hardware=True, preconditions=dock_sensor_pre,
+                  errors=("blocked", *dock_sensor_err),
                   note="SIM_PASS; el lidar no cubre atras: supervisar en el robot real"),
         SkillSpec("receive_bag", "Plan B: abrir la pinza, esperar a que la persona ponga la bolsa, cerrar y confirmar por ancho",
                   default_timeout_s=30.0, moves_hardware=True, errors=("grasp_empty", "manipulation_unavailable"),
@@ -170,7 +174,8 @@ def default_registry() -> SkillRegistry:
         SkillSpec("answer_question", "Escuchar y responder una pregunta", status=UNAVAILABLE),
         SkillSpec("dock_front", "Acercarse con el lidar a lo que hay adelante (pared, puerta o mesa) y frenar a distancia segura",
                   optional=("target", "standoff_m"), default_timeout_s=40.0, moves_hardware=True,
-                  errors=("door_closed", "blocked", "nothing_ahead", "too_far", "no_scan")),
+                  preconditions=dock_sensor_pre,
+                  errors=("door_closed", "blocked", "nothing_ahead", "too_far", *dock_sensor_err)),
         SkillSpec("describe_view", "Mirar con la camara de la cabeza y decir lo que ve (VLM local)",
                   optional=("question",), default_timeout_s=45.0, preconditions=("vlm_server activo (127.0.0.1:8772)",),
                   errors=("no_image", "vlm_unavailable", "tts_failed")),

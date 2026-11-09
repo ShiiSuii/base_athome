@@ -1,7 +1,8 @@
 # base_athome_skills
 
 Habilidades para RoboCup@Home 2026.2 y la **capa de misiones** (planes deterministas supervisados).
-No modifica Nav2 ni la base: navega solo como cliente de `navigate_to_pose`.
+No modifica Nav2 ni el driver de la base. La navegación usa `navigate_to_pose`;
+el docking final publica `/cmd_vel` y mueve la base.
 
 ## door_open_detector (señal de inicio, reglamento §3.6.8)
 
@@ -102,6 +103,14 @@ skill desconocida o no implementada, argumentos, lugares inexistentes, `home` fa
 ### Seguridad
 - `mode:=sim` (por defecto) **se niega a arrancar en `ROS_DOMAIN_ID=10`** (chequeo antes de `rclpy.init`).
 - `mode:=real` exige `supervised:=true`: `navigate_*` mueve la base → solo con supervisión humana (`AGENTS.md` §3).
+- `dock_front`, `dock_table` y `undock_table` exigen llegadas de `/scan` y `/odom` de
+  no más de 0.3 s, medidas con reloj monotónico. Comprueban la frescura cada ciclo de
+  50 ms y, al acercarse, también después de calcular la decisión. Si falta un sensor
+  o vence, publican velocidad cero al salir y fallan con `no_scan`, `no_odom`,
+  `stale_scan` o `stale_odom`; no esperan al timeout de la habilidad.
+- Ante una pared, el docking frontal considera cualquier punto del contorno de un
+  cluster que entre en el corredor de avance. Basta el mínimo configurado por
+  `min_cluster_points` (3 por defecto) para bloquear un obstáculo interpuesto.
 
 ### Uso y pruebas
 ```bash
