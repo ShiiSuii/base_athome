@@ -1208,6 +1208,7 @@ def test_initial_spin_order_fixed_head_and_three_views_merge_in_map():
 
     session = h.make_session(spin_fn=spin, point_head_fn=lambda p, t: events.append(('head', (p, t))))
     session.detect_customers_fn = detect
+    session.stop_look_on_customer = False      # este test mira las tres vistas completas
     assert session.run()
     assert [v for e, v in events if e == 'spin'] == [math.pi / 2, -math.pi, math.pi / 2]
     assert [e for e, _ in events[:9]] == ['head', 'spin', 'look'] * 3
@@ -1229,6 +1230,7 @@ def test_failed_spin_keeps_customers_and_continues_without_blind_relative_turns(
         return len(turns) != failed_spin
 
     session = h.make_session(spin_fn=spin)
+    session.stop_look_on_customer = False      # aca importa que hace un giro fallido, no el corte por cliente
     assert session.run()
     assert len(turns) == failed_spin
     assert len([e for e, _ in h.events if e == 'detect_customers']) == failed_spin
@@ -1321,3 +1323,26 @@ def test_restaurant_rolling_overlay_preserves_slam_obstacles_and_unknown_space()
     assert params['track_unknown_space']
     assert params['plugins'] == ['static_layer', 'obstacle_layer', 'inflation_layer']
     assert params['obstacle_layer']['scan']['topic'] == '/scan_nav'
+
+
+
+def test_look_around_stops_at_the_first_customer_and_goes_there():
+    """Pedido del usuario: en cuanto ve a alguien con la mano levantada deja de girar y navega hacia esa persona."""
+    h = FakeRestaurantHarness(speech_script=['water', 'ready'])
+    spins, looks = [], []
+    views = iter([[{'id': '1', 'xy': [3., 1.]}], [], []])
+
+    def spin(angle):
+        spins.append(angle)
+        return True
+
+    def detect(timeout_s, min_frames):
+        looks.append(timeout_s)
+        return next(views)
+
+    session = h.make_session(spin_fn=spin)
+    session.detect_customers_fn = detect
+    assert session.run()
+    assert spins == [math.pi / 2] and len(looks) == 1          # no siguio con -180 ni +90
+    assert [c['xy'] for c in session.customers] == [[3., 1.]]
+    assert h.nav_goals, "tiene que navegar hacia la persona detectada"

@@ -263,6 +263,7 @@ class RestaurantSession:
             raise ValueError("pose_timeout_s must be positive and finite")
         self.standoff_dist = float(standoff_dist)
         self.served = 0
+        self.stop_look_on_customer = True     # cortar el barrido inicial en cuanto aparece un cliente
         self.use_tray = bool(use_tray)
         self.max_customers = int(max_customers)
 
@@ -359,6 +360,11 @@ class RestaurantSession:
                         continue
                     if not any(math.hypot(x - c["xy"][0], y - c["xy"][1]) < 0.8 for c in customers):
                         customers.append(dict(customer, xy=[x, y]))
+            # Pedido del usuario: apenas ve a alguien con la mano levantada, corta el barrido y va hacia esa persona
+            # (su posicion en el mapa ya quedo guardada). No sigue girando.
+            if customers and self.spin_fn and self.stop_look_on_customer:
+                self._set_state(SessionState.DETECTING_CUSTOMERS, {"stopped_look_at_angle": angle, "customers": len(customers)})
+                break
             # Tras un giro fallido no se conoce el yaw alcanzado. Aprovechar esta vista
             # y las anteriores, sin encadenar giros relativos que ya no volverian al frente.
             if not spin_ok:
