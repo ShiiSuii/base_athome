@@ -73,8 +73,8 @@ class VoiceClient:
         self.status_time = time.time()
 
     # ------------------------------------------------------------------ pedidos
-    def request(self, prompt: str = "", **kw) -> str:
-        """Abre una escucha (llamar DESPUES del beep). Devuelve el id."""
+    def request(self, prompt: str = "", quiet: bool = False, **kw) -> str:
+        """Abre una escucha (llamar DESPUES del beep). Devuelve el id. quiet: no loguear escuchas sin voz (monitor de "stop")."""
         rid = f"{self._prefix}{next(self._ids)}"
         p = dict(self.defaults)
         p.update({k: float(v) for k, v in kw.items() if k in p and v is not None})
@@ -85,12 +85,13 @@ class VoiceClient:
         with self._lock:
             for old in list(self._pending):      # un pedido nuevo reemplaza a los anteriores
                 self._finish(old, VoiceResult(old, "cancelled", reason="replaced"))
-            self._pending[rid] = {"t0": now, "deadline": deadline, "legacy": legacy, "speech": False}
+            self._pending[rid] = {"t0": now, "deadline": deadline, "legacy": legacy, "speech": False, "quiet": quiet}
         if legacy:
             self._legacy_trigger(rid)
         else:
             self.pub_request.publish(String(data=json.dumps(dict(p, id=rid, prompt=prompt or ""))))
-        self.log.info(f"🎤 Escuchando [{rid}]{' (modo compatible)' if legacy else ''}")
+        if not quiet:
+            self.log.info(f"🎤 Escuchando [{rid}]{' (modo compatible)' if legacy else ''}")
         return rid
 
     def _new_protocol_available(self) -> bool:
@@ -174,7 +175,7 @@ class VoiceClient:
             self._results[rid] = res
             if len(self._results) > 50:
                 self._results.pop(next(iter(self._results)))
-            if res.status != "cancelled":
+            if res.status != "cancelled" and not (pend.get("quiet") and res.status != "ok"):
                 self.log.info(f"🎤 [{rid}] {res.status}{': ' + repr(res.text) if res.text else ''}"
                               f"{' (' + res.reason + ')' if res.reason else ''}")
 

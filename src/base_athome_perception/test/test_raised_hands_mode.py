@@ -14,6 +14,7 @@ import pytest
 
 from base_athome_perception.person_search import PersonSearch
 from base_athome_perception.raised_hand import (
+    classify_raised_hand,
     COCO_L_SHOULDER,
     COCO_L_WRIST,
     COCO_NOSE,
@@ -263,7 +264,7 @@ class SweepHarness:
         methods = [n for n in cls.body if isinstance(n, ast.FunctionDef)
                    and n.name in ("_find_raised_hands", "_sweep_people", "_head_state", "_head_still")]
         env = dict(math=math, time=NS(time=lambda: self.now, sleep=self.advance),
-                   SIM=True, RaisedHandsAggregator=RaisedHandsAggregator,
+                   SIM=True, RaisedHandsAggregator=RaisedHandsAggregator, classify_raised_hand=classify_raised_hand,
                    bv=NS(HEAD_STILL_DPS=3.0))
         for n in tree.body:
             if isinstance(n, ast.Assign) and isinstance(n.targets[0], ast.Name):
@@ -449,7 +450,7 @@ def test_find_person_reuses_sweep_and_map_positions_without_ros(sim, fresh_frame
             node.rgb_stamp = now[0]
     scope = dict(json=json, time=SimpleNamespace(time=lambda: now[0], sleep=sleep),
                  PersonSearch=PersonSearch, valid_descriptor=valid_descriptor,
-                 RaisedHandsAggregator=RaisedHandsAggregator,
+                 RaisedHandsAggregator=RaisedHandsAggregator, classify_raised_hand=classify_raised_hand,
                  RAISED_HANDS_PANS=(-60., -30., 0., 30., 60.), SEARCH_TILT=0.,
                  RAISED_HANDS_VIEW_S=2., RAISED_HANDS_SETTLE_S=1.5,
                  SIM=sim, extract_person_attributes=extract_person_attributes, String=SimpleNamespace,

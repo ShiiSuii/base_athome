@@ -1216,7 +1216,7 @@ def test_initial_spin_order_fixed_head_and_three_views_merge_in_map():
     assert [c['xy'] for c in session.customers] == [[2., -1.], [4., 2.]]
     assert len(set(c['id'] for c in session.customers)) == 2
     assert len(session.orders) == 2 and session.served == 2
-    assert all(v == (8., 3) for e, v in events if e == 'look')
+    assert all(v == (14., 3) for e, v in events if e == 'look')      # 14 s por mirada: 8 era poco con YOLO en la CPU
 
 
 @pytest.mark.parametrize('failed_spin', [1, 2, 3])

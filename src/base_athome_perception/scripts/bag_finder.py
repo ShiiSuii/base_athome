@@ -364,6 +364,8 @@ class BagFinder(Node):
         self._ensure_torque()
         aggregator = RaisedHandsAggregator(min_frames=min_frames, match_dist_m=0.8) if search is None else None
 
+        fixed_head = search is None and "pans" in req
+        seen = dict(frames=0, people=0, raised=0)
         pan_idx = 0
         last_stamp = None
         while time.time() < end:
@@ -373,9 +375,9 @@ class BagFinder(Node):
 
             settle_end = min(end, time.time() + RAISED_HANDS_SETTLE_S)
             while time.time() < settle_end:
-                if (time.time() - self.head_stamp < 0.5
-                        and abs(self.head[0] - pan) < 3.0
-                        and abs(self.head[1] - SEARCH_TILT) < 3.0 and self._head_still()):
+                # Con la cabeza fija (pedido con "pans", la base es la que gira) no se espera llegar: alcanza con que este quieta.
+                if (time.time() - self.head_stamp < 0.5 and self._head_still()
+                        and (fixed_head or (abs(self.head[0] - pan) < 3.0 and abs(self.head[1] - SEARCH_TILT) < 3.0))):
                     break
                 time.sleep(0.05)
             else:
@@ -402,6 +404,9 @@ class BagFinder(Node):
                     cam = self._cam(stamp)
                     if rgb is not None:
                         people = self._poses(rgb, cam)
+                        seen["frames"] += 1
+                        seen["people"] = max(seen["people"], len(people))
+                        seen["raised"] += sum(1 for p in people if classify_raised_hand(p[1], p[2]).is_raised)
                         candidates = []
                         for person in people:
                             # En simulacion los puntos del cuerpo no coinciden con el modelo dibujado: la profundidad del
@@ -437,7 +442,8 @@ class BagFinder(Node):
         if out["ok"]:
             self.get_logger().info(f"Modo raised_hands: {len(out['customers'])} clientes encontrados")
         else:
-            self.get_logger().info(f"Modo raised_hands: sin clientes ({out['error']})")
+            self.get_logger().info(f"Modo raised_hands: sin clientes ({out['error']}); cuadros={seen['frames']}, "
+                                   f"maximo de personas en un cuadro={seen['people']}, cuadros con mano levantada={seen['raised']}")
         return out
 
     def _wait_gesture(self, end):

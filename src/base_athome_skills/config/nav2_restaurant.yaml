@@ -30,3 +30,12 @@ global_costmap:
       obstacle_layer:
         scan:
           max_obstacle_height: 2.0
+
+# Giro inicial de Restaurant (Spin de Nav2) mas lento: el usuario lo vio demasiado rapido. En Jazzy el Spin lee estos
+# parametros en la raiz de behavior_server (no bajo "spin:"), asi que el 0.8 de nav2_params.yaml no se aplicaba y giraba
+# al valor por defecto (1.0 rad/s, aceleracion 3.2).
+behavior_server:
+  ros__parameters:
+    max_rotational_vel: 0.40     # rad/s (~23 grados/s)
+    min_rotational_vel: 0.30     # menos y la base del hoverboard puede no arrancar
+    rotational_acc_lim: 0.8

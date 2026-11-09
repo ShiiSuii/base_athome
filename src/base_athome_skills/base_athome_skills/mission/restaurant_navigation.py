@@ -29,7 +29,7 @@ class NavigationStopMonitor:
         if self.stopped:
             return
         if self.request_id is None:
-            self.request_id = self.voice.request(prompt="Stop.", start_timeout=2.0, max_speech=2.0)
+            self.request_id = self.voice.request(prompt="Stop.", quiet=True, start_timeout=2.0, max_speech=2.0)   # solo se loguea si oye algo
         result = self.voice.poll(self.request_id)
         if result is not None:
             self.request_id = None

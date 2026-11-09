@@ -343,7 +343,7 @@ class RestaurantSession:
             if self.stopped or self._is_timeout():
                 break
             self._set_state(SessionState.DETECTING_CUSTOMERS)
-            raw = self.detect_customers_fn(min(8.0 if self.spin_fn else 40.0, self.remaining_s()), 3)
+            raw = self.detect_customers_fn(min(14.0 if self.spin_fn else 40.0, self.remaining_s()), 3)   # 8 s era poco con YOLO en la CPU
             view = (raw.get("customers", []) if raw.get("ok", True) else []) if isinstance(raw, dict) else raw
             if isinstance(view, list):
                 for customer in view:
