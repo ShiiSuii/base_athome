@@ -129,6 +129,22 @@ class SimRobot(Node):
         self.walk_after_s = float(os.environ.get("ATHOME_SIM_PERSON_WALK_AFTER_S", "0") or 0)
         self.t_start = time.time()
         self.person_sway = float(os.environ.get("ATHOME_SIM_PERSON_SWAY_M", "0.0"))
+        # ATHOME_SIM_CUSTOMERS="x,y;x,y" (clientes sentados o de pie con mano levantada para Restaurant)
+        self.customers_xy = []
+        raw_cust = os.environ.get("ATHOME_SIM_CUSTOMERS", "").strip()
+        if raw_cust:
+            for item in raw_cust.split(";"):
+                item = item.strip()
+                if item:
+                    parts = [v.strip() for v in item.split(",") if v.strip()]
+                    if len(parts) >= 2:
+                        try:
+                            cx, cy = float(parts[0]), float(parts[1])
+                            hand = parts[2] if len(parts) >= 3 else "right"
+                            seated = (parts[3].lower() == "seated") if len(parts) >= 4 else False
+                            self.customers_xy.append({"xy": [cx, cy], "hand": hand, "seated": seated})
+                        except ValueError:
+                            pass
         self.bag2 = [float(v) for v in os.environ["ATHOME_SIM_BAG2"].split(",")] if os.environ.get("ATHOME_SIM_BAG2") else None
         self.wrist_tilt_err = math.radians(float(os.environ.get("ATHOME_SIM_WRIST_TILT_ERR_DEG", "0")))   # montaje real distinto del modelo
         self.head_pix_err = float(os.environ.get("ATHOME_SIM_DEPTH_NOISE_MM", "5"))
@@ -548,15 +564,34 @@ class SimRobot(Node):
             self.get_logger().warn(f"gz service: {e}")
             return ""
 
+    def _customers(self):
+        """Devuelve las personas clientes con mano levantada segun ATHOME_SIM_CUSTOMERS."""
+        out = []
+        robot_pos = (self.base.x, self.base.y)
+        for c in self.customers_xy:
+            out.append(sim_scene.make_customer(
+                c["xy"],
+                facing_xy=robot_pos,
+                hand=c.get("hand", "right"),
+                seated=c.get("seated", False)
+            ))
+        return out
+
     def _gz_spawn_scene(self):
-        """Crea la bolsa y la persona cuando el mundo ya corre."""
-        if self.rigid_object:
-            models = [gz_model.table_object_sdf(self.bag_map)]
-        else:
-            models = [gz_model.bag_sdf(self.bag_map[:2], self.bag_top), gz_model.person_sdf(self.person_xy)]
+        """Crea la bolsa, la persona y los clientes cuando el mundo ya corre."""
+        models = []
+        if self.rigid_object and self.bag_map is not None:
+            models.append(gz_model.table_object_sdf(self.bag_map))
+        elif self.bag_map is not None:
+            models.append(gz_model.bag_sdf(self.bag_map[:2], self.bag_top))
+        if self.person_xy is not None and (self.bag_map is not None or "ATHOME_SIM_PERSON" in os.environ):
+            models.append(gz_model.person_sdf(self.person_xy))
         if self.bag2 is not None:
             models.append(gz_model.bag_sdf(self.bag2[:2], self.bag2[2]).replace(f'name="{gz_model.BAG_MODEL}"', 'name="bolsa_2"')
                           .replace(gz_model.BAG_ODOM_TOPIC, "/sim/gz/bolsa_2/odometry"))
+        for i, c in enumerate(self.customers_xy):
+            name = f"cliente_{i+1}"
+            models.append(gz_model.customer_sdf(name, c["xy"], hand=c.get("hand", "right"), seated=c.get("seated", False)))
         time.sleep(3.0)
         for sdf in models:
             for _ in range(10):
@@ -565,7 +600,7 @@ class SimRobot(Node):
                 time.sleep(1.0)
             else:
                 self.get_logger().error("No pude crear un modelo en Gazebo")
-        self.get_logger().info("Bolsa y persona creadas en Gazebo")
+        self.get_logger().info("Modelos de escena creados en Gazebo")
 
     def _gz_bag_odom(self, m):
         if time.time() < self.gz_ready_t:
@@ -576,8 +611,12 @@ class SimRobot(Node):
 
     def _gz_people(self):
         """Publica los puntos del cuerpo y muestra en Gazebo el brazo con el que senala."""
+        people = []
         person = self._person()
-        self.pub_people.publish(String(data=json.dumps(dict(people=[person] if person else []))))
+        if person is not None:
+            people.append(person)
+        people.extend(self._customers())
+        self.pub_people.publish(String(data=json.dumps(dict(people=people))))
         if person is None:
             return
         pointing = self.person_pointing and not self.obj_attached and not self.bag_delivered
@@ -737,7 +776,7 @@ class SimRobot(Node):
 
     def _person(self, ahead=False):
         """La persona ahora: mira al robot y, si corresponde, apunta a la bolsa con el error de una persona real."""
-        if self.bag_map is None:
+        if self.bag_map is None and "ATHOME_SIM_PERSON" not in os.environ:
             return None
         xy = list(self.person_xy)
         if self.person_sway:
@@ -751,7 +790,8 @@ class SimRobot(Node):
         target = None
         # En Gazebo el brazo visible tarda en aparecer: el gesto cuenta recien cuando la camara lo puede medir
         if self.person_pointing and not self.obj_attached and not self.bag_delivered and (not self.gz or self.gz_arm_ready):
-            target = (self.bag_map[0] + self.point_err, self.bag_map[1] - self.point_err)
+            if self.bag_map is not None:
+                target = (self.bag_map[0] + self.point_err, self.bag_map[1] - self.point_err)
         return sim_scene.make_person(xy, (self.base.x, self.base.y), target)
 
     def _world_faces(self, person):
@@ -911,10 +951,15 @@ class SimRobot(Node):
         # --- RealSense de la cabeza (640x480, fx ~615) ---
         W, H, f = 640, 480, 615.0
         person = self._person()
-        head = self._lookup("camera_color_optical_frame", "map") if self.bag_map is not None else None
+        customers = self._customers()
+        all_people = ([person] if person else []) + customers
+        head = self._lookup("camera_color_optical_frame", "map") if (self.bag_map is not None or self.customers_xy or "ATHOME_SIM_PERSON" in os.environ) else None
         if head is not None:     # la escena sale de la geometria: la percepcion real corre en lazo cerrado
-            self.pub_people.publish(String(data=json.dumps(dict(people=[person] if person else []))))
-            rgb, depth = sim_scene.render(head[0], head[1], (f, f, W / 2, H / 2), W, H, self._world_faces(person))
+            self.pub_people.publish(String(data=json.dumps(dict(people=all_people))))
+            faces = self._world_faces(person)
+            for c in customers:
+                faces += sim_scene.person_faces(c)
+            rgb, depth = sim_scene.render(head[0], head[1], (f, f, W / 2, H / 2), W, H, faces)
             if self.head_pix_err:
                 noise = self.rng.normal(0.0, self.head_pix_err, depth.shape)
                 depth = np.where(depth > 0, np.clip(depth + noise, 1, 65535), 0).astype(np.uint16)

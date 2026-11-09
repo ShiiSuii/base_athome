@@ -63,9 +63,47 @@ def table_object_sdf(xyz, length: float = 0.23, radius: float = 0.0375) -> str:
     <odom_publish_frequency>10</odom_publish_frequency><dimensions>3</dimensions></plugin></model></sdf>"""
 
 
-def person_sdf(xy) -> str:
+def person_sdf(xy, name: str = "persona") -> str:
     """Cuerpo de la persona: bloque visual, sin colision, de la altura que usa sim_scene.make_person."""
-    return _static_box("persona", (xy[0], xy[1], 0.81), (0.52, 0.52, 1.62), (0.2, 0.35, 0.6))
+    return _static_box(name, (xy[0], xy[1], 0.81), (0.52, 0.52, 1.62), (0.2, 0.35, 0.6))
+
+
+def customer_sdf(name: str, xy, hand: str = "right", seated: bool = False) -> str:
+    """Cuerpo visible en Gazebo de un cliente con mano levantada (Restaurant)."""
+    h = 1.25 if seated else 1.62
+    sh_z = 1.05 if seated else 1.40
+    raised_z = h + 0.20
+    cz = h / 2.0
+    color = "0.2 0.35 0.6 1"
+    arm_color = "0.3 0.45 0.7 1"
+
+    arm_len = raised_z - sh_z
+    arm_cz = (sh_z + raised_z) / 2.0
+
+    visuals = [
+        f'  <visual name="v_cuerpo"><pose>0 0 {cz:.3f} 0 0 0</pose>'
+        f'<geometry><box><size>0.52 0.52 {h:.2f}</size></box></geometry>'
+        f'<material><diffuse>{color}</diffuse><ambient>{color}</ambient></material></visual>'
+    ]
+
+    if hand in ("right", "both"):
+        visuals.append(
+            f'  <visual name="v_brazo_d"><pose>0 -0.20 {arm_cz:.3f} 0 0 0</pose>'
+            f'<geometry><box><size>0.10 0.10 {arm_len:.3f}</size></box></geometry>'
+            f'<material><diffuse>{arm_color}</diffuse><ambient>{arm_color}</ambient></material></visual>'
+        )
+    if hand in ("left", "both"):
+        visuals.append(
+            f'  <visual name="v_brazo_i"><pose>0 0.20 {arm_cz:.3f} 0 0 0</pose>'
+            f'<geometry><box><size>0.10 0.10 {arm_len:.3f}</size></box></geometry>'
+            f'<material><diffuse>{arm_color}</diffuse><ambient>{arm_color}</ambient></material></visual>'
+        )
+
+    v_str = "\n".join(visuals)
+    return f"""<?xml version="1.0"?><sdf version="1.9"><model name="{name}"><static>true</static>
+  <pose>{xy[0]} {xy[1]} 0 0 0 0</pose><link name="l">
+{v_str}
+</link></model></sdf>"""
 
 
 def arm_pose(shoulder, wrist):

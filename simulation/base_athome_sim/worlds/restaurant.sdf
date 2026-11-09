@@ -1,0 +1,124 @@
+<?xml version="1.0"?>
+<!-- ==============================================================================
+     Base@Home - Mundo de Restaurante (Gazebo Harmonic / gz sim)
+     ==============================================================================
+     Salón de restaurante de 8 x 6 m para la prueba de Restaurant (RoboCup@Home OPL).
+     Sin mapa previo (no se genera .pgm): la prueba opera con SLAM online.
+
+     ARQUITECTURA Y PUNTOS DE REFERENCIA:
+       - Punto de arranque del robot:
+           pose: x = -1.0, y = 0.0, z = 0.0, yaw = 0.0
+           Ubicado junto a la barra de servicio (kitchen bar) mirando al este (+X) hacia las mesas.
+       - Barra de servicio (kitchen bar):
+           pose: x = -2.0, y = 0.0, z = 0.0
+           Dimensiones: 0.6 m de profundidad (X) x 3.0 m de largo (Y) x 0.90 m de altura (Z).
+       - Mesas de comedor (3 mesas):
+           * Mesa 1 (mesa_1): pose 1.5 1.5 0.0 (0.8 x 1.2 x 0.76 m) con 2 sillas.
+           * Mesa 2 (mesa_2): pose 3.5 1.5 0.0 (0.8 x 1.2 x 0.76 m) con 2 sillas.
+           * Mesa 3 (mesa_3): pose 2.5 -1.5 0.0 (0.8 x 1.4 x 0.76 m) con 2 sillas.
+
+     POSICIONES SUGERIDAS DE CLIENTES (ATHOME_SIM_CUSTOMERS):
+       - Cliente en Mesa 1: x = 1.5, y = 2.3 (esperando de pie o sentado junto a la mesa)
+       - Cliente en Mesa 2: x = 3.5, y = 2.3
+       - Cliente en Mesa 3: x = 2.5, y = -2.4
+       Ejemplo de ejecucion:
+         ATHOME_SIM_CUSTOMERS="1.5,2.3;2.5,-2.4"
+     ============================================================================== -->
+<sdf version="1.9">
+  <world name="restaurant">
+    <physics name="1ms" type="ignored"><max_step_size>0.002</max_step_size><real_time_factor>1.0</real_time_factor></physics>
+    <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics"/>
+    <plugin filename="gz-sim-user-commands-system" name="gz::sim::systems::UserCommands"/>
+    <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster"/>
+    <plugin filename="gz-sim-sensors-system" name="gz::sim::systems::Sensors"><render_engine>ogre2</render_engine></plugin>
+    <light type="directional" name="sol"><cast_shadows>false</cast_shadows><pose>0 0 10 0 0 0</pose>
+      <diffuse>0.9 0.9 0.9 1</diffuse><direction>-0.3 0.2 -1</direction></light>
+    <scene><ambient>0.6 0.6 0.6 1</ambient><background>0.8 0.85 0.9 1</background></scene>
+
+    <!-- Piso del salon -->
+    <model name="piso"><static>true</static><link name="l">
+      <collision name="col_piso"><geometry><plane><normal>0 0 1</normal><size>20 20</size></plane></geometry></collision>
+      <visual name="vis_piso"><geometry><plane><normal>0 0 1</normal><size>20 20</size></plane></geometry>
+        <material><diffuse>0.60 0.55 0.50 1</diffuse><ambient>0.60 0.55 0.50 1</ambient></material></visual></link></model>
+
+    <!-- Paredes: salon de 8 x 6 m (X: -3 a +5 m, Y: -3 a +3 m) -->
+    <model name="paredes"><static>true</static><link name="l">
+      <!-- Pared Norte (Y = +3) -->
+      <collision name="col_n"><pose>1.0 3.0 0.6 0 0 0</pose><geometry><box><size>8.0 0.1 1.2</size></box></geometry></collision>
+      <visual name="vis_n"><pose>1.0 3.0 0.6 0 0 0</pose><geometry><box><size>8.0 0.1 1.2</size></box></geometry>
+        <material><diffuse>0.85 0.85 0.82 1</diffuse><ambient>0.85 0.85 0.82 1</ambient></material></visual>
+      <!-- Pared Sur (Y = -3) -->
+      <collision name="col_s"><pose>1.0 -3.0 0.6 0 0 0</pose><geometry><box><size>8.0 0.1 1.2</size></box></geometry></collision>
+      <visual name="vis_s"><pose>1.0 -3.0 0.6 0 0 0</pose><geometry><box><size>8.0 0.1 1.2</size></box></geometry>
+        <material><diffuse>0.85 0.85 0.82 1</diffuse><ambient>0.85 0.85 0.82 1</ambient></material></visual>
+      <!-- Pared Este (X = +5) -->
+      <collision name="col_e"><pose>5.0 0.0 0.6 0 0 0</pose><geometry><box><size>0.1 6.0 1.2</size></box></geometry></collision>
+      <visual name="vis_e"><pose>5.0 0.0 0.6 0 0 0</pose><geometry><box><size>0.1 6.0 1.2</size></box></geometry>
+        <material><diffuse>0.85 0.85 0.82 1</diffuse><ambient>0.85 0.85 0.82 1</ambient></material></visual>
+      <!-- Pared Oeste (X = -3) -->
+      <collision name="col_w"><pose>-3.0 0.0 0.6 0 0 0</pose><geometry><box><size>0.1 6.0 1.2</size></box></geometry></collision>
+      <visual name="vis_w"><pose>-3.0 0.0 0.6 0 0 0</pose><geometry><box><size>0.1 6.0 1.2</size></box></geometry>
+        <material><diffuse>0.85 0.85 0.82 1</diffuse><ambient>0.85 0.85 0.82 1</ambient></material></visual>
+    </link></model>
+
+    <!-- Barra de cocina (kitchen bar) en el extremo oeste: 0.6 x 3.0 x 0.90 m -->
+    <model name="barra"><static>true</static><pose>-2.0 0.0 0.0 0 0 0</pose><link name="l">
+      <collision name="col_barra"><pose>0 0 0.45 0 0 0</pose><geometry><box><size>0.6 3.0 0.90</size></box></geometry></collision>
+      <visual name="vis_barra"><pose>0 0 0.45 0 0 0</pose><geometry><box><size>0.6 3.0 0.90</size></box></geometry>
+        <material><diffuse>0.28 0.22 0.18 1</diffuse><ambient>0.28 0.22 0.18 1</ambient></material></visual></link></model>
+
+    <!-- Mesa 1: 0.8 x 1.2 x 0.76 m con sillas -->
+    <model name="mesa_1"><static>true</static><pose>1.5 1.5 0.0 0 0 0</pose><link name="l">
+      <collision name="col_mesa_1"><pose>0 0 0.38 0 0 0</pose><geometry><box><size>0.8 1.2 0.76</size></box></geometry></collision>
+      <visual name="vis_mesa_1"><pose>0 0 0.38 0 0 0</pose><geometry><box><size>0.8 1.2 0.76</size></box></geometry>
+        <material><diffuse>0.50 0.35 0.20 1</diffuse><ambient>0.50 0.35 0.20 1</ambient></material></visual></link></model>
+    <model name="silla_1_a"><static>true</static><pose>1.5 2.3 0.0 0 0 0</pose><link name="l">
+      <collision name="col_silla_1_a"><pose>0 0 0.225 0 0 0</pose><geometry><box><size>0.45 0.45 0.45</size></box></geometry></collision>
+      <visual name="vis_silla_1_a"><pose>0 0 0.225 0 0 0</pose><geometry><box><size>0.45 0.45 0.45</size></box></geometry>
+        <material><diffuse>0.25 0.30 0.55 1</diffuse><ambient>0.25 0.30 0.55 1</ambient></material></visual>
+      <visual name="vis_respaldo_1_a"><pose>0 0.20 0.625 0 0 0</pose><geometry><box><size>0.45 0.05 0.35</size></box></geometry>
+        <material><diffuse>0.25 0.30 0.55 1</diffuse><ambient>0.25 0.30 0.55 1</ambient></material></visual></link></model>
+    <model name="silla_1_b"><static>true</static><pose>1.5 0.7 0.0 0 0 0</pose><link name="l">
+      <collision name="col_silla_1_b"><pose>0 0 0.225 0 0 0</pose><geometry><box><size>0.45 0.45 0.45</size></box></geometry></collision>
+      <visual name="vis_silla_1_b"><pose>0 0 0.225 0 0 0</pose><geometry><box><size>0.45 0.45 0.45</size></box></geometry>
+        <material><diffuse>0.25 0.30 0.55 1</diffuse><ambient>0.25 0.30 0.55 1</ambient></material></visual>
+      <visual name="vis_respaldo_1_b"><pose>0 -0.20 0.625 0 0 0</pose><geometry><box><size>0.45 0.05 0.35</size></box></geometry>
+        <material><diffuse>0.25 0.30 0.55 1</diffuse><ambient>0.25 0.30 0.55 1</ambient></material></visual></link></model>
+
+    <!-- Mesa 2: 0.8 x 1.2 x 0.76 m con sillas -->
+    <model name="mesa_2"><static>true</static><pose>3.5 1.5 0.0 0 0 0</pose><link name="l">
+      <collision name="col_mesa_2"><pose>0 0 0.38 0 0 0</pose><geometry><box><size>0.8 1.2 0.76</size></box></geometry></collision>
+      <visual name="vis_mesa_2"><pose>0 0 0.38 0 0 0</pose><geometry><box><size>0.8 1.2 0.76</size></box></geometry>
+        <material><diffuse>0.50 0.35 0.20 1</diffuse><ambient>0.50 0.35 0.20 1</ambient></material></visual></link></model>
+    <model name="silla_2_a"><static>true</static><pose>3.5 2.3 0.0 0 0 0</pose><link name="l">
+      <collision name="col_silla_2_a"><pose>0 0 0.225 0 0 0</pose><geometry><box><size>0.45 0.45 0.45</size></box></geometry></collision>
+      <visual name="vis_silla_2_a"><pose>0 0 0.225 0 0 0</pose><geometry><box><size>0.45 0.45 0.45</size></box></geometry>
+        <material><diffuse>0.25 0.30 0.55 1</diffuse><ambient>0.25 0.30 0.55 1</ambient></material></visual>
+      <visual name="vis_respaldo_2_a"><pose>0 0.20 0.625 0 0 0</pose><geometry><box><size>0.45 0.05 0.35</size></box></geometry>
+        <material><diffuse>0.25 0.30 0.55 1</diffuse><ambient>0.25 0.30 0.55 1</ambient></material></visual></link></model>
+    <model name="silla_2_b"><static>true</static><pose>3.5 0.7 0.0 0 0 0</pose><link name="l">
+      <collision name="col_silla_2_b"><pose>0 0 0.225 0 0 0</pose><geometry><box><size>0.45 0.45 0.45</size></box></geometry></collision>
+      <visual name="vis_silla_2_b"><pose>0 0 0.225 0 0 0</pose><geometry><box><size>0.45 0.45 0.45</size></box></geometry>
+        <material><diffuse>0.25 0.30 0.55 1</diffuse><ambient>0.25 0.30 0.55 1</ambient></material></visual>
+      <visual name="vis_respaldo_2_b"><pose>0 -0.20 0.625 0 0 0</pose><geometry><box><size>0.45 0.05 0.35</size></box></geometry>
+        <material><diffuse>0.25 0.30 0.55 1</diffuse><ambient>0.25 0.30 0.55 1</ambient></material></visual></link></model>
+
+    <!-- Mesa 3: 0.8 x 1.4 x 0.76 m con sillas -->
+    <model name="mesa_3"><static>true</static><pose>2.5 -1.5 0.0 0 0 0</pose><link name="l">
+      <collision name="col_mesa_3"><pose>0 0 0.38 0 0 0</pose><geometry><box><size>0.8 1.4 0.76</size></box></geometry></collision>
+      <visual name="vis_mesa_3"><pose>0 0 0.38 0 0 0</pose><geometry><box><size>0.8 1.4 0.76</size></box></geometry>
+        <material><diffuse>0.50 0.35 0.20 1</diffuse><ambient>0.50 0.35 0.20 1</ambient></material></visual></link></model>
+    <model name="silla_3_a"><static>true</static><pose>2.5 -0.6 0.0 0 0 0</pose><link name="l">
+      <collision name="col_silla_3_a"><pose>0 0 0.225 0 0 0</pose><geometry><box><size>0.45 0.45 0.45</size></box></geometry></collision>
+      <visual name="vis_silla_3_a"><pose>0 0 0.225 0 0 0</pose><geometry><box><size>0.45 0.45 0.45</size></box></geometry>
+        <material><diffuse>0.25 0.30 0.55 1</diffuse><ambient>0.25 0.30 0.55 1</ambient></material></visual>
+      <visual name="vis_respaldo_3_a"><pose>0 0.20 0.625 0 0 0</pose><geometry><box><size>0.45 0.05 0.35</size></box></geometry>
+        <material><diffuse>0.25 0.30 0.55 1</diffuse><ambient>0.25 0.30 0.55 1</ambient></material></visual></link></model>
+    <model name="silla_3_b"><static>true</static><pose>2.5 -2.4 0.0 0 0 0</pose><link name="l">
+      <collision name="col_silla_3_b"><pose>0 0 0.225 0 0 0</pose><geometry><box><size>0.45 0.45 0.45</size></box></geometry></collision>
+      <visual name="vis_silla_3_b"><pose>0 0 0.225 0 0 0</pose><geometry><box><size>0.45 0.45 0.45</size></box></geometry>
+        <material><diffuse>0.25 0.30 0.55 1</diffuse><ambient>0.25 0.30 0.55 1</ambient></material></visual>
+      <visual name="vis_respaldo_3_b"><pose>0 -0.20 0.625 0 0 0</pose><geometry><box><size>0.45 0.05 0.35</size></box></geometry>
+        <material><diffuse>0.25 0.30 0.55 1</diffuse><ambient>0.25 0.30 0.55 1</ambient></material></visual></link></model>
+  </world>
+</sdf>

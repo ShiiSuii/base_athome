@@ -121,11 +121,70 @@ def make_person(xy: Sequence[float], facing_xy: Sequence[float], pointing_to: Op
     return dict(xy=list(xy), keypoints=keypoints)
 
 
+def make_customer(
+    xy: Sequence[float],
+    facing_xy: Optional[Sequence[float]] = None,
+    hand: str = "right",
+    seated: bool = False
+) -> Dict:
+    """Cliente en la simulacion con la mano levantada (Restaurant).
+    Keypoints COCO con la muneca sobre la cabeza.
+    """
+    if facing_xy is None:
+        yaw = 0.0
+    else:
+        yaw = math.atan2(facing_xy[1] - xy[1], facing_xy[0] - xy[0])
+    left = np.array([-math.sin(yaw), math.cos(yaw)])
+
+    head_z = 1.25 if seated else HEAD_Z
+    shoulder_z = 1.05 if seated else SHOULDER_Z
+    hip_z = 0.55 if seated else HIP_Z
+
+    side = lambda s, z: [xy[0] + s * left[0], xy[1] + s * left[1], z]
+    r_sh = np.array(side(-SHOULDER_HALF, shoulder_z))
+    l_sh = np.array(side(SHOULDER_HALF, shoulder_z))
+
+    raised_z = head_z + 0.20
+
+    if hand in ("right", "both"):
+        r_wr = np.array([r_sh[0], r_sh[1], raised_z])
+    else:
+        r_wr = r_sh + np.array([0.0, 0.0, -ARM_M])
+
+    if hand in ("left", "both"):
+        l_wr = np.array([l_sh[0], l_sh[1], raised_z])
+    else:
+        l_wr = l_sh + np.array([0.0, 0.0, -ARM_M])
+
+    r_el = (r_sh + r_wr) / 2.0
+    l_el = (l_sh + l_wr) / 2.0
+
+    keypoints = {
+        0: [xy[0], xy[1], head_z],
+        5: l_sh.tolist(),
+        6: r_sh.tolist(),
+        7: l_el.tolist(),
+        8: r_el.tolist(),
+        9: l_wr.tolist(),
+        10: r_wr.tolist(),
+        11: side(0.12, hip_z),
+        12: side(-0.12, hip_z)
+    }
+    return dict(xy=list(xy), keypoints=keypoints, hand=hand, seated=seated)
+
+
 def person_faces(person: Dict) -> List:
     kp = person["keypoints"]
-    faces = prism_faces(person["xy"], 0.0, SHOULDER_Z + 0.05, BODY_R + 0.07, BODY_BGR)
-    faces += prism_faces(person["xy"], SHOULDER_Z + 0.05, HEAD_Z + 0.1, 0.10, HEAD_BGR)
-    faces += segment_faces(kp[5], kp[9], 0.045, ARM_BGR) + segment_faces(kp[6], kp[10], 0.045, ARM_BGR)
+    # Soporta tanto personas de pie como clientes sentados usando la altura de sus keypoints
+    k5 = kp.get(5) or kp.get("5")
+    k0 = kp.get(0) or kp.get("0")
+    shoulder_z = float(k5[2]) if k5 is not None else SHOULDER_Z
+    head_z = float(k0[2]) if k0 is not None else HEAD_Z
+    k9 = kp.get(9) or kp.get("9")
+    k10 = kp.get(10) or kp.get("10")
+    faces = prism_faces(person["xy"], 0.0, shoulder_z + 0.05, BODY_R + 0.07, BODY_BGR)
+    faces += prism_faces(person["xy"], shoulder_z + 0.05, head_z + 0.1, 0.10, HEAD_BGR)
+    faces += segment_faces(k5, k9, 0.045, ARM_BGR) + segment_faces(k6 := (kp.get(6) or kp.get("6")), k10, 0.045, ARM_BGR)
     return faces
 
 
