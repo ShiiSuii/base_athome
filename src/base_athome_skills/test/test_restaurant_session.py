@@ -897,7 +897,7 @@ def test_tf_recovery_within_deadline_records_only_measured_pose():
     h = FakeRestaurantHarness(customers=[])
     session = h.make_session()
     session.get_pose_fn = lambda: (4., 5., 0.7) if h.current_time >= 100.3 else None
-    assert session.run()
+    assert session.run() is False      # sin clientes la prueba no se hizo; lo que importa es la pose medida
     assert session.bar_pose == (4., 5., 0.7)
     assert not h.nav_goals
 
