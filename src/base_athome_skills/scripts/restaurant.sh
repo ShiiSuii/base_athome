@@ -11,11 +11,12 @@ set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 WS=$(cd "$HERE/../../.." && pwd)
 
-if pgrep -f 'hri_receptionist' >/dev/null; then
+# Los chequeos buscan el programa que corre, no cualquier linea que lo nombre (un agente o un editor con ese texto no cuenta)
+if pgrep -f 'python3? [^ ]*hri_receptionist[^ ]*\.py|lib/base_athome_perception/hri_receptionist' >/dev/null; then
   echo "El receptionist esta corriendo: usa el mismo microfono. Cerralo antes."
   exit 1
 fi
-if pgrep -f 'commander' >/dev/null; then
+if pgrep -f 'lib/base_athome_skills/commander( |$)|^/bin/bash [^ ]*scripts/commander\.sh' >/dev/null; then
   echo "Hay una sesion de commander abierta. Cerrala antes."
   exit 1
 fi
