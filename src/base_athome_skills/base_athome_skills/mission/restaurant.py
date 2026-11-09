@@ -65,7 +65,7 @@ def confirm_order_phrase(items: Sequence[str]) -> str:
     """Confirmacion inmediata del pedido al comensal."""
     clean = [str(it).strip().lower() for it in items if str(it).strip()]
     if not clean:
-        return repeat_order_phrase()
+        return limit_words("I have taken your order and will bring it right away.")
     if len(clean) == 1:
         text = f"I will bring you a {clean[0]} right away."
     else:
@@ -97,8 +97,10 @@ def barman_request_phrase(items: Sequence[str], use_tray: bool = True) -> str:
 def deliver_phrase(items: Sequence[str]) -> str:
     """Frase de entrega de los items al cliente."""
     clean = [str(it).strip().lower() for it in items if str(it).strip()]
-    joined = " and ".join(clean) if clean else "your order"
-    return limit_words(f"Here is your order of {joined}. Enjoy!")
+    if clean:
+        joined = " and ".join(clean)
+        return limit_words(f"Here is your order of {joined}. Enjoy!")
+    return limit_words("Here is your order, please take it from my tray.")
 
 
 # ------------------------------------------------------------------------------
@@ -295,6 +297,8 @@ def _resolve_customer_place(client: Dict[str, Any]) -> str:
     if "table" in client and client["table"]:
         return str(client["table"])
     cid = client.get("id", "1")
+    if "xy" in client:
+        return f"customer_{cid}"
     return f"table_{cid}"
 
 
