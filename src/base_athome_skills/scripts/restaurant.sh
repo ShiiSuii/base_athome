@@ -34,6 +34,13 @@ set -u
 . "$HERE/session_lib.sh"
 
 nav_up() { timeout 6 ros2 action list 2>/dev/null | grep -q '^/navigate_to_pose$'; }
+# Alguien PUBLICA el topico. "ros2 topic list" tambien lista topicos que solo tienen suscriptores: asi el lidar no se lanzaba.
+has_publisher() { timeout 6 ros2 topic info "$1" 2>/dev/null | grep -Eq '^Publisher count: [1-9]'; }
+# Debug visual (RVIZ=0 lo apaga): mapa SLAM, costmaps, lidar completo y el que usa Nav2, plan y camara de la cabeza.
+start_rviz() {
+  [ "${RVIZ:-1}" = 1 ] || return 0
+  session_start rviz env DISPLAY="${DISPLAY:-:1}" nice -n 5 rviz2 -d "$WS/src/base_athome_skills/config/restaurant.rviz"
+}
 
 restaurant_graph_idle() {
   local nodes actions
@@ -101,8 +108,7 @@ if [ "${SIM:-0}" = 1 ]; then
 
   GUI=false
   [ "${GZ_GUI:-0}" = 1 ] && GUI=true
-  RV=false
-  [ "${RVIZ:-0}" = 1 ] && RV=true
+  RV=false     # el RViz de Restaurant se abre aparte (start_rviz), con costmaps y plan
 
   session_start sim ros2 launch base_athome_sim sim.launch.py gazebo:=true gz_gui:=$GUI rviz:=$RV "${W_ARG[@]}"
   echo "Esperando arranque de Gazebo..."
@@ -119,6 +125,7 @@ if [ "${SIM:-0}" = 1 ]; then
   echo "Levantando navegacion con SLAM (restaurant_nav)..."
   session_start nav ros2 launch base_athome_skills restaurant_nav.launch.py use_sim_time:=false   # nuestra simulacion publica con la hora real, como nav2_sim.launch.py
   wait_restaurant_nav || exit 1
+  start_rviz
 
   echo "Iniciando restaurant_node..."
   AUTO_ARG=(); [ "${AUTO:-0}" = 1 ] && AUTO_ARG=(-p auto_start:=true)   # AUTO=1: sin esperar ENTER (pruebas automaticas)
@@ -130,6 +137,9 @@ fi
 # MODO ROBOT REAL (POR DEFECTO)
 # ------------------------------------------------------------------------------
 export ROS_DOMAIN_ID=10
+# Procesos de una corrida anterior que murio sin limpiar: se cierran antes de decidir si hay otro stack activo.
+export BASE_ATHOME_SESSION=$$
+session_stop_orphans
 restaurant_graph_idle || exit 1
 session_init "${RESTAURANT_LOG_DIR:-/tmp}/restaurant_$$"
 
@@ -138,12 +148,12 @@ echo "ROBOT REAL: se mueve solo; E-stop a mano"
 echo "============================================================"
 
 # 1. Base y actuadores
-if ! timeout 6 ros2 topic list 2>/dev/null | grep -q '^/odom$'; then
+if ! has_publisher /odom; then
   session_start base ros2 launch base_athome_bringup base.launch.py
 fi
 
 # 2. LiDAR Hokuyo
-if ! timeout 6 ros2 topic list 2>/dev/null | grep -q '^/scan$'; then
+if ! has_publisher /scan; then
   session_start lidar ros2 launch urg_node urg_node_launch.py
 fi
 
@@ -178,6 +188,7 @@ VLM_MODEL=$HOME/.local/share/base_athome/models/SmolVLM-500M-Instruct-Q8_0.gguf
 echo "Levantando SLAM y Nav2 (restaurant_nav)..."
 session_start nav ros2 launch base_athome_skills restaurant_nav.launch.py
 wait_restaurant_nav || exit 1
+start_rviz
 
 # 9. Nodo Restaurant en primer plano
 echo "Iniciando nodo Restaurant..."
