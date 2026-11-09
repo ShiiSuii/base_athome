@@ -1,0 +1,24 @@
+================================================================================
+LISTA FINAL DE PENDIENTES [TBD] PARA EL TDP DE URUBOTS (ROBOCUP@HOME OPL 2027)
+Fecha: 2026-11-09 | Entrega: 06/12/2026 23:59 GMT | docs/TDP_PENDIENTES.txt
+================================================================================
+1. [TBD #1] AUTORES Y AFILIACIÓN (Header y Annex): Lista y orden de autores,
+   ORCID, afiliación institucional (Facultad/Universidad, Uruguay) y contacto.
+2. [TBD #2] IDENTIDAD DEL ROBOT E HISTORIAL (Abstract y Sec. 1): Nombre oficial
+   ("Base@Home" u otro) y antecedentes del equipo UruBots / primera postulación.
+3. [TBD #3] WEB EN INGLÉS Y VIDEO (Header y Annex): URL pública (urubots.uy) y
+   video de cualificación publicado (<= 10 min, 16:9, >= 5 habilidades en continuo).
+4. [TBD #4] FOTOGRAFÍAS REALES (Fig. 1 y Annex): Fotos del robot completo y
+   distribución de hardware sin personas sin consentimiento ni marcadores ArUco.
+5. [TBD #5] LICENCIA DE CÓDIGO ABIERTO (Repo y Annex): Licencia formal (Apache
+   2.0 / MIT) en el repo público para postular al Open-Source Award.
+6. [TBD #6] DIMENSIONES Y PESO MEDIDO (Sec. 2 y Annex): Medición en balanza y cinta:
+   peso total en kg, ancho y alto total (RuleBook §4.4: ancho <= 70 cm, alto <= 200 cm).
+7. [TBD #7] ALIMENTACIÓN Y SEGURIDAD ELÉCTRICA (Sec. 2 y Annex): Batería, química,
+   tensión, BMS, fusibles y verificación física de E-stop único que corte todo.
+8. [TBD #8] CALIBRACIÓN EXTRÍNSECA Y HOLGURA (Sec. 2 y 4): Calibración fina de
+   cámaras (D435 y DaBai) y comprobar que el brazo lateral plegado esté dentro de 36 cm.
+9. [TBD #9] ENSAYOS FÍSICOS SUPERVISADOS [HARDWARE_VERIFIED] (Sec. 5): Series
+   (N >= 10) en LAB_SUPERVISADO de: basura, Receptionist, voz en vivo y Nav2 real.
+10. [TBD #10] AGRADECIMIENTOS Y FINANCIACIÓN: Fuentes de financiamiento o apoyo.
+================================================================================
