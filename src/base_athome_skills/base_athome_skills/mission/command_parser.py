@@ -13,6 +13,7 @@ import unicodedata
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
+from . import vlm
 from .places import resolve
 
 PLACE_ALIASES = {
@@ -173,6 +174,12 @@ TRASH_RE = re.compile(r"(?:^|\b)(?:saca|sacar|saques|sacame|tira|tirar|tires|tir
                       r".*\b(?:basura|trash|garbage|rubbish)\b")
 BAG_RE = re.compile(r"\b(?:bolsa|bag|bolso)\b(?!\s+(?:de|of)\b)")
 POINT_RE = re.compile(r"\b(?:senalo|senalando|apunto|apuntando|pointing|point|indicando|indico)\b")
+LOOK_RE = re.compile(r"^(?:tell me |decime )?(?:what (?:do|can) you see(?: now| here)?|what is (?:in front of you|around you)|"
+                     r"describe (?:what you see|the (?:room|scene|place)|your surroundings|this|everything)|"
+                     r"look around(?: and (?:tell me|describe)(?: what you see)?)?|"
+                     r"que (?:ves|estas viendo|hay (?:adelante|enfrente)(?: tuyo)?)|describi (?:lo que ves|el lugar|la habitacion)|"
+                     r"mira y deci(?:me)? (?:lo )?que ves)$")
+HOW_MANY_SEE_RE = re.compile(r"^(?:tell me )?how many (.+?) (?:do|can) you see(?: now| here)?$")
 REQUEST_PREFIX_RE = re.compile(r"^(?:quiero que|necesito que|podes|podrias|i want you to|i need you to|can you|could you|"
                                r"would you|you should|por favor|please)\s+")
 
@@ -437,6 +444,12 @@ def _split(text: str) -> Tuple[List[str], Dict[str, str]]:
     return [p for p in parts if p], quotes
 
 
+def _look(c: "_Ctx", question: Optional[str]) -> None:
+    """Mirar y decir lo que ve con el VLM. La respuesta puede estar mal: el VLM es chico."""
+    # Sin recuperacion: si el VLM falla no tiene sentido volver a casa
+    c.add("describe_view", {"question": question} if question else {}, "mirar y decir lo que veo", recover=False, timeout=60)
+
+
 def _clause(c: _Ctx, raw: str, quotes: Dict[str, str]) -> None:
     t = raw
     changed = True
@@ -449,6 +462,13 @@ def _clause(c: _Ctx, raw: str, quotes: Dict[str, str]) -> None:
     if t in FILLERS or not t:
         return
     t = REQUEST_PREFIX_RE.sub("", t).strip()
+    if LOOK_RE.match(t):
+        _look(c, None)
+        return
+    many = HOW_MANY_SEE_RE.match(t)
+    if many:
+        _look(c, vlm.count_question(dict(target=many.group(1))))
+        return
     if TRASH_RE.search(t):
         _take_out_trash(c, raw)
         return
@@ -713,6 +733,15 @@ def compile_gpsr_actions(actions: List[Dict[str, Any]], places: Dict[str, Any], 
                 c.add("speak", {"text": text}, f"decir: {text}", recover=False)
             else:
                 c.errors.append(f"'{raw}': todavia no se responder eso")
+        elif act == "count":
+            _look(c, vlm.count_question(p))
+        elif act == "describe":
+            if p.get("target") == "person" and p.get("property") == "name":
+                c.errors.append(f"'{raw}': todavia no se reconocer el nombre de una persona")
+            elif p.get("target") == "person":
+                _look(c, f"What is the {p.get('property', 'pose')} of the person? Answer in a few words.")
+            else:
+                _look(c, vlm.describe_question(p))
         else:
             c.errors.append(f"'{raw}': todavia no esta implementado")
     return _finish(c, name)

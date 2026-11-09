@@ -48,7 +48,12 @@ class H(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        if self.path.startswith("/api/state"):
+        if self.path.startswith("/grafo"):
+            # El grafo de graphify: se regenera con `graphify update .` despues de cada cambio de codigo.
+            graph = estado.WS / "graphify-out" / "graph.html"
+            body = graph.read_bytes() if graph.exists() else "Falta el grafo: correr graphify update .".encode()
+            self._send(body, "text/html; charset=utf-8")
+        elif self.path.startswith("/api/state"):
             self._send(json.dumps(state()).encode(), "application/json")
         else:
             # El estado va en la pagina para que se vea completa desde el primer dibujo.

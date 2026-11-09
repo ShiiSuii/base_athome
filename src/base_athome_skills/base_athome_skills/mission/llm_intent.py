@@ -13,11 +13,12 @@ from typing import Any, Dict, List, Sequence
 SYSTEM = ("You read one sentence said near a home robot. Output the robot actions as JSON, or [] when the sentence is NOT a "
           "direct request to the robot to do something now. Statements, opinions, thanks, past events, negations and "
           "questions about the world are not requests: output []. Actions: go_to place; pick object; deliver_to_me; "
-          "follow_me; guide place (lead a person there).")
+          "follow_me; guide place (lead a person there); describe (look and say what the robot sees now).")
 SHOTS = (("go to the shelf", '[{"a": "go_to", "x": "shelf"}]'),
          ("bring me a cup from the table", '[{"a": "go_to", "x": "table"}, {"a": "pick", "x": "cup"}, {"a": "deliver_to_me"}]'),
          ("please lead her to the entrance", '[{"a": "guide", "x": "entrance"}]'),
          ("follow me please", '[{"a": "follow_me"}]'),
+         ("hey robot what's going on around you", '[{"a": "describe"}]'),
          ("the table is very old", "[]"), ("I love this shelf", "[]"), ("thank you", "[]"),
          ("yesterday I went to the entrance", "[]"), ("never touch the cup", "[]"))
 URL = "http://127.0.0.1:8771/intent"
@@ -32,13 +33,13 @@ def _alternatives(names: Sequence[str]) -> str:
 def grammar(places: Sequence[str], objects: Sequence[str]) -> str:
     """GBNF: solo acciones conocidas, con lugares y objetos de esta lista."""
     rules = ['root ::= "[]" | "[" act (", " act)* "]"', "act ::= " + " | ".join(
-        (["go", "gd"] if places else []) + (["pk"] if objects else []) + ["dv", "fl"])]
+        (["go", "gd"] if places else []) + (["pk"] if objects else []) + ["dv", "fl", "ds"])]
     if places:
         rules += ['go ::= "{\\"a\\": \\"go_to\\", \\"x\\": " place "}"', 'gd ::= "{\\"a\\": \\"guide\\", \\"x\\": " place "}"',
                   "place ::= " + _alternatives(places)]
     if objects:
         rules += ['pk ::= "{\\"a\\": \\"pick\\", \\"x\\": " obj "}"', "obj ::= " + _alternatives(objects)]
-    rules += ['dv ::= "{\\"a\\": \\"deliver_to_me\\"}"', 'fl ::= "{\\"a\\": \\"follow_me\\"}"']
+    rules += ['ds ::= "{\\"a\\": \\"describe\\"}"', 'dv ::= "{\\"a\\": \\"deliver_to_me\\"}"', 'fl ::= "{\\"a\\": \\"follow_me\\"}"']
     return "\n".join(rules)
 
 
@@ -68,6 +69,8 @@ def to_actions(reply: str) -> List[Dict[str, Any]]:
             out.append(dict(action="pick", params=dict(object=arg)))
         elif name == "deliver_to_me":
             out.append(dict(action="deliver_to", params=dict(person="me")))
+        elif name == "describe":
+            out.append(dict(action="describe", params={}))
         elif name == "follow_me":
             out.append(dict(action="follow", params=dict(person="me")))
         else:

@@ -41,6 +41,8 @@ def plan_to_speech(plan: Dict[str, Any], objects: Optional[List[Dict[str, Any]]]
             continue
         elif skill == "speak":
             phrase = f"say: {args.get('text')}"
+        elif skill == "describe_view":
+            phrase = "look and tell you what I see"
         elif skill == "wait":
             phrase = f"wait {args.get('seconds')} seconds"
         elif skill == "listen":
@@ -93,3 +95,12 @@ def asr_prompt(places: List[str], objects: List[Dict[str, Any]]) -> str:
     if things:
         text += " Objects: " + ", ".join(things) + "."
     return text
+
+
+def needs_confirmation(plan: Dict[str, Any], registry) -> bool:
+    """Solo se pide "yes" si algun paso puede mover el robot. Una skill desconocida cuenta como que mueve."""
+    for s in plan.get("steps", []) + plan.get("recovery", []):
+        spec = registry.get(s.get("skill", ""))
+        if spec is None or spec.moves_hardware:
+            return True
+    return False

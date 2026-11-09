@@ -53,6 +53,9 @@ GPSR_ARGS=(); [ "${GPSR:-0}" = 1 ] && GPSR_ARGS=(-p gpsr:=true)
 # La LLM local, si esta instalada: 1.9 GiB y baja prioridad. Sin ella, el commander funciona igual.
 LLM_PY=$HOME/.local/share/llm-venv/bin/python
 [ -x "$LLM_PY" ] && session_start llm env -u PYTHONPATH nice -n 10 "$LLM_PY" "$HERE/llm_server.py"
+# El VLM local (SmolVLM 500M, ~0.8 GiB): "what do you see", "how many cups do you see". Sin el modelo, eso falla y nada mas.
+VLM_MODEL=$HOME/.local/share/base_athome/models/SmolVLM-500M-Instruct-Q8_0.gguf
+[ -x "$LLM_PY" ] && [ -f "$VLM_MODEL" ] && session_start vlm env -u PYTHONPATH nice -n 10 "$LLM_PY" "$HERE/vlm_server.py"
 [ "${GPSR:-0}" = 1 ] && session_start door ros2 run base_athome_skills door_open_detector
 session_start commander ros2 run base_athome_skills commander --ros-args -p real:=true -p voice:=true "${GPSR_ARGS[@]}"
 echo "ROBOT REAL: decile que hacer en ingles, responde 'yes' para que se mueva, 'stop' para cancelar. E-stop a mano."

@@ -3,7 +3,7 @@
 Corto y actualizado: se **reemplaza** lo viejo, no se acumula (`AGENTS.md` §9). Lo histórico se
 recupera por commit (§8). Editado por el integrador (Claude).
 
-**Última actualización:** 2026-11-06 · Antigravity · modo `DESARROLLO` · transición activa por cuota de Claude hasta el lunes; rutina de puerta y cliente VLM completados con tests y graphify actualizado.
+**Última actualización:** 2026-11-09 · Claude Code · modo `DESARROLLO` · VLM conectado al commander y LLM con "describe"; falta probarlos por voz en el robot.
 
 ## 1. Estado comprobado al pausar
 
@@ -162,6 +162,15 @@ Antes de empezar: E-stop a mano, zona despejada y otra persona atenta. Bolsa liv
 - **Codex CLI:** Instalado `codex-cli 0.167.0` en `/home/athome/.local/bin/codex` para vinculación de cuenta OpenAI y trabajo como agente en Orca.
 - **Sin probar:** Apertura de puerta real (requiere sesión supervisada con palanca real y E-stop); inferencia del VLM contra la cámara RealSense en tiempo real.
 
+
+## 2n. VLM en el commander y grafo del código (2026-11-09)
+
+- **VLM:** `describe_view` mira con la RealSense de la cabeza, le pregunta a SmolVLM 500M (`vlm_server.py`, `127.0.0.1:8772`) y dice la respuesta. `commander`/`gpsr` lo levantan solos si está el modelo. No mueve nada, así que no pide "yes"; si falla, no vuelve a casa.
+- **Frases:** "what do you see", "describe the room", "how many cups do you see", "¿qué ves?". La gramática oficial ahora también compila `count` y `describe` de objetos (va al lugar y pregunta). Nombres de personas: siguen sin hacerse.
+- **LLM:** nueva acción `describe`. Medido hoy en la NUC: 14/16 frases bien, 0/8 órdenes falsas, máximo 3,2 s.
+- **Medido en la NUC:** el VLM ocupa 835 MiB y tarda unos 5 s; respondió bien 4 de 4 imágenes de prueba (no del robot). **Sin probar:** con la cámara real, por voz y con el resto del stack corriendo.
+- **Grafo:** `grafo` (o `debug grafo`) abre el grafo de graphify en `http://127.0.0.1:8780/grafo`. Se regenera con `graphify update .`.
+- **Revisado:** los commits `8e516ab` y `12445d7` de Antigravity (puerta, cliente VLM, tablero). Los tests de puerta y VLM pasan.
 
 ## 3. Cómo retomar la teleoperación con el Quest (pendiente: prueba completa en el brazo real)
 

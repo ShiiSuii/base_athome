@@ -2,7 +2,7 @@
 # Abre el tablero de debug. Lo arranca si no esta corriendo; solo muestra, no da ordenes al robot.
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PORT="${DEBUG_PORT:-8780}"
-URL="http://127.0.0.1:${PORT}"
+URL="http://127.0.0.1:${PORT}/${1:-}"  # `debug grafo` abre el grafo de graphify
 if ! ss -ltn | grep -q "127.0.0.1:${PORT} "; then
   LOG="${HOME}/.local/share/base_athome/debug_dashboard.log"
   mkdir -p "$(dirname "$LOG")"

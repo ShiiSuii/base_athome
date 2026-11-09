@@ -33,7 +33,7 @@ from .node import _share_config
 from .places import load_objects, load_places, load_tables
 from .plan import parse_plan, validate_plan
 from .skills import default_registry
-from .voice_dialog import asr_prompt, error_to_speech, plan_to_speech
+from .voice_dialog import asr_prompt, error_to_speech, needs_confirmation, plan_to_speech
 
 PORT = 8770
 PAGE = r"""<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -303,6 +303,10 @@ class Commander(Node):
                 self._say("I am busy. Say stop to cancel.")
             elif not res["ok"]:
                 self._say(error_to_speech(res["errors"]))
+            elif not needs_confirmation(res["plan"], self.registry):   # mirar o hablar: sin "yes"
+                res = self.run(res)
+                if not res["executed"]:
+                    self._say("I cannot start the mission right now.")
             else:
                 self._say(plan_to_speech(res["plan"], load_objects(self.semantic_map)) + " Should I do it?")
                 answer = self._hear(voice, "esperando yes o no", start_timeout=10.0)

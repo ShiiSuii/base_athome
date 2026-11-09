@@ -77,3 +77,17 @@ def test_ask_vlm_cv_with_mock(mock_server):
         assert res == "a red cup on the kitchen table"
     except ImportError:
         pytest.skip("numpy / cv2 no disponibles")
+
+
+def test_short_answer_keeps_two_sentences():
+    from base_athome_skills.mission import vlm
+    assert vlm.short_answer("A cup. A table!  A dog? A cat.") == "A cup. A table."
+    assert vlm.short_answer("") == ""
+
+
+def test_questions_from_official_gpsr_params():
+    from base_athome_skills.mission import vlm
+    q = vlm.count_question(dict(target="people", clothing="gray jackets"))
+    assert q == "How many people wearing gray jackets do you see? Answer with one number."
+    assert "largest drink" in vlm.describe_question(dict(property="largest", target="drink"))
+    assert vlm.describe_question({}) == vlm.DEFAULT_QUESTION

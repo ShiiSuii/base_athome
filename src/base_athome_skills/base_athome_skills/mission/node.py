@@ -31,11 +31,11 @@ from rclpy.node import Node
 from geometry_msgs.msg import PoseWithCovarianceStamped, Twist
 from nav_msgs.msg import Odometry
 from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data
-from sensor_msgs.msg import LaserScan
+from sensor_msgs.msg import Image, LaserScan
 from std_msgs.msg import Bool, Float64, String
 from std_srvs.srv import Trigger
 
-from . import bag_task, follow_logic, table_dock
+from . import bag_task, follow_logic, table_dock, vlm
 from .executor import MissionExecutor, SkillContext
 from .places import home_place, load_places, resolve
 from .plan import PlanError, parse_plan, validate_plan
@@ -51,6 +51,7 @@ NAV_SUCCEEDED, NAV_CANCELED, NAV_ABORTED = 4, 5, 6
 DOCK_TURN_RPS = 0.3
 TABLE_UNDOCK_MIN_M = 0.25   # lo que hace falta para salir del inflado de Nav2 aunque casi no se haya avanzado
 TABLE_DOCK_MAX_M = 0.60     # Nav2 deja lejos, pero no tanto: mas que esto es que no mira una mesa
+CAMERA_TOPIC = "/camera/camera/color/image_raw"   # RealSense de la cabeza
 FOLLOW_SEARCH_S = 12.0      # buscando a la persona antes de darla por perdida: la cabeza tarda en barrer
 DOCK_SPEED_MPS = 0.08      # tramo final hasta la bolsa
 TORSO_TOLERANCE_M = 0.02
@@ -128,6 +129,7 @@ class MissionExecutorNode(Node):
 
         self.registry = default_registry()
         handlers = dict(navigate_to=self.h_navigate_to, navigate_sequence=self.h_navigate_sequence,
+                        describe_view=self.h_describe_view,
                         return_home=self.h_return_home, speak=self.h_speak, listen=self.h_listen, wait=self.h_wait,
                         detect_object=self.h_detect, pick_object=self.h_pick, follow_person=self.h_follow_person, dock_table=self.h_dock_table, undock_table=self.h_undock_table, receive_bag=self.h_receive_bag, give_object=self.h_give, place_object=self.h_place,
                         arm_pose=self.h_arm_pose, find_pointed_bag=self.h_find_pointed_bag, approach_person=self.h_approach_person,
@@ -268,6 +270,43 @@ class MissionExecutorNode(Node):
             return SkillResult.failure("tts_failed", f"{type(e).__name__}: {e}")
         finally:
             self.pub_mute.publish(Bool(data=False))
+
+    def _camera_jpeg(self, timeout_s: float):
+        """Un cuadro de la camara de la cabeza en JPEG, o None. Se suscribe solo mientras lo necesita."""
+        got, ready = [], threading.Event()
+
+        def take(msg):
+            if not got:
+                got.append(msg)
+                ready.set()
+        sub = self.create_subscription(Image, CAMERA_TOPIC, take, qos_profile_sensor_data, callback_group=self.cb)
+        try:
+            ready.wait(max(0.1, timeout_s))
+        finally:
+            self.destroy_subscription(sub)
+        if not got:
+            return None
+        import cv2
+        m = got[0]
+        frame = np.frombuffer(m.data, np.uint8).reshape(m.height, m.width, -1)
+        if m.encoding == "rgb8":
+            frame = frame[:, :, ::-1]
+        ok, buf = cv2.imencode(".jpg", frame)
+        return buf.tobytes() if ok else None
+
+    def h_describe_view(self, ctx: SkillContext) -> SkillResult:
+        """Mira, le pregunta al VLM local y dice la respuesta. No mueve nada."""
+        question = str(ctx.args.get("question") or vlm.DEFAULT_QUESTION)
+        jpeg = self._camera_jpeg(min(5.0, ctx.remaining()))
+        if jpeg is None:
+            return SkillResult.failure("no_image", f"no llega imagen de {CAMERA_TOPIC}")
+        answer = vlm.ask_vlm(jpeg, question, timeout_s=max(1.0, min(vlm.ROBOT_TIMEOUT_S, ctx.remaining() - 5.0)))
+        if not answer:
+            return SkillResult.failure("vlm_unavailable", "el VLM no respondio: esta corriendo vlm_server?")
+        answer = vlm.short_answer(answer)
+        ctx.log("info", f"VLM: {question!r} -> {answer!r}")
+        said = self.h_speak(SkillContext({"text": answer}, ctx.cancel, ctx.deadline, ctx.log))
+        return SkillResult.success(f"vi: {answer}", answer=answer) if said.ok else said
 
     def h_listen(self, ctx: SkillContext) -> SkillResult:
         try:
