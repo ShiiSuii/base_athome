@@ -6,6 +6,7 @@
 #     bag_finder, LLM, VLM, SLAM + Nav2 (restaurant_nav) y restaurant_node.
 #   - Modo SIM=1: dominio 42, Gazebo (worlds/restaurant.sdf), ATHOME_SIM_CUSTOMERS,
 #     bag_finder, LLM, VLM, SLAM + Nav2 y restaurant_node con use_sim_time:=true.
+#     SIM=1 ATHOME_SIM_ARENA=1: lo mismo en el comedor de la casa completa (worlds/arena.sdf), SLAM sin mapa previo.
 # ==============================================================================
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -111,9 +112,16 @@ wait_restaurant_nav() {
 if [ "${SIM:-0}" = 1 ]; then
   export ROS_DOMAIN_ID=${SIM_DOMAIN:-42}
   export ATHOME_SIM=1
-  export ATHOME_SIM_WORLD=restaurant.sdf   # el simulador crea los clientes en este mundo: sin esto los pedia en otro y no aparecian
+  if [ "${ATHOME_SIM_ARENA:-0}" = 1 ]; then
+    # Arena (worlds/arena.sdf): el comedor de la casa. El robot arranca junto a la barra mirando a las mesas; clientes en mesas 1 y 3.
+    export ATHOME_SIM_WORLD=arena.sdf
+    export ATHOME_SIM_START="${ATHOME_SIM_START:-7.75,4.4,-90}"
+    export ATHOME_SIM_CUSTOMERS="${ATHOME_SIM_CUSTOMERS:-6.5,3.5,right,seated;8.55,0.1,left,seated}"
+  else
+    export ATHOME_SIM_WORLD=restaurant.sdf   # el simulador crea los clientes en este mundo: sin esto los pedia en otro y no aparecian
+    export ATHOME_SIM_CUSTOMERS="${ATHOME_SIM_CUSTOMERS:-2.0,2.8,right,seated;3.0,-2.9,left,seated}"   # sentados en las mesas 1 y 3 de restaurant.sdf (12 x 9 m)
+  fi
   export ATHOME_SIM_NAV2=1      # la navegacion la hace Nav2 + SLAM, no el simulador
-  export ATHOME_SIM_CUSTOMERS="${ATHOME_SIM_CUSTOMERS:-2.0,2.8,right,seated;3.0,-2.9,left,seated}"   # sentados en las mesas 1 y 3 de restaurant.sdf (12 x 9 m)
   [ -f "$HOME/cyclonedds_local.xml" ] && export CYCLONEDDS_URI=file://$HOME/cyclonedds_local.xml
   session_init "${RESTAURANT_LOG_DIR:-/tmp}/restaurant_$$" || exit 1
   restaurant_graph_idle || exit 1
@@ -124,7 +132,7 @@ if [ "${SIM:-0}" = 1 ]; then
   echo "Clientes en: $ATHOME_SIM_CUSTOMERS"
   echo "============================================================"
 
-  REST_WORLD="$WS/simulation/base_athome_sim/worlds/restaurant.sdf"
+  REST_WORLD="$WS/simulation/base_athome_sim/worlds/$ATHOME_SIM_WORLD"
   W_ARG=()
   if [ -f "$REST_WORLD" ]; then
     W_ARG=(world:="$REST_WORLD")

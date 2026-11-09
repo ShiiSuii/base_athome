@@ -2,9 +2,11 @@
 
   ros2 launch base_athome_sim sim.launch.py                 # simple: sin fisica, liviana (CPU minima)
   ros2 launch base_athome_sim sim.launch.py gazebo:=true    # Gazebo Harmonic (gz sim) con fisica/render
-Argumentos: rviz:=true|false  auto_guest:=true|false  gz_gui:=true|false
+Argumentos: rviz:=true|false  auto_guest:=true|false  gz_gui:=true|false  world:=arena.sdf
+Entorno: ATHOME_SIM_WORLD (mundo si no hay world:=), ATHOME_SIM_START="x,y,yaw_deg" (pose inicial del robot en Gazebo).
 Usar SIEMPRE en un ROS_DOMAIN_ID distinto del robot (alias `sim_env` -> 42).
 """
+import math
 import os
 
 from ament_index_python.packages import get_package_prefix, get_package_share_directory
@@ -42,6 +44,10 @@ def _setup(context):
             world = world_env if os.path.isabs(world_env) else os.path.join(sim_share, "worlds", world_env)
         else:
             world = os.path.join(sim_share, "worlds", "casa_basura.sdf" if os.environ.get("ATHOME_SIM_BAG") else "casa_simple.sdf")
+        # ATHOME_SIM_START="x,y,yaw_deg": donde aparece el robot (por defecto el origen del mundo). Con Nav2, nav2_sim.launch.py
+        # da la misma pose a AMCL; con SLAM el mapa nace ahi. La odometria de gz sim es la pose en el mundo: mapa = mundo.
+        start = [float(v) for v in os.environ.get("ATHOME_SIM_START", "0,0,0").split(",")]
+        start_args = ["-x", str(start[0]), "-y", str(start[1]), "-Y", str(math.radians(start[2]))]
         gz_urdf = os.path.join("/tmp", f"base_athome_gz_{os.getuid()}.urdf")
         with open(gz_urdf, "w", encoding="utf-8") as f:
             f.write(gz_model.gazebo_urdf(urdf))
@@ -49,7 +55,7 @@ def _setup(context):
             SetEnvironmentVariable("GZ_SIM_RESOURCE_PATH", ":".join(sorted(shares) + [os.environ.get("GZ_SIM_RESOURCE_PATH", "")])),
             ExecuteProcess(cmd=["gz", "sim", "-r", world] + ([] if gz_gui else ["-s", "--headless-rendering"]), output="log"),
             Node(package="ros_gz_sim", executable="create", output="screen",
-                 arguments=["-name", gz_model.MODEL, "-file", gz_urdf, "-z", "0.0"]),
+                 arguments=["-name", gz_model.MODEL, "-file", gz_urdf, "-z", "0.0"] + start_args),
             Node(package="ros_gz_bridge", executable="parameter_bridge", output="log",
                  arguments=gz_model.bridge_args(),
                  parameters=[{"override_timestamps_with_wall_time": True}]),

@@ -8,7 +8,10 @@ no cumple su expectativa.
 Uso:
   GAZEBO=1 python3 simulation/scripts/sim_escenarios.py    (sin GAZEBO=1: simulador liviano)
   python3 simulation/scripts/sim_escenarios.py [nombre ...]
+  ATHOME_SIM_ARENA=1 GAZEBO=1 NAV2=1 python3 simulation/scripts/sim_escenarios.py [nombre ...]
+      los mismos escenarios en el living de la casa completa (worlds/arena.sdf): persona y bolsa en coordenadas de la arena.
 """
+import dataclasses
 from dataclasses import dataclass, field
 from pathlib import Path
 import json
@@ -134,6 +137,36 @@ SCENARIOS: List[Scenario] = [
 
 SCENARIO_MAP: Dict[str, Scenario] = {s.name: s for s in SCENARIOS}
 
+# Los mismos escenarios en la ARENA (worlds/arena.sdf): el robot arranca en 'home' (0, 0) mirando al este, en el living
+# (X -1..5, Y -4..2). La persona queda delante, la bolsa a su izquierda, lejos de la mesa ratona (que el lidar no ve).
+ARENA_BAG = "1.5,1.0,0.30"
+ARENA_PERSON = "2.6,-0.2"
+ARENA_ENV: Dict[str, Dict[str, str]] = {
+    "normal": {"ATHOME_SIM_BAG": ARENA_BAG, "ATHOME_SIM_PERSON": ARENA_PERSON},
+    "lejos": {"ATHOME_SIM_PERSON": "4.2,-0.6", "ATHOME_SIM_BAG": "3.3,0.9,0.30"},
+    "distractor": {"ATHOME_SIM_BAG": ARENA_BAG, "ATHOME_SIM_PERSON": ARENA_PERSON, "ATHOME_SIM_BAG2": "1.0,0.2,0.25"},
+    "alta": {"ATHOME_SIM_BAG": "1.5,1.0,0.45", "ATHOME_SIM_PERSON": ARENA_PERSON},
+    "sin_persona": {"ATHOME_SIM_BAG": ARENA_BAG, "ATHOME_SIM_PERSON": "-8,-8"},          # fuera de la casa
+    "apunta_mal": {"ATHOME_SIM_BAG": "0.5,1.3,0.30", "ATHOME_SIM_PERSON": ARENA_PERSON, "ATHOME_SIM_POINT_ERR_M": "1.0"},
+    "seguir": {"ATHOME_SIM_BAG": "0.5,-3.4,0.30", "ATHOME_SIM_PERSON": "2.0,0.0", "ATHOME_SIM_PERSON_POINTS": "0",
+               "ATHOME_SIM_PERSON_WALK": "3.5,0.0;3.5,-1.5;2.5,-1.5"},
+}
+
+
+def arena_scenarios() -> List[Scenario]:
+    """Los escenarios con las posiciones de la arena; lo demas (expectativas, errores inyectados) no cambia."""
+    out = []
+    for sc in SCENARIOS:
+        env = {k: v for k, v in sc.env.items() if k not in ("ATHOME_SIM_BAG", "ATHOME_SIM_PERSON", "ATHOME_SIM_BAG2",
+                                                            "ATHOME_SIM_PERSON_WALK")}
+        env.update(ARENA_ENV.get(sc.name, {"ATHOME_SIM_BAG": ARENA_BAG, "ATHOME_SIM_PERSON": ARENA_PERSON}))
+        out.append(dataclasses.replace(sc, env=env))
+    return out
+
+
+def use_arena() -> bool:
+    return os.environ.get("ATHOME_SIM_ARENA") == "1"
+
 
 def parse_sim_log(text: str) -> Optional[float]:
     """Extrae la distancia en cm de 'Pinza cerrada ... a X cm' del log de sim_robot (primera ocurrencia)."""
@@ -198,13 +231,15 @@ def evaluate(scenario: Scenario, data: RunData) -> EvalResult:
     return EvalResult(scenario=scenario, data=data, ok=ok, failed_step=failed_step, reason=reason)
 
 
-def select_scenarios(names: Sequence[str]) -> List[Scenario]:
+def select_scenarios(names: Sequence[str], arena: bool = False) -> List[Scenario]:
+    pool = arena_scenarios() if arena else list(SCENARIOS)
     if not names:
-        return list(SCENARIOS)
-    unknown = [n for n in names if n not in SCENARIO_MAP]
+        return pool
+    by_name = {s.name: s for s in pool}
+    unknown = [n for n in names if n not in by_name]
     if unknown:
-        raise ValueError(f"Escenario(s) desconocido(s): {', '.join(unknown)}. Disponibles: {', '.join(SCENARIO_MAP)}")
-    return [SCENARIO_MAP[n] for n in names]
+        raise ValueError(f"Escenario(s) desconocido(s): {', '.join(unknown)}. Disponibles: {', '.join(by_name)}")
+    return [by_name[n] for n in names]
 
 
 def format_table(results: Sequence[EvalResult]) -> str:
@@ -234,19 +269,21 @@ def format_table(results: Sequence[EvalResult]) -> str:
     return "\n".join(lines)
 
 
-def _clean_sim_env(base_env: Dict[str, str], scenario_env: Dict[str, str]) -> Dict[str, str]:
+def _clean_sim_env(base_env: Dict[str, str], scenario_env: Dict[str, str], arena: bool = False) -> Dict[str, str]:
     env = {k: v for k, v in base_env.items() if not k.startswith("ATHOME_SIM_")}
     env["ROS_DOMAIN_ID"] = "42"
     env["ATHOME_SIM"] = "1"
     env["ATHOME_SIM_OBJECT_LABEL"] = "handbag"
     env["RVIZ"] = "0"
+    if arena:
+        env["ATHOME_SIM_ARENA"] = "1"      # sim_commander.sh elige mundo, mapa y mapa semantico de la arena
     env.update(scenario_env)
     return env
 
 
-def run_scenario(scenario: Scenario, script_path: Path, timeout_s: float = 360.0) -> EvalResult:
+def run_scenario(scenario: Scenario, script_path: Path, timeout_s: float = 360.0, arena: bool = False) -> EvalResult:
     log_root = Path(tempfile.mkdtemp(prefix=f"sim_escenario_{scenario.name}_"))
-    env = _clean_sim_env(dict(os.environ), scenario.env)
+    env = _clean_sim_env(dict(os.environ), scenario.env, arena)
     env["SIM_LOG_DIR"] = str(log_root)
 
     t0 = time.time()
@@ -306,6 +343,8 @@ def save_results(results: Sequence[EvalResult], path: Path = RESULTS_FILE) -> No
                           capture_output=True, text=True).stdout.strip()
     when = time.strftime("%Y-%m-%d %H:%M")
     mode = "Gazebo + Nav2" if os.environ.get("NAV2") == "1" else "Gazebo"
+    if use_arena():
+        mode += " (arena)"
     for r in results:
         rows[r.scenario.name] = dict(nombre=r.scenario.name, ok=r.ok, cm=r.data.grip_cm, detalle=r.reason,
                                      cuando=when, modo=mode, commit=head)
@@ -315,8 +354,9 @@ def save_results(results: Sequence[EvalResult], path: Path = RESULTS_FILE) -> No
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
+    arena = use_arena()
     try:
-        selected = select_scenarios(args)
+        selected = select_scenarios(args, arena)
     except ValueError as e:
         print(str(e), file=sys.stderr)
         return 2
@@ -324,8 +364,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     script_path = Path(__file__).resolve().parent / "sim_commander.sh"
     results: List[EvalResult] = []
     for sc in selected:
-        print(f">>> Corriendo escenario '{sc.name}' ({sc.env})...", flush=True)
-        res = run_scenario(sc, script_path)
+        print(f">>> Corriendo escenario '{sc.name}'{' en la arena' if arena else ''} ({sc.env})...", flush=True)
+        res = run_scenario(sc, script_path, arena=arena)
         results.append(res)
         status_tag = "PASS" if res.ok else "FAIL"
         cm_info = f", pinza={res.data.grip_cm:.1f} cm" if res.data.grip_cm is not None else ""

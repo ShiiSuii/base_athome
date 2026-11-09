@@ -55,6 +55,41 @@ GAZEBO=1 NAV2=1 python3 simulation/scripts/sim_escenarios.py
 
 Everything runs in `ROS_DOMAIN_ID=42`. `SIM_DOMAIN` changes it. Never use the robot's domain, 10.
 
+## Arena: one house, one map, every test
+
+`worlds/arena.sdf` is a 14 x 10 m house (hall with a closed front door, living room, bedroom, kitchen, dining room with a
+bar and three tables, laundry with the trash bin) joined by 0.90 m doors. Its map is `simulation/config/arena.yaml` and its
+semantic map `base_athome_sim/config/arena_semantic_map.yaml`. The header of the `.sdf` lists rooms, doors and useful
+points. `ATHOME_SIM_ARENA=1` selects all three; each test only changes where people, bags and customers are.
+
+```bash
+# Navigation through every room with real Nav2
+ATHOME_SIM_ARENA=1 GAZEBO=1 NAV2=1 simulation/scripts/sim_commander.sh \
+  "go to the kitchen" "go to the bedroom" "go to the door" "go to the dining room" "go to the bar" \
+  "go to the laundry" "go to the trash" "go back home"
+
+# Take out the trash: the 12 regression scenarios, placed in the living room of the arena
+ATHOME_SIM_ARENA=1 GAZEBO=1 NAV2=1 python3 simulation/scripts/sim_escenarios.py            # all
+ATHOME_SIM_ARENA=1 GAZEBO=1 NAV2=1 python3 simulation/scripts/sim_escenarios.py normal     # one
+
+# Nav2 profiles: living-dining door, a person in the way, a person who steps out of the doorway
+ATHOME_SIM_ARENA=1 simulation/scripts/nav_eval.py puerta robot
+
+# Restaurant in the dining room: SLAM with no previous map, robot starts at the bar, customers at tables 1 and 3
+ROS_DOMAIN_ID=42 python3 simulation/scripts/restaurant_actor.py &      # scripted customers and barman
+SIM=1 AUTO=1 ATHOME_SIM_ARENA=1 src/base_athome_skills/scripts/restaurant.sh
+```
+
+Regenerate the map after editing the world, then run the tests that check doors, waypoints and reachability:
+
+```bash
+python3 simulation/scripts/hacer_mapa.py simulation/base_athome_sim/worlds/arena.sdf simulation/config/arena -4.5 -5.0 16 12
+python3 -m pytest simulation/base_athome_sim/test/test_arena_world.py
+```
+
+The low coffee table in the living room (0.35 m) is below the lidar (0.38 m): it is not in the map and Nav2 does not see
+it, as on the real robot. The older worlds and their scenarios still work without `ATHOME_SIM_ARENA`.
+
 ## Scene options
 
 | Variable | Meaning |
@@ -62,6 +97,8 @@ Everything runs in `ROS_DOMAIN_ID=42`. `SIM_DOMAIN` changes it. Never use the ro
 | `ATHOME_SIM_WORLD=world.sdf` | Gazebo world file (default: `casa_basura.sdf` or `casa_simple.sdf`) |
 | `ATHOME_SIM_MAP=map.yaml` | Occupancy map YAML for Nav2 in simulation |
 | `ATHOME_SIM_SEMANTIC_MAP=map.yaml` | Semantic map YAML with waypoints, furniture and objects |
+| `ATHOME_SIM_ARENA=1` | Use the arena: world, map and semantic map of the whole house |
+| `ATHOME_SIM_START=x,y,yaw_deg` | Where the robot appears in Gazebo (default: origin). AMCL starts there too |
 | `ATHOME_SIM_BAG=x,y,top` | Bag position and height, in metres |
 | `ATHOME_SIM_BAG2=x,y,top` | A second bag, as a distractor |
 | `ATHOME_SIM_PERSON=x,y` | Person position |

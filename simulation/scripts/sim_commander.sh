@@ -2,6 +2,7 @@
 # Simulacion + mission_executor + commander (ROS_DOMAIN_ID=42). Cierra TODO lo propio por PID al terminar.
 #   Interactivo: [RVIZ=1] simulation/scripts/sim_commander.sh        -> abrir http://127.0.0.1:8770 (Ctrl-C cierra)
 #   Automatico:  simulation/scripts/sim_commander.sh "anda a la mesa" "volve a casa"
+#   Arena:       ATHOME_SIM_ARENA=1 GAZEBO=1 NAV2=1 simulation/scripts/sim_commander.sh "go to the kitchen"
 #     corre cada pedido por la API web, espera el fin y sale con rc!=0 si alguno no termina SUCCEEDED.
 set -u
 WS=$(cd "$(dirname "$0")/../.." && pwd)
@@ -9,6 +10,12 @@ set +u; source /opt/ros/jazzy/setup.bash; source "$WS/install/setup.bash"; set -
 export SIM_MISSION_TAG=$$ ROS_DOMAIN_ID=${SIM_DOMAIN:-42} ATHOME_SIM=1 ATHOME_SIM_OBJECT_LABEL=${ATHOME_SIM_OBJECT_LABEL:-bottle}
 [ -f "$HOME/cyclonedds_local.xml" ] && export CYCLONEDDS_URI=file://$HOME/cyclonedds_local.xml
 LOG=${SIM_LOG_DIR:-/tmp}/sim_commander_$$; mkdir -p "$LOG"
+# ATHOME_SIM_ARENA=1: la casa completa (worlds/arena.sdf) con su mapa y su mapa semantico, para cualquier prueba
+if [ "${ATHOME_SIM_ARENA:-0}" = 1 ]; then
+  export ATHOME_SIM_WORLD=${ATHOME_SIM_WORLD:-arena.sdf}
+  export ATHOME_SIM_MAP=${ATHOME_SIM_MAP:-$WS/simulation/config/arena.yaml}
+  export ATHOME_SIM_SEMANTIC_MAP=${ATHOME_SIM_SEMANTIC_MAP:-$WS/simulation/base_athome_sim/config/arena_semantic_map.yaml}
+fi
 MAP=${ATHOME_SIM_SEMANTIC_MAP:-$WS/simulation/base_athome_sim/config/sim_semantic_map.yaml}
 export ATHOME_SIM_POSES=${ATHOME_SIM_POSES:-$WS/simulation/config/arm_poses_sim.yaml}
 RV=false; [ "${RVIZ:-0}" = "1" ] && RV=true

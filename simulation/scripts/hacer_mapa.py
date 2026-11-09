@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Hace el mapa de ocupacion de un mundo de Gazebo a partir de sus modelos estaticos. Uso: hacer_mapa.py mundo.sdf salida
+"""Hace el mapa de ocupacion de un mundo de Gazebo a partir de sus modelos estaticos.
+Uso: hacer_mapa.py mundo.sdf salida [origen_x origen_y ancho_m alto_m]      (por defecto: origen (-5, -5), 12 x 10 m)
 Escribe salida.pgm y salida.yaml, como los que guarda el robot con su mapeo. Solo entiende cajas: es lo que usan estos mundos."""
 import math
 import os
@@ -19,8 +20,8 @@ def _pose(text):
     return v + [0.0] * (6 - len(v))
 
 
-def occupancy(world_path):
-    w, h = int(SIZE_M[0] / RES_M), int(SIZE_M[1] / RES_M)
+def occupancy(world_path, origin=ORIGIN, size_m=SIZE_M):
+    w, h = int(round(size_m[0] / RES_M)), int(round(size_m[1] / RES_M))
     grid = np.zeros((h, w), bool)
     for model in ET.parse(world_path).getroot().iter("model"):
         if model.findtext("static") != "true":
@@ -41,7 +42,7 @@ def occupancy(world_path):
                 for j in np.arange(-sy / 2.0, sy / 2.0 + RES_M / 2.0, RES_M / 2.0):
                     x = ox + i * math.cos(yaw) - j * math.sin(yaw)
                     y = oy + i * math.sin(yaw) + j * math.cos(yaw)
-                    col_i, row = int((x - ORIGIN[0]) / RES_M), int((y - ORIGIN[1]) / RES_M)
+                    col_i, row = int((x - origin[0]) / RES_M), int((y - origin[1]) / RES_M)
                     if 0 <= col_i < w and 0 <= row < h:
                         grid[row, col_i] = True
     return grid
@@ -49,14 +50,17 @@ def occupancy(world_path):
 
 def main():
     world, out = sys.argv[1], sys.argv[2]
-    grid = occupancy(world)
+    origin, size_m = ORIGIN, SIZE_M
+    if len(sys.argv) >= 7:
+        origin, size_m = (float(sys.argv[3]), float(sys.argv[4])), (float(sys.argv[5]), float(sys.argv[6]))
+    grid = occupancy(world, origin, size_m)
     image = np.where(grid, 0, 254).astype(np.uint8)[::-1]
     with open(out + ".pgm", "wb") as f:
         f.write(f"P5\n{image.shape[1]} {image.shape[0]}\n255\n".encode())
         f.write(image.tobytes())
     with open(out + ".yaml", "w", encoding="utf-8") as f:
         f.write(f"image: {os.path.basename(out)}.pgm\nmode: trinary\nresolution: {RES_M}\n"
-                f"origin: [{ORIGIN[0]}, {ORIGIN[1]}, 0.0]\nnegate: 0\noccupied_thresh: 0.65\nfree_thresh: 0.25\n")
+                f"origin: [{origin[0]}, {origin[1]}, 0.0]\nnegate: 0\noccupied_thresh: 0.65\nfree_thresh: 0.25\n")
     print(f"{out}: {int(grid.sum())} celdas ocupadas")
 
 

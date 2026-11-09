@@ -3,6 +3,9 @@
 
   simulation/scripts/nav_eval.py                 # todos los escenarios con el perfil del robot y con 'eval'
   simulation/scripts/nav_eval.py persona eval    # un escenario y un perfil ('robot' = nav2_params.yaml sin cambios)
+  ATHOME_SIM_ARENA=1 simulation/scripts/nav_eval.py puerta robot
+      los mismos tres escenarios en la casa completa (worlds/arena.sdf): puerta living-comedor de 0.90 m y camino
+      entre las mesas hasta la barra.
 
 Por corrida: si llego, cuanto tardo y lo mas cerca que paso del centro de la persona. Guarda ~/.local/share/base_athome/nav_eval.json
 """
@@ -28,6 +31,18 @@ SCENARIOS = {
     "se_corre": dict(command="go to afuera", person="-3.0,0.0", walk="-2.2,1.8", walk_after_s="12"),
 }
 PROFILES = ("robot", "altura", "eval")
+ARENA = os.environ.get("ATHOME_SIM_ARENA") == "1"
+ARENA_FAR = "-2.5,0.5"   # en el hall, fuera del camino
+ARENA_SCENARIOS = {
+    # del living a la barra del comedor: puerta de 0.90 m y pasillo entre las mesas, sin nadie
+    "puerta": dict(command="go to the bar", person=ARENA_FAR),
+    # una persona quieta en el medio del living, con lugar para rodearla
+    "persona": dict(command="go to the dining room", person="2.5,0.2"),
+    # una persona parada en la puerta living-comedor, que entra al comedor a los 12 s
+    "se_corre": dict(command="go to the bar", person="5.0,0.5", walk="5.9,1.4", walk_after_s="12"),
+}
+if ARENA:
+    SCENARIOS, FAR = ARENA_SCENARIOS, ARENA_FAR
 
 
 class Recorder:
@@ -71,10 +86,14 @@ class Recorder:
 
 def run(name, profile):
     sc = SCENARIOS[name]
-    env = dict(os.environ, GAZEBO="1", NAV2="1", SIM_DOMAIN="42", ROS_DOMAIN_ID="42",
-               ATHOME_SIM_WORLD="nav_eval.sdf", ATHOME_SIM_MAP=str(WS / "simulation/config/nav_eval.yaml"),
-               ATHOME_SIM_SEMANTIC_MAP=str(WS / "simulation/base_athome_sim/config/nav_eval_semantic_map.yaml"),
-               ATHOME_SIM_BAG="4.6,-2.6,0.30", ATHOME_SIM_PERSON=sc["person"], ATHOME_SIM_PERSON_POINTS="0",
+    world = dict(ATHOME_SIM_WORLD="arena.sdf", ATHOME_SIM_MAP=str(WS / "simulation/config/arena.yaml"),
+                 ATHOME_SIM_SEMANTIC_MAP=str(WS / "simulation/base_athome_sim/config/arena_semantic_map.yaml"),
+                 ATHOME_SIM_BAG="-2.8,1.5,0.30") if ARENA else \
+        dict(ATHOME_SIM_WORLD="nav_eval.sdf", ATHOME_SIM_MAP=str(WS / "simulation/config/nav_eval.yaml"),
+             ATHOME_SIM_SEMANTIC_MAP=str(WS / "simulation/base_athome_sim/config/nav_eval_semantic_map.yaml"),
+             ATHOME_SIM_BAG="4.6,-2.6,0.30")       # la bolsa, lejos: sin ella el simulador no publica /sim/people
+    env = dict(os.environ, GAZEBO="1", NAV2="1", SIM_DOMAIN="42", ROS_DOMAIN_ID="42", **world,
+               ATHOME_SIM_PERSON=sc["person"], ATHOME_SIM_PERSON_POINTS="0",
                ATHOME_SIM_PERSON_WALK=sc.get("walk", ""), ATHOME_SIM_PERSON_WALK_AFTER_S=sc.get("walk_after_s", "0"),
                ATHOME_NAV_PROFILE="" if profile == "robot" else profile)
     os.environ["ROS_DOMAIN_ID"] = "42"
@@ -84,7 +103,8 @@ def run(name, profile):
                           capture_output=True, text=True, timeout=900)
     rec.close()
     tail = [l for l in proc.stdout.splitlines() if "FIN:" in l or "FAILED" in l or "SUCCEEDED" in l][-3:]
-    return dict(escenario=name, perfil=profile, ok=proc.returncode == 0, segundos=round(time.time() - t0),
+    return dict(escenario=name, perfil=profile, mundo="arena" if ARENA else "nav_eval", ok=proc.returncode == 0,
+                segundos=round(time.time() - t0),
                 min_persona_m=None if rec.min_d is None or sc["person"] == FAR else round(rec.min_d, 2), detalle=tail)
 
 

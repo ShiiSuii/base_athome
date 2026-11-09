@@ -1,5 +1,6 @@
 """Nav2 de verdad contra Gazebo: los mismos servidores y parametros que el robot, leidos de nav2_params.yaml sin modificarlo.
 Solo cambia, en una copia temporal: el mapa, la pose inicial y las rutas de este equipo."""
+import math
 import os
 import tempfile
 
@@ -28,7 +29,8 @@ def _params(map_yaml):
     params["map_server"]["ros__parameters"]["yaml_filename"] = map_yaml
     amcl = params["amcl"]["ros__parameters"]
     amcl["set_initial_pose"] = True
-    amcl["initial_pose"] = dict(x=0.0, y=0.0, z=0.0, yaw=0.0)
+    start = [float(v) for v in os.environ.get("ATHOME_SIM_START", "0,0,0").split(",")]   # la misma pose con la que sim.launch.py crea el robot
+    amcl["initial_pose"] = dict(x=start[0], y=start[1], z=0.0, yaw=math.radians(start[2]))
     bt = params["bt_navigator"]["ros__parameters"]
     if "default_nav_to_pose_bt_xml" in bt:
         bt["default_nav_to_pose_bt_xml"] = os.path.join(get_package_share_directory("base_athome_navigation"), "config", "bt_trees",
