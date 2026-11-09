@@ -15,6 +15,8 @@ from dataclasses import dataclass, field
 import math
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
+import numpy as np
+
 # ------------------------------------------------------------------------------
 # Indices Anatomicos COCO-17
 # ------------------------------------------------------------------------------
@@ -395,3 +397,145 @@ def order_clients(
         pass
 
     return selected
+
+
+# ------------------------------------------------------------------------------
+# Rastreo y Agregacion de Clientes con Mano Levantada (Restaurant / bag_finder)
+# ------------------------------------------------------------------------------
+class TrackedCustomer:
+    """Acumula observaciones espaciales y temporales de un cliente en el mapa."""
+
+    def __init__(self, xy: Sequence[float], min_frames: int = 3, window_size: int = 10):
+        self.positions: List[Tuple[float, float]] = [(float(xy[0]), float(xy[1]))]
+        self.filter = TemporalRaisedHandFilter(window_size=window_size, min_raised_frames=min_frames)
+        self.min_frames = min_frames
+        self.raised_frames: int = 0
+        self.total_frames: int = 0
+        self.dominant_hand: str = RaisedHandState.NONE
+        self.is_confirmed: bool = False
+        self.last_state: str = RaisedHandState.NONE
+
+    @property
+    def xy(self) -> Tuple[float, float]:
+        xs = [p[0] for p in self.positions]
+        ys = [p[1] for p in self.positions]
+        return float(np.median(xs)), float(np.median(ys))
+
+    def update(self, xy: Sequence[float], keypoints: Any, conf: Optional[Any] = None) -> bool:
+        self.positions.append((float(xy[0]), float(xy[1])))
+        self.total_frames += 1
+
+        cls = classify_raised_hand(keypoints, conf=conf)
+        if cls.is_raised:
+            self.raised_frames += 1
+            if cls.state != RaisedHandState.NONE:
+                self.last_state = cls.state
+
+        confirmed, dominant = self.filter.update(keypoints, conf=conf)
+        self.is_confirmed = confirmed
+        if confirmed:
+            self.dominant_hand = dominant if dominant != RaisedHandState.NONE else self.last_state
+        return self.is_confirmed
+
+
+class RaisedHandsAggregator:
+    """Agrega observaciones de clientes en el mapa y arma la respuesta del contrato."""
+
+    def __init__(self, min_frames: int = 3, match_dist_m: float = 0.8, window_size: int = 10):
+        self.min_frames = min_frames
+        self.match_dist_m = match_dist_m
+        self.window_size = window_size
+        self.customers: List[TrackedCustomer] = []
+
+    def update_observation(
+        self,
+        xy: Sequence[float],
+        keypoints: Any,
+        conf: Optional[Any] = None
+    ) -> TrackedCustomer:
+        best_c, best_d = None, self.match_dist_m
+        for c in self.customers:
+            d = math.hypot(c.xy[0] - xy[0], c.xy[1] - xy[1])
+            if d < best_d:
+                best_d = d
+                best_c = c
+
+        if best_c is None:
+            best_c = TrackedCustomer(xy, min_frames=self.min_frames, window_size=self.window_size)
+            self.customers.append(best_c)
+
+        best_c.update(xy, keypoints, conf=conf)
+        return best_c
+
+    def get_confirmed_customers(
+        self,
+        robot_pos: Tuple[float, float] = (0.0, 0.0)
+    ) -> List[Dict[str, Any]]:
+        confirmed = []
+        for c in self.customers:
+            if c.is_confirmed and c.dominant_hand != RaisedHandState.NONE:
+                c_xy = c.xy
+                dist = math.hypot(c_xy[0] - robot_pos[0], c_xy[1] - robot_pos[1])
+                confirmed.append({
+                    "xy": [round(float(c_xy[0]), 2), round(float(c_xy[1]), 2)],
+                    "hand": c.dominant_hand,
+                    "frames": int(c.raised_frames),
+                    "range_m": round(float(dist), 2),
+                })
+        confirmed.sort(key=lambda item: item["range_m"])
+        return confirmed
+
+    def build_response(
+        self,
+        request_id: str,
+        robot_pos: Tuple[float, float] = (0.0, 0.0),
+        error_msg: str = "no_raised_hand"
+    ) -> Dict[str, Any]:
+        customers = self.get_confirmed_customers(robot_pos=robot_pos)
+        ok = len(customers) > 0
+        return {
+            "id": str(request_id),
+            "ok": ok,
+            "customers": customers,
+            "error": "" if ok else error_msg,
+        }
+
+
+def process_raised_hands_candidates(
+    candidates: Sequence[Dict[str, Any]],
+    robot_pos: Tuple[float, float] = (0.0, 0.0),
+    min_frames: int = 1,
+    request_id: str = "req_1",
+    match_dist_m: float = 0.8
+) -> Dict[str, Any]:
+    """Evalua una coleccion de candidatos de personas con keypoints y genera la respuesta del contrato.
+
+    Admite candidatos con:
+      - 'xy' o 'pos': coordenadas espaciales en el frame map.
+      - 'keypoints' y opcionalmente 'conf': articulaciones COCO o BODY_25.
+      - 'frames_keypoints': secuencia temporal de cuadros de keypoints.
+      - 'frames': conteo de cuadros (si no se proporciona frames_keypoints).
+    """
+    aggregator = RaisedHandsAggregator(min_frames=min_frames, match_dist_m=match_dist_m)
+
+    for cand in candidates:
+        xy = cand.get("xy") or cand.get("pos") or cand.get("position")
+        if xy is None:
+            continue
+
+        if "frames_keypoints" in cand:
+            for kpts in cand["frames_keypoints"]:
+                aggregator.update_observation(xy, kpts, conf=cand.get("conf"))
+        elif "keypoints" in cand:
+            n_frames = int(cand.get("frames", 1))
+            for _ in range(n_frames):
+                aggregator.update_observation(xy, cand["keypoints"], conf=cand.get("conf"))
+        elif "hand" in cand and cand["hand"] != RaisedHandState.NONE:
+            n_frames = int(cand.get("frames", min_frames))
+            tc = TrackedCustomer(xy, min_frames=min_frames)
+            tc.is_confirmed = (n_frames >= min_frames)
+            tc.dominant_hand = cand["hand"]
+            tc.raised_frames = n_frames
+            aggregator.customers.append(tc)
+
+    return aggregator.build_response(request_id, robot_pos=robot_pos)

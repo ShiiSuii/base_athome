@@ -26,6 +26,7 @@ from tf2_ros import Buffer, TransformListener
 
 from base_athome_perception import bag_vision as bv
 from base_athome_perception import scene_analysis as scene
+from base_athome_perception.raised_hand import RaisedHandsAggregator
 from base_athome_perception.wrist_detector import make_bag_detector
 from base_athome_skills.mission import bag_task
 
@@ -33,6 +34,7 @@ MODELS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "models"
 SIM = os.environ.get("ATHOME_SIM") == "1"
 FRAME = "camera_color_optical_frame"
 SEARCH_PANS = (0.0, 30.0, -30.0, 60.0, -60.0)
+RAISED_HANDS_PANS = (-60.0, -30.0, 0.0, 30.0, 60.0)
 SEARCH_TILT = 0.0
 SEARCH_VIEW_S = 1.5
 LOST_PERSON_S = 1.5
@@ -228,8 +230,98 @@ class BagFinder(Node):
         if mode == "follow_person":
             self._follow(req)
             return
-        out = self._locate_person(req) if mode == "locate_person" else self._refine(req) if mode == "refine_bag" else self._find(req)
+        if mode == "raised_hands":
+            out = self._find_raised_hands(req)
+        elif mode == "locate_person":
+            out = self._locate_person(req)
+        elif mode == "refine_bag":
+            out = self._refine(req)
+        else:
+            out = self._find(req)
         self.pub.publish(String(data=json.dumps(out)))
+
+    def _robot_pos(self):
+        """Ubicacion del robot en el frame map (base_footprint o camara como fallback)."""
+        try:
+            t = self.tf_buf.lookup_transform("map", "base_footprint", rclpy.time.Time()).transform
+            return float(t.translation.x), float(t.translation.y)
+        except Exception:
+            pass
+        cam = self._cam()
+        if cam is not None:
+            return float(cam[0][0]), float(cam[0][1])
+        return 0.0, 0.0
+
+    def _sim_person_spot(self, person, cam):
+        """En simulacion halla la coordenada mapa de un cliente por proyeccion geometrica."""
+        if not self.sim_people or cam is None or self.K is None:
+            return None
+        u, v = bv.torso_pixel(person)
+        best_p, best_d = None, 60.0  # tolerancia en pixeles
+        for sp in self.sim_people:
+            pos = np.array([sp["xy"][0], sp["xy"][1], 1.2])
+            c = cam[1].T @ (pos - cam[0])
+            if c[2] > 0.1:
+                pu = self.K[2] + self.K[0] * c[0] / c[2]
+                pv = self.K[3] + self.K[1] * c[1] / c[2]
+                d = math.hypot(pu - u, pv - v)
+                if d < best_d:
+                    best_d = d
+                    best_p = sp["xy"]
+        if best_p is not None:
+            return float(best_p[0]), float(best_p[1])
+        return None
+
+    def _find_raised_hands(self, req):
+        """Busca clientes con la mano levantada barriendo la cabeza en -60..+60 grados."""
+        req_id = req.get("id", "raised_hands")
+        timeout_s = float(req.get("timeout_s", 20.0))
+        min_frames = int(req.get("min_frames", 3))
+        end = time.time() + timeout_s
+
+        self._ensure_torque()
+        sweep_pans = RAISED_HANDS_PANS
+        aggregator = RaisedHandsAggregator(min_frames=min_frames, match_dist_m=0.8)
+
+        pan_idx = 0
+        while time.time() < end:
+            pan = sweep_pans[pan_idx % len(sweep_pans)]
+            pan_idx += 1
+            self._send_head(pan, SEARCH_TILT)
+
+            remaining = end - time.time()
+            dwell_s = min(SEARCH_VIEW_S, max(0.8, remaining / max(1, len(sweep_pans) - (pan_idx % len(sweep_pans)))))
+            view_end = min(end, time.time() + dwell_s)
+
+            time.sleep(0.2)
+
+            while time.time() < view_end:
+                if self._head_still():
+                    rgb, depth = self._frames()
+                    cam = self._cam()
+                    if rgb is not None:
+                        people = self._poses(rgb, cam)
+                        for person in people:
+                            spot = None
+                            if depth is not None and cam is not None and self.K is not None:
+                                spot = bv.person_map_position(person, depth, cam[0], cam[1], self.K)
+                            if spot is None and SIM:
+                                spot = self._sim_person_spot(person, cam)
+                            if spot is not None:
+                                aggregator.update_observation(spot, keypoints=person[1], conf=person[2])
+                time.sleep(0.12)
+
+            # Si ya se cubrio el barrido completo al menos una vez y hay clientes confirmados, se devuelve
+            if pan_idx >= len(sweep_pans) and aggregator.get_confirmed_customers(self._robot_pos()):
+                break
+
+        robot_xy = self._robot_pos()
+        out = aggregator.build_response(req_id, robot_pos=robot_xy, error_msg="no_raised_hand")
+        if out["ok"]:
+            self.get_logger().info(f"Modo raised_hands: {len(out['customers'])} clientes encontrados")
+        else:
+            self.get_logger().info(f"Modo raised_hands: sin clientes ({out['error']})")
+        return out
 
     def _wait_gesture(self, end):
         """Sigue a la persona hasta ver tres veces el gesto. (punto del piso, motivo si no)."""
