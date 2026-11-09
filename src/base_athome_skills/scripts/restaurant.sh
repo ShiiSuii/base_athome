@@ -40,6 +40,7 @@ session_init "${RESTAURANT_LOG_DIR:-/tmp}/restaurant_$$"
 if [ "${SIM:-0}" = 1 ]; then
   export ROS_DOMAIN_ID=${SIM_DOMAIN:-42}
   export ATHOME_SIM=1
+  export ATHOME_SIM_WORLD=restaurant.sdf   # el simulador crea los clientes en este mundo: sin esto los pedia en otro y no aparecian
   export ATHOME_SIM_NAV2=1      # la navegacion la hace Nav2 + SLAM, no el simulador
   export ATHOME_SIM_CUSTOMERS="${ATHOME_SIM_CUSTOMERS:-1.5,2.3,right,seated;2.5,-2.4,left,seated}"   # sentados en las mesas 1 y 3 de restaurant.sdf
   [ -f "$HOME/cyclonedds_local.xml" ] && export CYCLONEDDS_URI=file://$HOME/cyclonedds_local.xml
