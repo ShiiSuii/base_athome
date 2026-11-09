@@ -29,7 +29,7 @@ from tf2_ros import Buffer, TransformListener
 
 from base_athome_perception import bag_vision as bv
 from base_athome_perception import scene_analysis as scene
-from base_athome_perception.raised_hand import RaisedHandsAggregator
+from base_athome_perception.raised_hand import RaisedHandsAggregator, classify_raised_hand
 from base_athome_perception.pose_debug import draw_pose_debug
 from base_athome_perception.person_search import PersonSearch, valid_descriptor
 from base_athome_perception.person_attributes import extract_person_attributes

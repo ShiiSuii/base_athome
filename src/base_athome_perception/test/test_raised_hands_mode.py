@@ -508,3 +508,17 @@ def test_raised_hands_invalid_pans_rejected_before_head_commands(pans):
     result = h.node._find_raised_hands(dict(id='bad', pans=pans))
     assert not result['ok'] and result['error'] == 'invalid_pans'
     assert h.commands == []
+
+
+def test_bag_finder_imports_what_the_sweep_uses():
+    """En el robot real faltaba importar classify_raised_hand y la busqueda se caia justo al ver a alguien."""
+    src = (Path(__file__).resolve().parents[1] / "scripts" / "bag_finder.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    imported = {a.asname or a.name for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) for a in n.names}
+    imported |= {a.asname or a.name.split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}
+    defined = {n.name for n in tree.body if isinstance(n, (ast.FunctionDef, ast.ClassDef))}
+    defined |= {t.id for n in tree.body if isinstance(n, ast.Assign) for t in n.targets if isinstance(t, ast.Name)}
+    used = {n.func.id for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
+    builtins_ = set(dir(__builtins__)) if isinstance(__builtins__, dict) is False else set(__builtins__)
+    missing = sorted(used - imported - defined - builtins_ - {"print"})
+    assert missing == [], f"nombres usados sin importar en bag_finder.py: {missing}"
