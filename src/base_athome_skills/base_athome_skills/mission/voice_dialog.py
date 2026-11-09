@@ -29,6 +29,11 @@ def plan_to_speech(plan: Dict[str, Any], objects: Optional[List[Dict[str, Any]]]
             phrase = "pick it up" if args.get("use_bag_target") else f"pick up the {args.get('object')}"
         elif skill == "place_object":
             phrase = "put it down"
+        elif skill == "find_person":
+            descriptions = [str(args[k]) for k in ("gesture", "posture") if args.get(k)]
+            if args.get("clothing"):
+                descriptions.append("wearing " + str(args["clothing"]))
+            phrase = "find the person" + (" " + " and ".join(descriptions) if descriptions else "")
         elif skill == "approach_person":
             phrase = "come to you"
         elif skill == "find_pointed_bag":

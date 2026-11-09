@@ -90,7 +90,8 @@ skill desconocida o no implementada, argumentos, lugares inexistentes, `home` fa
 | `speak {text}` | available | TTS de la NUC (`RoboCupSpeaker`) en modo real; en sim solo se registra |
 | `listen {prompt?, expect?, listen_timeout_s?}` | available | `VoiceClient` (`/voice/*`); no probado contra Whisper real desde el ejecutor |
 | `wait {seconds}` | available | cancelable |
-| `detect_object`, `find_person`, `pick_object`, `place_object`, `follow_person`, `guide_person`, `deliver_object`, `answer_question` | **unavailable** | vocabulario GPSR sin implementación validada: el plan se rechaza |
+| `find_person {gesture?, posture?, clothing?}` | available (`UNIT_PASS`) | requiere al menos un descriptor visual; barre con `bag_finder` y se acerca; mueve cabeza/base, exige confirmación en modo real; nombres pendientes |
+| `detect_object`, `pick_object`, `place_object`, `follow_person`, `guide_person`, `deliver_object`, `answer_question` | consultar `/mission/skills` | el registro `default_registry()` contiene el estado vigente de cada habilidad |
 
 ### Interfaces
 | Interfaz | Tipo | Notas |
@@ -99,6 +100,13 @@ skill desconocida o no implementada, argumentos, lugares inexistentes, `home` fa
 | srv `/mission/cancel` | std_srvs/Trigger | cancela el paso actual (goal de Nav2 incluido) y nunca arranca el siguiente |
 | pub `/mission/status` | std_msgs/String JSON, transient_local, en cada cambio y a 1 Hz | `{mission_id, name, mode, state, current_step, started_at, finished_at, message, steps[{index, id, skill, args, state, attempts, max_attempts, started_at, finished_at, duration_s, message, error}], log[]}`; estados `IDLE/RUNNING/SUCCEEDED/FAILED/CANCELED` y por paso `PENDING/RUNNING/SUCCEEDED/FAILED/SKIPPED/CANCELED` |
 | pub `/mission/skills` | std_msgs/String JSON, transient_local | registro con contratos |
+
+`find_person` pide `/bag_finder/request` con `mode:"find_person"` y
+`descriptor:{gesture|posture|clothing: texto}`. Recibe `/bag_finder/result`
+con `{id, ok, person:{xy:[x,y]}|null, reason}` en coordenadas `map`.
+Solo se acerca a coincidencias confirmadas por `person_matcher`; ante incertidumbre
+falla con `no_matching_person`. Protocolo, cobertura medida y límites en
+[`GPSR_PERSONAS.txt`](../../docs/GPSR_PERSONAS.txt).
 
 ### Seguridad
 - `mode:=sim` (por defecto) **se niega a arrancar en `ROS_DOMAIN_ID=10`** (chequeo antes de `rclpy.init`).

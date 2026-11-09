@@ -2,34 +2,31 @@
 HOME-107: GPSR - RECONOCER PERSONAS POR GESTO, POSTURA, ROPA Y NOMBRE
 ================================================================================
 
-1. IMPACTO Y COBERTURA SOBRE DATASET OFICIAL (tools/gpsr_parser/data/commands.jsonl)
+1. COBERTURA MEDIDA OFFLINE (tools/gpsr_parser/data/commands.jsonl)
 --------------------------------------------------------------------------------
-- Comandos totales evaluados: 500
-- Compilan actualmente en development: 189 / 500 (37.8%)
-- Fallan por persona (nombre, gesto, postura, ropa): 297 / 500 (59.4%)
-- Fallan por otros motivos (preguntas abiertas no soportadas): 14 / 500 (2.8%)
+VERIFICADO 2026-11-09, rama codex/gpsr-personas, base 4e56930:
+  python3 tools/gpsr_parser/count_compilable.py --baseline-ref 4e56930
+  - Antes: 189 / 500 (37.8%). Despues: 285 / 500 (57.0%).
+  - 96 comandos nuevos: 41 con gesto, 50 con postura y 5 con ropa.
+  - Ningun comando que compilaba antes deja de compilar.
+  - Los 285 planes pasan validate_plan con el registro de skills disponibles.
+Los lugares del conteo tienen coordenadas ficticias; esto mide compilacion,
+no exactitud del parser, ejecucion de misiones ni seguridad fisica.
 
-Desglose de los 297 comandos cubiertos por person_matcher.py:
-  * Nombres (144 comandos, 48.5% de los bloqueados):
-      Resueltos mediante secuencia conversacional HRI (preguntar "Are you X?").
-  * Gestos visuales (88 comandos, 29.6% de los bloqueados):
-      - raising their right arm: 19
-      - pointing to the left: 19
-      - waving: 18
-      - pointing to the right: 17
-      - raising their left arm: 15
-  * Posturas corporales (60 comandos, 20.2% de los bloqueados):
-      - lying / lying down: 23
-      - sitting: 20
-      - standing: 17
-  * Vestimenta / Ropa (5 comandos, 1.7% de los bloqueados):
-      - blue sweater: 2
-      - orange jacket: 1
-      - red jacket: 1
-      - orange t shirt: 1
+Vocabulario visual conectado a find_person:
+  * Gestos: raising their right arm, raising their left arm,
+    pointing to the left, pointing to the right, waving.
+  * Posturas: lying / lying down, sitting, standing.
+  * Ropa: color y region corporal (torso/piernas), incluidos blue sweater,
+    orange jacket, red jacket y orange t shirt. Tipo exacto de prenda pendiente.
+  * Nombres: protocolo puro por voz ya existente, sin conexion al ejecutor/ASR;
+    el compilador rechaza la orden completa con un error explicito.
 
-Potencial de compilacion total con person_matcher conectado:
-  189 (actuales) + 297 (cubiertos) = 486 / 500 comandos (97.2% de cobertura).
+La proyeccion anterior de 486 / 500 no era una medicion de esta integracion.
+Persisten rechazos por nombres y por otras acciones de la orden no soportadas.
+Limitacion previa del parser: en el comando "say hello ... orange t shirt ...
+and follow them ..." el descriptor absorbe el resto de la frase y pierde follow.
+Ese parser no se modifica en esta tarea (HOME-15b).
 
 2. ARQUITECTURA ENTREGADA (src/base_athome_perception)
 --------------------------------------------------------------------------------
@@ -43,15 +40,30 @@ Potencial de compilacion total con person_matcher conectado:
       classify_yes_no_response, evaluate_voice_candidate_response, resolve_person_by_voice).
 - test/test_person_matcher.py:
     * 61 tests unitarios sinteticos (gestos, posturas, ruido, fallas, ropa, dialogo).
+- base_athome_perception/person_search.py:
+    * Seleccion pura: evalua match_person por candidato, descarta UNKNOWN/NO_MATCH
+      y coordenadas invalidas; agrupa por posicion y exige por defecto 3 imagenes distintas.
+    * Elige la coincidencia confirmada mas cercana a la posicion mapa del robot.
+- bag_finder.py: modo find_person, barrido compartido con raised_hands y la misma
+  posicion mapa RGB-D (o posicion simulada); cada timestamp RGB cuenta una vez.
+- Skill find_person: disponible, moves_hardware=True; pide descriptor visual,
+  espera el finder y se acerca con person_stand_pose + cliente navigate_to_pose.
+  Las entregas conservan la persona elegida, sin una segunda busqueda generica.
+- voice_dialog: confirma el descriptor con una frase corta en ingles.
 
-3. QUE FALTA PARA CONECTARLO AL ROBOT (TRABAJO DE CLAUDE)
+3. INTERFAZ Y VALIDACION PENDIENTE
 --------------------------------------------------------------------------------
-1. Habilitar find_person en command_parser.py (base_athome_skills):
-   Permitir que compile_gpsr_actions genere la secuencia de acciones para
-   find_person con parametros 'name', 'gesture', 'posture' y 'clothing'.
-2. Modo de filtrado en bag_finder.py / nodo de percepcion:
-   Al ejecutar la accion find_person, tomar los esqueletos de person_pose_detector
-   y atributos de person_attributes, invocar person_matcher.match_person(),
-   y filtrar la persona objetivo antes de enviar el goal de acercamiento.
-3. Dialogo de confirmacion de nombre en mission/commander_node.py:
-   Vincular el resolvedor verbal con la skill 'speak' y el cliente de ASR.
+Pedido en /bag_finder/request (std_msgs/String JSON):
+  {"id":"gpsr-1","mode":"find_person","timeout_s":30,
+   "descriptor":{"gesture":"raising their left arm"}}
+Descriptor: una o mas claves gesture/posture/clothing; conjuncion si hay varias.
+Respuesta en /bag_finder/result (xy en frame map, metros):
+  {"id":"gpsr-1","ok":true,"person":{"xy":[2.0,1.0]},"reason":"matched","error":""}
+Sin coincidencia: ok=false, person=null, reason/error="no_matching_person".
+Descriptor vacio, con nombre o mal formado: reason/error="invalid_descriptor";
+se rechaza antes del barrido. No hay seleccion de respaldo por proximidad.
+
+UNIT_PASS con imagenes/keypoints sinteticos y handlers falsos, sin nodo DDS.
+No se probaron camaras, modelos YOLO, ASR, Gazebo ni actuadores reales.
+Pendiente: conectar el protocolo verbal de nombres y validar la cadena visual
+con pruebas de simulacion y luego con supervision fisica autorizada.

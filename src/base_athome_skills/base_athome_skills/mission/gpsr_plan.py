@@ -3,7 +3,7 @@
 Convierte la salida de GPSRParser (o texto de ordenes) a un Plan determinista
 de Base@Home apto para `validate_plan`, identificando de forma explicita:
   1. Habilidades no disponibles en el hardware actual (status=UNAVAILABLE en SkillRegistry:
-     find_person, follow_person, guide_person, deliver_object, answer_question).
+     guide_person, deliver_object, answer_question).
   2. Acciones del vocabulario GPSR sin ninguna habilidad definida en Base@Home (count, describe).
   3. Errores de sintaxis de argumentos o lugares desconocidos.
 
@@ -86,8 +86,8 @@ def _conv_deliver_to(p: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _conv_find_person(p: Dict[str, Any]) -> Dict[str, Any]:
-    # Skill find_person tiene optional=("name", "gesture", "posture", "clothing").
-    # Se omiten parametros no reconocidos como 'location' para evitar error de check_args.
+    # Se conserva 'name' para que la validacion lo rechace explicitamente; no se infiere identidad por vision.
+    # Se omiten parametros de ubicacion: el parser emite go_to por separado.
     return {k: str(p[k]) for k in ("name", "gesture", "posture", "clothing") if p.get(k) is not None}
 
 

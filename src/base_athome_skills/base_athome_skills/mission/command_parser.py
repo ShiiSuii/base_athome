@@ -721,14 +721,19 @@ def compile_gpsr_actions(actions: List[Dict[str, Any]], places: Dict[str, Any], 
                 continue
             if p.get("location"):
                 _go(c, str(p["location"]), raw)
-            if p.get("person") not in (None, "me"):
+            # find_person ya se acerca al objetivo elegido: no volver a buscar a cualquiera.
+            selected_person = bool(c.steps and c.steps[-1]["skill"] == "find_person")
+            if p.get("person") not in (None, "me") and not selected_person:
                 c.add("approach_person", {}, "acercarse a la persona", timeout=120)
             c.add("speak", {"text": GIVE_SPEECH}, "avisar que va a soltar el objeto", recover=False)
             c.add("give_object", {}, f"entregar '{c.holding}'", timeout=30)
             c.holding, c.seen, c.observing = None, None, False
         elif act == "find_person":
-            if p.get("name") or p.get("gesture") or p.get("posture") or p.get("clothing"):
-                c.errors.append(f"'{raw}': todavia no se reconocer a una persona por nombre, gesto o ropa")
+            if p.get("name"):
+                c.errors.append(f"'{raw}': buscar por nombre requiere un dialogo de confirmacion por voz todavia no conectado")
+            elif any(p.get(k) for k in ("gesture", "posture", "clothing")):
+                args = {k: p[k] for k in ("gesture", "posture", "clothing") if p.get(k)}
+                c.add("find_person", args, "buscar a la persona y acercarse", timeout=120)
             else:
                 c.add("approach_person", {}, "buscar a la persona y acercarse", timeout=120)
         elif act == "follow":

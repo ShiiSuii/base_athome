@@ -3,6 +3,8 @@
 
   sub /bag_finder/request  String JSON {id, timeout_s, mode: locate_person | refine_bag (con near:[x,y]) | la bolsa senalada}
   pub /bag_finder/result   String JSON {id, ok, bag:[x,y,z], pointed:[x,y]} o {id, ok:false, error, message}
+  mode find_person: pedido {id, mode:"find_person", descriptor:{gesture|posture|clothing: str}, timeout_s}
+                    respuesta {id, ok, person:{xy:[x,y]}|null, reason, error}; coordenadas map.
 z es la parte superior de la bolsa (donde esta la manija). Marco map. Las mediciones estan en base_athome_perception.bag_vision.
 Detector de bolsas: YOLO-World (wrist_detector.BagDetector), el mismo de la muneca. Con ATHOME_SIM=1 corre todo este codigo
 contra la imagen dibujada por la simulacion, sin modelos: la persona llega con sus keypoints por /sim/people.
@@ -27,6 +29,8 @@ from tf2_ros import Buffer, TransformListener
 from base_athome_perception import bag_vision as bv
 from base_athome_perception import scene_analysis as scene
 from base_athome_perception.raised_hand import RaisedHandsAggregator
+from base_athome_perception.person_search import PersonSearch, valid_descriptor
+from base_athome_perception.person_attributes import extract_person_attributes
 from base_athome_perception.wrist_detector import make_bag_detector
 from base_athome_skills.mission import bag_task
 
@@ -97,9 +101,9 @@ class BagFinder(Node):
         self.sim_people = json.loads(m.data)["people"]
 
     def _rgb(self, m):
-        self.rgb_stamp = m.header.stamp
         img = np.frombuffer(m.data, np.uint8).reshape(m.height, m.width, -1)
         with self.lock:
+            self.rgb_stamp = m.header.stamp
             self.rgb = img[:, :, ::-1].copy() if m.encoding == "rgb8" else img.copy()
 
     def _depth(self, m):
@@ -150,9 +154,10 @@ class BagFinder(Node):
             return None
         return np.array([t.translation.x, t.translation.y, t.translation.z]), bv.quat_to_R(t.rotation)
 
-    def _frames(self):
+    def _frames(self, with_stamp=False):
         with self.lock:
-            return (None, None) if self.rgb is None or self.depth is None else (self.rgb.copy(), self.depth.copy())
+            frames = (None, None) if self.rgb is None or self.depth is None else (self.rgb.copy(), self.depth.copy())
+            return (*frames, self.rgb_stamp) if with_stamp else frames
 
     def _poses(self, rgb, cam=None):
         if SIM:
@@ -253,7 +258,9 @@ class BagFinder(Node):
         if mode == "follow_person":
             self._follow(req)
             return
-        if mode == "raised_hands":
+        if mode == "find_person":
+            out = self._find_person(req)
+        elif mode == "raised_hands":
             out = self._find_raised_hands(req)
         elif mode == "locate_person":
             out = self._locate_person(req)
@@ -295,8 +302,17 @@ class BagFinder(Node):
             return float(best_p[0]), float(best_p[1])
         return None
 
+    def _find_person(self, req):
+        search = PersonSearch(req.get("descriptor"), req.get("min_frames", 3))
+        if not valid_descriptor(search.descriptor):
+            return search.build_response(req.get("id"))
+        return self._sweep_people(req, search=search)
+
     def _find_raised_hands(self, req):
-        """Busca clientes con la mano levantada barriendo la cabeza en -60..+60 grados."""
+        return self._sweep_people(req)
+
+    def _sweep_people(self, req, search=None):
+        """Barrido comun de Restaurant/GPSR en -60..+60 grados, con posicion mapa."""
         req_id = req.get("id", "raised_hands")
         timeout_s = float(req.get("timeout_s", 20.0))
         min_frames = int(req.get("min_frames", 3))
@@ -304,9 +320,10 @@ class BagFinder(Node):
 
         self._ensure_torque()
         sweep_pans = RAISED_HANDS_PANS
-        aggregator = RaisedHandsAggregator(min_frames=min_frames, match_dist_m=0.8)
+        aggregator = RaisedHandsAggregator(min_frames=min_frames, match_dist_m=0.8) if search is None else None
 
         pan_idx = 0
+        last_stamp = None
         while time.time() < end:
             pan = sweep_pans[pan_idx % len(sweep_pans)]
             pan_idx += 1
@@ -328,14 +345,16 @@ class BagFinder(Node):
             last_stamp = self.rgb_stamp
 
             while time.time() < view_end:
-                stamp = self.rgb_stamp
-                if (self._head_still() and time.time() - self.head_stamp < 0.5
-                        and stamp is not None and stamp != last_stamp):
+                if self._head_still() and time.time() - self.head_stamp < 0.5:
+                    rgb, depth, stamp = self._frames(with_stamp=True)
+                    if stamp is None or stamp == last_stamp:
+                        time.sleep(0.12)
+                        continue
                     last_stamp = stamp
-                    rgb, depth = self._frames()
                     cam = self._cam(stamp)
                     if rgb is not None:
                         people = self._poses(rgb, cam)
+                        candidates = []
                         for person in people:
                             # En simulacion los puntos del cuerpo no coinciden con el modelo dibujado: la profundidad del
                             # torso caia en la pared de atras (~2x de distancia). Ahi se usa la posicion de la persona simulada.
@@ -343,13 +362,27 @@ class BagFinder(Node):
                             if spot is None and depth is not None and cam is not None and self.K is not None:
                                 spot = bv.person_map_position(person, depth, cam[0], cam[1], self.K)
                             if spot is not None:
-                                aggregator.update_observation(spot, keypoints=person[1], conf=person[2])
+                                if search is None:
+                                    aggregator.update_observation(spot, keypoints=person[1], conf=person[2])
+                                else:
+                                    attrs = (extract_person_attributes(rgb, person[1], person[2])
+                                             if search.descriptor.get("clothing") else None)
+                                    candidates.append(dict(xy=spot, bbox=person[0], keypoints=person[1],
+                                                           keypoints_conf=person[2], attributes=attrs))
+                        if search is not None:
+                            # La misma imagen no cuenta varias veces como evidencia temporal.
+                            search.update_frame(candidates)
                 time.sleep(0.12)
 
             # Si ya se cubrio el barrido completo al menos una vez y hay clientes confirmados, se devuelve
-            if pan_idx >= len(sweep_pans) and aggregator.get_confirmed_customers(self._robot_pos()):
-                break
+            if pan_idx >= len(sweep_pans):
+                confirmed = (search.build_response(req_id, self._robot_pos())["ok"] if search is not None
+                             else aggregator.get_confirmed_customers(self._robot_pos()))
+                if confirmed:
+                    break
 
+        if search is not None:
+            return search.build_response(req_id, self._robot_pos())
         robot_xy = self._robot_pos()
         out = aggregator.build_response(req_id, robot_pos=robot_xy, error_msg="no_raised_hand")
         if out["ok"]:

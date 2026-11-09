@@ -30,7 +30,7 @@ def plan(*steps, name="t"):
 # ------------------------------------------------------------------ registro / validacion
 def test_registry_marks_unimplemented_skills_unavailable():
     assert {"navigate_to", "navigate_sequence", "speak", "listen", "wait", "return_home"} <= set(REG.available())
-    for name in ("find_person", "guide_person", "deliver_object", "answer_question"):
+    for name in ("guide_person", "deliver_object", "answer_question"):
         assert REG.get(name).status == "unavailable"
     for name in ("detect_object", "pick_object", "place_object", "arm_pose"):   # SIM_PASS (HOME-47)
         assert REG.get(name).status == "available"

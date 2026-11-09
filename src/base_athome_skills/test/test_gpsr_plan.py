@@ -112,12 +112,12 @@ def test_gpsr_rejects_missing_skills_count_and_describe():
 
 def test_gpsr_rejects_unavailable_skills_in_strict_mode():
     """Habilidades no implementadas en el robot actual (status=UNAVAILABLE) son rechazadas por defecto."""
-    # find_person; follow_person ya esta disponible
+    # find_person visual disponible; nombre sigue fuera del contrato
     cmd_follow = "go to the bed then meet Angel and follow them"
     res_follow = compile_gpsr(cmd_follow, registry=REG, allow_unavailable=False)
     assert res_follow.ok is False
-    assert set(res_follow.unavailable_skills) == {"find_person"}
-    assert any("la skill 'find_person' no esta implementada" in e for e in res_follow.errors)
+    assert not res_follow.unavailable_skills
+    assert any("name" in e for e in res_follow.errors)
 
     # deliver_object
     cmd_deliver = "bring me a bowl from the cabinet"
@@ -137,13 +137,13 @@ def test_gpsr_rejects_unavailable_skills_in_strict_mode():
 def test_gpsr_accepts_unavailable_skills_in_lenient_mode():
     """En modo lenient (allow_unavailable=True), comandos cuyas acciones si corresponden a skills registradas
     generan un Plan valido sin errores bloqueantes."""
-    cmd_follow = "go to the bed then meet Angel and follow them"
+    cmd_follow = "bring me a bowl from the cabinet"
     res = compile_gpsr(cmd_follow, registry=REG, allow_unavailable=True)
     assert res.ok is True
     assert res.errors == []
     assert res.plan is not None
     # Las skills unavailable se registran informativamente
-    assert set(res.unavailable_skills) == {"find_person"}
+    assert set(res.unavailable_skills) == {"deliver_object"}
 
     # Pero acciones sin skill (count/describe) siguen fallando aun en lenient
     cmd_count = "tell me how many people in the living room are wearing gray jackets"
@@ -232,26 +232,12 @@ def test_gpsr_commands_jsonl_benchmark_30():
         print(f"  * {reason:<45}: {count:2d} ({pct:4.1f}%)")
     print("=" * 80)
 
-    # Verificaciones cuantitativas exactas:
-    # 1. En estricto compila exactamente 1 comando (ID 19) que solo requiere skills disponibles
-    assert strict_ok == 1, f"Se esperaba 1 comando estricto, obtenido {strict_ok}"
-
-    # 2. En lenient compilan 26 comandos (86.7%) cuya sintaxis y argumentos son completamente validos
-    assert lenient_ok == 26, f"Se esperaban 26 comandos lenient, obtenido {lenient_ok}"
-
-    # 3. Exactamente 4 comandos carecen de skill en Base@Home (1 count + 3 describe)
-    no_skill_count = reasons.get("no_skill:count", 0)
-    no_skill_describe = reasons.get("no_skill:describe", 0)
-    assert no_skill_count == 1, f"Se esperaba 1 'count', obtenido {no_skill_count}"
-    assert no_skill_describe == 3, f"Se esperaban 3 'describe', obtenido {no_skill_describe}"
-    assert (no_skill_count + no_skill_describe) == 4
-
-    # 4. Los 25 comandos restantes rechazados en estricto se deben a skills UNAVAILABLE
-    unavail_rejections = sum(v for k, v in reasons.items() if k.startswith("unavailable_skill:"))
-    assert unavail_rejections == 25, f"Se esperaban 25 rechazos por unavailable, obtenido {unavail_rejections}"
-
-    # 5. La suma de razones coincide exactamente con el total de rechazados (29)
-    assert sum(reasons.values()) == 29
+    # Registro actualizado: find_person visual disponible, name rechazado como argumento.
+    assert strict_ok == 7
+    assert lenient_ok == 16
+    assert reasons == {"no_skill:count": 1, "no_skill:describe": 3,
+                       "unavailable_skill:deliver_object": 12, "validation_error": 7}
+    assert sum(reasons.values()) == total - strict_ok
 
     # 6. Cada detalle contiene un motivo no vacio y errores claros
     for item in report["details"]:
@@ -266,8 +252,8 @@ def test_gpsr_commands_jsonl_benchmark_50():
 
     report = evaluate_batch(cmds, registry=REG)
     assert report["total"] == 50
-    assert report["strict_ok"] == 3       # IDs 19, 39, 44 o equivalentes
-    assert report["lenient_ok"] == 42     # 84.0%
+    assert report["strict_ok"] == 13
+    assert report["lenient_ok"] == 27
     reasons = report["rejection_reasons"]
     assert reasons.get("no_skill:count", 0) == 3
     assert reasons.get("no_skill:describe", 0) == 5

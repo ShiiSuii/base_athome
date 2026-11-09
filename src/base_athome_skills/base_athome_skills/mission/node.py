@@ -138,7 +138,7 @@ class MissionExecutorNode(Node):
                         describe_view=self.h_describe_view,
                         return_home=self.h_return_home, speak=self.h_speak, listen=self.h_listen, wait=self.h_wait,
                         detect_object=self.h_detect, pick_object=self.h_pick, follow_person=self.h_follow_person, dock_table=self.h_dock_table, undock_table=self.h_undock_table, receive_bag=self.h_receive_bag, give_object=self.h_give, place_object=self.h_place,
-                        arm_pose=self.h_arm_pose, find_pointed_bag=self.h_find_pointed_bag, approach_person=self.h_approach_person,
+                        arm_pose=self.h_arm_pose, find_pointed_bag=self.h_find_pointed_bag, approach_person=self.h_approach_person, find_person=self.h_find_person,
                         approach_bag=self.h_approach_bag, dock_bag=self.h_dock_bag, remember_bag=self.h_remember_bag, set_torso=self.h_set_torso)
         self.executor_core = MissionExecutor(self.registry, handlers, mode=self.mode, on_update=self._publish)
         self._thread: Optional[threading.Thread] = None
@@ -655,9 +655,31 @@ class MissionExecutorNode(Node):
             if res is not None:
                 if res.get("ok"):
                     return res, None
-                return None, SkillResult.failure(str(res.get("error", "bag_not_found")), str(res.get("message", "")))
+                return None, SkillResult.failure(str(res.get("error") or res.get("reason") or "bag_not_found"),
+                                                 str(res.get("message", res.get("reason", ""))))
             time.sleep(0.05)
         return None, SkillResult.failure("finder_unavailable", "bag_finder no respondio")
+
+    def h_find_person(self, ctx: SkillContext) -> SkillResult:
+        descriptor = {k: ctx.args[k] for k in ("gesture", "posture", "clothing") if ctx.args.get(k)}
+        if not descriptor or not all(isinstance(v, str) and v.strip() for v in descriptor.values()):
+            return SkillResult.failure("invalid_descriptor", "se requiere gesto, postura o ropa como texto no vacio")
+        res, err = self._ask_finder(ctx, "find_person", min(30.0, ctx.remaining()), descriptor=descriptor)
+        if err is not None:
+            return err
+        if self.robot_pose is None:
+            return SkillResult.failure("no_person", "no se la pose del robot")
+        person = res.get("person")
+        try:
+            xy = [float(v) for v in person["xy"]] if isinstance(person, dict) else []
+        except (KeyError, TypeError, ValueError):
+            xy = []
+        if len(xy) != 2 or not all(math.isfinite(v) for v in xy):
+            return SkillResult.failure("no_person", "la persona no tiene posicion mapa valida")
+        pose = bag_task.person_stand_pose(xy, self._pose_now())
+        if pose is None:
+            return SkillResult.success("la persona ya esta cerca", person=xy)
+        return self._navigate(ctx, "hacia la persona", pose)
 
     def h_approach_person(self, ctx: SkillContext) -> SkillResult:
         # Avisar antes de moverse: sin elevador calibrado la mision fallaria recien junto a la bolsa

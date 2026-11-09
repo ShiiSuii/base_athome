@@ -12,6 +12,7 @@ from types import SimpleNamespace as NS
 import numpy as np
 import pytest
 
+from base_athome_perception.person_search import PersonSearch
 from base_athome_perception.raised_hand import (
     COCO_L_SHOULDER,
     COCO_L_WRIST,
@@ -219,7 +220,6 @@ def test_aggregator_clusters_nearby_observations():
     # Coordenadas medianas centradas alrededor de (2.0, 1.0)
     assert resp["customers"][0]["xy"] == [2.0, 1.0]
 
-
 def test_confirmed_customer_survives_other_sweep_positions_and_lowered_hand():
     up, conf = _make_keypoints(hand='left')
     down, _ = _make_keypoints(hand='none')
@@ -261,7 +261,7 @@ class SweepHarness:
         tree = ast.parse(path.read_text())
         cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "BagFinder")
         methods = [n for n in cls.body if isinstance(n, ast.FunctionDef)
-                   and n.name in ("_find_raised_hands", "_head_state", "_head_still")]
+                   and n.name in ("_find_raised_hands", "_sweep_people", "_head_state", "_head_still")]
         env = dict(math=math, time=NS(time=lambda: self.now, sleep=self.advance),
                    SIM=True, RaisedHandsAggregator=RaisedHandsAggregator,
                    bv=NS(HEAD_STILL_DPS=3.0))
@@ -303,9 +303,10 @@ class SweepHarness:
         self.commands.append(pan)
         self.target = pan
 
-    def frames(self):
+    def frames(self, with_stamp=False):
         self.samples.append((self.node.head[0], self.node.head_speed, self.node.rgb_stamp))
-        return object(), None
+        frames = (object(), None)
+        return (*frames, self.node.rgb_stamp) if with_stamp else frames
 
     def poses(self, rgb, cam):
         up, conf = _make_keypoints(hand="left")
@@ -353,3 +354,138 @@ def test_head_ramp_is_slow_and_ends_on_target():
     assert len(pts) == 40                      # 60 grados a 15 grados/s = 4 s = 40 pasos de 0.1 s
     assert max(abs(b[0] - a[0]) for a, b in zip([(0.0, 0.0)] + pts, pts)) <= 1.5 + 1e-9
     assert ns["head_ramp"]((10.0, 0.0), (10.0, 0.0), 15.0, 0.1) == [(10.0, 0.0)]
+
+
+# GPSR comparte el barrido y las posiciones de raised_hands, pero filtra por descriptor.
+
+
+@pytest.mark.parametrize('xy', [None, 1, [], [1.], ['bad', 0.], [float('inf'), 0.], [float('nan'), 0.]])
+def test_person_search_discards_invalid_map_positions(xy):
+    points, conf = _make_keypoints('left')
+    search = PersonSearch({'gesture': 'raising their left arm'}, min_frames=1)
+    search.update_frame([dict(xy=xy, keypoints=points, keypoints_conf=conf)])
+    assert search.build_response('bad_position')['person'] is None
+
+
+@pytest.mark.parametrize('posture', ['sitting', 'standing', 'lying'])
+def test_person_search_selects_posture_with_distractor(posture):
+    from test_person_matcher import make_skeleton
+
+    other = 'standing' if posture != 'standing' else 'sitting'
+    search = PersonSearch({'posture': posture}, min_frames=1)
+    candidates = []
+    for xy, pose in [([1., 0.], other), ([3., 0.], posture)]:
+        points, conf = make_skeleton(posture=pose)
+        candidates.append(dict(xy=xy, keypoints=points, keypoints_conf=conf))
+    search.update_frame(candidates)
+    assert search.build_response('posture')['person']['xy'] == [3., 0.]
+
+
+def test_person_search_selects_matching_person_not_nearest_nonmatch():
+    left, conf = _make_keypoints('left')
+    right, _ = _make_keypoints('right')
+    search = PersonSearch({'gesture': 'raising their left arm'}, min_frames=2)
+    candidates = [dict(xy=[.2, 0.], keypoints=right, keypoints_conf=conf),
+                  dict(xy=[3., 1.], keypoints=left, keypoints_conf=conf)]
+    search.update_frame(candidates)
+    assert not search.build_response('a')['ok']
+    search.update_frame(candidates)
+    result = search.build_response('a')
+    assert result['ok'] and result['person']['xy'] == [3., 1.]
+    assert json.loads(json.dumps(result)) == result
+
+
+def test_person_search_unknown_invalid_position_and_descriptor_never_match():
+    points, conf = _make_keypoints('left', conf_val=0.)
+    for descriptor in ({'gesture': 'waving'}, {}, {'name': 'Angel'}, {'gesture': 'invented'}):
+        search = PersonSearch(descriptor, min_frames=1)
+        search.update_frame([dict(xy=[1., 2.], keypoints=points, keypoints_conf=conf),
+                             dict(xy=[float('nan'), 0.], keypoints=points)])
+        assert not search.build_response('a')['ok']
+        assert search.build_response('a')['reason']
+
+
+def test_person_search_clothing_nearest_relative_to_robot_and_conjunction():
+    points, conf = _make_keypoints('left')
+    search = PersonSearch({'clothing': 'blue sweater', 'gesture': 'raising their left arm'}, min_frames=1)
+    search.update_frame([dict(xy=[x, 0.], keypoints=points, keypoints_conf=conf,
+                             attributes={'torso': {'color': color, 'confidence': .9}})
+                         for x, color in [(1., 'blue'), (5., 'blue'), (4., 'red')]])
+    assert search.build_response('a', (4., 0.))['person']['xy'] == [5., 0.]
+
+
+def test_person_search_does_not_count_two_detections_as_two_frames():
+    points, conf = _make_keypoints('left')
+    search = PersonSearch({'gesture': 'waving'}, min_frames=2)
+    candidate = dict(xy=[1., 2.], keypoints=points, keypoints_conf=conf)
+    search.update_frame([candidate, candidate])
+    assert not search.build_response('a')['ok']
+
+
+@pytest.mark.parametrize('sim', [True, False])
+@pytest.mark.parametrize('fresh_frames', [True, False])
+@pytest.mark.parametrize('descriptor', [
+    {'gesture': 'raising their left arm'}, {'posture': 'standing'}, {'clothing': 'blue sweater'}])
+def test_find_person_reuses_sweep_and_map_positions_without_ros(sim, fresh_frames, descriptor):
+    """Ejecuta los metodos reales del barrido con reloj/camara/cabeza falsos, sin importar ROS."""
+    import ast
+    from pathlib import Path
+    from types import SimpleNamespace
+    from base_athome_perception.person_search import valid_descriptor
+    from base_athome_perception.person_attributes import extract_person_attributes
+    from test_person_matcher import make_skeleton
+    source = Path(__file__).resolve().parents[1] / 'scripts/bag_finder.py'
+    tree = ast.parse(source.read_text())
+    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'BagFinder')
+    cls.bases = []
+    cls.body = [n for n in cls.body if isinstance(n, ast.FunctionDef)
+                and n.name in ('_serve_one', '_find_person', '_sweep_people')]
+    now = [0.]
+    def sleep(seconds):
+        now[0] += seconds
+        node.head_stamp = now[0]
+        if fresh_frames:
+            node.rgb_stamp = now[0]
+    scope = dict(json=json, time=SimpleNamespace(time=lambda: now[0], sleep=sleep),
+                 PersonSearch=PersonSearch, valid_descriptor=valid_descriptor,
+                 RaisedHandsAggregator=RaisedHandsAggregator,
+                 RAISED_HANDS_PANS=(-60., -30., 0., 30., 60.), SEARCH_TILT=0.,
+                 RAISED_HANDS_VIEW_S=2., RAISED_HANDS_SETTLE_S=1.5,
+                 SIM=sim, extract_person_attributes=extract_person_attributes, String=SimpleNamespace,
+                 bv=SimpleNamespace(person_map_position=lambda *args: (4., 2.)))
+    exec(compile(ast.fix_missing_locations(ast.Module(body=[cls], type_ignores=[])), str(source), 'exec'), scope)
+    node = scope['BagFinder']()
+    pans = []
+    points, conf = make_skeleton('standing', 'raising_left_arm')
+    points *= .5
+    node.rgb_stamp = now[0] if fresh_frames else 1.
+    def frames(with_stamp=False):
+        images = (np.full((480, 640, 3), [220, 50, 0], np.uint8), np.ones((480, 640)))
+        return (*images, node.rgb_stamp) if with_stamp else images
+    node._frames = frames
+    node._poses = lambda *args: [([0, 0, 100, 300], points, conf)]
+    node._cam = lambda *args: (None, None)
+    node.K = (1., 1., 0., 0.)
+    node.head, node.head_stamp = (0., 0.), now[0]
+    node._head_still = lambda: True
+    node._ensure_torque = lambda: None
+    def move_head(pan, tilt):
+        pans.append(pan)
+        node.head, node.head_stamp = (pan, tilt), now[0]
+    node._move_head = move_head
+    node._robot_pos = lambda: (0., 0.)
+    node._sim_person_spot = lambda *args: (2., 1.)
+    published = []
+    node.pub = SimpleNamespace(publish=lambda msg: published.append(json.loads(msg.data)))
+    node._serve_one(dict(id='a', mode='find_person', descriptor=descriptor, timeout_s=10.))
+    out, = published
+    assert out['id'] == 'a'
+    assert pans[:5] == [-60., -30., 0., 30., 60.]
+    if fresh_frames:
+        assert out['ok'] and out['person']['xy'] == ([2., 1.] if sim else [4., 2.])
+        assert len(pans) == 5
+    else:
+        assert not out['ok'] and out['reason'] == 'no_matching_person'
+    pans.clear()
+    assert node._find_person(dict(id='b', descriptor={'name': 'Angel'}))['reason'] == 'invalid_descriptor'
+    assert not pans

@@ -297,6 +297,16 @@ duplicada: eliminada (S-05).
 | `/torso/goal` (Float64, NaN = parar), srv `/torso/calibrate` | Float64 / Trigger | ejecutor → `torso_state` con `allow_motion:=true` (**actuador**) |
 | `/bag_finder/request`, `/bag_finder/result` | String JSON | ejecutor ↔ `bag_finder` (RealSense; mueve la cabeza) |
 
+**GPSR visual (`CODIGO`, `UNIT_PASS` 2026-11-09):** el modo `find_person` de
+`bag_finder` recibe `descriptor` con `gesture`, `posture` y/o `clothing`, comparte
+el barrido y la localización mapa de `raised_hands` y filtra con `person_matcher`.
+`person_search.py` confirma coincidencias por defecto en tres imágenes distintas y
+elige la más cercana al robot; responde `{id, ok, person:{xy:[x,y]}|null, reason}`
+(metros, frame `map`). El ejecutor usa `person_stand_pose` y la acción
+`navigate_to_pose`; `moves_hardware=True` conserva la confirmación de voz.
+Nombres por voz y pruebas con cámara/actuadores: `PENDIENTE`. Detalle en
+`docs/GPSR_PERSONAS.txt`; sin cambios en la configuración de navegación.
+
 ### Seguridad del software de actuadores (vigente, no revertir)
 
 - Piper: `auto_enable=False` por defecto; **rechaza habilitarse sin tramas CAN recientes** (`feedback_timeout_s=0.5`); `/arm/status` informa `enabled`/`feedback_ok`.
