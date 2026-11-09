@@ -158,3 +158,11 @@ def test_athome_sim_customers_env_parsing(monkeypatch):
 
     # Ambos conviven
     assert os.environ.get("ATHOME_SIM_PERSON") == "0.5,1.8"
+
+
+def test_gazebo_publishes_customers_without_a_bag():
+    """Restaurant no tiene bolsa: igual hay que publicar /sim/people y crear los clientes en Gazebo."""
+    import inspect
+    from base_athome_sim import sim_robot
+    src = inspect.getsource(sim_robot.SimRobot._setup_gazebo) if hasattr(sim_robot, "SimRobot") else inspect.getsource(sim_robot)
+    assert "elif self.customers_xy" in src

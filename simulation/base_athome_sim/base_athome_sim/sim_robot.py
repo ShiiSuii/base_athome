@@ -551,6 +551,9 @@ class SimRobot(Node):
             sub(Odometry, gz_model.BAG_ODOM_TOPIC, self._gz_bag_odom)
             self.create_timer(0.2, self._gz_people)
             threading.Thread(target=self._gz_spawn_scene, daemon=True).start()
+        elif self.customers_xy:     # Restaurant: clientes sin bolsa. Sin esto /sim/people nunca se publicaba
+            self.create_timer(0.2, self._gz_people)
+            threading.Thread(target=self._gz_spawn_scene, daemon=True).start()
 
     def _tcp_in_map(self):
         tcp = self._lookup("base_footprint", "tcp_link")[1]
