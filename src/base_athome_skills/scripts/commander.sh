@@ -10,7 +10,8 @@ set +u; source /opt/ros/jazzy/setup.bash; source "$WS/install/setup.bash"; set -
 export ROS_DOMAIN_ID=10
 . "$HERE/session_lib.sh"
 session_init "${COMMANDER_LOG_DIR:-/tmp}/commander_$$" || exit 1
-if pgrep -f 'hri_receptionist' >/dev/null; then
+session_start audio_keepalive python3 "$HERE/audio_keepalive.py"   # sonido breve cada 5 s: el parlante Bluetooth no se apaga
+if pgrep -f 'python3? [^ ]*hri_receptionist[^ ]*\.py|lib/base_athome_perception/hri_receptionist' >/dev/null; then   # el programa, no cualquier linea que lo nombre
   echo "El receptionist esta corriendo: usa el mismo microfono. Cerralo antes."; exit 1
 fi
 if pgrep -f 'hoverboard_driver' >/dev/null && ! timeout 6 ros2 action list 2>/dev/null | grep -q '^/navigate_to_pose$'; then

@@ -811,6 +811,7 @@ def node_methods(*names):
         return NS(pose=NS(header=NS(), pose=NS(position=NS(), orientation=NS())))
     env = dict(math=math, Optional=Optional, Tuple=Tuple, List=List,
                NavigateToPose=NS(Goal=message), GoalStatus=NS(STATUS_ABORTED=6),
+               Spin=NS(Goal=NS), Duration=lambda seconds: NS(to_msg=lambda: NS(seconds=seconds)),
                NavigationStopMonitor=NavigationStopMonitor, rclpy=NS(time=NS(Time=lambda: None)))
     exec(compile(ast.Module(body=methods, type_ignores=[]), str(path), 'exec'), env)
     return env
@@ -824,7 +825,8 @@ def test_voice_stop_during_node_navigation_cancels_and_aborts_session(speech):
     session = h.make_session()
     session.clock_fn = lambda: action.now
     methods = node_methods('_navigate', '_cancel_nav')
-    node = NS(_navigation=action.nav, voice=voice, session=session, navigation_timeout_s=90.,
+    node = NS(_navigation=action.nav, _spinning=NS(cancel=lambda: None),
+              voice=voice, session=session, navigation_timeout_s=90.,
               get_logger=lambda: NS(info=lambda _: None),
               get_clock=lambda: NS(now=lambda: NS(to_msg=lambda: None)))
     session.navigate_fn = lambda *pose, **kw: methods['_navigate'](node, *pose, **kw)
@@ -1185,3 +1187,137 @@ def test_session_skips_customer_without_any_planned_approach(restaurant_grid):
     assert "I could not reach the customer." in h.spoken
     assert all(goal[1] <= 0 for goal in h.nav_goals)   # nunca un goal sin plan
     assert len(h.nav_goals) == 4                       # cliente 2, barra, entrega, barra final
+
+
+def test_initial_spin_order_fixed_head_and_three_views_merge_in_map():
+    h = FakeRestaurantHarness(speech_script=['water', 'ready', 'beer', 'ready'])
+    views = iter([
+        [{'id': '1', 'xy': [4., 2.]}],
+        {'ok': True, 'customers': [{'id': '1', 'xy': [2., -1.]}]},
+        [{'id': '1', 'xy': [4.1, 2.1]}, {'id': '2', 'xy': [2.1, -1.1]}],
+    ])
+    events = []
+
+    def spin(angle):
+        events.append(('spin', angle))
+        return True
+
+    def detect(timeout_s, min_frames):
+        events.append(('look', (timeout_s, min_frames)))
+        return next(views)
+
+    session = h.make_session(spin_fn=spin, point_head_fn=lambda p, t: events.append(('head', (p, t))))
+    session.detect_customers_fn = detect
+    assert session.run()
+    assert [v for e, v in events if e == 'spin'] == [math.pi / 2, -math.pi, math.pi / 2]
+    assert [e for e, _ in events[:9]] == ['head', 'spin', 'look'] * 3
+    assert all(v == (0., 0.) for e, v in events[:9] if e == 'head')
+    assert len(session.customers) == 2
+    assert [c['xy'] for c in session.customers] == [[2., -1.], [4., 2.]]
+    assert len(set(c['id'] for c in session.customers)) == 2
+    assert len(session.orders) == 2 and session.served == 2
+    assert all(v == (8., 3) for e, v in events if e == 'look')
+
+
+@pytest.mark.parametrize('failed_spin', [1, 2, 3])
+def test_failed_spin_keeps_customers_and_continues_without_blind_relative_turns(failed_spin):
+    h = FakeRestaurantHarness(customers=[{'xy': [2., 0.]}], speech_script=['water', 'ready'])
+    turns = []
+
+    def spin(angle):
+        turns.append(angle)
+        return len(turns) != failed_spin
+
+    session = h.make_session(spin_fn=spin)
+    assert session.run()
+    assert len(turns) == failed_spin
+    assert len([e for e, _ in h.events if e == 'detect_customers']) == failed_spin
+    assert len(session.customers) == 1 and session.served == 1
+
+
+def test_failed_second_spin_retains_customer_from_first_view_when_next_is_empty():
+    h = FakeRestaurantHarness(speech_script=['water', 'ready'])
+    results = iter([True, False])
+    views = iter([[{'xy': [2., 1.]}], {'ok': False, 'customers': []}])
+    session = h.make_session(spin_fn=lambda _: next(results))
+    session.detect_customers_fn = lambda *_: next(views)
+    assert session.run()
+    assert session.customers[0]['xy'] == [2., 1.]
+
+
+@pytest.mark.parametrize('interrupt', ['stop', 'timeout'])
+def test_interrupt_during_initial_spin_prevents_detection_and_navigation(interrupt):
+    h = FakeRestaurantHarness()
+    turns = []
+
+    def spin(angle):
+        turns.append(angle)
+        if interrupt == 'stop':
+            session.stop()
+        else:
+            h.current_time = session.deadline_s
+        return False
+
+    session = h.make_session(spin_fn=spin)
+    assert not session.run()
+    assert session.state == (SessionState.ABORTED if interrupt == 'stop' else SessionState.TIMEOUT)
+    assert turns == [math.pi / 2] and h.nav_cancelled
+    assert not h.nav_goals
+    assert not any(e == 'detect_customers' for e, _ in h.events)
+
+
+@pytest.mark.parametrize('stop_at', [100.2, 101.0])
+def test_node_spin_voice_stop_cancels_even_before_acceptance_and_drains(stop_at):
+    action = FakeActionHarness(accept_after=0.5, finish_after=None)
+    voice = FakeVoice(action, [(stop_at, 'STOP!')])
+    h = FakeRestaurantHarness()
+    session = h.make_session()
+    session.clock_fn = lambda: action.now
+    methods = node_methods('_spin', '_cancel_nav')
+    nav_cancel = []
+    node = NS(_navigation=NS(cancel=lambda: nav_cancel.append(True)), _spinning=action.nav,
+              voice=voice, session=session, spin_timeout_s=40.)
+    session.spin_fn = lambda angle: methods['_spin'](node, angle)
+    session.cancel_nav_fn = lambda: methods['_cancel_nav'](node)
+    assert not session.run()
+    assert session.state == SessionState.ABORTED
+    assert action.cancels and action.result.done() and not action.nav.pending
+    assert len(action.sent) == 1 and nav_cancel
+    assert action.sent[0].target_yaw == math.pi / 2
+    assert not h.nav_goals
+    assert not any(e == 'detect_customers' for e, _ in h.events)
+
+
+@pytest.mark.parametrize('remaining,spin_timeout', [(900., 2.), (0.5, 40.)])
+def test_node_spin_time_allowance_and_client_timeout_are_bounded(remaining, spin_timeout):
+    action = FakeActionHarness(finish_after=None)
+    h = FakeRestaurantHarness()
+    session = h.make_session()
+    session.clock_fn = lambda: action.now
+    session.deadline_s = action.now + remaining
+    method = node_methods('_spin')['_spin']
+    node = NS(_spinning=action.nav, voice=FakeVoice(action, []), session=session,
+              spin_timeout_s=spin_timeout)
+    assert not method(node, -math.pi)
+    assert action.sent[0].time_allowance.seconds == min(remaining, spin_timeout)
+    assert action.sent[0].target_yaw == -math.pi
+    assert action.cancels and action.result.done() and not action.nav.pending
+    assert action.cancels[0] == pytest.approx(100. + min(remaining, spin_timeout))
+
+
+def test_restaurant_rolling_overlay_preserves_slam_obstacles_and_unknown_space():
+    import yaml
+
+    root = Path(__file__).parents[1]
+    overlay = yaml.safe_load((root / 'config/nav2_restaurant.yaml').read_text())
+    base = yaml.safe_load((root.parent / 'base_athome_navigation/config/nav2_params.yaml').read_text())
+    tree = ast.parse((root / 'launch/restaurant_nav.launch.py').read_text())
+    merge = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == '_merge')
+    scope = {}
+    exec(compile(ast.Module(body=[merge], type_ignores=[]), 'restaurant_merge', 'exec'), scope)
+    params = scope['_merge'](base, overlay)['global_costmap']['global_costmap']['ros__parameters']
+    assert params['global_frame'] == 'map' and params['rolling_window']
+    assert params['width'] == params['height'] == 20
+    assert params['track_unknown_space']
+    assert params['plugins'] == ['static_layer', 'obstacle_layer', 'inflation_layer']
+    assert params['obstacle_layer']['scan']['topic'] == '/scan_nav'

@@ -354,8 +354,14 @@ class BagFinder(Node):
         min_frames = int(req.get("min_frames", 3))
         end = time.time() + timeout_s
 
+        # pans opcional en grados: Restaurant usa [0.0] mientras orienta la base.
+        # Validar antes de tocar la cabeza; sin el campo se conserva el barrido actual.
+        sweep_pans = req.get("pans", RAISED_HANDS_PANS) if search is None else RAISED_HANDS_PANS
+        if search is None and "pans" in req and (not isinstance(sweep_pans, (list, tuple)) or not sweep_pans
+                or any(isinstance(p, bool) or not isinstance(p, (int, float))
+                       or not math.isfinite(p) or not -60.0 <= p <= 60.0 for p in sweep_pans)):
+            return {"id": req_id, "ok": False, "customers": [], "error": "invalid_pans"}
         self._ensure_torque()
-        sweep_pans = RAISED_HANDS_PANS
         aggregator = RaisedHandsAggregator(min_frames=min_frames, match_dist_m=0.8) if search is None else None
 
         pan_idx = 0

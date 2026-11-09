@@ -13,6 +13,8 @@ import threading
 import time
 from typing import Callable, Optional
 
+from base_athome_perception.audio_lock import playback_lock
+
 
 class RoboCupSpeaker:
     """Motor de Text-to-Speech neuronal y reproductor de audio para HRI (RoboCup @Home)."""
@@ -74,9 +76,10 @@ class RoboCupSpeaker:
 
         def _play():
             try:
-                bt_sink = self.ensure_bluetooth_sink()
-                sink_flag = ["-d", bt_sink] if bt_sink else []
-                subprocess.run(["paplay"] + sink_flag + [wav_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                with playback_lock():
+                    bt_sink = self.ensure_bluetooth_sink()
+                    sink_flag = ["-d", bt_sink] if bt_sink else []
+                    subprocess.run(["paplay"] + sink_flag + [wav_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             except Exception as e:
                 print(f"[RoboCupSpeaker] Error reproduciendo audio: {e}")
 
@@ -133,22 +136,23 @@ class RoboCupSpeaker:
 
             self._is_speaking = True
             try:
-                bt_sink = self.ensure_bluetooth_sink()
-                sink_flag = f"-d {bt_sink} " if bt_sink else ""
+                with playback_lock():
+                    bt_sink = self.ensure_bluetooth_sink()
+                    sink_flag = f"-d {bt_sink} " if bt_sink else ""
 
-                clean_text = text.replace('"', '\\"').replace("`", "").replace("$", "")
-                cmd = (
-                    f'echo "{clean_text}" | '
-                    f'"{self.piper_bin}" --model "{self.model_path}" --output-raw 2>/dev/null | '
-                    f'paplay {sink_flag}--raw --rate {self.sample_rate} --channels 1 --format s16le 2>/dev/null'
-                )
+                    clean_text = text.replace('"', '\\"').replace("`", "").replace("$", "")
+                    cmd = (
+                        f'echo "{clean_text}" | '
+                        f'"{self.piper_bin}" --model "{self.model_path}" --output-raw 2>/dev/null | '
+                        f'paplay {sink_flag}--raw --rate {self.sample_rate} --channels 1 --format s16le 2>/dev/null'
+                    )
 
-                self._current_process = subprocess.Popen(
-                    cmd,
-                    shell=True,
-                    executable="/bin/bash",
-                )
-                self._current_process.wait()
+                    self._current_process = subprocess.Popen(
+                        cmd,
+                        shell=True,
+                        executable="/bin/bash",
+                    )
+                    self._current_process.wait()
             except Exception as e:
                 print(f"[RoboCupSpeaker] Error en reproduccion TTS: {e}")
 

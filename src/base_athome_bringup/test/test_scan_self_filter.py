@@ -100,3 +100,46 @@ def test_front_only_drops_side_and_rear_beams():
     out = filter_scan_ranges(ranges, amin, inc, max_abs_angle=_m.radians(100.0))
     assert _m.isinf(out[135 + 120]) and _m.isinf(out[135 - 120])     # costados de atras
     assert out[135] == 2.0 and out[135 + 90] == 2.0                   # adelante y 90 grados
+
+
+def test_scan_nav_offers_reliable_and_short_queue_while_input_stays_sensor_qos():
+    """Constructor real con Node/QoS falsos, sin ROS. RELIABLE satisface ambos lectores."""
+    import ast
+    from pathlib import Path
+    from types import SimpleNamespace as NS
+    ReliabilityPolicy = NS(RELIABLE='RELIABLE')
+    qos_profile_sensor_data = object()
+
+    path = Path(__file__).parents[1] / 'base_athome_bringup/scan_self_filter_node.py'
+    tree = ast.parse(path.read_text())
+    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'ScanSelfFilterNode')
+    init = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == '__init__')
+    published, subscribed = [], []
+
+    class FakeNode:
+        def __init__(self, name):
+            pass
+
+        def declare_parameter(self, name, value, descriptor):
+            return NS(value=value)
+
+        def create_publisher(self, msg, topic, qos):
+            published.append((topic, qos))
+
+        def create_subscription(self, msg, topic, callback, qos):
+            subscribed.append((topic, qos))
+
+        def _scan_callback(self, msg):
+            pass
+
+    fake_class = ast.ClassDef(name='ScanSelfFilterNode', bases=[ast.Name(id='FakeNode', ctx=ast.Load())],
+                             keywords=[], body=[init], decorator_list=[])
+    scope = dict(FakeNode=FakeNode, ParameterDescriptor=NS, math=math, LaserScan=object,
+                 filter_scan_ranges=filter_scan_ranges, QoSProfile=NS,
+                 ReliabilityPolicy=ReliabilityPolicy, qos_profile_sensor_data=qos_profile_sensor_data)
+    exec(compile(ast.fix_missing_locations(ast.Module(body=[fake_class], type_ignores=[])), str(path), 'exec'), scope)
+    scope['ScanSelfFilterNode']()
+    topic, offered = published[0]
+    assert topic == '/scan_nav' and offered.depth == 2
+    assert offered.reliability == ReliabilityPolicy.RELIABLE
+    assert subscribed == [('/scan', qos_profile_sensor_data)]

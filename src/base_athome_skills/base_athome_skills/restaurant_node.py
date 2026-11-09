@@ -21,11 +21,12 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import Vector3
-from nav2_msgs.action import ComputePathToPose, NavigateToPose
+from nav2_msgs.action import ComputePathToPose, NavigateToPose, Spin
 from nav_msgs.msg import OccupancyGrid
 import rclpy
 from rclpy.action import ActionClient
 from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.duration import Duration
 from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data
@@ -61,6 +62,10 @@ class RestaurantNode(Node):
         self.navigation_timeout_s = float(self.get_parameter("navigation_timeout_s").value)
         if not math.isfinite(self.navigation_timeout_s) or self.navigation_timeout_s <= 0:
             raise ValueError("navigation_timeout_s must be positive and finite")
+        self.declare_parameter("spin_timeout_s", 40.0)
+        self.spin_timeout_s = float(self.get_parameter("spin_timeout_s").value)
+        if not math.isfinite(self.spin_timeout_s) or self.spin_timeout_s <= 0:
+            raise ValueError("spin_timeout_s must be positive and finite")
         self._nav_aborted = False
         self._costmap = None
         self.create_subscription(
@@ -84,6 +89,8 @@ class RestaurantNode(Node):
         # Nav2 Action Client
         self.nav_client = ActionClient(self, NavigateToPose, "navigate_to_pose", callback_group=self.cb_group)
         self._navigation = RestaurantNavigation(self.nav_client, warn_fn=self.get_logger().warn)
+        self.spin_client = ActionClient(self, Spin, "spin", callback_group=self.cb_group)
+        self._spinning = RestaurantNavigation(self.spin_client, warn_fn=self.get_logger().warn)
         # Solo consulta al planner (no mueve el robot): valida que exista camino antes de mandar el goal.
         self.plan_client = ActionClient(self, ComputePathToPose, "compute_path_to_pose", callback_group=self.cb_group)
 
@@ -126,6 +133,7 @@ class RestaurantNode(Node):
         # Instanciar sesion
         self.session = RestaurantSession(
             navigate_fn=self._navigate,
+            spin_fn=self._spin,
             get_costmap_fn=lambda: self._costmap,
             nav_aborted_fn=lambda: self._nav_aborted,
             speak_fn=self._speak,
@@ -174,7 +182,7 @@ class RestaurantNode(Node):
             if self._session_thread and self._session_thread.is_alive():
                 self.get_logger().warn("La sesion ya esta en ejecucion.")
                 return
-            if not self._navigation.reset():
+            if not self._navigation.reset() or not self._spinning.reset():
                 self.get_logger().error("Hay una operacion Nav2 pendiente de resultado terminal; inicio rechazado.")
                 return
             self.get_logger().info("Arrancando mision Restaurant...")
@@ -225,6 +233,23 @@ class RestaurantNode(Node):
         finally:
             monitor.close()
 
+    def _spin(self, angle_rad: float) -> bool:
+        """Spin relativo con colisiones de Nav2, plazo acotado y el mismo stop que navegar."""
+        if self.session.stopped or self.session.remaining_s() <= 0:
+            return False
+        timeout_s = min(self.spin_timeout_s, self.session.remaining_s())
+        goal = Spin.Goal()
+        goal.target_yaw = float(angle_rad)
+        goal.time_allowance = Duration(seconds=timeout_s).to_msg()
+        monitor = NavigationStopMonitor(self.voice, self.session.stop)
+        try:
+            return self._spinning.navigate(
+                goal, deadline_s=self.session.deadline_s, timeout_s=timeout_s,
+                stop_requested_fn=lambda: self.session.stopped, monitor_fn=monitor.poll,
+            )
+        finally:
+            monitor.close()
+
     def _plan(self, pose: Tuple[float, float, float], timeout_s: float = 2.0) -> Optional[float]:
         """Largo del plan de Nav2 desde la pose actual, None sin camino; lanza si no hay planner."""
         if not self.plan_client.wait_for_server(timeout_sec=1.0):
@@ -264,6 +289,7 @@ class RestaurantNode(Node):
     def _cancel_nav(self) -> None:
         """Marca stop incluso antes de recibir un handle; _navigate espera su fin."""
         self._navigation.cancel()
+        self._spinning.cancel()
 
     def _ask_order(self, text: str, menu: List[str]) -> List[str]:
         remaining = self.session.remaining_s()
@@ -306,6 +332,7 @@ class RestaurantNode(Node):
         req_data = json.dumps({
             "id": req_id,
             "mode": "raised_hands",
+            "pans": [0.0],  # La base orienta la mirada; la cabeza permanece recta.
             "timeout_s": float(timeout_s),
             "min_frames": int(min_frames),
         })

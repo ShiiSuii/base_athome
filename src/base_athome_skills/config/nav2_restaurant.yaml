@@ -19,6 +19,13 @@ global_costmap:
   global_costmap:
     ros__parameters:
       global_frame: "map"
+      # SLAM online empieza con un mapa pequeno/asimetrico por /scan_nav (+-100 grados).
+      # En Nav2 Jazzy una ventana movil conserva su tamano, en vez de redimensionarse
+      # al OccupancyGrid de StaticLayer: la base queda centrada incluso al inicio.
+      # StaticLayer sigue aportando el mapa SLAM; fuera de lo observado sigue desconocido.
+      rolling_window: true
+      width: 20
+      height: 20
       track_unknown_space: true
       obstacle_layer:
         scan:

@@ -491,3 +491,19 @@ def test_find_person_reuses_sweep_and_map_positions_without_ros(sim, fresh_frame
     pans.clear()
     assert node._find_person(dict(id='b', descriptor={'name': 'Angel'}))['reason'] == 'invalid_descriptor'
     assert not pans
+
+
+def test_raised_hands_optional_pans_keeps_head_centered():
+    h = SweepHarness(always_visible=True)
+    result = h.node._find_raised_hands(dict(id='fixed', timeout_s=8., min_frames=3, pans=[0.]))
+    assert result['ok'] and len(result['customers']) == 1
+    assert h.commands == [0.]
+    assert all(abs(pan) < 1e-8 for pan, _, _ in h.samples)
+
+
+@pytest.mark.parametrize('pans', [[], None, '0', [float('nan')], [float('inf')], [61.], [True]])
+def test_raised_hands_invalid_pans_rejected_before_head_commands(pans):
+    h = SweepHarness(always_visible=True)
+    result = h.node._find_raised_hands(dict(id='bad', pans=pans))
+    assert not result['ok'] and result['error'] == 'invalid_pans'
+    assert h.commands == []

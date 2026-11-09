@@ -11,7 +11,7 @@ from copy import deepcopy
 import rclpy
 from rcl_interfaces.msg import ParameterDescriptor
 from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data
+from rclpy.qos import QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
 from sensor_msgs.msg import LaserScan
 
 from base_athome_bringup.scan_self_filter import filter_scan_ranges
@@ -44,7 +44,11 @@ class ScanSelfFilterNode(Node):
         if not self.laser_frame:
             raise ValueError("laser_frame no puede estar vacio")
 
-        self.publisher = self.create_publisher(LaserScan, "/scan_nav", qos_profile_sensor_data)
+        # RELIABLE ofrecido satisface lectores RELIABLE (SLAM) y BEST_EFFORT (sensores).
+        # Cola corta para no acumular scans viejos; la entrada conserva QoS de sensor.
+        self.publisher = self.create_publisher(
+            LaserScan, "/scan_nav", QoSProfile(depth=2, reliability=ReliabilityPolicy.RELIABLE)
+        )
         self.subscription = self.create_subscription(
             LaserScan, "/scan", self._scan_callback, qos_profile_sensor_data
         )

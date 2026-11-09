@@ -2,7 +2,7 @@
 
 Estrategia:
   1. Inicio junto al kitchen bar: registra pose inicial como 'kitchen_bar'.
-  2. Pide deteccion de clientes con la mano levantada (raised_hands).
+  2. Mira alrededor con Spin (+90, -180, +90 grados), detecta y fusiona clientes en map.
   3. Informa cuantos clientes vio ("I see one customer" / "I see two customers").
   4. Por cada cliente (hasta 2, en orden de cercania):
      - Navega a un punto a ~0.9 m del cliente mirandolo de frente (orientacion hacia el comensal).
@@ -40,6 +40,7 @@ from .restaurant_navigation import is_stop_command
 class SessionState(str, Enum):
     IDLE = "IDLE"
     STARTING = "STARTING"
+    LOOKING_AROUND = "LOOKING_AROUND"
     DETECTING_CUSTOMERS = "DETECTING_CUSTOMERS"
     APPROACHING_CUSTOMER = "APPROACHING_CUSTOMER"
     GREETING = "GREETING"
@@ -233,7 +234,9 @@ class RestaurantSession:
         nav_aborted_fn: Optional[Callable[[], bool]] = None,
         pose_timeout_s: float = 5.0,
         plan_fn: Optional[Callable[[Tuple[float, float, float]], Optional[float]]] = None,
+        spin_fn: Optional[Callable[[float], bool]] = None,
     ):
+        self.spin_fn = spin_fn
         self.plan_fn = plan_fn
         self.get_costmap_fn = get_costmap_fn or (lambda: None)
         self.nav_aborted_fn = nav_aborted_fn or (lambda: False)
@@ -318,6 +321,54 @@ class RestaurantSession:
                 pass
             self.sleep_fn(min(0.1, max(0.0, deadline - self.clock_fn())))
         return None
+
+    def _look_around(self) -> List[Dict[str, Any]]:
+        """Tres vistas con pan fijo; spin_fn debe cancelar/drenar ante stop o deadline.
+
+        Los ids de bag_finder son locales a cada pedido: asociar por distancia en map
+        (0.8 m, igual que RaisedHandsAggregator), nunca por id ni por rango de camara.
+        Sin adaptador Spin conserva la deteccion unica para clientes existentes.
+        """
+        customers: List[Dict[str, Any]] = []
+        angles = (math.pi / 2, -math.pi, math.pi / 2) if self.spin_fn else (None,)
+        for angle in angles:
+            if self.stopped or self._is_timeout():
+                break
+            spin_ok = True
+            if angle is not None:
+                if self.point_head_fn:
+                    self.point_head_fn(0.0, 0.0)
+                self._set_state(SessionState.LOOKING_AROUND, {"angle_rad": angle})
+                spin_ok = self.spin_fn(angle)
+            if self.stopped or self._is_timeout():
+                break
+            self._set_state(SessionState.DETECTING_CUSTOMERS)
+            raw = self.detect_customers_fn(min(8.0 if self.spin_fn else 40.0, self.remaining_s()), 3)
+            view = (raw.get("customers", []) if raw.get("ok", True) else []) if isinstance(raw, dict) else raw
+            if isinstance(view, list):
+                for customer in view:
+                    if not self.spin_fn:
+                        customers.append(dict(customer))
+                        continue
+                    xy = customer.get("xy", (customer.get("x"), customer.get("y")))
+                    try:
+                        x, y = map(float, xy)
+                    except (TypeError, ValueError):
+                        continue
+                    if not math.isfinite(x) or not math.isfinite(y):
+                        continue
+                    if not any(math.hypot(x - c["xy"][0], y - c["xy"][1]) < 0.8 for c in customers):
+                        customers.append(dict(customer, xy=[x, y]))
+            # Tras un giro fallido no se conoce el yaw alcanzado. Aprovechar esta vista
+            # y las anteriores, sin encadenar giros relativos que ya no volverian al frente.
+            if not spin_ok:
+                break
+        if self.spin_fn:
+            customers.sort(key=lambda c: math.hypot(c["xy"][0] - self.bar_pose[0],
+                                                    c["xy"][1] - self.bar_pose[1]))
+            for idx, customer in enumerate(customers, 1):
+                customer["id"] = str(idx)
+        return customers
 
     def _handle_pose_failure(self) -> bool:
         if self.stopped:
@@ -418,19 +469,11 @@ class RestaurantSession:
         if self.stopped:
             return self._handle_stop()
 
-        self._set_state(SessionState.DETECTING_CUSTOMERS)
-        raw_cust = self.detect_customers_fn(min(40.0, self.remaining_s()), 3)   # el barrido lento de la cabeza tarda unos 25 s
+        customers_list = self._look_around()
         if self.stopped:
             return self._handle_stop()
         if self._is_timeout():
             return self._handle_timeout()
-
-        customers_list: List[Dict[str, Any]] = []
-        if isinstance(raw_cust, dict):
-            if raw_cust.get("ok", True):
-                customers_list = list(raw_cust.get("customers", []))
-        elif isinstance(raw_cust, list):
-            customers_list = list(raw_cust)
 
         if not customers_list:
             self._speak("I do not see any customers calling.")

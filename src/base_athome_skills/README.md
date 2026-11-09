@@ -168,9 +168,35 @@ Arranca `torso_state` con `allow_motion:=false`: este flujo no usa el elevador.
 Estos controles no modifican los parámetros funcionales de la navegación
 habitual. Validación con Nav2, ASR y hardware reales: pendiente.
 
-La petición raised_hands dura hasta 18 s. Conserva los pans -60/-30/0/30/60°,
-espera hasta 1.5 s por feedback fresco de `/pan_tilt/joint_states` en el ángulo
-objetivo y luego observa 2 s contando imágenes distintas posteriores a la llegada,
-con TF del instante de la imagen. Cada cliente que
-cumplió N de M queda confirmado hasta terminar esa petición, aunque luego baje
-la mano. Verificación de ambos clientes en Gazebo y hardware: pendiente.
+Al iniciar Restaurant, la cabeza queda en pan 0 y la base usa la acción Nav2
+`spin` (`nav2_msgs/action/Spin`) con ángulos relativos +90°, −180°, +90°.
+Después de cada giro pide `raised_hands` con `"pans": [0.0]`, hasta 8 s por
+pedido. Sin `pans`, bag_finder conserva el barrido −60/−30/0/30/60°.
+Espera feedback fresco de cabeza y cuenta imágenes distintas con su TF.
+La sesión fusiona clientes entre pedidos por distancia en `map` (<0.8 m),
+asigna ids únicos y atiende primero a los más cercanos al punto inicial.
+Cada giro tiene `spin_timeout_s` (positivo, 40 s por defecto), acotado por
+el plazo global y cancelación por voz `stop`, usando la misma espera de
+resultado terminal que navegación. Si falla, mira desde donde quedó y sigue
+con los clientes reunidos, sin más giros relativos de orientación incierta.
+El adaptador puro `spin_fn(angle_rad) -> bool` debe cancelar y esperar ese
+resultado ante stop o plazo; sin adaptador, la sesión conserva la detección única.
+
+Solo el overlay `nav2_restaurant.yaml` usa un costmap global móvil de 20 × 20 m
+en `map`: el tamaño inicial de SLAM ya no deja a la base fuera del costmap.
+Mantiene StaticLayer, obstáculos, inflado y espacio desconocido. El publicador
+de `/scan_nav` ofrece RELIABLE con profundidad 2; su entrada sigue con QoS de
+sensor. No cambia el YAML de navegación habitual.
+
+`restaurant.sh` (robot real) y `commander.sh` arrancan `audio_keepalive.py`
+con la sesión. Cada 45 s genera un tono de 150 ms, 220 Hz y amplitud 0.3 %,
+dirigido al sink Bluetooth o al predeterminado si no hay Bluetooth.
+Configurar con `AUDIO_KEEPALIVE_INTERVAL_S` o `--interval` al ejecutar el programa.
+Saltea el ciclo si el sink está RUNNING, su estado es desconocido o TTS/beeps
+tienen el bloqueo compartido de `base_athome_perception.audio_lock`.
+Requiere reconstruir/desplegar también `base_athome_perception`; no reproduce
+un tono inmediatamente al iniciar. La sesión cierra el proceso al salir.
+
+`UNIT_PASS` 2026-11-09: pruebas con acciones, reloj, cabeza y audio falsos.
+Ventana móvil con SLAM/Nav2, giros y persistencia de la conexión Bluetooth en
+hardware: `PENDIENTE`; estas pruebas unitarias no iniciaron nodos ni reprodujeron audio.
