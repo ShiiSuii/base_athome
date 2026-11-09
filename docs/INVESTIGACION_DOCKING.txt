@@ -1,0 +1,87 @@
+================================================================================
+INVESTIGACION HOME-101: DOCKING FRONTAL GENERICO CON LIDAR EN BASE@HOME
+Nav2 Jazzy (opennav_docking, behaviors, collision_monitor) vs Lógica Pura
+================================================================================
+Fecha: 2026-11-09 | Autor: Antigravity | Modo: DESARROLLO | SHA base: c40b9a8
+
+1. PAQUETES INSTALADOS EN EL HOST (UBUNTU 24.04 / ROS 2 JAZZY) [VERIFICADO]
+Verificado en /var/lib/dpkg/status y /opt/ros/jazzy/share/:
+- Docking: ros-jazzy-opennav-docking, opennav-docking-core, opennav-docking-bt.
+- Seguridad y supervisión: ros-jazzy-nav2-collision-monitor.
+- Navegación y behaviors: ros-jazzy-nav2-behaviors (DriveOnHeading, BackUp, Spin, Wait),
+  nav2-bt-navigator, nav2-controller, nav2-planner, nav2-costmap-2d, nav2-amcl, etc.
+
+2. COMO RESUELVE EL ACERCAMIENTO FINO NAV2 JAZZY [VERIFICADO]
+A. opennav_docking (antiguo nav2_docking):
+   - Arquitectura: Servidor de acciones (DockRobot, UndockRobot) gestionado por lifecycle.
+   - Plugins provistos en /opt/ros/jazzy/share/opennav_docking/plugins.xml:
+     * SimpleChargingDock y SimpleNonChargingDock (heredan de opennav_docking_core::NonChargingDock).
+   - Cómo detecta el dock:
+     1) Pose estática prefijada en base de datos YAML (docks.yaml).
+     2) Pose externa publicada en tópico PoseStamped (ej. image_proc::TrackMarkerNode con ArUco/Apriltags).
+   - ¿Sirve sin marcadores visuales?: NO out-of-the-box. No incluye detector 2D de bordes, paredes ni patas
+     de mesa sobre LaserScan. Para usarlo con LiDAR puro habría que:
+     a) Implementar un plugin C++ derivado de opennav_docking_core::NonChargingDock sobrecargando
+        getStagingPose() y getRefinedPose(), compilando una shared library registrada con pluginlib; O
+     b) Correr un nodo ROS externo que procese /scan y publique geometry_msgs/PoseStamped al dock_pose_sub_.
+B. DriveOnHeading / BackUp (nav2_behaviors):
+   - Avance o retroceso lineal ciego en distancia fija configurada en el Goal.
+   - Solo chequea colisión contra el costmap local (simulate_ahead_time_); no realiza alineación
+     perpendicular, no extrae normales, ni discrimina qué objeto tiene enfrente.
+C. nav2_collision_monitor:
+   - Filtro de seguridad intermedio entre el controlador y el driver de base (cmd_vel_in -> cmd_vel_out).
+   - Monitorea zonas poligonales (Stop, Slowdown, Limit, Approach) sobre /scan o PointCloud2.
+   - Frena o desacelera la base ante colisión inminente, pero NO gobierna aproximación ni docking.
+
+3. COMO LO RESUELVEN EQUIPOS LIDERES DE ROBOCUP@HOME [VERIFICADO]
+1) RoBorregos (FRIDA, RoboCup@Home OPL):
+   - Repositorio: https://github.com/RoBorregos/home2 @ 0807f83b745404cd43825023e761b8d0ae35c07e
+   - Archivo: navigation/packages/nav_main/scripts/table_docker.py (líneas 1-240, 480-650).
+   - Estrategia: Nav2 lleva a un near-pose (~1.0 m). Luego un nodo Python dedicado toma /cmd_vel mediante
+     servicios (/navigation/dock_to_surface). Aplica RANSAC 2D line-fit sobre /scan central (+/-30°),
+     extrae la normal por SVD/PCA, rota para orientar perpendicular y avanza a velocidad baja (0.05 m/s).
+2) Tech United Eindhoven (HERO / AMIGO):
+   - Repositorio: https://github.com/tue-robotics/tue_robocup @ 5bbf7bb13b635e798fc01d03e4a09b7cd6f421a9
+   - Archivo: navigation/ed_navigation/src/ y SMACH states en pick_and_place.
+   - Estrategia: Desacopla la navegación macro de la micro. Utiliza el modelo de entorno ED para estimar
+     la pose del mueble/mesa y un controlador local cinemático en lazo cerrado para aproximarse a la cota.
+3) LASR-at-Home (Base):
+   - Repositorio: https://github.com/LASR-at-Home/Base @ 2a3ced2
+   - Archivo: HRI/state_machine.py y motion controllers directos.
+   - Estrategia: Aproximación final mediante bucles en Python con lectura de distancias láser mínimas y
+     freno protegido antes de colisión, evitando replanificación costosa en Nav2.
+
+4. EVALUACION: PLUGIN NonChargingDock PROPIO vs LOGICA PURA + cmd_vel [VERIFICADO]/[INFERENCIA]
+A. Plugin C++ NonChargingDock en opennav_docking:
+   - Desventajas:
+     * Requiere compilar C++ en colcon, manejar pluginlib y lifecycle nodes de Nav2.
+     * Toca o acopla la infraestructura de navegación protegida (AGENTS.md §4 prohíbe alterar nav2 funcional).
+     * El framework opennav_docking asume docks con ID preconfigurados en un archivo de base de datos;
+       no está pensado para interactuar dinámicamente con puertas cerradas vs abiertas o paredes en runtime.
+     * Complejidad de depuración y testing unitario sin simulación pesada de ROS 2.
+B. Lógica pura Python (front_dock.py) + cmd_vel lento (estilo table_dock.py):
+   - Ventajas:
+     * 100% desacoplado de ROS: testeable con pytest en milisegundos usando escenas sintéticas puras.
+     * Reutiliza y envuelve directamente table_dock.py (HOME-99/HOME-58) sin duplicar código ni regresiones.
+     * Permite discriminación semántica inmediata: pared vs mesa vs puerta cerrada vs corredor bloqueado.
+     * Se integra limpiamente en la máquina de estados de base_athome_skills (node.py) sin tocar Nav2.
+   - Conclusión: SE DEBE SEGUIR CON LOGICA PURA + cmd_vel lento en base_athome_skills. opennav_docking
+     agrega overhead innecesario y acoplamiento con la navegación protegida.
+
+5. PROPUESTA PARA UNDOCK SEGURO EN node.py:459 [INFERENCIA]
+- Problema actual: En node.py:444-464 (h_undock_table), el robot retrocede con `msg.linear.x = -DOCK_SPEED_MPS`
+  a ciegas por odometría, sin verificar si hay personas u obstáculos detrás.
+- Limitación física del sensor: El Hokuyo UST-05LX está montado al frente (x=0.22 m) con FOV de 270°
+  (-135° a +135°). Esto deja un cono ciego de 90° directamente a la espalda (135° a 225°).
+- Solución propuesta para front_dock:
+  Implementar la función `check_rear_corridor(angles, ranges, ...)` que evalúa los sectores laterales traseros
+  (ángulos entre 90°..135° y -135°..-90° con x < 0). Si detecta retornos a menos del margen de retroceso
+  dentro del ancho del chasis, reporta 'blocked' impidiendo el retroceso a ciegas. Claude podrá conectarla
+  en node.py:450 sin tocar código de navegación protegida.
+
+6. CONCLUSION SINTETIZADA
+1) Nav2 opennav_docking está instalado pero no provee detección nativa de geometría de mesa/puerta en LiDAR;
+   exige marcadores o plugins C++ complejos.
+2) La lógica pura en Python (front_dock.py envolviendo table_dock) es la opción superior: testeable, modular,
+   segura y conforme a las reglas del repositorio.
+3) Para el undock de node.py:459 se provee validación de los cuadrantes traseros del LiDAR de 270°.
