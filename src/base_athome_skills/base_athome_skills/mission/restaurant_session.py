@@ -185,11 +185,15 @@ class RestaurantSession:
 
         if not items:
             lower = speech_text.lower()
+            found: List[Tuple[int, str]] = []
             for m in self.menu:
                 m_clean = m.strip().lower()
-                if re.search(r"\b" + re.escape(m_clean) + r"\b", lower):
-                    if m_clean not in items:
-                        items.append(m_clean)
+                for match in re.finditer(r"\b" + re.escape(m_clean) + r"\b", lower):
+                    found.append((match.start(), m_clean))
+            found.sort(key=lambda x: x[0])
+            for _, item in found:
+                if item not in items:
+                    items.append(item)
 
         valid_menu = {m.strip().lower() for m in self.menu}
         filtered = [it for it in items if it in valid_menu]
@@ -254,10 +258,12 @@ class RestaurantSession:
 
         self.customers = customers_list[: self.max_customers]
         n_cust = len(self.customers)
+        word_map = {1: "one", 2: "two", 3: "three"}
+        num_word = word_map.get(n_cust, str(n_cust))
         if n_cust == 1:
             self._speak("I see one customer.")
         else:
-            self._speak(f"I see {n_cust} customers.")
+            self._speak(f"I see {num_word} customers.")
 
         # 3. Atencion secuencial de clientes
         for idx, cust in enumerate(self.customers):
