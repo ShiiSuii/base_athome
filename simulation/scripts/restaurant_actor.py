@@ -24,6 +24,8 @@ def main():
         if msg.data != "LISTENING" or state["answered"] == id(state["last"]):
             return
         said = state["last"]
+        if "here is your" in said or "mission complete" in said:     # entrega o fin: el cliente no pide de nuevo
+            return
         if "order" in said or "would you like" in said or "what can i" in said:
             text = ORDERS[min(state["customer"], len(ORDERS) - 1)]
             state["customer"] += 1

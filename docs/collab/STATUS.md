@@ -3,7 +3,7 @@
 Corto y actualizado: se **reemplaza** lo viejo, no se acumula (`AGENTS.md` §9). Lo histórico se
 recupera por commit (§8). Editado por el integrador (Claude).
 
-**Última actualización:** 2026-11-09 · Claude Code · modo `DESARROLLO` · **Nav2 del robot descarta el lidar** (max_obstacle_height 0.0): falta la decisión del usuario; perfil de evaluación probado en Gazebo.
+**Última actualización:** 2026-11-09 · Claude Code · modo `DESARROLLO` · Restaurant completo en Gazebo (2 clientes); filtro `/scan_nav` para que Nav2 no vea al robot; falta probar en el robot real.
 
 ## 1. Estado comprobado al pausar
 
@@ -204,6 +204,13 @@ Antes de empezar: E-stop a mano, zona despejada y otra persona atenta. Bolsa liv
 
 - **Medido en Gazebo:** el lidar ve el costado izquierdo del robot (rayos a 116–130°, 0.30–0.34 m; en base_link x≈0.0–0.08, y≈0.24–0.30). Con `max_obstacle_height: 2.0` eso marca al robot como obstáculo y Nav2 responde "Start occupied". **No usar Nav2 en el robot real hasta integrar el filtro** (`/scan_nav`, en curso con Codex) o confirmar con el lidar real que no pasa.
 - Restaurant en Gazebo: SLAM activo con el launch oficial de slam_toolbox, RViz con mapa, clientes sentados visibles, barrido suave de 15°/s. Ve a los dos clientes; no llega por el punto anterior.
+
+## 2s. Restaurant completo en Gazebo y lidar solo hacia adelante (2026-11-09)
+
+- **Filtro `/scan_nav`** (`scan_self_filter`, base_athome_bringup): descarta los puntos dentro de la caja del cuerpo del robot y los rayos fuera de ±100° (`max_abs_angle_deg`). Lo usan los costmaps (robot real, Gazebo y Restaurant) y el SLAM de Restaurant; AMCL sigue con `/scan` de 270°. Sin probar con el lidar real: verificar que la caja cubra el brazo.
+- **Restaurant (Fable):** las poses de llegada se eligen con el mismo criterio que el planner y se validan con `compute_path_to_pose` antes de mandar el goal. **Gazebo:** atendió a los dos clientes (pedido por voz simulada, barman, entrega) en el salón original (8 x 6 m) y en uno agrandado (12 x 9 m, ahora por defecto). Una corrida por mundo.
+- También: SLAM con el launch oficial de slam_toolbox (antes quedaba sin configurar), barrido del pan-tilt a 15°/s en pasos de 1.5°, Nav2 cancelado de forma segura y "stop" por voz durante la navegación (Codex), elevador bloqueado en Restaurant, GPSR por gesto/postura/ropa (285/500 comandos compilan).
+- **Sin probar en el robot real.** Antes: confirmar el filtro con el lidar real y que Nav2 planifique desde la posición inicial.
 
 ## 3. Cómo retomar la teleoperación con el Quest (pendiente: prueba completa en el brazo real)
 
