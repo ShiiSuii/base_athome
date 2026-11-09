@@ -10,6 +10,8 @@
   <depend>rclpy</depend>
   <depend>hoverboard_base</depend>
   <depend>robot_state_publisher</depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>rcl_interfaces</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

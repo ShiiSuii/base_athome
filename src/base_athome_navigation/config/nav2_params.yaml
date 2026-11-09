@@ -194,7 +194,7 @@ local_costmap:
         enabled: True
         observation_sources: scan
         scan:
-          topic: /scan
+          topic: /scan_nav      # autofiltro de la caja del chasis; AMCL conserva /scan
           sensor_frame: laser
           clearing: True
           marking: True
@@ -232,7 +232,7 @@ global_costmap:
         enabled: True
         observation_sources: scan
         scan:
-          topic: /scan
+          topic: /scan_nav      # autofiltro de la caja del chasis; AMCL conserva /scan
           sensor_frame: laser
           clearing: True
           marking: True

@@ -26,6 +26,7 @@ setup(
         'console_scripts': [
             'stepper_controller = base_athome_bringup.stepper_controller:main',
             'torso_state = base_athome_bringup.torso_state_node:main',
+            'scan_self_filter = base_athome_bringup.scan_self_filter_node:main',
         ],
     },
 )

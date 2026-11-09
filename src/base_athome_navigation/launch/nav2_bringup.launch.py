@@ -93,6 +93,15 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration('launch_lidar'))
     )
 
+    # Autofiltro del chasis, tambien si /scan viene de un driver ya activo.
+    scan_self_filter_node = Node(
+        package='base_athome_bringup',
+        executable='scan_self_filter',
+        name='scan_self_filter',
+        output='screen',
+        parameters=[{'use_sim_time': use_sim_time}]
+    )
+
     # 3. Control Joystick PS4 (/joy -> /cmd_vel)
     teleop_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -201,6 +210,7 @@ def generate_launch_description():
         rviz_arg,
         base_launch,
         lidar_launch,
+        scan_self_filter_node,
         teleop_launch,
         map_server_node,
         amcl_node,

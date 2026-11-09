@@ -69,6 +69,9 @@ def _prepare_slam_params(use_sim_time: bool) -> str:
     with open(slam_yaml_path, "r", encoding="utf-8") as f:
         slam_params = yaml.safe_load(f)
 
+    # Solo la copia de Restaurant: el YAML de mapeo conserva /scan.
+    slam_params["slam_toolbox"]["ros__parameters"]["scan_topic"] = "/scan_nav"
+
     if use_sim_time:
         if "slam_toolbox" in slam_params and "ros__parameters" in slam_params["slam_toolbox"]:
             slam_params["slam_toolbox"]["ros__parameters"]["use_sim_time"] = True
@@ -87,6 +90,14 @@ def _setup(context):
 
     nav_params_file = _prepare_nav_params(use_sim_time)
     slam_params_file = _prepare_slam_params(use_sim_time)
+
+    scan_self_filter_node = Node(
+        package="base_athome_bringup",
+        executable="scan_self_filter",
+        name="scan_self_filter",
+        output="screen",
+        parameters=[{"use_sim_time": use_sim_time}],
+    )
 
     # 1. SLAM Toolbox asincrono, con su launch oficial: configura y activa el nodo solo (autostart).
     #    Lanzado a mano como LifecycleNode quedaba "unconfigured": sin mapa ni TF map -> odom, y RViz no mostraba nada.
@@ -173,6 +184,7 @@ def _setup(context):
     )
 
     return [
+        scan_self_filter_node,
         slam_toolbox_node,
         # lifecycle_slam_node: no hace falta, slam_toolbox se activa solo (ver use_lifecycle_manager)
         planner_server_node,

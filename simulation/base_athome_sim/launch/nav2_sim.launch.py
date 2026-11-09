@@ -51,7 +51,8 @@ def _setup(_context):
     params = _params(map_yaml)
     packages = dict(amcl="nav2_amcl", map_server="nav2_map_server", planner_server="nav2_planner", controller_server="nav2_controller",
                     behavior_server="nav2_behaviors", bt_navigator="nav2_bt_navigator")
-    actions = [Node(package=pkg, executable=n, name=n, output="screen", parameters=[params]) for n, pkg in packages.items()]
+    actions = [Node(package="base_athome_bringup", executable="scan_self_filter", name="scan_self_filter", output="screen")]
+    actions.extend(Node(package=pkg, executable=n, name=n, output="screen", parameters=[params]) for n, pkg in packages.items())
     actions.append(Node(package="nav2_lifecycle_manager", executable="lifecycle_manager", name="lifecycle_manager_navigation",
                         output="screen", parameters=[dict(autostart=True, node_names=list(NODES), bond_timeout=20.0)]))
     return actions
