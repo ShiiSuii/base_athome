@@ -34,6 +34,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from . import restaurant as rest
 from . import vlm
+from .restaurant_navigation import is_stop_command
 
 
 class SessionState(str, Enum):
@@ -144,13 +145,13 @@ class RestaurantSession:
 
     def __init__(
         self,
-        navigate_fn: Callable[[float, float, float], bool],
+        navigate_fn: Callable[..., bool],
         speak_fn: Callable[[str], None],
         listen_fn: Callable[[float], Optional[str]],
         detect_customers_fn: Callable[[float, int], Any],
         ask_order_fn: Optional[Callable[[str, Sequence[str]], List[str]]] = None,
         ask_vlm_fn: Optional[Callable[[bytes, str], Optional[str]]] = None,
-        get_pose_fn: Optional[Callable[[], Tuple[float, float, float]]] = None,
+        get_pose_fn: Optional[Callable[[], Optional[Tuple[float, float, float]]]] = None,
         clock_fn: Optional[Callable[[], float]] = None,
         sleep_fn: Optional[Callable[[float], None]] = None,
         cancel_nav_fn: Optional[Callable[[], None]] = None,
@@ -164,6 +165,7 @@ class RestaurantSession:
         max_customers: int = 2,
         get_costmap_fn: Optional[Callable[[], Any]] = None,
         nav_aborted_fn: Optional[Callable[[], bool]] = None,
+        pose_timeout_s: float = 5.0,
     ):
         self.get_costmap_fn = get_costmap_fn or (lambda: None)
         self.nav_aborted_fn = nav_aborted_fn or (lambda: False)
@@ -173,8 +175,8 @@ class RestaurantSession:
         self.detect_customers_fn = detect_customers_fn
         self.ask_order_fn = ask_order_fn
         self.ask_vlm_fn = ask_vlm_fn
-        self.get_pose_fn = get_pose_fn or (lambda: (0.0, 0.0, 0.0))
-        self.clock_fn = clock_fn or time.time
+        self.get_pose_fn = get_pose_fn or (lambda: None)
+        self.clock_fn = clock_fn or time.monotonic
         self.sleep_fn = sleep_fn or time.sleep
         self.cancel_nav_fn = cancel_nav_fn or (lambda: None)
         self.point_head_fn = point_head_fn
@@ -183,6 +185,11 @@ class RestaurantSession:
 
         self.menu = tuple(menu)
         self.max_time_s = float(max_time_s)
+        self.pose_timeout_s = float(pose_timeout_s)
+        if not math.isfinite(self.max_time_s) or self.max_time_s <= 0:
+            raise ValueError("max_time_s must be positive and finite")
+        if not math.isfinite(self.pose_timeout_s) or self.pose_timeout_s <= 0:
+            raise ValueError("pose_timeout_s must be positive and finite")
         self.standoff_dist = float(standoff_dist)
         self.served = 0
         self.use_tray = bool(use_tray)
@@ -191,7 +198,8 @@ class RestaurantSession:
         self.state: SessionState = SessionState.IDLE
         self.stopped: bool = False
         self.start_time: float = 0.0
-        self.bar_pose: Tuple[float, float, float] = (0.0, 0.0, 0.0)
+        self.deadline_s: Optional[float] = None
+        self.bar_pose: Optional[Tuple[float, float, float]] = None
         self.customers: List[Dict[str, Any]] = []
         self.current_customer_idx: int = 0
         self.orders: Dict[str, List[str]] = {}
@@ -220,9 +228,38 @@ class RestaurantSession:
                 pass
 
     def _is_timeout(self) -> bool:
-        if self.start_time <= 0:
+        return self.deadline_s is not None and self.clock_fn() >= self.deadline_s
+
+    def remaining_s(self) -> float:
+        return max(0.0, self.deadline_s - self.clock_fn()) if self.deadline_s is not None else 0.0
+
+    def _navigate_to(self, pose: Tuple[float, float, float]) -> bool:
+        """El adaptador recibe el deadline absoluto y debe cancelar/drenar al vencer."""
+        if self.stopped or self._is_timeout():
             return False
-        return (self.clock_fn() - self.start_time) >= self.max_time_s
+        return self.navigate_fn(*pose, deadline_s=self.deadline_s)
+
+    def _wait_for_pose(self) -> Optional[Tuple[float, float, float]]:
+        deadline = min(self.deadline_s, self.clock_fn() + self.pose_timeout_s)
+        while not self.stopped and self.clock_fn() < deadline:
+            try:
+                pose = self.get_pose_fn()
+                if pose is not None and len(pose) == 3 and all(math.isfinite(v) for v in pose):
+                    return tuple(float(v) for v in pose)
+            except Exception:
+                pass
+            self.sleep_fn(min(0.1, max(0.0, deadline - self.clock_fn())))
+        return None
+
+    def _handle_pose_failure(self) -> bool:
+        if self.stopped:
+            return self._handle_stop()
+        if self._is_timeout():
+            return self._handle_timeout()
+        self.cancel_nav_fn()
+        self._speak("Robot position unavailable. Stopping mission.")
+        self._set_state(SessionState.FAILED, {"reason": "pose_unavailable"})
+        return False
 
     def stop(self) -> None:
         """Detiene inmediatamente la ejecucion."""
@@ -271,30 +308,41 @@ class RestaurantSession:
                 img_bytes = self.get_camera_image_fn()
                 if img_bytes:
                     try:
-                        if rest.verify_item_on_tray(img_bytes, order_items[0], timeout_s=3.0):
+                        if rest.verify_item_on_tray(
+                                img_bytes, order_items[0], timeout_s=min(3.0, self.remaining_s())):
                             return
                     except Exception:
                         pass
 
-            speech = self.listen_fn(min(3.0, max_wait_s - (self.clock_fn() - t0)))
+            listen_s = min(3.0, self.remaining_s(), max_wait_s - (self.clock_fn() - t0))
+            if self.stopped or listen_s <= 0:
+                return
+            speech = self.listen_fn(listen_s)
             if speech:
                 lower = speech.lower()
-                if "stop" in lower.split():
+                if is_stop_command(speech):
                     self.stop()
                     return
                 if any(w in lower for w in ("ready", "done", "finished", "here", "ok")):
                     return
             else:
-                self.sleep_fn(0.2)
+                self.sleep_fn(min(0.2, self.remaining_s()))
 
     def run(self) -> bool:
         """Ejecuta la mision completa."""
         self.start_time = self.clock_fn()
+        self.deadline_s = self.start_time + self.max_time_s
         self.stopped = False
+        self.served = 0
+        self.bar_pose = None
+        self.customers = []
+        self.orders = {}
         self._set_state(SessionState.STARTING)
 
         # 1. Pose de inicio como kitchen_bar
-        self.bar_pose = self.get_pose_fn()
+        self.bar_pose = self._wait_for_pose()
+        if self.bar_pose is None:
+            return self._handle_pose_failure()
 
         # 2. Deteccion de clientes
         if self._is_timeout():
@@ -303,7 +351,11 @@ class RestaurantSession:
             return self._handle_stop()
 
         self._set_state(SessionState.DETECTING_CUSTOMERS)
-        raw_cust = self.detect_customers_fn(40.0, 3)   # el barrido lento de la cabeza tarda unos 25 s
+        raw_cust = self.detect_customers_fn(min(40.0, self.remaining_s()), 3)   # el barrido lento de la cabeza tarda unos 25 s
+        if self.stopped:
+            return self._handle_stop()
+        if self._is_timeout():
+            return self._handle_timeout()
 
         customers_list: List[Dict[str, Any]] = []
         if isinstance(raw_cust, dict):
@@ -339,21 +391,24 @@ class RestaurantSession:
             c_xy = cust.get("xy")
             if not c_xy:
                 c_xy = (cust.get("x", 0.0), cust.get("y", 0.0))
+            robot_pose = self._wait_for_pose()
+            if robot_pose is None:
+                return self._handle_pose_failure()
             candidates = approach_candidates(
-                c_xy, self.get_pose_fn(), self.get_costmap_fn(), self.standoff_dist)
+                c_xy, robot_pose, self.get_costmap_fn(), self.standoff_dist)
             candidate_idx = 0
             approach_pose = candidates[candidate_idx]
 
             # Acercarse al cliente
             self._set_state(SessionState.APPROACHING_CUSTOMER, {"target": approach_pose, "customer_index": idx})
-            nav_ok = self.navigate_fn(approach_pose[0], approach_pose[1], approach_pose[2])
+            nav_ok = self._navigate_to(approach_pose)
             if (not nav_ok and not self.stopped and not self._is_timeout()
                     and self.nav_aborted_fn() and len(candidates) > 1):
                 candidate_idx += 1
                 approach_pose = candidates[candidate_idx]
                 self._set_state(SessionState.APPROACHING_CUSTOMER,
                                 {"target": approach_pose, "customer_index": idx, "retry": 1})
-                nav_ok = self.navigate_fn(*approach_pose)
+                nav_ok = self._navigate_to(approach_pose)
             if self.stopped:
                 return self._handle_stop()
             if self._is_timeout():
@@ -384,11 +439,19 @@ class RestaurantSession:
                 if self.stopped:
                     return self._handle_stop()
 
-                speech = self.listen_fn(15.0) or ""
-                if "stop" in speech.lower().split():
+                speech = self.listen_fn(min(15.0, self.remaining_s())) or ""
+                if is_stop_command(speech):
+                    self.stop()
+                if self.stopped:
                     return self._handle_stop()
+                if self._is_timeout():
+                    return self._handle_timeout()
 
                 items = self.extract_order(speech)
+                if self.stopped:
+                    return self._handle_stop()
+                if self._is_timeout():
+                    return self._handle_timeout()
                 if items:
                     order_items = items
                     break
@@ -416,9 +479,11 @@ class RestaurantSession:
                 return self._handle_stop()
 
             self._set_state(SessionState.RETURNING_TO_BAR)
-            nav_bar_ok = self.navigate_fn(self.bar_pose[0], self.bar_pose[1], self.bar_pose[2])
+            nav_bar_ok = self._navigate_to(self.bar_pose)
             if self.stopped:
                 return self._handle_stop()
+            if self._is_timeout():
+                return self._handle_timeout()
             if not nav_bar_ok:
                 self._speak("I could not reach the bar.")
                 continue
@@ -437,14 +502,14 @@ class RestaurantSession:
 
             # Regresar al cliente
             self._set_state(SessionState.DELIVERING_TO_CUSTOMER)
-            nav_back_ok = self.navigate_fn(approach_pose[0], approach_pose[1], approach_pose[2])
+            nav_back_ok = self._navigate_to(approach_pose)
             if (not nav_back_ok and not self.stopped and not self._is_timeout()
                     and self.nav_aborted_fn() and candidate_idx + 1 < len(candidates)):
                 candidate_idx += 1
                 approach_pose = candidates[candidate_idx]
                 self._set_state(SessionState.DELIVERING_TO_CUSTOMER,
                                 {"target": approach_pose, "customer_index": idx, "retry": 1})
-                nav_back_ok = self.navigate_fn(*approach_pose)
+                nav_back_ok = self._navigate_to(approach_pose)
             if self.stopped:
                 return self._handle_stop()
             if self._is_timeout():
@@ -464,7 +529,15 @@ class RestaurantSession:
             return self._handle_stop()
 
         self._set_state(SessionState.RETURNING_TO_BAR_FINAL)
-        self.navigate_fn(self.bar_pose[0], self.bar_pose[1], self.bar_pose[2])
+        final_nav_ok = self._navigate_to(self.bar_pose)
+        if self.stopped:
+            return self._handle_stop()
+        if self._is_timeout():
+            return self._handle_timeout()
+        if not final_nav_ok:
+            self._speak("I could not reach the bar.")
+            self._set_state(SessionState.FAILED, {"reason": "bar_unreachable"})
+            return False
         if not self.served:     # volver a la barra sin haber atendido a nadie no es un exito
             self._speak("I could not serve any customer.")
             self._set_state(SessionState.FAILED, {"reason": "no_customer_served"})
@@ -478,6 +551,7 @@ class RestaurantSession:
         return self.run()
 
     def _handle_stop(self) -> bool:
+        self.stopped = True
         try:
             self.cancel_nav_fn()
         except Exception:
@@ -491,10 +565,6 @@ class RestaurantSession:
             self.cancel_nav_fn()
         except Exception:
             pass
-        self._speak("Time limit reached. Returning to the kitchen bar.")
+        self._speak("Time limit reached. Stopping mission.")
         self._set_state(SessionState.TIMEOUT)
-        try:
-            self.navigate_fn(self.bar_pose[0], self.bar_pose[1], self.bar_pose[2])
-        except Exception:
-            pass
         return False

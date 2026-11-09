@@ -145,7 +145,28 @@ libre o sin grilla conserva la aproximación por la recta. No garantiza un camin
 Nav2 lo resuelve; ante `ABORTED` intenta una sola alternativa libre por visita
 (también al entregar). No reintenta ante rechazo, cancelación o timeout.
 `navigation_timeout_s` (positivo, por defecto 90 s) limita la espera del resultado
-por goal y solicita cancelación al vencer; no cambia parámetros de Nav2.
+por goal y solicita cancelación al vencer. El goal o su aceptación pendiente
+permanecen registrados hasta el resultado terminal; el ACK de cancelación no
+libera la operación. Mientras falta esa confirmación no termina la navegación
+ni se admite otro goal o reinicio de sesión. Una aceptación posterior a 10 s,
+al deadline global o a stop se cancela al recibirla. Una caída del servidor
+puede mantener esa espera hasta recuperar el resultado.
+
+Durante la navegación abre escucha no bloqueante con `VoiceClient` y cancela
+ante la palabra `stop`, también con mayúsculas y puntuación (`STOP!`). Cierra
+ese pedido de voz antes de pasar al diálogo. La sesión usa reloj monotónico y
+pasa `deadline_s` absoluto a `navigate_fn(x, y, yaw, deadline_s=...)`;
+el deadline global cancela el goal y termina en `TIMEOUT` sin enviar un retorno
+a la barra. La recuperación requiere un nuevo inicio explícito.
+
+Sin TF válida `map → base_footprint`, espera hasta 5 s, acotados por el plazo
+global; si no aparece, aborta sin inventar una pose. El arranque `restaurant.sh`
+rechaza navegación, AMCL, map_server o SLAM previos antes de iniciar procesos.
+Inicia su propio `restaurant_nav` y exige SLAM activo en modo `mapping`, sin
+AMCL/map_server, con el overlay de planner esperado y la acción disponible.
+Arranca `torso_state` con `allow_motion:=false`: este flujo no usa el elevador.
+Estos controles no modifican los parámetros funcionales de la navegación
+habitual. Validación con Nav2, ASR y hardware reales: pendiente.
 
 La petición raised_hands dura hasta 18 s. Conserva los pans -60/-30/0/30/60°,
 espera hasta 1.5 s por feedback fresco de `/pan_tilt/joint_states` en el ángulo

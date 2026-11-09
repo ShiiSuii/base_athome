@@ -93,7 +93,9 @@ def test_messages_prompt_structure():
 
 
 def test_ask_order_offline_server_returns_empty_list():
-    assert rest.ask_order("a coke", ["coke"], url="http://127.0.0.1:9/none", timeout_s=0.2) == []
+    # Simula el servidor caido sin abrir sockets, ni siquiera en localhost.
+    with patch.object(rest.urllib.request, "urlopen", side_effect=OSError("offline")):
+        assert rest.ask_order("a coke", ["coke"], timeout_s=0.2) == []
 
 
 # ------------------------------------------------------------------------------

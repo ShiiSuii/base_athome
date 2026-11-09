@@ -6,16 +6,25 @@ Cubre:
   3. 'stop' por voz cancela navegacion y aborta la sesion inmediatamente.
   4. Nadie levanta la mano: aviso breve y finalizacion limpia sin navegar.
   5. LLM caida: extraccion por palabras clave del menu, o pide repetir si no hay items validos.
-  6. Tope de tiempo global de 15 minutos (900 s): aborta y regresa al bar.
+  6. Tope global: cancela y termina sin iniciar un retorno a la barra.
   7. Frases breves: todas las locuciones tienen <= 15 palabras y terminan con puntuacion.
   8. Jamas anuncia el pedido antes de escucharlo.
 """
 
+import ast
+from concurrent.futures import Future
 import math
+from pathlib import Path
+from types import SimpleNamespace as NS
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 import pytest
 
 from base_athome_skills.mission import restaurant as rest
+from base_athome_skills.mission.restaurant_navigation import (
+    NavigationStopMonitor,
+    RestaurantNavigation,
+    is_stop_command,
+)
 from base_athome_skills.mission.restaurant_session import (
     RestaurantSession,
     SessionState,
@@ -52,6 +61,7 @@ class FakeRestaurantHarness:
         self.events: List[Tuple[str, Any]] = []
         self.spoken: List[str] = []
         self.nav_goals: List[Tuple[float, float, float]] = []
+        self.nav_deadlines: List[float] = []
         self.nav_cancelled: bool = False
         self.states: List[Dict[str, Any]] = []
 
@@ -64,7 +74,9 @@ class FakeRestaurantHarness:
     def get_pose(self) -> Tuple[float, float, float]:
         return self.robot_pose
 
-    def navigate(self, x: float, y: float, yaw: float) -> bool:
+    def navigate(self, x: float, y: float, yaw: float, *, deadline_s: float) -> bool:
+        assert self.current_time < deadline_s
+        self.nav_deadlines.append(deadline_s)
         goal = (round(x, 3), round(y, 3), round(yaw, 4))
         self.nav_goals.append(goal)
         self.events.append(("navigate", goal))
@@ -321,8 +333,9 @@ def test_global_timeout_terminates_mission():
 
     assert ok is False
     assert session.state == SessionState.TIMEOUT
-    assert "Time limit reached. Returning to the kitchen bar." in harness.spoken
+    assert "Time limit reached. Stopping mission." in harness.spoken
     assert harness.nav_cancelled is True
+    assert len(harness.nav_goals) == 1
 
 
 # ------------------------------------------------------------------------------
@@ -460,8 +473,8 @@ def test_aborted_navigation_retries_next_candidate_once():
     h = FakeRestaurantHarness(customers=[{'xy': [2., 0.]}], speech_script=['water', 'ready'])
     session = h.make_session(get_costmap_fn=make_grid, nav_aborted_fn=lambda: True)
     original = h.navigate
-    def navigate(*pose):
-        original(*pose)
+    def navigate(*pose, **kwargs):
+        original(*pose, **kwargs)
         return len(h.nav_goals) != 1
     session.navigate_fn = navigate
     assert session.run()
@@ -494,73 +507,12 @@ def test_aborted_fallback_has_no_free_candidate_to_retry():
     assert len(h.nav_goals) == 2
 
 
-@pytest.mark.parametrize('timeout_s', [37., 90.])
-@pytest.mark.parametrize('completed,status,expected,cancelled', [
-    (False, None, False, True), (False, 4, False, True), (False, 6, False, True),
-    (True, 4, True, False), (True, 6, False, False), (True, 5, False, False),
-])
-def test_node_navigation_timeout_and_abort(completed, status, expected, cancelled, timeout_s):
-    # Compile the actual method with fake action messages/events, without starting ROS.
-    import ast
-    from pathlib import Path
-    from types import SimpleNamespace as NS
-    path = Path(__file__).parents[1] / 'base_athome_skills/restaurant_node.py'
-    tree = ast.parse(path.read_text())
-    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'RestaurantNode')
-    method = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == '_navigate')
-    waits, cancels, pending = [], [], []
-
-    def deliver_result():
-        pending.pop()(Future(NS(status=status)))
-
-    class Event:
-        def set(self): pass
-        def wait(self, timeout):
-            waits.append(timeout)
-            if len(waits) == 1:
-                return True
-            if completed:
-                deliver_result()
-            return completed
-    class Future:
-        def __init__(self, result, delayed=False):
-            self.value, self.delayed = result, delayed
-        def result(self): return self.value
-        def add_done_callback(self, cb):
-            if self.delayed:
-                pending.append(cb)
-            else:
-                cb(self)
-
-    def cancel():
-        cancels.append(True)
-        # Model a result racing with the cancellation after the wait expired.
-        deliver_result()
-
-    goal = NS(accepted=True, get_result_async=lambda: Future(NS(status=status), delayed=True),
-              cancel_goal_async=cancel)
-    def message():
-        return NS(pose=NS(header=NS(), pose=NS(position=NS(), orientation=NS())))
-    import threading
-    env = dict(math=math, threading=NS(Event=Event), NavigateToPose=NS(Goal=message),
-               GoalStatus=NS(STATUS_SUCCEEDED=4, STATUS_ABORTED=6))
-    exec(compile(ast.Module(body=[method], type_ignores=[]), str(path), 'exec'), env)
-    node = NS(get_logger=lambda: NS(info=lambda _: None, warn=lambda _: None),
-              nav_client=NS(wait_for_server=lambda **_: True, send_goal_async=lambda _: Future(goal)),
-              get_clock=lambda: NS(now=lambda: NS(to_msg=lambda: None)),
-              _nav_lock=threading.Lock(), navigation_timeout_s=timeout_s)
-    assert env['_navigate'](node, 1., 2., 0.) == expected
-    assert waits == [10., timeout_s]
-    assert bool(cancels) == cancelled
-    assert node._nav_aborted == (completed and status == 6)
-
-
 def test_delivery_aborted_retries_other_free_candidate():
     h = FakeRestaurantHarness(customers=[{'xy': [2., 0.]}], speech_script=['water', 'ready'])
     session = h.make_session(get_costmap_fn=make_grid, nav_aborted_fn=lambda: True)
     original = h.navigate
-    def navigate(*pose):
-        original(*pose)
+    def navigate(*pose, **kwargs):
+        original(*pose, **kwargs)
         return len(h.nav_goals) != 3
     session.navigate_fn = navigate
     assert session.run()
@@ -573,8 +525,8 @@ def test_delivery_abort_does_not_retry_an_unchecked_fallback():
     session = h.make_session(nav_aborted_fn=lambda: True)
     original = h.navigate
 
-    def navigate(*pose):
-        original(*pose)
+    def navigate(*pose, **kwargs):
+        original(*pose, **kwargs)
         if len(h.nav_goals) == 3:
             h.robot_pose = (1., 1., 0.)  # Nav2 aborted partway to the customer.
             return False
@@ -583,3 +535,431 @@ def test_delivery_abort_does_not_retry_an_unchecked_fallback():
     session.navigate_fn = navigate
     assert not session.run()
     assert len(h.nav_goals) == 4  # No free alternatives without a costmap.
+
+
+class FakeActionHarness:
+    """Futuros reales, reloj virtual y respuestas programadas; no ROS ni sockets."""
+
+    def __init__(self, accept_after=0., finish_after=1., status=4, cancel_delay=0.4,
+                 cancel_status=5, accepted=True):
+        self.now = 100.
+        self.events = []
+        self.waits = 0
+        self.sent = []
+        self.cancels = []
+        self.warnings = []
+        self.accept_after = accept_after
+        self.finish_after = finish_after
+        self.status = status
+        self.cancel_delay = cancel_delay
+        self.cancel_status = cancel_status
+        self.on_send = lambda: None
+        self.on_cancel = lambda: None
+        self.acceptance = Future()
+        self.result = Future()
+        self.goal = NS(accepted=accepted, get_result_async=lambda: self.result,
+                       cancel_goal_async=self.cancel)
+        self.client = NS(wait_for_server=lambda **_: True, send_goal_async=self.send)
+        self.nav = RestaurantNavigation(self.client, warn_fn=self.warnings.append,
+                                        clock_fn=lambda: self.now, wait_fn=self.wait)
+
+    def at(self, when, callback):
+        self.events.append((round(when, 8), callback))
+        self.events.sort(key=lambda ev: ev[0])
+
+    def wait(self, event, seconds):
+        self.waits += 1
+        assert self.waits < 10000, 'No se recibio el resultado terminal esperado por el fake'
+        end = round(self.now + seconds, 8)
+        while self.events and self.events[0][0] <= end:
+            self.now, callback = self.events.pop(0)
+            callback()
+        self.now = end
+
+    def send(self, goal):
+        assert self.nav.pending  # Debe registrarse ANTES del envio.
+        self.sent.append(goal)
+        self.on_send()
+        if self.accept_after == 0:
+            self.acceptance.set_result(self.goal)
+        else:
+            self.at(self.now + self.accept_after, lambda: self.acceptance.set_result(self.goal))
+        if self.finish_after is not None:
+            self.at(self.now + self.accept_after + self.finish_after, lambda: self.finish(self.status))
+        return self.acceptance
+
+    def finish(self, status):
+        if not self.result.done():
+            self.result.set_result(NS(status=status))
+
+    def cancel(self):
+        assert self.nav.active_goal_handle is self.goal
+        assert self.nav.pending
+        self.cancels.append(self.now)
+        self.on_cancel()
+        if self.cancel_delay is not None:
+            self.at(self.now + self.cancel_delay, lambda: self.finish(self.cancel_status))
+        ack = Future()
+        ack.set_result(NS(goals_canceling=[self.goal]))
+        return ack
+
+    def run(self, timeout_s=90., deadline_s=1000., stop_requested_fn=lambda: False,
+            monitor_fn=lambda: None):
+        return self.nav.navigate(object(), timeout_s=timeout_s, deadline_s=deadline_s,
+                                 stop_requested_fn=stop_requested_fn, monitor_fn=monitor_fn)
+
+
+@pytest.mark.parametrize('status,expected', [(4, True), (5, False), (6, False)])
+def test_navigation_terminal_results(status, expected):
+    h = FakeActionHarness(status=status)
+    assert h.run() is expected
+    assert h.nav.last_status == status
+    assert not h.cancels
+    assert not h.nav.pending
+    assert h.nav.active_goal_handle is None
+
+
+@pytest.mark.parametrize('timeout_s', [37., 90., 180.])
+@pytest.mark.parametrize('terminal_status', [4, 5, 6])
+def test_navigation_timeout_cancels_and_waits_for_terminal_result(timeout_s, terminal_status):
+    h = FakeActionHarness(finish_after=None, cancel_status=terminal_status)
+    observed = []
+
+    def after_cancel_ack():
+        # El ACK de cancelacion llego, pero aun NO hay resultado terminal.
+        assert not h.result.done()
+        assert h.nav.active_goal_handle is h.goal
+        assert not h.nav.reset()
+        assert not h.run()  # Tampoco se permite un goal nuevo.
+        assert len(h.sent) == 1
+        observed.append(True)
+
+    h.at(100. + timeout_s + 0.2, after_cancel_ack)
+    assert not h.run(timeout_s=timeout_s)
+    assert observed
+    assert h.cancels[0] == pytest.approx(100. + timeout_s)
+    assert h.now >= 100. + timeout_s + h.cancel_delay
+    assert h.result.done()
+    assert h.nav.last_status is None  # Ni un ABORTED tardio habilita reintento.
+    assert not h.nav.pending
+    assert h.nav.active_goal_handle is None
+
+
+def test_late_acceptance_is_tracked_cancelled_and_drained():
+    h = FakeActionHarness(accept_after=10.3, finish_after=None)
+    observations = []
+
+    def still_pending():
+        assert h.nav.pending
+        assert h.nav.active_goal_handle is None
+        assert not h.nav.reset()
+        assert not h.run()
+        observations.append(True)
+
+    h.at(110.1, still_pending)
+    assert not h.run()
+    assert observations
+    assert len(h.sent) == 1
+    assert h.cancels[0] == pytest.approx(110.3)
+    assert h.result.done()
+    assert h.now >= 110.7
+    assert not h.nav.pending
+
+
+@pytest.mark.parametrize('stop_during_send', [False, True])
+def test_stop_before_handle_assignment_cancels_acceptance(stop_during_send):
+    h = FakeActionHarness(accept_after=0. if stop_during_send else 0.5, finish_after=None)
+    if stop_during_send:
+        h.on_send = h.nav.cancel
+    else:
+        h.at(100.2, h.nav.cancel)
+    assert not h.run()
+    assert len(h.sent) == 1
+    assert h.cancels[0] == pytest.approx(100. if stop_during_send else 100.5)
+    assert h.result.done()
+    assert not h.nav.pending
+
+
+def test_stop_before_navigation_prevents_sending_until_explicit_restart():
+    h = FakeActionHarness()
+    h.nav.cancel()
+    assert not h.run()
+    assert not h.sent
+    assert h.nav.reset()
+    assert h.run()
+
+
+def test_stop_while_waiting_for_server_prevents_send():
+    h = FakeActionHarness()
+    def ready_after_stop(**_):
+        h.nav.cancel()
+        return True
+    h.client.wait_for_server = ready_after_stop
+    assert not h.run()
+    assert not h.sent
+    assert not h.nav.pending
+
+
+def test_rejected_goal_finishes_without_handle_or_cancel():
+    h = FakeActionHarness(accepted=False, finish_after=None)
+    assert not h.run()
+    assert not h.cancels
+    assert not h.nav.pending
+    assert h.nav.active_goal_handle is None
+
+
+@pytest.mark.parametrize('failure', ['pending', 'exception', 'rejected'])
+def test_unconfirmed_cancellation_retries_and_retains_handle(failure):
+    h = FakeActionHarness(finish_after=None, cancel_delay=None)
+    def cancel():
+        assert h.nav.active_goal_handle is h.goal
+        h.cancels.append(h.now)
+        if len(h.cancels) == 2:
+            h.at(h.now + 0.2, lambda: h.finish(5))
+        elif failure == 'exception':
+            raise OSError('cancel request failed')
+        ack = Future()
+        if failure != 'pending':
+            ack.set_result(NS(goals_canceling=[]))
+        return ack
+    h.goal.cancel_goal_async = cancel
+    assert not h.run(timeout_s=0.2)
+    assert len(h.cancels) == 2
+    assert h.cancels[1] - h.cancels[0] == pytest.approx(1.)
+    assert h.result.done()
+    assert not h.nav.pending
+
+
+def test_result_error_is_not_terminal_and_handle_is_retained_until_recovery():
+    h = FakeActionHarness(finish_after=None, cancel_delay=None)
+    observed = []
+    def result_error():
+        h.result.set_exception(OSError('result transport failed'))
+        h.result = Future()
+    def still_owned():
+        assert h.nav.active_goal_handle is h.goal
+        assert h.nav.pending
+        observed.append(True)
+    h.at(100.2, result_error)
+    h.at(100.4, still_owned)
+    h.at(101.5, lambda: h.finish(5))
+    assert not h.run()
+    assert observed
+    assert h.result.done()
+    assert h.cancels
+    assert not h.nav.pending
+
+
+@pytest.mark.parametrize('accept_after', [0., 0.7])
+def test_global_deadline_cancels_executing_or_pending_goal(accept_after):
+    h = FakeActionHarness(accept_after=accept_after, finish_after=None)
+    assert not h.run(deadline_s=100.3)
+    assert h.cancels[0] == pytest.approx(100. + max(0.3, accept_after))
+    assert h.result.done()
+    assert h.nav.last_status is None
+
+
+def test_expired_deadline_does_not_send_goal():
+    h = FakeActionHarness()
+    assert not h.run(deadline_s=100.)
+    assert not h.sent
+    assert not h.nav.pending
+
+
+class FakeVoice:
+    def __init__(self, action, utterances=()):
+        self.action = action
+        self.utterances = list(utterances)
+        self.requests = []
+        self.cancelled = []
+
+    def request(self, **kwargs):
+        rid = f'voice_{len(self.requests)}'
+        self.requests.append((rid, kwargs))
+        return rid
+
+    def poll(self, rid):
+        if self.utterances and self.action.now >= self.utterances[0][0]:
+            _, text = self.utterances.pop(0)
+            return NS(ok=True, text=text)
+        return None
+
+    def cancel(self, rid):
+        self.cancelled.append(rid)
+
+
+def node_methods(*names):
+    # Ejecuta los adaptadores reales con fakes, sin importar ni iniciar ROS.
+    path = Path(__file__).parents[1] / 'base_athome_skills/restaurant_node.py'
+    tree = ast.parse(path.read_text())
+    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'RestaurantNode')
+    methods = [n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name in names]
+    def message():
+        return NS(pose=NS(header=NS(), pose=NS(position=NS(), orientation=NS())))
+    env = dict(math=math, Optional=Optional, Tuple=Tuple, List=List,
+               NavigateToPose=NS(Goal=message), GoalStatus=NS(STATUS_ABORTED=6),
+               NavigationStopMonitor=NavigationStopMonitor, rclpy=NS(time=NS(Time=lambda: None)))
+    exec(compile(ast.Module(body=methods, type_ignores=[]), str(path), 'exec'), env)
+    return env
+
+
+@pytest.mark.parametrize('speech', ['STOP!', 'Stop.', 'Please, STOP!!!', '“sToP”'])
+def test_voice_stop_during_node_navigation_cancels_and_aborts_session(speech):
+    action = FakeActionHarness(finish_after=None)
+    voice = FakeVoice(action, [(100.2, speech)])
+    h = FakeRestaurantHarness(customers=[{'xy': [2., 0.]}])
+    session = h.make_session()
+    session.clock_fn = lambda: action.now
+    methods = node_methods('_navigate', '_cancel_nav')
+    node = NS(_navigation=action.nav, voice=voice, session=session, navigation_timeout_s=90.,
+              get_logger=lambda: NS(info=lambda _: None),
+              get_clock=lambda: NS(now=lambda: NS(to_msg=lambda: None)))
+    session.navigate_fn = lambda *pose, **kw: methods['_navigate'](node, *pose, **kw)
+    session.cancel_nav_fn = lambda: methods['_cancel_nav'](node)
+    assert not session.run()
+    assert session.state == SessionState.ABORTED
+    assert len(action.sent) == 1  # Ningun regreso ni reintento tras stop.
+    assert action.cancels[0] == pytest.approx(100.2)
+    assert action.result.done()
+    assert not node._nav_aborted
+    assert len(voice.requests) == 1
+
+
+def test_voice_monitor_rearms_and_closes_only_its_own_request():
+    h = FakeActionHarness()
+    voice = FakeVoice(h, [(100., 'hello')])
+    monitor = NavigationStopMonitor(voice, h.nav.cancel)
+    assert h.run(monitor_fn=monitor.poll)
+    monitor.close()
+    assert len(voice.requests) == 2
+    assert voice.cancelled == ['voice_1']
+
+
+@pytest.mark.parametrize('text', ['stopwatch', 'stopping', 'nonstop', 'water please', ''])
+def test_stop_normalization_requires_whole_word(text):
+    assert not is_stop_command(text)
+
+
+@pytest.mark.parametrize('speech', ['STOP!', 'Stop.', 'Please, STOP!!!'])
+@pytest.mark.parametrize('at_barman', [False, True])
+def test_punctuated_stop_during_dialogue(speech, at_barman):
+    h = FakeRestaurantHarness(customers=[{'xy': [2., 0.]}],
+                              speech_script=['water', speech] if at_barman else [speech])
+    session = h.make_session()
+    assert not session.run()
+    assert session.state == SessionState.ABORTED
+    assert h.nav_cancelled
+    assert len(h.nav_goals) == (2 if at_barman else 1)
+
+
+@pytest.mark.parametrize('navigation_number', [1, 2, 3, 4])
+def test_deadline_during_each_navigation_is_terminal_without_return(navigation_number):
+    h = FakeRestaurantHarness(customers=[{'xy': [2., 0.]}], speech_script=['water', 'ready'])
+    session = h.make_session()
+    def navigate(*pose, deadline_s):
+        result = h.navigate(*pose, deadline_s=deadline_s)
+        if len(h.nav_goals) == navigation_number:
+            h.current_time = deadline_s
+            return False
+        return result
+    session.navigate_fn = navigate
+    assert not session.run()
+    assert session.state == SessionState.TIMEOUT
+    assert h.nav_cancelled
+    assert len(h.nav_goals) == navigation_number
+    assert set(h.nav_deadlines) == {session.deadline_s}
+    assert h.spoken[-1] == 'Time limit reached. Stopping mission.'
+
+
+def test_deadline_in_detection_cannot_report_success_or_start_navigation():
+    h = FakeRestaurantHarness(customers=[])
+    session = h.make_session(max_time_s=0.5)
+    assert not session.run()
+    assert session.state == SessionState.TIMEOUT
+    assert not h.nav_goals
+    assert ('detect_customers', (0.5, 3)) in h.events
+
+
+@pytest.mark.parametrize('pose', [None, (float('nan'), 0., 0.), (0., float('inf'), 0.)])
+def test_missing_initial_tf_aborts_without_inventing_bar(pose):
+    h = FakeRestaurantHarness()
+    session = h.make_session(pose_timeout_s=0.3)
+    session.get_pose_fn = lambda: pose
+    assert not session.run()
+    assert session.state == SessionState.FAILED
+    assert session.bar_pose is None
+    assert not h.nav_goals
+    assert not any(event == 'detect_customers' for event, _ in h.events)
+    assert h.current_time >= 100.3
+
+
+def test_tf_recovery_within_deadline_records_only_measured_pose():
+    h = FakeRestaurantHarness(customers=[])
+    session = h.make_session()
+    session.get_pose_fn = lambda: (4., 5., 0.7) if h.current_time >= 100.3 else None
+    assert session.run()
+    assert session.bar_pose == (4., 5., 0.7)
+    assert not h.nav_goals
+
+
+def test_tf_missing_at_approach_aborts_without_origin_based_goal():
+    h = FakeRestaurantHarness()
+    session = h.make_session(pose_timeout_s=0.3)
+    poses = iter([(4., 5., 0.7)])
+    session.get_pose_fn = lambda: next(poses, None)
+    assert not session.run()
+    assert session.state == SessionState.FAILED
+    assert session.bar_pose == (4., 5., 0.7)
+    assert not h.nav_goals
+
+
+def test_tf_wait_respects_global_deadline_even_when_clock_starts_at_zero():
+    h = FakeRestaurantHarness()
+    h.current_time = 0.
+    session = h.make_session(max_time_s=0.2)
+    session.get_pose_fn = lambda: None
+    assert not session.run()
+    assert session.state == SessionState.TIMEOUT
+    assert not h.nav_goals
+
+
+def test_node_tf_error_returns_absence_and_measured_origin_is_valid():
+    get_pose = node_methods('_get_pose')['_get_pose']
+    def missing(*_):
+        raise RuntimeError('TF unavailable')
+    node = NS(tf_buffer=NS(lookup_transform=missing))
+    assert get_pose(node) is None
+    transform = NS(transform=NS(translation=NS(x=0., y=0.), rotation=NS(x=0., y=0., z=0., w=1.)))
+    node.tf_buffer.lookup_transform = lambda *_: transform
+    assert get_pose(node) == (0., 0., 0.)
+    transform.transform.rotation.w = 0.
+    assert get_pose(node) is None
+
+
+def test_node_never_opens_voice_listen_with_expired_deadline():
+    listen = node_methods('_listen')['_listen']
+    calls = []
+    node = NS(session=NS(stopped=False, remaining_s=lambda: 0.),
+              voice=NS(listen=lambda **kw: calls.append(kw)))
+    assert listen(node, 0.) == ''
+    assert not calls
+
+
+def test_restaurant_script_never_enables_torso_motion():
+    script = (Path(__file__).parents[1] / 'scripts/restaurant.sh').read_text()
+    torso_starts = [line for line in script.splitlines() if 'session_start torso ' in line]
+    assert len(torso_starts) == 1
+    assert '-p allow_motion:=false' in torso_starts[0]
+    assert 'allow_motion:=true' not in script
+
+
+def test_restaurant_script_rejects_existing_navigation_before_starting_real_stack():
+    script = (Path(__file__).parents[1] / 'scripts/restaurant.sh').read_text()
+    real = script.split('export ROS_DOMAIN_ID=10', 1)[1]
+    assert real.index('restaurant_graph_idle || exit 1') < real.index('session_init ')
+    assert real.index('restaurant_graph_idle || exit 1') < real.index('session_start ')
+    assert 'if nav_up; then' not in script
+    assert 'amcl|map_server|slam_toolbox|' in script
+    assert 'ros2 param get /slam_toolbox mode' in script
+    assert 'ros2 lifecycle get /slam_toolbox' in script
+    assert real.index('wait_restaurant_nav || exit 1') < real.index('ros2 run base_athome_skills restaurant_node')

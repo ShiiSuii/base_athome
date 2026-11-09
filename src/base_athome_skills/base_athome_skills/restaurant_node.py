@@ -26,7 +26,7 @@ from nav_msgs.msg import OccupancyGrid
 import rclpy
 from rclpy.action import ActionClient
 from rclpy.callback_groups import ReentrantCallbackGroup
-from rclpy.executors import MultiThreadedExecutor
+from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data
 from sensor_msgs.msg import Image
@@ -39,7 +39,8 @@ from base_athome_perception.voice_client import VoiceClient
 
 from .mission import restaurant as rest
 from .mission import vlm
-from .mission.restaurant_session import RestaurantSession, SessionState
+from .mission.restaurant_navigation import NavigationStopMonitor, RestaurantNavigation
+from .mission.restaurant_session import RestaurantSession
 
 
 class RestaurantNode(Node):
@@ -82,8 +83,7 @@ class RestaurantNode(Node):
 
         # Nav2 Action Client
         self.nav_client = ActionClient(self, NavigateToPose, "navigate_to_pose", callback_group=self.cb_group)
-        self._active_nav_goal_handle = None
-        self._nav_lock = threading.Lock()
+        self._navigation = RestaurantNavigation(self.nav_client, warn_fn=self.get_logger().warn)
 
         # Deteccion de comensales (/bag_finder)
         self.pub_bag_request = self.create_publisher(String, "/bag_finder/request", 5)
@@ -129,7 +129,7 @@ class RestaurantNode(Node):
             speak_fn=self._speak,
             listen_fn=self._listen,
             detect_customers_fn=self._detect_customers,
-            ask_order_fn=rest.ask_order,
+            ask_order_fn=self._ask_order,
             ask_vlm_fn=vlm.ask_vlm,
             get_pose_fn=self._get_pose,
             cancel_nav_fn=self._cancel_nav,
@@ -171,6 +171,9 @@ class RestaurantNode(Node):
             if self._session_thread and self._session_thread.is_alive():
                 self.get_logger().warn("La sesion ya esta en ejecucion.")
                 return
+            if not self._navigation.reset():
+                self.get_logger().error("Hay una operacion Nav2 pendiente de resultado terminal; inicio rechazado.")
+                return
             self.get_logger().info("Arrancando mision Restaurant...")
             self._session_thread = threading.Thread(target=self._run_session, daemon=True)
             self._session_thread.start()
@@ -180,6 +183,7 @@ class RestaurantNode(Node):
             ok = self.session.run()
             self.get_logger().info(f"Mision Restaurant terminada. Resultado: {ok}")
         except Exception as e:
+            self._cancel_nav()
             self.get_logger().error(f"Error inesperado en sesion Restaurant: {e}")
         finally:
             if self._exit_when_done:     # prueba automatica: al terminar se cierra el nodo y con el la sesion
@@ -190,13 +194,10 @@ class RestaurantNode(Node):
         if msg.header.frame_id == "map":
             self._costmap = msg
 
-    def _navigate(self, x: float, y: float, yaw: float) -> bool:
-        """Navega hacia (x, y, yaw) en el frame map usando Nav2."""
+    def _navigate(self, x: float, y: float, yaw: float, *, deadline_s: float) -> bool:
+        """Navega en map, vigilando stop y ambos plazos hasta el resultado terminal."""
         self._nav_aborted = False
         self.get_logger().info(f"Nav2 -> x={x:.2f}, y={y:.2f}, yaw={yaw:.2f}")
-        if not self.nav_client.wait_for_server(timeout_sec=5.0):
-            self.get_logger().error("Servidor Nav2 (navigate_to_pose) no disponible.")
-            return False
 
         goal_msg = NavigateToPose.Goal()
         goal_msg.pose.header.frame_id = "map"
@@ -210,63 +211,26 @@ class RestaurantNode(Node):
         goal_msg.pose.pose.orientation.z = float(qz)
         goal_msg.pose.pose.orientation.w = float(qw)
 
-        accept_event = threading.Event()
-        goal_handle = None
-
-        def _goal_response_cb(fut):
-            nonlocal goal_handle
-            try:
-                goal_handle = fut.result()
-            except Exception:
-                goal_handle = None
-            accept_event.set()
-
-        send_future = self.nav_client.send_goal_async(goal_msg)
-        send_future.add_done_callback(_goal_response_cb)
-
-        if not accept_event.wait(timeout=10.0) or not goal_handle or not goal_handle.accepted:
-            self.get_logger().warn("Goal de navegacion rechazado por Nav2.")
-            return False
-
-        with self._nav_lock:
-            self._active_nav_goal_handle = goal_handle
-
-        done_event = threading.Event()
-        result_status = None
-
-        def _result_cb(fut):
-            nonlocal result_status
-            try:
-                res = fut.result()
-                result_status = res.status
-            except Exception:
-                result_status = None
-            done_event.set()
-
-        result_future = goal_handle.get_result_async()
-        result_future.add_done_callback(_result_cb)
-
-        completed = done_event.wait(timeout=self.navigation_timeout_s)
-        if not completed:
-            self.get_logger().warn(f"Timeout de navegacion ({self.navigation_timeout_s}s); cancelando goal.")
-            goal_handle.cancel_goal_async()
-        self._nav_aborted = completed and result_status == GoalStatus.STATUS_ABORTED
-
-        with self._nav_lock:
-            self._active_nav_goal_handle = None
-
-        return completed and result_status == GoalStatus.STATUS_SUCCEEDED
+        monitor = NavigationStopMonitor(self.voice, self.session.stop)
+        try:
+            ok = self._navigation.navigate(
+                goal_msg, deadline_s=deadline_s, timeout_s=self.navigation_timeout_s,
+                stop_requested_fn=lambda: self.session.stopped, monitor_fn=monitor.poll,
+            )
+            self._nav_aborted = self._navigation.last_status == GoalStatus.STATUS_ABORTED
+            return ok
+        finally:
+            monitor.close()
 
     def _cancel_nav(self) -> None:
-        """Cancela inmediatamente el goal activo de Nav2."""
-        with self._nav_lock:
-            gh = self._active_nav_goal_handle
-            if gh:
-                try:
-                    self.get_logger().info("Cancelando goal activo de Nav2...")
-                    gh.cancel_goal_async()
-                except Exception:
-                    pass
+        """Marca stop incluso antes de recibir un handle; _navigate espera su fin."""
+        self._navigation.cancel()
+
+    def _ask_order(self, text: str, menu: List[str]) -> List[str]:
+        remaining = self.session.remaining_s()
+        if self.session.stopped or remaining <= 0:
+            return []
+        return rest.ask_order(text, menu, timeout_s=min(rest.LLM_TIMEOUT_S, remaining))
 
     def _speak(self, text: str) -> None:
         """Emite voz con Piper TTS y publica en /hri/say_something."""
@@ -280,6 +244,9 @@ class RestaurantNode(Node):
 
     def _listen(self, timeout_s: float = 15.0) -> Optional[str]:
         """Escucha la respuesta del interlocutor con VoiceClient."""
+        timeout_s = min(timeout_s, self.session.remaining_s())
+        if self.session.stopped or timeout_s <= 0:
+            return ""
         self.get_logger().info(f"Escuchando comensal (timeout={timeout_s}s)...")
         try:
             res = self.voice.listen(prompt="What would you like to order?", timeout=timeout_s)
@@ -305,7 +272,7 @@ class RestaurantNode(Node):
         })
         self.pub_bag_request.publish(String(data=req_data))
 
-        ev.wait(timeout=timeout_s + 5.0)
+        ev.wait(timeout=min(timeout_s + 5.0, self.session.remaining_s()))
         with self._bag_lock:
             _, res_data = self._bag_pending.pop(req_id, (None, {}))
 
@@ -328,18 +295,22 @@ class RestaurantNode(Node):
         except Exception:
             pass
 
-    def _get_pose(self) -> Tuple[float, float, float]:
-        """Obtiene la pose actual del robot en el frame map."""
+    def _get_pose(self) -> Optional[Tuple[float, float, float]]:
+        """Consulta TF sin bloquear; la sesion espera una pose valida con plazo."""
         try:
-            t = self.tf_buffer.lookup_transform("map", "base_footprint", rclpy.time.Time(), timeout=rclpy.duration.Duration(seconds=0.5))
+            t = self.tf_buffer.lookup_transform("map", "base_footprint", rclpy.time.Time())
             tx = t.transform.translation.x
             ty = t.transform.translation.y
             qz = t.transform.rotation.z
             qw = t.transform.rotation.w
+            quaternion = t.transform.rotation
+            values = (tx, ty, quaternion.x, quaternion.y, qz, qw)
+            if not all(math.isfinite(v) for v in values) or sum(v * v for v in values[2:]) < 1e-12:
+                return None
             yaw = 2.0 * math.atan2(qz, qw)
             return (float(tx), float(ty), float(yaw))
         except Exception:
-            return (0.0, 0.0, 0.0)
+            return None
 
     def _point_head(self, pan_deg: float, tilt_deg: float) -> None:
         """Mueve la cabeza pan-tilt para apuntar al cliente."""

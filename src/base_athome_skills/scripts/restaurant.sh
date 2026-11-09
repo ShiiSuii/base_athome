@@ -32,7 +32,46 @@ fi
 set -u
 
 . "$HERE/session_lib.sh"
-session_init "${RESTAURANT_LOG_DIR:-/tmp}/restaurant_$$"
+
+nav_up() { timeout 6 ros2 action list 2>/dev/null | grep -q '^/navigate_to_pose$'; }
+
+restaurant_graph_idle() {
+  local nodes actions
+  nodes=$(timeout 6 ros2 node list 2>/dev/null) || {
+    echo "No se pudo comprobar la configuracion ROS activa; inicio rechazado."
+    return 1
+  }
+  if echo "$nodes" | grep -Eq '(^|/)(amcl|map_server|slam_toolbox|planner_server|controller_server|behavior_server|bt_navigator|lifecycle_manager_navigation|lifecycle_manager_localization|lifecycle_manager_slam)$'; then
+    echo "Hay navegacion, localizacion o un mapa activos. Restaurant requiere su propio SLAM nuevo."
+    echo "Inicio rechazado; no se reutiliza ni se detiene el stack existente."
+    return 1
+  fi
+  actions=$(timeout 6 ros2 action list 2>/dev/null) || return 1
+  if echo "$actions" | grep -Eq '(^|/)navigate_to_pose$'; then
+    echo "Hay una accion de navegacion activa; inicio Restaurant rechazado."
+    return 1
+  fi
+}
+
+restaurant_nav_ready() {
+  local nodes
+  nodes=$(timeout 6 ros2 node list 2>/dev/null) || return 1
+  echo "$nodes" | grep -Eq '(^|/)(amcl|map_server)$' && return 1
+  timeout 6 ros2 param get /slam_toolbox mode 2>/dev/null | grep -qx 'String value is: mapping' || return 1
+  timeout 6 ros2 lifecycle get /slam_toolbox 2>/dev/null | grep -q '^active ' || return 1
+  timeout 6 ros2 param get /planner_server GridBased.allow_unknown 2>/dev/null | grep -qx 'Boolean value is: True' || return 1
+  nav_up
+}
+
+wait_restaurant_nav() {
+  local attempt
+  for attempt in $(seq 15); do
+    restaurant_nav_ready && return 0
+    sleep 2
+  done
+  echo "Restaurant no tiene SLAM mapping activo y Nav2 compatible; inicio rechazado."
+  return 1
+}
 
 # ------------------------------------------------------------------------------
 # MODO SIMULACION (SIM=1)
@@ -44,6 +83,8 @@ if [ "${SIM:-0}" = 1 ]; then
   export ATHOME_SIM_NAV2=1      # la navegacion la hace Nav2 + SLAM, no el simulador
   export ATHOME_SIM_CUSTOMERS="${ATHOME_SIM_CUSTOMERS:-1.5,2.3,right,seated;2.5,-2.4,left,seated}"   # sentados en las mesas 1 y 3 de restaurant.sdf
   [ -f "$HOME/cyclonedds_local.xml" ] && export CYCLONEDDS_URI=file://$HOME/cyclonedds_local.xml
+  restaurant_graph_idle || exit 1
+  session_init "${RESTAURANT_LOG_DIR:-/tmp}/restaurant_$$"
 
   echo "============================================================"
   echo "MODO SIMULACION: ROS_DOMAIN_ID=$ROS_DOMAIN_ID (Gazebo)"
@@ -77,7 +118,7 @@ if [ "${SIM:-0}" = 1 ]; then
 
   echo "Levantando navegacion con SLAM (restaurant_nav)..."
   session_start nav ros2 launch base_athome_skills restaurant_nav.launch.py use_sim_time:=false   # nuestra simulacion publica con la hora real, como nav2_sim.launch.py
-  sleep 6
+  wait_restaurant_nav || exit 1
 
   echo "Iniciando restaurant_node..."
   AUTO_ARG=(); [ "${AUTO:-0}" = 1 ] && AUTO_ARG=(-p auto_start:=true)   # AUTO=1: sin esperar ENTER (pruebas automaticas)
@@ -89,12 +130,12 @@ fi
 # MODO ROBOT REAL (POR DEFECTO)
 # ------------------------------------------------------------------------------
 export ROS_DOMAIN_ID=10
+restaurant_graph_idle || exit 1
+session_init "${RESTAURANT_LOG_DIR:-/tmp}/restaurant_$$"
 
 echo "============================================================"
 echo "ROBOT REAL: se mueve solo; E-stop a mano"
 echo "============================================================"
-
-nav_up() { timeout 6 ros2 action list 2>/dev/null | grep -q '^/navigate_to_pose$'; }
 
 # 1. Base y actuadores
 if ! timeout 6 ros2 topic list 2>/dev/null | grep -q '^/odom$'; then
@@ -119,7 +160,7 @@ fi
 
 # 5. Elevador
 if [ -e /dev/serial/by-id/usb-1a86_USB_Single_Serial_5CBD013609-if00 ] && ! pgrep -f 'stepper_controller' >/dev/null; then
-  session_start torso ros2 run base_athome_bringup torso_state --ros-args -p allow_motion:=true
+  session_start torso ros2 run base_athome_bringup torso_state --ros-args -p allow_motion:=false
 fi
 
 # 6. Deteccion de comensales (bag_finder con modo raised_hands)
@@ -134,13 +175,9 @@ VLM_MODEL=$HOME/.local/share/base_athome/models/SmolVLM-500M-Instruct-Q8_0.gguf
 [ -x "$LLM_PY" ] && [ -f "$VLM_MODEL" ] && session_start vlm env -u PYTHONPATH nice -n 10 "$LLM_PY" "$HERE/vlm_server.py"
 
 # 8. SLAM Toolbox y Nav2 sin mapa previo
-if nav_up; then
-  echo "Nav2 ya esta corriendo."
-else
-  echo "Levantando SLAM y Nav2 (restaurant_nav)..."
-  session_start nav ros2 launch base_athome_skills restaurant_nav.launch.py
-  for _ in $(seq 15); do nav_up && break; sleep 2; done
-fi
+echo "Levantando SLAM y Nav2 (restaurant_nav)..."
+session_start nav ros2 launch base_athome_skills restaurant_nav.launch.py
+wait_restaurant_nav || exit 1
 
 # 9. Nodo Restaurant en primer plano
 echo "Iniciando nodo Restaurant..."
