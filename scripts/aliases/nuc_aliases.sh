@@ -13,10 +13,11 @@ urdf_editor() {  # editor URDF/Xacro en http://127.0.0.1:8765 (solo preview)
      (sleep 2; xdg-open http://127.0.0.1:8765/ >/dev/null 2>&1 &) && .venv/bin/python -m backend "$@")
 }
 alias editor_urdf='urdf_editor'
-gpsr() {  # gpsr "bring me a coke from the kitchen"  -> plan JSON + frase
+# `gpsr` queda para la mision (alias en ~/.bashrc); si se usara como nombre de funcion,
+# ese alias se expandiria aca y romperia el source con "syntax error near unexpected token `('".
+function gpsr_parser {  # gpsr_parser "bring me a coke from the kitchen"  -> plan JSON + frase
     (cd "$WS_ATHOME/tools/gpsr_parser" && env -u PYTHONPATH python3 -m gpsr_parser "$@")
 }
-alias gpsr_parser='gpsr'
 alias puerta='_ros && ros2 launch base_athome_skills door_open_detector.launch.py'
 alias detector_puerta='puerta'
 alias compilar='(cd $WS_ATHOME && source /opt/ros/jazzy/setup.bash && colcon build --symlink-install) && _ros'
@@ -54,7 +55,7 @@ alias camara_muneca='_ros && ros2 run rqt_image_view rqt_image_view /arm_camera/
 ayuda_robot() {
     cat <<'EOF'
 Workspace:     ws | devel | sws  (= source install/setup.bash)
-Herramientas:  urdf_editor | gpsr "<comando>" | puerta | compilar | editor_mapa
+Herramientas:  urdf_editor | gpsr_parser "<comando>" | puerta | compilar | editor_mapa
 Red/Jetson:    jetson (ssh) | red_jetson | deploy_jetson[_dry] | jetson_stats
 Cabeza:        head_start | head_stop | head_restart | head_status | head_logs
 Manipulacion:  manipulacion (incluye MoveIt) | manipulacion_avanzada | rviz_manipulacion | agarrar_botella | teach_record
