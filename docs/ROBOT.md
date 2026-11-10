@@ -395,7 +395,7 @@ Funciona según el usuario y es **protegida** (`AGENTS.md` §4). Lo siguiente es
 **Cadena:** `Nav2 → /cmd_vel → hoverboard_driver → UART 50 Hz → placa STM32 FOC → motores` y de
 vuelta `ticks Hall → /odom + TF odom→base_footprint (50 Hz) → AMCL (map→odom) → Nav2`.
 
-- **Placa:** config Lenzod (`firmware/firmware_config/lenzod_red_stm32_usart3_odometry/config.h`): FOC en `VLT_MODE`, `I_MOT_MAX 15 A`, `N_MOT_MAX 1000 rpm`, `TIMEOUT 20` comandos perdidos → apagado, `ENABLE_ODOMETRY`. El binario realmente flasheado: `PENDIENTE`.
+- **Placa:** config Lenzod (`firmware/firmware_config/lenzod_red_stm32_usart3_odometry/config.h`): FOC en `VLT_MODE`, `I_MOT_MAX 15 A`, `N_MOT_MAX 1000 rpm`, `TIMEOUT 20` comandos perdidos → apagado, `ENABLE_ODOMETRY`. El binario realmente flasheado: `PENDIENTE`. Firmware original: con el robot quieto 8 min (`INACTIVITY_TIMEOUT`) se apaga aunque reciba velocidad 0 por serie, y sin comandos repite 3 beeps (serial timeout) hasta apagarse. Arreglo preparado, **sin flashear** (Nivel C): `firmware/patches/foc_serial_keepalive_quiet_beep.diff` sobre `~/base1.0/hoverboard-firmware-hack-FOC` (4f141cb + cambios locales) con el preset Lenzod → `firmware/firmware_bin/hover_lenzod_usart3_odometry_keepalive.bin`. Con comandos serie válidos no se apaga; sin la NUC, ~10 s de beep, silencio y apagado a los 8 min. Ojo: el mismo árbol con el preset Lenzod **no** reproduce byte a byte `hover_lenzod_usart3_odometry.bin` (34680 contra 34692 bytes).
 - **Driver** (`src/hoverboard_base/hoverboard_base/hoverboard_driver.py`, parámetros efectivos en
   `config/hoverboard_params.yaml`): trama `0xABCD` + steer + speed + checksum XOR (protocolo serie del
   firmware FOC tipo EFeru); telemetría con contadores Hall por rueda, RPM, batería y temperatura.
