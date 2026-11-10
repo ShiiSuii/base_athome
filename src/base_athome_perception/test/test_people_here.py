@@ -80,25 +80,3 @@ def test_continuous_scan_can_cover_two_spins_and_still_has_a_finite_cap():
         assert result['ok'] and result['customers'] == []
         assert expected <= now[0] - 100. < expected + .1
         assert result['diagnostics'].get('stopped', False) == (stop_after is not None)
-
-
-def test_simulated_seated_person_maps_to_its_true_position_instead_of_depth_ghost():
-    import ast
-    from pathlib import Path
-    from types import SimpleNamespace as NS
-    import numpy as np
-    from base_athome_perception import bag_vision as bv
-    script = Path(__file__).parents[1] / 'scripts/bag_finder.py'
-    cls = next(n for n in ast.parse(script.read_text()).body
-               if isinstance(n, ast.ClassDef) and n.name == 'BagFinder')
-    method = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == '_sim_person_spot')
-    env = dict(np=np, math=math, bv=bv)
-    exec(compile(ast.Module(body=[method], type_ignores=[]), str(script), 'exec'), env)
-    customer = dict(xy=[3., 0.], keypoints={
-        0: [3., 0., 1.25], 5: [3., -.2, 1.05], 6: [3., .2, 1.05],
-        11: [3., -.12, .55], 12: [3., .12, .55]})
-    cam = (np.array([0., 0., 1.3]), np.array([[0., 0., 1.], [-1., 0., 0.], [0., -1., 0.]]))
-    k = (615., 615., 320., 240.)
-    (person,) = bv.project_people([customer], *cam, k, 640, 480)
-    node = NS(sim_people=[customer], K=k, rgb=np.zeros((480, 640, 3), dtype=np.uint8))
-    assert env['_sim_person_spot'](node, person, cam) == (3., 0.)

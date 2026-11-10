@@ -465,23 +465,21 @@ class BagFinder(Node):
         return 0.0, 0.0
 
     def _sim_person_spot(self, person, cam):
-        """Asocia la pose sintetica con la misma proyeccion usada para generarla."""
-        if not self.sim_people or cam is None or self.K is None or self.rgb is None:
+        """En simulacion halla la coordenada mapa de un cliente por proyeccion geometrica."""
+        if not self.sim_people or cam is None or self.K is None:
             return None
         u, v = bv.torso_pixel(person)
-        height, width = self.rgb.shape[:2]
-        best_p, best_d = None, 60.0
+        best_p, best_d = None, 60.0  # tolerancia en pixeles
         for sp in self.sim_people:
-            projected = bv.project_people([sp], cam[0], cam[1], self.K, width, height)
-            if not projected:
-                continue
-            # Un cliente sentado tiene el torso a ~0.8 m, no a 1.2 m.
-            # Usar los keypoints visibles evita caer al depth con otro pixel/TF
-            # y crear posiciones fantasma durante el barrido.
-            pu, pv = bv.torso_pixel(projected[0])
-            d = math.hypot(pu - u, pv - v)
-            if d < best_d:
-                best_d, best_p = d, sp["xy"]
+            pos = np.array([sp["xy"][0], sp["xy"][1], 1.2])
+            c = cam[1].T @ (pos - cam[0])
+            if c[2] > 0.1:
+                pu = self.K[2] + self.K[0] * c[0] / c[2]
+                pv = self.K[3] + self.K[1] * c[1] / c[2]
+                d = math.hypot(pu - u, pv - v)
+                if d < best_d:
+                    best_d = d
+                    best_p = sp["xy"]
         if best_p is not None:
             return float(best_p[0]), float(best_p[1])
         return None
