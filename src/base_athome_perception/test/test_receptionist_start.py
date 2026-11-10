@@ -12,7 +12,6 @@ Cubre:
 9. _ready_banner refleja estado de la puerta, microfono y atajos.
 10. _scan_callback se desactiva una vez confirmado el inicio.
 """
-import importlib.util
 import math
 import os
 import sys
@@ -21,7 +20,11 @@ from unittest import mock
 
 import numpy as np
 import pytest
-from sensor_msgs.msg import LaserScan
+from types import SimpleNamespace
+from receptionist_offline import load_receptionist
+
+# Only the scan fields read by the pure door detector are needed offline.
+LaserScan = SimpleNamespace
 
 HERE = os.path.dirname(__file__)
 SCRIPT = os.path.join(HERE, "..", "scripts", "hri_receptionist_challenge.py")
@@ -29,13 +32,7 @@ SCRIPT = os.path.join(HERE, "..", "scripts", "hri_receptionist_challenge.py")
 
 @pytest.fixture(scope="module")
 def hri_module():
-    spec = importlib.util.spec_from_file_location("hri_receptionist_challenge", SCRIPT)
-    mod = importlib.util.module_from_spec(spec)
-    try:
-        spec.loader.exec_module(mod)
-    except Exception as exc:
-        pytest.skip(f"No se pudo importar hri_receptionist_challenge: {exc}")
-    return mod
+    return load_receptionist()
 
 
 @pytest.fixture

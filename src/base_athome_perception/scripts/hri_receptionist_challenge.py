@@ -16,6 +16,13 @@
 #      points with AgileX Piper 6-DOF arm to available seat and invites guest.
 #  10. Returns to door to receive Guest 2, and introduces Guest 2 to both
 #      the host and Guest 1.
+# Optional --wait-doorbell waits up to --doorbell-timeout-s (default 30 s) before
+# each trip to the door. --doorbell-audio-topic (default /hri/doorbell/audio) needs
+# an external live PCM source: std_msgs/Int16MultiArray, mono 16 kHz, <=1600 samples
+# per message. This node does not open a microphone. Timeout continues without
+# claiming detection. ROS parameters have the same names with underscores.
+# Guest 1's trusted torso/legs colors and garment types are saved and described
+# to Guest 2 in one sentence (<=20 words); unsupported attributes are omitted.
 # ==============================================================================
 
 import argparse
@@ -42,9 +49,10 @@ import rclpy
 from rclpy.node import Node
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.qos import DurabilityPolicy, QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy, qos_profile_sensor_data
+from rclpy.utilities import remove_ros_args
 from geometry_msgs.msg import Vector3, PoseStamped, PoseWithCovarianceStamped
 from sensor_msgs.msg import CameraInfo, Image, JointState, LaserScan
-from std_msgs.msg import String, Float32, Bool
+from std_msgs.msg import String, Float32, Bool, Int16MultiArray
 from std_srvs.srv import SetBool, Trigger
 
 # CV Bridge
@@ -79,6 +87,13 @@ from base_athome_perception.guest_input_server import GuestInputServer
 from base_athome_perception import seat_occupancy as seatocc
 from base_athome_perception import scene_analysis as scene
 from base_athome_perception.speaker import RoboCupSpeaker
+from base_athome_perception.doorbell_detector import DoorbellDetector
+from base_athome_perception.receptionist_attributes import (
+    describe_guest_attributes, extract_guest_attributes, prefer_attributes,
+)
+from base_athome_perception.receptionist_doorbell import (
+    doorbell_wait_status, validate_doorbell_timeout,
+)
 try:
     from base_athome_perception.person_pose_detector import PersonPoseDetector
 except ImportError:
@@ -177,6 +192,7 @@ class HriReceptionistChallengeNode(Node):
     STATE_DONE = 16  # terminal: antes COMPLETE se re-ejecutaba en bucle (repetia el discurso final)
     STATE_ASK_CONFIRM = 17     # "Your name is X and you like Y. Is that correct?"
     STATE_WAIT_CONFIRM = 18
+    STATE_WAIT_DOORBELL = 19
 
     STATE_NAMES = {
         STATE_INIT: "0/7: INICIALIZANDO SISTEMA",
@@ -198,6 +214,7 @@ class HriReceptionistChallengeNode(Node):
         STATE_DONE: "7/7: TERMINADO",
         STATE_ASK_CONFIRM: "3/7: VERIFICANDO LO QUE ENTENDI",
         STATE_WAIT_CONFIRM: "3/7: ESCUCHANDO SI / NO",
+        STATE_WAIT_DOORBELL: "ESPERANDO TIMBRE ANTES DE IR A LA PUERTA",
     }
     # Estados en los que la cabeza sigue la cara del interlocutor
     TRACKING_STATES = {STATE_WAIT_DOOR, STATE_GREET_AND_PROMPT, STATE_WAIT_NAME_DRINK, STATE_PROMPT_MISSING_INFO,
@@ -220,6 +237,9 @@ class HriReceptionistChallengeNode(Node):
         gentle_tracking: bool = True,
         door_config: Optional[Any] = None,
         scan_topic: str = "/scan",
+        wait_doorbell: bool = False,
+        doorbell_timeout_s: float = 30.0,
+        doorbell_audio_topic: str = "/hri/doorbell/audio",
     ):
         super().__init__("hri_receptionist_challenge_node")
 
@@ -232,6 +252,20 @@ class HriReceptionistChallengeNode(Node):
         self._last_voice_listen_attempt = 0.0
         self.door_detector = DoorOpenDetector(cfg=door_config or DoorDetectorConfig())
         self.scan_topic = scan_topic
+        self.wait_doorbell = self.declare_parameter("wait_doorbell", wait_doorbell).value
+        self.doorbell_timeout_s = validate_doorbell_timeout(
+            self.declare_parameter("doorbell_timeout_s", doorbell_timeout_s).value)
+        self.doorbell_audio_topic = self.declare_parameter(
+            "doorbell_audio_topic", doorbell_audio_topic).value
+        self.doorbell_lock = threading.Lock()
+        self.doorbell_started_at = None
+        self.doorbell_detected_at = None
+        self.doorbell_detector = DoorbellDetector(armed=False)
+        if self.wait_doorbell:
+            # New input contract: mono PCM int16, 16000 Hz, <=1600 samples/message.
+            # Volatile sensor QoS avoids replaying historical audio on subscription.
+            self.create_subscription(Int16MultiArray, self.doorbell_audio_topic,
+                                     self._doorbell_audio_callback, qos_profile_sensor_data)
         self._pt_retest_requested = False
         self.max_guests = max_guests
         self.arm_gestures = arm_gestures
@@ -432,6 +466,7 @@ class HriReceptionistChallengeNode(Node):
         # Datos temporales del invitado actual
         self.current_name: Optional[str] = None
         self.current_drink: Optional[str] = None
+        self.current_attributes: Dict = {}
         self.missing_field: Optional[str] = None
         self.retry_count = 0
         self.door_detection_start: Optional[float] = None
@@ -509,6 +544,8 @@ class HriReceptionistChallengeNode(Node):
         self.seated_hits = 0
         self.seat_reminded = False
         self.face_dets_stamp = 0.0
+        self.visual_attributes = {}
+        self.visual_attributes_stamp = 0.0
         self.last_tracked_stamp = 0.0
         self.face_worker_stop = threading.Event()
         self.face_worker = threading.Thread(target=self._face_worker_loop, daemon=True)
@@ -595,14 +632,20 @@ class HriReceptionistChallengeNode(Node):
             try:
                 dets = self.recognizer.detect_and_recognize(frame)
                 poses = None
+                attributes = None
                 if self.pose_detector is not None and t0 - self.last_pose_time >= 0.28:
                     self.last_pose_time = t0
                     poses = self.pose_detector.detect_poses(frame)
+                    if self.guest_index == 1 and self.state in self.REGISTRATION_STATES:
+                        attributes = extract_guest_attributes(frame, poses, dets)
                 with self.face_lock:
                     self.current_face_dets = dets
                     self.face_dets_stamp = t0
                     if poses is not None:
                         self.current_poses = poses
+                    if attributes is not None:
+                        self.visual_attributes = attributes
+                        self.visual_attributes_stamp = t0
             except Exception as e:
                 self.get_logger().warn(f"Error en reconocimiento facial: {e}", throttle_duration_sec=5.0)
             time.sleep(max(0.0, 0.1 - (time.time() - t0)))
@@ -623,6 +666,8 @@ class HriReceptionistChallengeNode(Node):
         self.guest_index = 1
         self.current_name = None
         self.current_drink = None
+        self.current_attributes = {}
+        # Worker observations predating the next registration are rejected by step().
         self.recording_samples = []
         self.best_thumbnail = None
         self._init_session_storage()
@@ -1504,6 +1549,48 @@ class HriReceptionistChallengeNode(Node):
     # BUCLE DE LA MAQUINA DE ESTADOS HRI
     # --------------------------------------------------------------------------
 
+    def _prepare_door_arrival(self):
+        """Start an optional bounded wait, separately for each arriving guest."""
+        if not getattr(self, "wait_doorbell", False):
+            self.state = self.STATE_NAV_TO_DOOR
+            return
+        with self.doorbell_lock:
+            self.doorbell_detector.reset()
+            self.doorbell_detected_at = None
+            self.doorbell_started_at = time.monotonic()
+            self.state = self.STATE_WAIT_DOORBELL
+            self.doorbell_detector.arm()
+        self.current_banner_text = "Esperando timbre (con tiempo limite)..."
+
+    def _doorbell_audio_callback(self, msg):
+        """Process small live PCM blocks only during the armed waiting window."""
+        with self.doorbell_lock:
+            now = time.monotonic()
+            status = doorbell_wait_status(self.wait_doorbell, self.doorbell_started_at,
+                                         now, self.doorbell_timeout_s,
+                                         self.doorbell_detected_at)
+            if (self.state != self.STATE_WAIT_DOORBELL or status != "waiting"
+                    or not 0 < len(msg.data) <= 1600):
+                return
+            if self.doorbell_detector.process(msg.data).detected:
+                self.doorbell_detected_at = now
+                self.doorbell_detector.disarm()
+
+    def _step_doorbell_wait(self):
+        with self.doorbell_lock:
+            status = doorbell_wait_status(True, self.doorbell_started_at,
+                                         time.monotonic(), self.doorbell_timeout_s,
+                                         self.doorbell_detected_at)
+            if status == "waiting":
+                return
+            self.doorbell_detector.disarm()
+            self.state = self.STATE_NAV_TO_DOOR
+        if status == "timeout":
+            self.get_logger().warn("Timbre: tiempo agotado; continuo hacia la puerta sin deteccion.")
+        else:
+            self.get_logger().info("Timbre detectado: voy a recibir al invitado.")
+        self.state_start_time = time.time()
+
     def step(self):
         """Ejecuta un ciclo de la maquina de estados de la prueba Receptionist."""
         now = time.time()
@@ -1634,7 +1721,7 @@ class HriReceptionistChallengeNode(Node):
                     self.listen_id = None
                 self.voice_text = None
                 self.say("Starting Receptionist Challenge.", emotion="happy", blocking=True)
-                self.state = self.STATE_NAV_TO_DOOR
+                self._prepare_door_arrival()
                 self.state_start_time = time.time()
                 return
             print("\n" + "=" * 70)
@@ -1665,8 +1752,11 @@ class HriReceptionistChallengeNode(Node):
                         pass
                 return
             self.say("All systems online. Camera and perception ready. Starting Receptionist Challenge.", emotion="happy", blocking=True)
-            self.state = self.STATE_NAV_TO_DOOR
+            self._prepare_door_arrival()
             self.state_start_time = time.time()  # tras los say() bloqueantes, no el 'now' del inicio del ciclo
+
+        elif self.state == self.STATE_WAIT_DOORBELL:
+            self._step_doorbell_wait()
 
         elif self.state == self.STATE_NAV_TO_DOOR:
             self.say("Navigating to the entrance door.", emotion="neutral", blocking=True)
@@ -1757,6 +1847,7 @@ class HriReceptionistChallengeNode(Node):
                 self.say("Hello! I am waiting for the guest at the door. Please step forward.", emotion="speaking", blocking=False)
 
         elif self.state == self.STATE_GREET_AND_PROMPT:
+            self.current_attributes = {}
             # Saludo y pregunta abierta de nombre y bebida favorita
             # 1) quien es el robot  2) que tiene que decir la persona  3) cuando (despues del beep)
             self.move_head_to(0.0, 0.0)  # mirar al frente (sin seguimiento)
@@ -1933,6 +2024,12 @@ class HriReceptionistChallengeNode(Node):
             self.state_start_time = time.time()  # tras los say() bloqueantes, no el 'now' del inicio del ciclo
 
         elif self.state == self.STATE_MEMORIZE_FACE:
+            if self.guest_index == 1:
+                with self.face_lock:
+                    if (self.visual_attributes_stamp >= self.state_start_time
+                            and 0 <= now - self.visual_attributes_stamp <= 1.0):
+                        self.current_attributes = prefer_attributes(
+                            self.current_attributes, self.visual_attributes)
             # Captura de 10 muestras biométricas con filtro de calidad
             if frame is not None and face_results:
                 target = max(face_results, key=lambda f: f["bbox"][2] * f["bbox"][3])
@@ -1979,6 +2076,7 @@ class HriReceptionistChallengeNode(Node):
                         "seat": seat_assigned,
                         "guest_index": self.guest_index,
                         "synthetic": self.samples_synthetic,
+                        "visual_attributes": self.current_attributes,
                     },
                 )
 
@@ -1992,6 +2090,7 @@ class HriReceptionistChallengeNode(Node):
                     "best_sharpness": round(float(self.best_sharpness), 2),
                     "registered_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     "thumbnail_path": self.recognizer.profiles[pid].thumbnail_file if pid in self.recognizer.profiles else "",
+                    "visual_attributes": self.current_attributes,
                 }
                 self.registered_guests.append({
                     "name": self.current_name,
@@ -1999,6 +2098,7 @@ class HriReceptionistChallengeNode(Node):
                     "seat": seat_assigned,
                     "person_id": pid,
                     "thumbnail": self.best_thumbnail,
+                    "visual_attributes": self.current_attributes,
                 })
                 # Persistencia inmediata en receptionist_session.json
                 self._update_session_storage(guest_record)
@@ -2044,6 +2144,7 @@ class HriReceptionistChallengeNode(Node):
                         "seat": seat_assigned,
                         "guest_index": self.guest_index,
                         "synthetic": self.samples_synthetic,
+                        "visual_attributes": self.current_attributes,
                     },
                 )
                 guest_record = {
@@ -2056,6 +2157,7 @@ class HriReceptionistChallengeNode(Node):
                     "best_sharpness": round(float(self.best_sharpness), 2),
                     "registered_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     "thumbnail_path": "",
+                    "visual_attributes": self.current_attributes,
                 }
                 self.registered_guests.append({
                     "name": self.current_name,
@@ -2063,6 +2165,7 @@ class HriReceptionistChallengeNode(Node):
                     "seat": seat_assigned,
                     "person_id": pid,
                     "thumbnail": self.best_thumbnail,
+                    "visual_attributes": self.current_attributes,
                 })
                 self._update_session_storage(guest_record)
 
@@ -2117,6 +2220,11 @@ class HriReceptionistChallengeNode(Node):
                 )
 
             self.say(intro_text, emotion="speaking", blocking=True)
+            if self.guest_index == 2 and self.registered_guests:
+                description = describe_guest_attributes(
+                    self.registered_guests[0].get("visual_attributes", {}))
+                if description:
+                    self.say(description, emotion="speaking", blocking=True)
             self.state = self.STATE_DETECT_AND_OFFER_SEAT
             self.state_start_time = time.time()  # tras los say() bloqueantes, no el 'now' del inicio del ciclo
 
@@ -2223,12 +2331,13 @@ class HriReceptionistChallengeNode(Node):
                 self.guest_index += 1
                 self.current_name = None
                 self.current_drink = None
+                self.current_attributes = {}
                 self.retry_count = 0
                 self.voice_text = None
                 self.user_speech_buffer = ""
                 self.voice.cancel(self.listen_id)
                 self.listen_id = None
-                self.state = self.STATE_NAV_TO_DOOR
+                self._prepare_door_arrival()
                 self.state_start_time = time.time()  # tras los say() bloqueantes, no el 'now' del inicio del ciclo
             else:
                 self.state = self.STATE_CHALLENGE_COMPLETE
@@ -2414,13 +2523,19 @@ def main():
     parser.add_argument("--no-wait", action="store_true",
                         help="Arranca solo al terminar de cargar, sin esperar apertura de puerta, voz ni ESPACIO")
     parser.add_argument("--max-guests", type=int, default=2, help="Cantidad de invitados a recibir")
+    parser.add_argument("--wait-doorbell", action="store_true",
+                        help="Esperar timbre antes de ir a la puerta, para cada invitado")
+    parser.add_argument("--doorbell-timeout-s", type=float, default=30.0,
+                        help="Tope de espera del timbre; al vencer continua hacia la puerta")
+    parser.add_argument("--doorbell-audio-topic", default="/hri/doorbell/audio",
+                        help="Entrada Int16MultiArray: PCM mono 16 kHz, bloques <=1600 muestras")
     parser.add_argument("--no-gentle-tracking", action="store_true",
                         help="Desactivar el seguimiento leve del rostro durante el registro del invitado")
     parser.add_argument("--track-faces", action="store_true",
                         help="Seguir la cara con el pan-tilt (por defecto la cabeza queda al frente)")
     parser.add_argument("--arm-gestures", action="store_true",
                         help="Permitir gestos del brazo (solo con realimentacion CAN y brazo habilitado)")
-    args = parser.parse_args()
+    args = parser.parse_args(remove_ros_args(sys.argv)[1:])
 
     rclpy.init()
 
@@ -2435,6 +2550,9 @@ def main():
         arm_gestures=args.arm_gestures,
         track_faces=args.track_faces,
         gentle_tracking=not args.no_gentle_tracking,
+        wait_doorbell=args.wait_doorbell,
+        doorbell_timeout_s=args.doorbell_timeout_s,
+        doorbell_audio_topic=args.doorbell_audio_topic,
     )
 
     executor = MultiThreadedExecutor(num_threads=4)
