@@ -79,9 +79,17 @@ def merge_restaurant_poses(current, extra_path, *, limits_path=None):
     return merged
 
 
+# Pedido del usuario 10/11: el objeto viaja en postgrasp hasta el cliente; carry es opcional
+# (solo recuperacion, y solo si tambien esta calibrada).
+RESTAURANT_REQUIRED_POSES = ("restaurant_pregrasp", "restaurant_postgrasp", "restaurant_handover")
+
+
+def _calibrated(poses, name):
+    return isinstance(poses.get(name), dict) and poses[name].get("calibrated") is True
+
+
 def poses_calibrated(poses):
-    return all(isinstance(poses.get(n), dict) and poses[n].get("calibrated") is True
-               for n in RESTAURANT_POSES)
+    return all(_calibrated(poses, n) for n in RESTAURANT_REQUIRED_POSES)
 
 
 class RestaurantMotionGuard:
@@ -217,6 +225,8 @@ class RestaurantArm:
         for name in ("restaurant_carry", "home"):
             if not self.permitted() or m.abort or not m.motion_ready():
                 break
+            if name == "restaurant_carry" and not _calibrated(m.poses, name):
+                continue
             if name in m.poses and m.go_to_holding(name)[0]:
                 return True
         self.warn("No se confirmo carry/home; se detiene la sesion para impedir transporte inseguro.")
@@ -233,8 +243,7 @@ class RestaurantArm:
                 m.select_item(label)
                 ok = m.go_to_blocking("restaurant_pregrasp")[0]
                 ok = ok and m.pick_blocking(label, retreat=False)[0]
-                ok = ok and m.go_to_holding("restaurant_postgrasp")[0]
-                ok = ok and m.go_to_holding("restaurant_carry")[0]
+                ok = ok and m.go_to_holding("restaurant_postgrasp")[0]  # viaja asi hasta el cliente
             except Exception:
                 self._recover(m)
                 raise

@@ -1688,7 +1688,7 @@ def test_new_callbacks_are_optional_and_arm_pick_failure_uses_tray():
                              stow_fn=lambda: True)
     assert session.run()
     assert picks == ['water', 'water']
-    assert 'Please place the water on my tray instead.' in h.spoken
+    assert 'I could not pick it. Please place everything on my tray instead.' in h.spoken
 
 
 def one_customer_protocol(order='water', tray_items=1):
@@ -2013,3 +2013,14 @@ def test_barman_wait_uses_yes_and_timeout_and_never_accepts_no_as_done():
     # El fake consume dos segundos por listen incluso si queda menos tiempo.
     assert 30. <= h.clock() - start < 32.
     assert not h.nav_goals
+
+
+def test_picks_second_item_when_first_is_not_visible_and_rest_goes_to_tray():
+    h = FakeRestaurantHarness(speech_script=['yes'] * 10)
+    picked = []
+    session = h.make_session(arm=True, detect_item_fn=lambda item, _t: item == 'coke',
+                             pick_item_fn=lambda item: picked.append(item) or True)
+    session.deadline_s = h.clock() + 900.
+    session._abort_run = False
+    held, tray = session._prepare_order(["chips", "coke"])
+    assert held == 'coke' and picked == ['coke'] and tray == ['chips']

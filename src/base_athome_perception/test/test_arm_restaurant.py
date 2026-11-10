@@ -14,7 +14,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).parents[1]))
 from base_athome_perception import pose_store
 from base_athome_perception.restaurant_arm import (
-    RESTAURANT_POSES, RestaurantArm, RestaurantItemDetector, RestaurantMotionGuard,
+    RESTAURANT_POSES, RESTAURANT_REQUIRED_POSES, RestaurantArm, RestaurantItemDetector, RestaurantMotionGuard,
     item_yolo_class, merge_restaurant_poses, poses_calibrated,
 )
 from base_athome_perception.restaurant_arm_teach import save_pose
@@ -87,7 +87,7 @@ def test_load_additive_merge_preserves_main_poses_limits_and_input(tmp_path):
 
 @pytest.mark.parametrize("value", [False, None, "true", 1])
 def test_each_uncalibrated_pose_blocks_every_callback_without_backend(value):
-    for name in RESTAURANT_POSES:
+    for name in RESTAURANT_REQUIRED_POSES:
         poses = calibrated_poses()
         poses[name]["calibrated"] = value
         arm = RestaurantArm(lambda: pytest.fail("No crear nodos/MoveIt sin calibracion"), poses,
@@ -139,8 +139,7 @@ def test_pick_handover_release_and_stow_are_separate_and_ordered():
     arm, m, stopped = harness()
     assert arm.pick_item("apple")
     assert m.events == [("select", "apple"), ("go", "restaurant_pregrasp"),
-                        ("pick", "apple", False), ("hold", "restaurant_postgrasp"),
-                        ("hold", "restaurant_carry")]
+                        ("pick", "apple", False), ("hold", "restaurant_postgrasp")]  # viaja en postgrasp
     assert arm.handover()
     assert m.events[-1] == ("hold", "restaurant_handover")
     assert not any(e[0] == "give" for e in m.events)
@@ -158,14 +157,25 @@ def test_failed_pick_recovers_carry_without_delivering():
     assert not stopped
 
 
-def test_failed_carry_recovers_home_and_if_both_fail_stops_session():
-    arm, m, stopped = harness(fail_at="restaurant_carry")
+def test_failed_postgrasp_recovers_home_and_if_both_fail_stops_session():
+    arm, m, stopped = harness(fail_at="restaurant_postgrasp")
     assert not arm.pick_item("banana")
-    assert m.events[-1] == ("hold", "home")
+    assert m.events[-1] == ("hold", "restaurant_carry")  # carry calibrada: recupera ahi
     assert not stopped
     m.go_to_holding = lambda name: (False, "controller failure")
     assert not arm.stow()
     assert stopped == [True]
+
+
+def test_carry_is_optional_and_uncalibrated_carry_is_never_used():
+    poses = calibrated_poses()
+    poses["restaurant_carry"]["calibrated"] = False
+    assert poses_calibrated(poses)
+    m = FakeManip()
+    m.poses["restaurant_carry"]["calibrated"] = False
+    arm = RestaurantArm(lambda: m, poses, lambda: True, unsafe_fn=lambda: pytest.fail("no debe frenar"))
+    assert arm.stow()
+    assert m.events[-1] == ("hold", "home")
 
 
 def test_controller_feedback_loss_cancels_operation_and_does_not_start_recovery():

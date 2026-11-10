@@ -499,10 +499,13 @@ class RestaurantSession:
         if self.stopped or self._is_timeout():
             return []
         self._set_state(SessionState.DETECTING_CUSTOMERS)
-        self._speak(rest.SEARCHING_PEOPLE)
+        if not (self.spin_fn and self.detect_people_fn):
+            self._speak(rest.SEARCHING_PEOPLE)
         if self.stopped or self._is_timeout():
             return []
         if self.spin_fn and self.detect_people_fn:
+            self._look_forward()  # deja de mirar al barman antes de girar
+            self._speak(rest.CUSTOMER_TURN)
             view = self._spin_scan_customers()
             eligible = [dict(c) for c in view if self._eligible_customer(c)]
             self._look_forward()
@@ -580,11 +583,23 @@ class RestaurantSession:
         self._speak(rest.SEARCHING_PEOPLE)
         if self.stopped or self._is_timeout():
             return None
-        try:
-            raw = self.detect_customers_fn(min(6.0, self.remaining_s()), 2)
-        except Exception:
-            return None
-        view = (raw.get("customers", []) if raw.get("ok", True) else []) if isinstance(raw, dict) else raw
+        view = []
+        if self.detect_people_fn is not None:
+            # El paso intermedio deja al robot mirando al cliente: alcanza con la camara al frente.
+            # Se acepta aunque ya haya bajado la mano; se prefiere a quien la mantiene.
+            try:
+                people = self._people_list(self.detect_people_fn(min(5.0, self.remaining_s()), 2))
+            except Exception:
+                people = []
+            view = sorted(people, key=lambda p: not self._raised(p))
+            if self.stopped or self._is_timeout():
+                return None
+        if not view:
+            try:
+                raw = self.detect_customers_fn(min(6.0, self.remaining_s()), 2)
+            except Exception:
+                return None
+            view = (raw.get("customers", []) if raw.get("ok", True) else []) if isinstance(raw, dict) else raw
         if not isinstance(view, list):
             return None
         best_xy: Optional[Tuple[float, float]] = None
@@ -599,7 +614,7 @@ class RestaurantSession:
                 continue
             d = math.hypot(x - float(expected_xy[0]), y - float(expected_xy[1]))
             if d <= max_gate_m:
-                est_rank = 1 if c.get("estimated", False) else 0
+                est_rank = (1 if c.get("estimated", False) else 0) + (0 if self._raised(c) else 0.5)
                 if (est_rank, d) < best_score:
                     best_score = (est_rank, d)
                     best_xy = (x, y)
@@ -621,7 +636,10 @@ class RestaurantSession:
         dist_to_cust = math.hypot(float(c_xy[0]) - robot_pose[0], float(c_xy[1]) - robot_pose[1])
         did_progressive = False
 
-        if cust.get("estimated", False) and dist_to_cust > self.standoff_dist + 0.6:
+        # Dos etapas (EIC/RoBorregos): la posicion de la vuelta sale del mapa y el yaw de SLAM se corre
+        # al girar; a mitad de camino se vuelve a medir de cerca, donde la D435 tiene profundidad.
+        two_stage = cust.get("estimated", False) or (self.detect_people_fn is not None and dist_to_cust > 2.2)
+        if two_stage and dist_to_cust > self.standoff_dist + 0.6:
             adv_cands = progressive_advance_candidates(
                 c_xy, robot_pose, self.get_costmap_fn(), self.standoff_dist
             )
@@ -1052,36 +1070,39 @@ class RestaurantSession:
         held = None
         tray = list(items)
         if self.arm and self.pick_item_fn is not None and items:
-            item = items[0]
-            self._speak(rest.counter_request_phrase(item))
-            detected = self.detect_item_fn is None  # adaptadores antiguos sin detector
-            for attempt in range(3) if self.detect_item_fn is not None else ():
-                if self.stopped or self._is_timeout():
-                    return None, []
-                self._set_state(SessionState.DETECTING_ITEM, {"item": item, "attempt": attempt + 1})
-                if self.stopped or self._is_timeout():
-                    return None, []
-                try:
-                    detected = bool(self.detect_item_fn(item, min(10.0, self.remaining_s())))
-                except Exception:
-                    detected = False
-                if self.stopped or self._is_timeout():
-                    return None, []
-                if detected:
+            # Pedido del usuario 10/11: agarrar al menos uno de los dos primeros objetos.
+            # Se prueba en orden; el primero que la camara ve y el brazo levanta va en la pinza.
+            for item in list(items[:2]):
+                if held is not None or self.stopped or self._is_timeout() or self._abort_run:
                     break
-                self._speak(f"I cannot see the {item}. Can you please slightly move and rotate it?")
-            if detected:
+                self._speak(rest.counter_request_phrase(item))
+                detected = self.detect_item_fn is None  # adaptadores antiguos sin detector
+                for attempt in range(3) if self.detect_item_fn is not None else ():
+                    if self.stopped or self._is_timeout():
+                        return None, []
+                    self._set_state(SessionState.DETECTING_ITEM, {"item": item, "attempt": attempt + 1})
+                    try:
+                        detected = bool(self.detect_item_fn(item, min(10.0, self.remaining_s())))
+                    except Exception:
+                        detected = False
+                    if self.stopped or self._is_timeout():
+                        return None, []
+                    if detected:
+                        break
+                    self._speak(f"I cannot see the {item}. Can you please slightly move and rotate it?")
+                if not detected:
+                    continue
                 for _ in range(2):
                     self._speak(f"I will now pick the {item}.")
                     if self._arm_action(SessionState.PICKING_ITEM, self.pick_item_fn, item):
                         held = item
                         self._holding_item = True
-                        tray = list(items[1:])
+                        tray = [i for j, i in enumerate(items) if j != list(items).index(item)]
                         break
                     if self._abort_run or self.stopped or self._is_timeout():
                         return None, []
-            if held is None:
-                self._speak(f"Please place the {item} on my tray instead.")
+            if held is None and not (self.stopped or self._is_timeout() or self._abort_run):
+                self._speak("I could not pick it. Please place everything on my tray instead.")
         for item in tray:
             if self.stopped or self._is_timeout() or self._abort_run:
                 break
