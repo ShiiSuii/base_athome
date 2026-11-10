@@ -3,6 +3,11 @@
 Everything specific to simulation is in this folder. The robot's own code in `src/` runs unchanged: the same mission
 executor, voice commands, perception and arm logic. You do not need the robot, the NUC or the Jetson.
 
+`worlds/restaurant.sdf` uses a 10 ms physics step to reduce stepping overhead while the visible
+Gazebo/RViz sessions share the host. The simulated base still uses VelocityControl; lidar/camera
+rates, robot geometry and Nav2 parameters are unchanged. This timing choice is for the restaurant
+simulation and does not validate real robot behavior or manipulation contact accuracy.
+
 ## Setup
 
 Ubuntu 24.04 with ROS 2 Jazzy and Gazebo Harmonic:
