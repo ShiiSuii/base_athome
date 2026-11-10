@@ -3,7 +3,16 @@
 Corto y actualizado: se **reemplaza** lo viejo, no se acumula (`AGENTS.md` §9). Lo histórico se
 recupera por commit (§8). Editado por el integrador (Claude).
 
-**Última actualización:** 2026-11-09 · Antigravity · modo `DESARROLLO` · Restaurant: estimación de distancia a cliente lejano + avance progresivo SLAM, barrido inicial `0° → -90° → 0° → +90° → 0°` sin cortar al primer cliente, y task planning de 2 clientes (`batch_orders=True`).
+**Última actualización:** 2026-11-10 · Claude Code · modo `DESARROLLO` · integrado el trabajo de Restaurant del 09/11 (clientes lejanos, 2 pedidos), la validación estática de la arena y receptionist con atributos y timbre. 1448 tests pasan. Nada de esto se probó todavía en el robot.
+
+## Integración 2026-11-10 (Claude)
+
+- **Restaurant (034c221):** el trabajo del 09/11 de Antigravity y Codex que había quedado sin commit (ver abajo). Cambió el barrido inicial: ahora recorre `0, -90, 0, +90, 0` y junta hasta 2 clientes, en vez de cortar al primero. Inflado 0.54 m solo en el overlay de Restaurant.
+- **Arena (cf72c67, Codex):** prueba estática con la huella del robot: 29 waypoints y 406 pares conectados, 5 puertas transitables, poses de Restaurant libres. Se movieron dos puntos de escenario que caían sobre muebles inflados. Falta Gazebo.
+- **Receptionist (4a9ad7f, Codex):** describe la ropa del invitado 1 al invitado 2 (≤20 palabras); `--wait-doorbell` espera el timbre hasta 30 s (apagado por defecto; falta publicar audio en `/hri/doorbell/audio`).
+- **TDP:** la actualización de Codex quedó en la rama `codex/tdp` (2ee93bc) sin integrar, porque `tdp/urubots/main.tex` tiene cambios sin commit del usuario desde el 09/11 16:24.
+- **Codex no puede commitear:** su sandbox monta `.git` de solo lectura; commitea el integrador.
+- **Rollback:** `git revert` del commit correspondiente.
 
 ## Restaurant — correcciones 2026-11-09 (Antigravity + Codex)
 

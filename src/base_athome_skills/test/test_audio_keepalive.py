@@ -5,6 +5,7 @@ import importlib.util
 import json
 from pathlib import Path
 import queue
+import threading
 import struct
 import subprocess
 import sys
@@ -182,31 +183,34 @@ def test_speaker_file_playback_holds_same_lock(monkeypatch, tmp_path):
     assert len(calls) == 1
 
 
-def test_speaker_holds_lock_through_tts_synthesis_and_playback(monkeypatch, tmp_path):
+def test_speaker_synthesizes_first_and_holds_lock_only_for_playback(monkeypatch, tmp_path):
+    """Piper termina el WAV antes de tomar el lock; paplay suena con el lock tomado."""
     path = tmp_path / 'audio.lock'
     monkeypatch.setattr(speaker, 'playback_lock', lambda: playback_lock(path=path))
+    monkeypatch.setattr(speaker, 'prepend_wav_silence', lambda wav_path: None)
     player = object.__new__(speaker.RoboCupSpeaker)
     player._queue = queue.Queue()
     player._queue.put(('water', lambda: None))
     player._running = True
+    player._stop_generation = 0
+    player._process_lock = threading.Lock()
+    player._current_process = None
     player.ensure_bluetooth_sink = lambda: None
     player.piper_bin, player.model_path, player.sample_rate = 'fake_piper', 'fake_model', 22050
     calls = []
 
-    def wait():
+    def popen(cmd, *args, **kwargs):
         with playback_lock(blocking=False, path=path) as acquired:
-            assert not acquired
-        player._running = False
+            held_by_speaker = not acquired
+        calls.append((cmd[0], held_by_speaker))
 
-    def popen(*args, **kwargs):
-        with playback_lock(blocking=False, path=path) as acquired:
-            assert not acquired
-        calls.append(args)
-        return NS(wait=wait)
+        def wait():
+            player._running = False
+        return NS(communicate=lambda input=None: None, returncode=0, wait=wait)
 
     monkeypatch.setattr(speaker.subprocess, 'Popen', popen)
     player._worker_loop()
-    assert len(calls) == 1
+    assert calls == [('fake_piper', False), ('paplay', True)]
     assert not player.is_speaking
 
 
