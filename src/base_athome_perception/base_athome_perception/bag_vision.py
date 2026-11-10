@@ -263,12 +263,206 @@ def pointed_target(people: Sequence, depth: np.ndarray, T, R, K) -> Tuple[Option
     return None, reason
 
 
-def person_map_position(person, depth: np.ndarray, T, R, K) -> Optional[Tuple[float, float]]:
-    u, v = torso_pixel(person)
-    z = depth_at(depth, u, v)
-    if z is None or not HEAD_DEPTH_RANGE_M[0] <= z <= HEAD_DEPTH_RANGE_M[1]:
+def _person_depth_region(depth, u, v, mask):
+    """Measured surface only: enough pixels, dominant depth cluster, limited spread."""
+    z = depth[v, u].astype(float) / 1000.0
+    valid = mask & np.isfinite(z) & (z >= HEAD_DEPTH_RANGE_M[0]) & (z <= HEAD_DEPTH_RANGE_M[1])
+    u, v, z = u[valid], v[valid], z[valid]
+    if len(z) < 12:
         return None
+    order = np.argsort(z)
+    groups = np.split(order, np.where(np.diff(z[order]) > 0.20)[0] + 1)
+    group = max(groups, key=len)
+    if len(group) < max(12, 0.6 * len(z)):
+        return None
+    u, v, z = u[group], v[group], z[group]
+    if (len(np.unique(u)) < 3 or len(np.unique(v)) < 3
+            or np.percentile(z, 90) - np.percentile(z, 10) > 0.35):
+        return None
+    return float(np.median(u)), float(np.median(v)), float(np.median(z))
+
+
+def person_depth_sample(person, depth):
+    """Recover depth holes using the interior torso, then reliable facial landmarks.
+
+    Never sample the full bounding box: it includes background and raised-arm gaps.
+    Returns measured (pixel_u, pixel_v, depth_m), not an assumed human size/range.
+    """
+    if depth is None or depth.ndim != 2:
+        return None
+    _, kp, conf = person
+    h, w = depth.shape
+    def good(i):
+        return (conf[i] >= MIN_KP_CONF and np.isfinite(kp[i]).all()
+                and 0 <= kp[i][0] < w and 0 <= kp[i][1] < h)
+
+    ids = (L_SHOULDER, R_SHOULDER, R_HIP, L_HIP)
+    if all(good(i) for i in ids):
+        polygon = np.array([kp[i] for i in ids], dtype=float)
+        center = polygon.mean(axis=0)
+        polygon = center + 0.65 * (polygon - center)  # keep away from silhouette/background
+        area = abs(np.sum(polygon[:, 0] * np.roll(polygon[:, 1], -1)
+                          - polygon[:, 1] * np.roll(polygon[:, 0], -1))) / 2
+        if area >= 12:
+            lo, hi = np.floor(polygon.min(axis=0)).astype(int), np.ceil(polygon.max(axis=0)).astype(int)
+            v, u = np.mgrid[lo[1]:min(h, hi[1]+1), lo[0]:min(w, hi[0]+1)]
+            cross = []
+            for first, last in zip(polygon, np.roll(polygon, -1, axis=0)):
+                cross.append((last[0]-first[0])*(v-first[1]) - (last[1]-first[1])*(u-first[0]))
+            cross = np.array(cross)
+            mask = np.all(cross >= 0, axis=0) | np.all(cross <= 0, axis=0)
+            result = _person_depth_region(depth, u, v, mask)
+            if result is not None:
+                return result
+
+    # Cropped/seated person: preserve the central chest measurement when hips
+    # are not confidently visible, but require a supported surface (not one pixel).
+    elif good(L_SHOULDER) and good(R_SHOULDER):
+        center = (np.asarray(kp[L_SHOULDER]) + np.asarray(kp[R_SHOULDER])) / 2
+        x, y = np.rint(center).astype(int)
+        v, u = np.mgrid[max(0, y-4):min(h, y+5), max(0, x-4):min(w, x+5)]
+        result = _person_depth_region(depth, u, v, np.ones(u.shape, dtype=bool))
+        if result is not None:
+            return result
+
+    # Face depth can remain valid when dark clothing absorbs infrared.
+    # Require nose and both eyes to constrain patch size to this person's face.
+    if all(good(i) for i in (0, 1, 2)):
+        eye_span = float(np.linalg.norm(kp[1] - kp[2]))
+        if eye_span >= 4:
+            radius = min(4, max(1, int(eye_span * 0.2)))
+            pixels = set()
+            for i in (0, 1, 2):
+                x, y = np.rint(kp[i]).astype(int)
+                for yy in range(max(0, y-radius), min(h, y+radius+1)):
+                    for xx in range(max(0, x-radius), min(w, x+radius+1)):
+                        pixels.add((xx, yy))
+            u, v = np.array(sorted(pixels)).T
+            return _person_depth_region(depth, u, v, np.ones(u.shape, dtype=bool))
+    return None
+
+
+def person_map_position(person, depth: np.ndarray, T, R, K) -> Optional[Tuple[float, float]]:
+    sample = person_depth_sample(person, depth)
+    if sample is None:
+        return None
+    u, v, z = sample
     p = np.asarray(T, dtype=float) + z * pixel_ray(u, v, R, K)
+    return float(p[0]), float(p[1])
+
+
+def _sparse_person_depth(person, depth: Optional[np.ndarray]) -> Optional[Tuple[float, float, float]]:
+    """Recupera profundidad rala (>= 4 pixeles coherentes en torso/hombros) cuando la persona esta lejos."""
+    if depth is None or getattr(depth, "ndim", 0) != 2:
+        return None
+    box, kp, conf = person
+    h, w = depth.shape
+
+    def good(i):
+        return (i < len(conf) and conf[i] >= MIN_KP_CONF and np.isfinite(kp[i]).all()
+                and 0 <= kp[i][0] < w and 0 <= kp[i][1] < h)
+
+    ids = (L_SHOULDER, R_SHOULDER, R_HIP, L_HIP)
+    if all(good(i) for i in ids):
+        polygon = np.array([kp[i] for i in ids], dtype=float)
+        center = polygon.mean(axis=0)
+        polygon = center + 0.70 * (polygon - center)
+        lo, hi = np.floor(polygon.min(axis=0)).astype(int), np.ceil(polygon.max(axis=0)).astype(int)
+        v, u = np.mgrid[max(0, lo[1]):min(h, hi[1] + 1), max(0, lo[0]):min(w, hi[0] + 1)]
+        if u.size > 0:
+            z = depth[v, u].astype(float) / 1000.0
+            valid = np.isfinite(z) & (z >= HEAD_DEPTH_RANGE_M[0]) & (z <= 6.5)
+            zv = z[valid]
+            if len(zv) >= 4 and np.percentile(zv, 90) - np.percentile(zv, 10) <= 0.45:
+                return float(np.median(u[valid])), float(np.median(v[valid])), float(np.median(zv))
+
+    if good(L_SHOULDER) and good(R_SHOULDER):
+        center = (np.asarray(kp[L_SHOULDER]) + np.asarray(kp[R_SHOULDER])) / 2.0
+        x, y = np.rint(center).astype(int)
+        v, u = np.mgrid[max(0, y - 5):min(h, y + 6), max(0, x - 5):min(w, x + 6)]
+        if u.size > 0:
+            z = depth[v, u].astype(float) / 1000.0
+            valid = np.isfinite(z) & (z >= HEAD_DEPTH_RANGE_M[0]) & (z <= 6.5)
+            zv = z[valid]
+            if len(zv) >= 4 and np.percentile(zv, 90) - np.percentile(zv, 10) <= 0.45:
+                return float(np.median(u[valid])), float(np.median(v[valid])), float(np.median(zv))
+    return None
+
+
+def _pinhole_person_depth(person, K: Sequence[float]) -> Optional[float]:
+    """Estima la distancia (m) por escala aparente de keypoints/caja con intrinsecos K = (fx, fy, cx, cy)."""
+    if K is None or len(K) < 4 or K[0] <= 0 or K[1] <= 0:
+        return None
+    box, kp, conf = person
+    fx, fy = float(K[0]), float(K[1])
+
+    def kp_ok(i):
+        return (i < len(conf) and conf[i] >= MIN_KP_CONF and np.isfinite(kp[i]).all()
+                and (kp[i][0] != 0.0 or kp[i][1] != 0.0))
+
+    estimates: List[float] = []
+    shoulders = [kp[i] for i in (L_SHOULDER, R_SHOULDER) if kp_ok(i)]
+    hips = [kp[i] for i in (L_HIP, R_HIP) if kp_ok(i)]
+    if shoulders and hips:
+        sh_y = float(np.mean([p[1] for p in shoulders]))
+        hip_y = float(np.mean([p[1] for p in hips]))
+        dy_torso = abs(hip_y - sh_y)
+        if dy_torso >= 6.0:
+            estimates.append(0.50 * fy / dy_torso)
+
+    if shoulders and kp_ok(0):
+        sh_y = float(np.mean([p[1] for p in shoulders]))
+        dy_head = abs(sh_y - float(kp[0][1]))
+        if dy_head >= 4.0:
+            estimates.append(0.24 * fy / dy_head)
+
+    if kp_ok(L_SHOULDER) and kp_ok(R_SHOULDER):
+        dx_sh = float(np.linalg.norm(np.asarray(kp[L_SHOULDER]) - np.asarray(kp[R_SHOULDER])))
+        if dx_sh >= 6.0:
+            estimates.append(0.40 * fx / dx_sh)
+
+    if not estimates and box is not None and len(box) >= 4:
+        bh = float(box[3]) - float(box[1])
+        if math.isfinite(bh) and bh >= 12.0:
+            estimates.append(1.40 * fy / bh)
+
+    if not estimates:
+        return 3.2
+    return float(np.clip(np.median(estimates), 1.8, 6.0))
+
+
+def person_estimated_map_position(
+    person, depth: Optional[np.ndarray], T, R, K
+) -> Optional[Tuple[float, float]]:
+    """Fallback cuando person_map_position no alcanza 12 pixeles de profundidad (persona muy lejos).
+
+    Usa primero profundidad rala coherente (>= 4 pixeles en torso/hombros) y, si no hay profundidad,
+    estima el rango por escala aparente (torso/cabeza/hombros/bbox) proyectado sobre el rayo medido (T, R, K).
+    Requiere TF (T, R) e intrinsecos K validos; nunca inventa coordenadas sin geometria de camara.
+    """
+    if T is None or R is None or K is None or len(K) < 4 or K[0] <= 0 or K[1] <= 0:
+        return None
+    T_arr, R_arr = np.asarray(T, dtype=float), np.asarray(R, dtype=float)
+    if T_arr.shape != (3,) or R_arr.shape != (3, 3) or not (np.isfinite(T_arr).all() and np.isfinite(R_arr).all()):
+        return None
+
+    exact = person_map_position(person, depth, T_arr, R_arr, K)
+    if exact is not None:
+        return exact
+
+    sparse = _sparse_person_depth(person, depth)
+    if sparse is not None:
+        u, v, z = sparse
+        p = T_arr + z * pixel_ray(u, v, R_arr, K)
+        return float(p[0]), float(p[1])
+
+    u, v = torso_pixel(person)
+    if not (math.isfinite(u) and math.isfinite(v)):
+        return None
+    z_est = _pinhole_person_depth(person, K)
+    if z_est is None or not math.isfinite(z_est):
+        return None
+    p = T_arr + z_est * pixel_ray(u, v, R_arr, K)
     return float(p[0]), float(p[1])
 
 

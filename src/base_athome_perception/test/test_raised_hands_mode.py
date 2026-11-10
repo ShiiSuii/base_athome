@@ -312,9 +312,9 @@ class SweepHarness:
 
     def poses(self, rgb, cam):
         up, conf = _make_keypoints(hand="left")
-        if self.always_visible or abs(self.node.head[0] + 60.) < 3.:
+        if self.always_visible or abs(self.node.head[0] + 90.) < 3.:
             return [((2.5, -2.4), up, conf)]
-        if abs(self.node.head[0] - 60.) < 3.:
+        if abs(self.node.head[0] - 90.) < 3.:
             return [((1.5, 2.3), up, conf)]
         return []
 
@@ -327,8 +327,8 @@ def test_sweep_observes_both_extremes_after_measured_head_arrives():
     result = h.run()
     assert result["ok"]
     assert {tuple(c["xy"]) for c in result["customers"]} == {(1.5, 2.3), (2.5, -2.4)}
-    assert h.commands == [-60., -30., 0., 30., 60.]
-    assert all(abs(pan - round(pan / 30) * 30) < 3 and speed <= 3
+    assert h.commands == [0., -90., 0., 90., 0.]
+    assert all(abs(pan - round(pan / 90) * 90) < 3 and speed <= 3
                for pan, speed, _ in h.samples)
     assert h.now < 118.
 
@@ -502,7 +502,7 @@ def test_raised_hands_optional_pans_keeps_head_centered():
     assert all(abs(pan) < 1e-8 for pan, _, _ in h.samples)
 
 
-@pytest.mark.parametrize('pans', [[], None, '0', [float('nan')], [float('inf')], [61.], [True]])
+@pytest.mark.parametrize('pans', [[], None, '0', [float('nan')], [float('inf')], [91.], [-91.], [True]])
 def test_raised_hands_invalid_pans_rejected_before_head_commands(pans):
     h = SweepHarness(always_visible=True)
     result = h.node._find_raised_hands(dict(id='bad', pans=pans))
@@ -542,5 +542,17 @@ def test_slow_sweep_stops_on_first_confirmed_customer():
     h.node._move_head = move
     result = h.node._find_raised_hands(dict(timeout_s=80., head_dps=6., view_s=3., stop_on_first=True))
     assert result['ok'] and len(result['customers']) == 1
-    assert h.commands == [-60.] and moves == [6.]
+    assert h.commands == [0.] and moves == [6.]
     assert h.now < 106.
+
+
+def test_visible_raised_hand_without_map_position_reports_localization_failure():
+    h = SweepHarness(always_visible=True)
+    h.node._sim_person_spot = lambda *args: None
+    h.node._cam = lambda *args: None
+    result = h.run()
+    assert not result['ok']
+    assert result['error'] == 'unlocalized_raised_hand'
+    assert result['diagnostics']['raised'] > 0
+    assert result['diagnostics']['no_tf'] > 0
+    assert result['diagnostics']['mapped_raised'] == 0

@@ -58,6 +58,8 @@ class RestaurantNode(Node):
         self.declare_parameter("tray", True)
         self.declare_parameter("max_customers", 2)
         self.declare_parameter("standoff_dist", 0.9)
+        self.declare_parameter("delivery_wait_s", 7.0)
+        self.declare_parameter("batch_orders", True)
         self.declare_parameter("navigation_timeout_s", 90.0)
         self.navigation_timeout_s = float(self.get_parameter("navigation_timeout_s").value)
         if not math.isfinite(self.navigation_timeout_s) or self.navigation_timeout_s <= 0:
@@ -81,6 +83,8 @@ class RestaurantNode(Node):
         use_tray = self.get_parameter("tray").get_parameter_value().bool_value
         max_cust = self.get_parameter("max_customers").get_parameter_value().integer_value
         standoff = self.get_parameter("standoff_dist").get_parameter_value().double_value
+        delivery_wait_s = float(self.get_parameter("delivery_wait_s").value)
+        batch_orders = self.get_parameter("batch_orders").get_parameter_value().bool_value
 
         # TF Listener
         self.tf_buffer = Buffer()
@@ -148,11 +152,15 @@ class RestaurantNode(Node):
             menu=menu_param,
             max_time_s=timeout_s,
             standoff_dist=standoff,
+            delivery_wait_s=delivery_wait_s,
             use_tray=use_tray,
             max_customers=max_cust,
             plan_fn=self._plan,
+            batch_orders=batch_orders,
         )
 
+        self._head_customer_xy = None
+        self.create_timer(0.5, self._refresh_customer_tracking, callback_group=self.cb_group)
         self._session_thread: Optional[threading.Thread] = None
         self._session_lock = threading.Lock()
 
@@ -321,7 +329,7 @@ class RestaurantNode(Node):
             self.get_logger().warn(f"Error en escucha VoiceClient: {e}")
         return ""
 
-    def _detect_customers(self, timeout_s: float = 45.0, min_frames: int = 3) -> List[Dict[str, Any]]:
+    def _detect_customers(self, timeout_s: float = 45.0, min_frames: int = 3):
         """Pide a /bag_finder detectar clientes con la mano alzada."""
         req_id = f"rest_cust_{int(time.time() * 1000)}"
         ev = threading.Event()
@@ -331,9 +339,10 @@ class RestaurantNode(Node):
         req_data = json.dumps({
             "id": req_id,
             "mode": "raised_hands",
-            "head_dps": 6.0,
-            "view_s": 3.0,
-            "stop_on_first": True,
+            "pans": [0.0, -90.0, 0.0, 90.0, 0.0],
+            "head_dps": 12.0,
+            "view_s": 2.5,
+            "stop_on_first": False,
             "timeout_s": float(timeout_s),
             "min_frames": int(min_frames),
         })
@@ -345,7 +354,7 @@ class RestaurantNode(Node):
 
         if not res_data or not res_data.get("ok", False):
             self.get_logger().warn(f"Sin respuesta de clientes de bag_finder ({res_data.get('error', 'timeout')}).")
-            return []
+            return res_data or {"ok": False, "error": "timeout", "customers": []}
 
         customers = res_data.get("customers", [])
         for c in customers:
@@ -405,8 +414,23 @@ class RestaurantNode(Node):
     def _get_camera_image(self) -> Optional[bytes]:
         return self._latest_image_bytes
 
+    def _refresh_customer_tracking(self):
+        """Lease corto: si Restaurant termina o se cae, la cabeza deja de seguir."""
+        xy = self._head_customer_xy
+        if self.session.stopped or self.session.remaining_s() <= 0:
+            xy = None
+        self.pub_bag_request.publish(String(data=json.dumps({
+            "mode": "track_customer", "xy": xy,
+        })))
+
     def _on_session_state_change(self, state_dict: Dict[str, Any]) -> None:
         """Publica el estado actual en /restaurant/state."""
+        state = state_dict.get("state")
+        active = state in {"APPROACHING_CUSTOMER", "GREETING", "TAKING_ORDER", "CONFIRMING_ORDER", "DELIVERING_TO_CUSTOMER"}
+        customers = self.session.customers
+        idx = state_dict.get("customer_idx", 0)
+        self._head_customer_xy = (customers[idx].get("xy") if active and 0 <= idx < len(customers) else None)
+        self._refresh_customer_tracking()
         msg = String(data=json.dumps(state_dict))
         self.pub_state.publish(msg)
 

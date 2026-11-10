@@ -11,6 +11,8 @@ planner_server:
 local_costmap:
   local_costmap:
     ros__parameters:
+      inflation_layer:
+        inflation_radius: 0.54  # Pedido usuario: 5 cm menos; robot_radius sigue en 0.44 m.
       obstacle_layer:
         scan:
           max_obstacle_height: 2.0
@@ -18,6 +20,8 @@ local_costmap:
 global_costmap:
   global_costmap:
     ros__parameters:
+      inflation_layer:
+        inflation_radius: 0.54  # Mismo margen que el costmap local.
       global_frame: "map"
       # SLAM online empieza con un mapa pequeno/asimetrico por /scan_nav (+-100 grados).
       # En Nav2 Jazzy una ventana movil conserva su tamano, en vez de redimensionarse

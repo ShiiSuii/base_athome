@@ -405,8 +405,11 @@ def order_clients(
 class TrackedCustomer:
     """Acumula observaciones espaciales y temporales de un cliente en el mapa."""
 
-    def __init__(self, xy: Sequence[float], min_frames: int = 3, window_size: int = 10):
-        self.positions: List[Tuple[float, float]] = [(float(xy[0]), float(xy[1]))]
+    def __init__(self, xy: Sequence[float], min_frames: int = 3, window_size: int = 10, estimated: bool = False):
+        pt = (float(xy[0]), float(xy[1]))
+        self.positions: List[Tuple[float, float]] = [pt]
+        self.measured_positions: List[Tuple[float, float]] = [] if estimated else [pt]
+        self.estimated_positions: List[Tuple[float, float]] = [pt] if estimated else []
         self.filter = TemporalRaisedHandFilter(window_size=window_size, min_raised_frames=min_frames)
         self.min_frames = min_frames
         self.raised_frames: int = 0
@@ -416,13 +419,23 @@ class TrackedCustomer:
         self.last_state: str = RaisedHandState.NONE
 
     @property
+    def is_estimated(self) -> bool:
+        return len(self.measured_positions) == 0 and len(self.estimated_positions) > 0
+
+    @property
     def xy(self) -> Tuple[float, float]:
-        xs = [p[0] for p in self.positions]
-        ys = [p[1] for p in self.positions]
+        source = self.measured_positions if self.measured_positions else self.positions
+        xs = [p[0] for p in source]
+        ys = [p[1] for p in source]
         return float(np.median(xs)), float(np.median(ys))
 
-    def update(self, xy: Sequence[float], keypoints: Any, conf: Optional[Any] = None) -> bool:
-        self.positions.append((float(xy[0]), float(xy[1])))
+    def update(self, xy: Sequence[float], keypoints: Any, conf: Optional[Any] = None, estimated: bool = False) -> bool:
+        pt = (float(xy[0]), float(xy[1]))
+        self.positions.append(pt)
+        if estimated:
+            self.estimated_positions.append(pt)
+        else:
+            self.measured_positions.append(pt)
         self.total_frames += 1
 
         cls = classify_raised_hand(keypoints, conf=conf)
@@ -452,20 +465,23 @@ class RaisedHandsAggregator:
         self,
         xy: Sequence[float],
         keypoints: Any,
-        conf: Optional[Any] = None
+        conf: Optional[Any] = None,
+        estimated: bool = False,
     ) -> TrackedCustomer:
-        best_c, best_d = None, self.match_dist_m
+        gate = max(self.match_dist_m, 1.4) if estimated else self.match_dist_m
+        best_c, best_d = None, gate
         for c in self.customers:
+            c_gate = max(gate, 1.4) if c.is_estimated else gate
             d = math.hypot(c.xy[0] - xy[0], c.xy[1] - xy[1])
-            if d < best_d:
+            if d < min(best_d, c_gate):
                 best_d = d
                 best_c = c
 
         if best_c is None:
-            best_c = TrackedCustomer(xy, min_frames=self.min_frames, window_size=self.window_size)
+            best_c = TrackedCustomer(xy, min_frames=self.min_frames, window_size=self.window_size, estimated=estimated)
             self.customers.append(best_c)
 
-        best_c.update(xy, keypoints, conf=conf)
+        best_c.update(xy, keypoints, conf=conf, estimated=estimated)
         return best_c
 
     def get_confirmed_customers(
@@ -477,13 +493,16 @@ class RaisedHandsAggregator:
             if c.is_confirmed and c.dominant_hand != RaisedHandState.NONE:
                 c_xy = c.xy
                 dist = math.hypot(c_xy[0] - robot_pos[0], c_xy[1] - robot_pos[1])
-                confirmed.append({
+                entry: Dict[str, Any] = {
                     "xy": [round(float(c_xy[0]), 2), round(float(c_xy[1]), 2)],
                     "hand": c.dominant_hand,
                     "frames": int(c.raised_frames),
                     "range_m": round(float(dist), 2),
-                })
-        confirmed.sort(key=lambda item: item["range_m"])
+                }
+                if c.is_estimated:
+                    entry["estimated"] = True
+                confirmed.append(entry)
+        confirmed.sort(key=lambda item: (bool(item.get("estimated", False)), item["range_m"]))
         return confirmed
 
     def build_response(

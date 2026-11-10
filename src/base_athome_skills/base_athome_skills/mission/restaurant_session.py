@@ -171,6 +171,102 @@ def approach_candidates(
     return [pose for _, pose in scored] or [fallback]
 
 
+def progressive_advance_candidates(
+    customer_xy: Sequence[float],
+    robot_pose: Tuple[float, float, float],
+    grid: Optional[Any] = None,
+    standoff_dist: float = 0.9,
+    robot_radius: float = 0.3,
+) -> List[Tuple[float, float, float]]:
+    """Genera poses intermedias en direccion al cliente para avanzar progresivamente sin mapa previo.
+
+    Se usa cuando el cliente esta muy lejos o su distancia fue estimada sin profundidad (estimated=True),
+    permitiendo acercarse ~1.0-2.2 m dentro del costmap SLAM antes de re-medir con la RealSense.
+    """
+    cx, cy = float(customer_xy[0]), float(customer_xy[1])
+    rx, ry, _ = float(robot_pose[0]), float(robot_pose[1]), float(robot_pose[2])
+    dx, dy = cx - rx, cy - ry
+    dist = math.hypot(dx, dy)
+    bearing = math.atan2(dy, dx)
+    max_advance = max(0.6, dist - max(standoff_dist, 1.1))
+    step_default = min(2.0, max(0.6, max_advance * 0.6))
+    fallback = (
+        round(rx + step_default * math.cos(bearing), 3),
+        round(ry + step_default * math.sin(bearing), 3),
+        round(bearing, 4),
+    )
+    if grid is None:
+        return [fallback]
+    info = grid.info
+    if (not math.isfinite(info.resolution) or info.resolution <= 0
+            or info.width <= 0 or info.height <= 0
+            or len(grid.data) != info.width * info.height):
+        return [fallback]
+    q = info.origin.orientation
+    yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
+    co, si = math.cos(yaw), math.sin(yaw)
+    res = info.resolution
+
+    def cost(pose) -> Optional[int]:
+        px, py = pose[0] - info.origin.position.x, pose[1] - info.origin.position.y
+        x, y = co * px + si * py, -si * px + co * py
+        cix, ciy = math.floor(x / res), math.floor(y / res)
+        if not (0 <= cix < info.width and 0 <= ciy < info.height):
+            return None
+        center = grid.data[ciy * info.width + cix]
+        if not 0 <= center < NAV2_INSCRIBED_VALUE:
+            return None
+        for iy in range(math.floor((y - robot_radius) / res), math.floor((y + robot_radius) / res) + 1):
+            for ix in range(math.floor((x - robot_radius) / res), math.floor((x + robot_radius) / res) + 1):
+                nx = max(ix * res - x, 0, x - (ix + 1) * res)
+                ny = max(iy * res - y, 0, y - (iy + 1) * res)
+                if math.hypot(nx, ny) > robot_radius:
+                    continue
+                if not (0 <= ix < info.width and 0 <= iy < info.height):
+                    return None
+                if not 0 <= grid.data[iy * info.width + ix] < NAV2_LETHAL_VALUE:
+                    return None
+        return center
+
+    scored = []
+    for frac in (0.65, 0.50, 0.35, 0.80):
+        step = min(2.4, max(0.6, max_advance * frac))
+        for d_ang in (0.0, 0.22, -0.22, 0.45, -0.45):
+            ang = bearing + d_ang
+            tx, ty = rx + step * math.cos(ang), ry + step * math.sin(ang)
+            rem_dist = math.hypot(cx - tx, cy - ty)
+            if rem_dist >= dist - 0.35:
+                continue
+            pose = (tx, ty, math.atan2(cy - ty, cx - tx))
+            c = cost(pose)
+            if c is not None:
+                score = rem_dist + c / NAV2_INSCRIBED_VALUE
+                scored.append((score, pose))
+    scored.sort(key=lambda sp: sp[0])
+    return [pose for _, pose in scored] or [fallback]
+
+
+def rank_customers(
+    customers: Sequence[Dict[str, Any]],
+    robot_pose: Tuple[float, float, float],
+) -> List[Dict[str, Any]]:
+    """Task planning para ordenar clientes detectados: primero posicion medida (no estimada) y mas cercana."""
+    rx, ry = float(robot_pose[0]), float(robot_pose[1])
+    ranked: List[Tuple[Tuple[int, float, int], Dict[str, Any]]] = []
+    for idx, cust in enumerate(customers):
+        c_copy = dict(cust)
+        xy = c_copy.get("xy") or (c_copy.get("x", 0.0), c_copy.get("y", 0.0))
+        try:
+            cx, cy = float(xy[0]), float(xy[1])
+        except (TypeError, ValueError, IndexError):
+            cx, cy = 0.0, 0.0
+        dist = math.hypot(cx - rx, cy - ry) if (math.isfinite(cx) and math.isfinite(cy)) else float("inf")
+        est_rank = 1 if c_copy.get("estimated", False) else 0
+        ranked.append(((est_rank, round(dist, 3), idx), c_copy))
+    ranked.sort(key=lambda item: item[0])
+    return [c for _, c in ranked]
+
+
 def path_length(points: Sequence[Sequence[float]]) -> float:
     """Largo de una polilinea (x, y)."""
     return sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(points, points[1:]))
@@ -231,6 +327,7 @@ class RestaurantSession:
         menu: Sequence[str] = rest.DEFAULT_MENU,
         max_time_s: float = 900.0,
         standoff_dist: float = 0.9,
+        delivery_wait_s: float = 7.0,
         use_tray: bool = True,
         max_customers: int = 2,
         get_costmap_fn: Optional[Callable[[], Any]] = None,
@@ -238,9 +335,11 @@ class RestaurantSession:
         pose_timeout_s: float = 5.0,
         plan_fn: Optional[Callable[[Tuple[float, float, float]], Optional[float]]] = None,
         spin_fn: Optional[Callable[[float], bool]] = None,
+        batch_orders: bool = False,
     ):
         self.spin_fn = spin_fn
         self.plan_fn = plan_fn
+        self.batch_orders = bool(batch_orders)
         self.get_costmap_fn = get_costmap_fn or (lambda: None)
         self.nav_aborted_fn = nav_aborted_fn or (lambda: False)
         self.navigate_fn = navigate_fn
@@ -265,6 +364,9 @@ class RestaurantSession:
         if not math.isfinite(self.pose_timeout_s) or self.pose_timeout_s <= 0:
             raise ValueError("pose_timeout_s must be positive and finite")
         self.standoff_dist = float(standoff_dist)
+        self.delivery_wait_s = float(delivery_wait_s)
+        if not math.isfinite(self.delivery_wait_s) or self.delivery_wait_s < 0:
+            raise ValueError("delivery_wait_s must be non-negative and finite")
         self.served = 0
         self.stop_look_on_customer = True     # cortar el barrido inicial en cuanto aparece un cliente
         self.use_tray = bool(use_tray)
@@ -333,6 +435,7 @@ class RestaurantSession:
         (0.8 m, igual que RaisedHandsAggregator), nunca por id ni por rango de camara.
         Sin adaptador Spin conserva la deteccion unica para clientes existentes.
         """
+        self.detection_error = ""
         customers: List[Dict[str, Any]] = []
         angles = (math.pi / 2, -math.pi, math.pi / 2) if self.spin_fn else (None,)
         for angle in angles:
@@ -348,6 +451,8 @@ class RestaurantSession:
                 break
             self._set_state(SessionState.DETECTING_CUSTOMERS)
             raw = self.detect_customers_fn(min(14.0 if self.spin_fn else HEAD_LOOK_AROUND_TIMEOUT_S, self.remaining_s()), 3)   # 8 s era poco con YOLO en la CPU
+            if isinstance(raw, dict) and not raw.get("ok", True):
+                self.detection_error = raw.get("error", "")
             view = (raw.get("customers", []) if raw.get("ok", True) else []) if isinstance(raw, dict) else raw
             if isinstance(view, list):
                 for customer in view:
@@ -456,11 +561,274 @@ class RestaurantSession:
             else:
                 self.sleep_fn(min(0.2, self.remaining_s()))
 
+    def _relocalize_customer_near(
+        self, expected_xy: Sequence[float], max_gate_m: float = 2.5
+    ) -> Optional[Tuple[float, float]]:
+        """Re-detecta al cliente desde mas cerca para reemplazar una posicion estimada por una medida."""
+        if self.stopped or self._is_timeout() or self.remaining_s() <= 1.0:
+            return None
+        try:
+            raw = self.detect_customers_fn(min(6.0, self.remaining_s()), 2)
+        except Exception:
+            return None
+        view = (raw.get("customers", []) if raw.get("ok", True) else []) if isinstance(raw, dict) else raw
+        if not isinstance(view, list):
+            return None
+        best_xy: Optional[Tuple[float, float]] = None
+        best_score = (2, float("inf"))
+        for c in view:
+            xy = c.get("xy", (c.get("x"), c.get("y")))
+            try:
+                x, y = float(xy[0]), float(xy[1])
+            except (TypeError, ValueError, IndexError):
+                continue
+            if not (math.isfinite(x) and math.isfinite(y)):
+                continue
+            d = math.hypot(x - float(expected_xy[0]), y - float(expected_xy[1]))
+            if d <= max_gate_m:
+                est_rank = 1 if c.get("estimated", False) else 0
+                if (est_rank, d) < best_score:
+                    best_score = (est_rank, d)
+                    best_xy = (x, y)
+        return best_xy
+
+    def _approach_customer(
+        self, idx: int, cust: Dict[str, Any]
+    ) -> Optional[Tuple[Tuple[float, float, float], List[Tuple[float, float, float]], int]]:
+        """Acerca el robot al cliente (con avance progresivo si esta muy lejos o fue estimado sin depth)."""
+        c_xy = cust.get("xy")
+        if not c_xy:
+            c_xy = (cust.get("x", 0.0), cust.get("y", 0.0))
+        robot_pose = self._wait_for_pose()
+        if robot_pose is None:
+            self._abort_run = True
+            self._handle_pose_failure()
+            return None
+
+        dist_to_cust = math.hypot(float(c_xy[0]) - robot_pose[0], float(c_xy[1]) - robot_pose[1])
+        did_progressive = False
+
+        if cust.get("estimated", False) and dist_to_cust > self.standoff_dist + 0.6:
+            adv_cands = progressive_advance_candidates(
+                c_xy, robot_pose, self.get_costmap_fn(), self.standoff_dist
+            )
+            adv_cands, _ = validate_with_planner(
+                adv_cands, self.plan_fn, self.clock_fn, budget_s=min(6.0, self.remaining_s())
+            )
+            if self.stopped or self._is_timeout():
+                return None
+            if adv_cands:
+                did_progressive = True
+                step_pose = adv_cands[0]
+                self._set_state(
+                    SessionState.APPROACHING_CUSTOMER,
+                    {"target": step_pose, "customer_index": idx, "customer_xy": list(c_xy), "progressive": True},
+                )
+                step_ok = self._navigate_to(step_pose)
+                if self.stopped or self._is_timeout():
+                    return None
+                if step_ok:
+                    robot_pose = self._wait_for_pose()
+                    if robot_pose is None:
+                        self._abort_run = True
+                        self._handle_pose_failure()
+                        return None
+                    refined = self._relocalize_customer_near(c_xy)
+                    if self.stopped or self._is_timeout():
+                        return None
+                    if refined is not None:
+                        c_xy = refined
+                        cust["xy"] = [round(refined[0], 2), round(refined[1], 2)]
+                        cust["estimated"] = False
+
+        candidates = approach_candidates(c_xy, robot_pose, self.get_costmap_fn(), self.standoff_dist)
+        n_free = len(candidates)
+        candidates, validated = validate_with_planner(
+            candidates, self.plan_fn, self.clock_fn, budget_s=min(10.0, self.remaining_s())
+        )
+        if self.stopped or self._is_timeout():
+            return None
+
+        if not candidates and not did_progressive and dist_to_cust >= 3.5:
+            adv_cands = progressive_advance_candidates(
+                c_xy, robot_pose, self.get_costmap_fn(), self.standoff_dist
+            )
+            adv_cands, _ = validate_with_planner(
+                adv_cands, self.plan_fn, self.clock_fn, budget_s=min(6.0, self.remaining_s())
+            )
+            if self.stopped or self._is_timeout():
+                return None
+            if adv_cands:
+                step_pose = adv_cands[0]
+                self._set_state(
+                    SessionState.APPROACHING_CUSTOMER,
+                    {"target": step_pose, "customer_index": idx, "customer_xy": list(c_xy), "progressive": True},
+                )
+                if self._navigate_to(step_pose):
+                    robot_pose = self._wait_for_pose()
+                    if robot_pose is None:
+                        self._abort_run = True
+                        self._handle_pose_failure()
+                        return None
+                    candidates = approach_candidates(
+                        c_xy, robot_pose, self.get_costmap_fn(), self.standoff_dist
+                    )
+                    n_free = len(candidates)
+                    candidates, validated = validate_with_planner(
+                        candidates, self.plan_fn, self.clock_fn, budget_s=min(10.0, self.remaining_s())
+                    )
+                    if self.stopped or self._is_timeout():
+                        return None
+
+        if not candidates:
+            self._set_state(
+                SessionState.APPROACHING_CUSTOMER,
+                {"customer_index": idx, "customer_xy": list(c_xy), "candidates": n_free, "reachable": 0},
+            )
+            self._speak("I could not reach the customer.")
+            return None
+
+        candidate_idx = 0
+        approach_pose = candidates[candidate_idx]
+        self._set_state(
+            SessionState.APPROACHING_CUSTOMER,
+            {
+                "target": approach_pose,
+                "customer_index": idx,
+                "customer_xy": list(c_xy),
+                "candidates": n_free,
+                "reachable": len(candidates) if validated else None,
+            },
+        )
+        nav_ok = self._navigate_to(approach_pose)
+        if (
+            not nav_ok
+            and not self.stopped
+            and not self._is_timeout()
+            and self.nav_aborted_fn()
+            and len(candidates) > 1
+        ):
+            candidate_idx += 1
+            approach_pose = candidates[candidate_idx]
+            self._set_state(
+                SessionState.APPROACHING_CUSTOMER,
+                {"target": approach_pose, "customer_index": idx, "retry": 1},
+            )
+            nav_ok = self._navigate_to(approach_pose)
+        if self.stopped or self._is_timeout():
+            return None
+        if not nav_ok:
+            self._speak("I could not reach the customer.")
+            return None
+        return approach_pose, candidates, candidate_idx
+
+    def _take_customer_order(self, idx: int, cust: Dict[str, Any]) -> List[str]:
+        """Saluda al cliente, escucha su pedido con hasta 2 intentos y confirma la orden."""
+        if self._is_timeout() or self.stopped:
+            return []
+        self._set_state(SessionState.GREETING)
+        self._speak(rest.greeting_phrase())
+
+        self._set_state(SessionState.TAKING_ORDER)
+        order_items: List[str] = []
+        for attempt in range(2):
+            if self._is_timeout() or self.stopped:
+                return []
+
+            speech = self.listen_fn(min(15.0, self.remaining_s())) or ""
+            if is_stop_command(speech):
+                self.stop()
+            if self.stopped or self._is_timeout():
+                return []
+
+            items = self.extract_order(speech)
+            if self.stopped or self._is_timeout():
+                return []
+            if items:
+                order_items = items
+                break
+            if attempt == 0:
+                self._speak(rest.repeat_order_phrase())
+            else:
+                self._speak(rest.cancel_order_phrase())
+
+        cust_id = str(cust.get("id", idx + 1))
+        self.orders[cust_id] = order_items
+        if not order_items:
+            return []
+
+        self._set_state(SessionState.CONFIRMING_ORDER, {"items": order_items})
+        self._speak(rest.confirm_order_phrase(order_items))
+        return order_items
+
+    def _fulfill_and_deliver_order(
+        self,
+        idx: int,
+        cust: Dict[str, Any],
+        order_items: Sequence[str],
+        approach_pose: Tuple[float, float, float],
+        candidates: Sequence[Tuple[float, float, float]],
+        candidate_idx: int,
+    ) -> bool:
+        """Regresa al kitchen bar, solicita la orden al barman, vuelve a la mesa y entrega."""
+        if self._is_timeout() or self.stopped:
+            return False
+
+        self._set_state(SessionState.RETURNING_TO_BAR)
+        nav_bar_ok = self._navigate_to(self.bar_pose)
+        if self.stopped or self._is_timeout():
+            return False
+        if not nav_bar_ok:
+            self._speak("I could not reach the bar.")
+            return False
+
+        self._set_state(SessionState.ORDERING_BARMAN)
+        self._speak(rest.barman_request_phrase(order_items, use_tray=self.use_tray))
+
+        self._set_state(SessionState.WAITING_BARMAN)
+        self._wait_for_barman(order_items, max_wait_s=30.0)
+        if self.stopped or self._is_timeout():
+            return False
+
+        self._set_state(SessionState.DELIVERING_TO_CUSTOMER)
+        nav_back_ok = self._navigate_to(approach_pose)
+        if (
+            not nav_back_ok
+            and not self.stopped
+            and not self._is_timeout()
+            and self.nav_aborted_fn()
+            and candidate_idx + 1 < len(candidates)
+        ):
+            candidate_idx += 1
+            approach_pose = candidates[candidate_idx]
+            self._set_state(
+                SessionState.DELIVERING_TO_CUSTOMER,
+                {"target": approach_pose, "customer_index": idx, "retry": 1},
+            )
+            nav_back_ok = self._navigate_to(approach_pose)
+        if self.stopped or self._is_timeout():
+            return False
+        if not nav_back_ok:
+            self._speak("I could not return to the customer.")
+            return False
+
+        self._speak("Here is your order, please take it from my tray.")
+        t_deliv = self.clock_fn()
+        while self.clock_fn() - t_deliv < self.delivery_wait_s:
+            if self.stopped or self._is_timeout():
+                break
+            self.sleep_fn(min(0.2, self.remaining_s()))
+        if self.stopped or self._is_timeout():
+            return False
+        self.served += 1
+        return True
+
     def run(self) -> bool:
         """Ejecuta la mision completa."""
         self.start_time = self.clock_fn()
         self.deadline_s = self.start_time + self.max_time_s
         self.stopped = False
+        self._abort_run = False
         self.served = 0
         self.bar_pose = None
         self.customers = []
@@ -485,11 +853,17 @@ class RestaurantSession:
             return self._handle_timeout()
 
         if not customers_list:
-            self._speak("I do not see any customers calling.")
+            reason = getattr(self, "detection_error", "")
+            phrases = {
+                "unlocalized_raised_hand": "I see your raised hand, but I cannot measure your distance. Please move closer.",
+                "unconfirmed_raised_hand": "I see your hand. Please hold it up a little longer.",
+                "timeout": "The customer detector did not respond in time.",
+            }
+            self._speak(phrases.get(reason, "I do not see any customers calling."))
             self._set_state(SessionState.FAILED, {"reason": "no_customers"})   # sin clientes no se hizo la prueba
             return False
 
-        self.customers = customers_list[: self.max_customers]
+        self.customers = rank_customers(customers_list, self.bar_pose)[: self.max_customers]
         n_cust = len(self.customers)
         word_map = {1: "one", 2: "two", 3: "three"}
         num_word = word_map.get(n_cust, str(n_cust))
@@ -498,165 +872,81 @@ class RestaurantSession:
         else:
             self._speak(f"I see {num_word} customers.")
 
-        # 3. Atencion secuencial de clientes
-        for idx, cust in enumerate(self.customers):
-            self.current_customer_idx = idx
-
-            if self._is_timeout():
-                return self._handle_timeout()
-            if self.stopped:
-                return self._handle_stop()
-
-            # Extraer coordenadas del cliente
-            c_xy = cust.get("xy")
-            if not c_xy:
-                c_xy = (cust.get("x", 0.0), cust.get("y", 0.0))
-            robot_pose = self._wait_for_pose()
-            if robot_pose is None:
-                return self._handle_pose_failure()
-            candidates = approach_candidates(
-                c_xy, robot_pose, self.get_costmap_fn(), self.standoff_dist)
-            n_free = len(candidates)
-            candidates, validated = validate_with_planner(
-                candidates, self.plan_fn, self.clock_fn, budget_s=min(10.0, self.remaining_s()))
-            if self.stopped:
-                return self._handle_stop()
-            if self._is_timeout():
-                return self._handle_timeout()
-            if not candidates:
-                # Nav2 no tiene camino a ninguna pose junto al cliente: no se manda un goal imposible.
-                self._set_state(SessionState.APPROACHING_CUSTOMER,
-                                {"customer_index": idx, "customer_xy": list(c_xy),
-                                 "candidates": n_free, "reachable": 0})
-                self._speak("I could not reach the customer.")
-                continue
-            candidate_idx = 0
-            approach_pose = candidates[candidate_idx]
-
-            # Acercarse al cliente
-            self._set_state(SessionState.APPROACHING_CUSTOMER,
-                            {"target": approach_pose, "customer_index": idx, "customer_xy": list(c_xy),
-                             "candidates": n_free, "reachable": len(candidates) if validated else None})
-            nav_ok = self._navigate_to(approach_pose)
-            if (not nav_ok and not self.stopped and not self._is_timeout()
-                    and self.nav_aborted_fn() and len(candidates) > 1):
-                candidate_idx += 1
-                approach_pose = candidates[candidate_idx]
-                self._set_state(SessionState.APPROACHING_CUSTOMER,
-                                {"target": approach_pose, "customer_index": idx, "retry": 1})
-                nav_ok = self._navigate_to(approach_pose)
-            if self.stopped:
-                return self._handle_stop()
-            if self._is_timeout():
-                return self._handle_timeout()
-            if not nav_ok:
-                self._speak("I could not reach the customer.")
-                continue
-
-            # Apuntar la cabeza hacia el cliente si existe pan-tilt
-            if self.point_head_fn:
-                try:
-                    self.point_head_fn(0.0, -10.0)
-                except Exception:
-                    pass
-
-            # Saludo inicial
-            if self._is_timeout():
-                return self._handle_timeout()
-            self._set_state(SessionState.GREETING)
-            self._speak(rest.greeting_phrase())
-
-            # Toma de orden con hasta 2 intentos
-            self._set_state(SessionState.TAKING_ORDER)
-            order_items: List[str] = []
-            for attempt in range(2):
+        if self.batch_orders and len(self.customers) >= 2:
+            # 3A. Task planning para 2 clientes: primero tomar ambos pedidos en orden optimo, luego ir al bar y entregar.
+            pending_deliveries: List[Tuple[int, Dict[str, Any], List[str], Tuple[float, float, float], List[Tuple[float, float, float]], int]] = []
+            for idx, cust in enumerate(self.customers):
+                self.current_customer_idx = idx
                 if self._is_timeout():
                     return self._handle_timeout()
                 if self.stopped:
                     return self._handle_stop()
 
-                speech = self.listen_fn(min(15.0, self.remaining_s())) or ""
-                if is_stop_command(speech):
-                    self.stop()
+                reached = self._approach_customer(idx, cust)
+                if getattr(self, "_abort_run", False):
+                    return False
                 if self.stopped:
                     return self._handle_stop()
                 if self._is_timeout():
                     return self._handle_timeout()
+                if reached is None:
+                    continue
+                approach_pose, candidates, candidate_idx = reached
 
-                items = self.extract_order(speech)
+                order_items = self._take_customer_order(idx, cust)
                 if self.stopped:
                     return self._handle_stop()
                 if self._is_timeout():
                     return self._handle_timeout()
-                if items:
-                    order_items = items
-                    break
-                else:
-                    if attempt == 0:
-                        self._speak(rest.repeat_order_phrase())
-                    else:
-                        self._speak(rest.cancel_order_phrase())
+                if not order_items:
+                    continue
+                pending_deliveries.append((idx, cust, order_items, approach_pose, candidates, candidate_idx))
 
-            cust_id = str(cust.get("id", idx + 1))
-            self.orders[cust_id] = order_items
+            for idx, cust, order_items, approach_pose, candidates, candidate_idx in pending_deliveries:
+                self.current_customer_idx = idx
+                self._fulfill_and_deliver_order(
+                    idx, cust, order_items, approach_pose, candidates, candidate_idx
+                )
+                if self.stopped:
+                    return self._handle_stop()
+                if self._is_timeout():
+                    return self._handle_timeout()
+        else:
+            # 3B. Atencion secuencial de clientes (1 cliente o modo secuencial)
+            for idx, cust in enumerate(self.customers):
+                self.current_customer_idx = idx
 
-            if not order_items:
-                # Orden fallida: continuar con el siguiente comensal
-                continue
+                if self._is_timeout():
+                    return self._handle_timeout()
+                if self.stopped:
+                    return self._handle_stop()
 
-            # Confirmar pedido
-            self._set_state(SessionState.CONFIRMING_ORDER, {"items": order_items})
-            self._speak(rest.confirm_order_phrase(order_items))
+                reached = self._approach_customer(idx, cust)
+                if getattr(self, "_abort_run", False):
+                    return False
+                if self.stopped:
+                    return self._handle_stop()
+                if self._is_timeout():
+                    return self._handle_timeout()
+                if reached is None:
+                    continue
+                approach_pose, candidates, candidate_idx = reached
 
-            # Ir al kitchen bar
-            if self._is_timeout():
-                return self._handle_timeout()
-            if self.stopped:
-                return self._handle_stop()
+                order_items = self._take_customer_order(idx, cust)
+                if self.stopped:
+                    return self._handle_stop()
+                if self._is_timeout():
+                    return self._handle_timeout()
+                if not order_items:
+                    continue
 
-            self._set_state(SessionState.RETURNING_TO_BAR)
-            nav_bar_ok = self._navigate_to(self.bar_pose)
-            if self.stopped:
-                return self._handle_stop()
-            if self._is_timeout():
-                return self._handle_timeout()
-            if not nav_bar_ok:
-                self._speak("I could not reach the bar.")
-                continue
-
-            # Pedir al barman
-            self._set_state(SessionState.ORDERING_BARMAN)
-            self._speak(rest.barman_request_phrase(order_items, use_tray=self.use_tray))
-
-            # Esperar barman (hasta 30 s o confirmacion)
-            self._set_state(SessionState.WAITING_BARMAN)
-            self._wait_for_barman(order_items, max_wait_s=30.0)
-            if self.stopped:
-                return self._handle_stop()
-            if self._is_timeout():
-                return self._handle_timeout()
-
-            # Regresar al cliente
-            self._set_state(SessionState.DELIVERING_TO_CUSTOMER)
-            nav_back_ok = self._navigate_to(approach_pose)
-            if (not nav_back_ok and not self.stopped and not self._is_timeout()
-                    and self.nav_aborted_fn() and candidate_idx + 1 < len(candidates)):
-                candidate_idx += 1
-                approach_pose = candidates[candidate_idx]
-                self._set_state(SessionState.DELIVERING_TO_CUSTOMER,
-                                {"target": approach_pose, "customer_index": idx, "retry": 1})
-                nav_back_ok = self._navigate_to(approach_pose)
-            if self.stopped:
-                return self._handle_stop()
-            if self._is_timeout():
-                return self._handle_timeout()
-            if not nav_back_ok:
-                self._speak("I could not return to the customer.")
-                continue
-
-            # Entregar orden
-            self._speak("Here is your order, please take it from my tray.")
-            self.served += 1
+                self._fulfill_and_deliver_order(
+                    idx, cust, order_items, approach_pose, candidates, candidate_idx
+                )
+                if self.stopped:
+                    return self._handle_stop()
+                if self._is_timeout():
+                    return self._handle_timeout()
 
         # 4. Regreso final al kitchen bar
         if self._is_timeout():

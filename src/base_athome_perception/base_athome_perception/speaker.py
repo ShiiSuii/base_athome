@@ -12,9 +12,22 @@ import subprocess
 import tempfile
 import threading
 import time
+import wave
 from typing import Callable, Optional
 
 from base_athome_perception.audio_lock import playback_lock
+
+
+def prepend_wav_silence(path: str, seconds: float = 0.8) -> None:
+    """Warm up the audio stream before speech, within the same playback."""
+    with wave.open(path, "rb") as src:
+        params = src.getparams()
+        audio = src.readframes(src.getnframes())
+    silent_sample = b"\x80" if params.sampwidth == 1 else b"\x00" * params.sampwidth
+    silence = silent_sample * params.nchannels * round(params.framerate * seconds)
+    with wave.open(path, "wb") as dst:
+        dst.setparams(params)
+        dst.writeframes(silence + audio)
 
 
 class RoboCupSpeaker:
@@ -165,6 +178,7 @@ class RoboCupSpeaker:
                 self._current_process.communicate(input=text)
                 if self._current_process.returncode != 0:
                     continue
+                prepend_wav_silence(wav_path)
                 with playback_lock():
                     bt_sink = self.ensure_bluetooth_sink()
                     sink_flag = ["-d", bt_sink] if bt_sink else []

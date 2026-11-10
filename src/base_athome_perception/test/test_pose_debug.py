@@ -142,3 +142,48 @@ def test_rviz_openpose_display_uses_debug_topic():
     panel, = [d for d in displays if d['Name'] == 'Detecciones OpenPose (pose y manos)']
     assert panel['Topic']['Value'] == '/bag_finder/debug_image'
     assert panel['Enabled'] and panel['Class'] == 'rviz_default_plugins/Image'
+
+
+def tracking_node():
+    import math
+    path = Path(__file__).parents[1] / 'scripts/bag_finder.py'
+    cls = next(n for n in ast.parse(path.read_text()).body if isinstance(n, ast.ClassDef) and n.name == 'BagFinder')
+    methods = [n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == '_track_customer']
+    seen = []
+    scope = dict(math=math, time=NS(monotonic=lambda: 100., time=lambda: 100.),
+                 bv=NS(person_map_position=lambda p, *args: p[0][:2], torso_pixel=lambda p: (50., 50.)),
+                 scene=NS(face_tracking_step=lambda u, v, *args, **kw: (seen.append((u, v)) or (1., 1.))))
+    exec(compile(ast.Module(body=methods, type_ignores=[]), str(path), 'exec'), scope)
+    node = NS(lock=threading.Lock(), serve_lock=threading.Lock(), rgb_received=100., head_stamp=100.,
+              depth=object(), K=(100., 100., 50., 50.), head=(0., 0.), customer_tracking=((2., 3.), 101.5))
+    node._cam = lambda stamp: (None, None)
+    commands = []
+    node._send_head = lambda *args: commands.append(args)
+    def run():
+        target = person('left')
+        target = ([2., 3., 10., 10.], target[1], target[2])
+        distractor = person('left')
+        return scope['_track_customer'](node, np.zeros((480, 640, 3)), [distractor, target], None, node.customer_tracking)
+    return node, run, commands, seen
+
+
+def test_customer_head_tracking_selects_map_target_and_aims_at_nose():
+    node, run, commands, seen = tracking_node()
+    run()
+    assert commands == [(1., 1.)]
+    assert seen == [(180., 100.)]
+    assert not node.serve_lock.locked()
+
+
+@pytest.mark.parametrize('condition', ['expired', 'old_rgb', 'old_feedback', 'busy', 'no_tf', 'no_depth', 'other_person'])
+def test_customer_head_tracking_holds_without_fresh_identified_customer(condition):
+    node, run, commands, seen = tracking_node()
+    if condition == 'expired': node.customer_tracking = ((2., 3.), 99.)
+    if condition == 'old_rgb': node.rgb_received = 99.
+    if condition == 'old_feedback': node.head_stamp = 99.
+    if condition == 'busy': node.serve_lock.acquire()
+    if condition == 'no_tf': node._cam = lambda stamp: None
+    if condition == 'no_depth': node.depth = None
+    if condition == 'other_person': node.customer_tracking = ((20., 30.), 101.5)
+    run()
+    assert not commands

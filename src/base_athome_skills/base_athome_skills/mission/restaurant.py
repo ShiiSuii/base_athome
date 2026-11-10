@@ -32,7 +32,15 @@ from . import vlm
 # Constantes y Parametros de Dialogo
 # ------------------------------------------------------------------------------
 DEFAULT_BAR_LOCATION = "kitchen_bar"
-DEFAULT_MENU = ("coke", "water", "beer", "juice", "coffee", "tea", "milk")
+DEFAULT_MENU = (
+    "coke", "cola", "water", "beer", "juice", "orange juice", "apple juice",
+    "coffee", "tea", "milk", "chocolate milk", "soda", "fanta", "sprite",
+    "lemonade", "wine", "apple", "orange", "banana", "lemon", "peach",
+    "pear", "strawberry", "plum", "chips", "pringles", "crisps", "crackers",
+    "biscuits", "cookies", "cereal", "noodles", "soup", "tuna", "mustard",
+    "ketchup", "mayonnaise", "sugar", "salt", "bread", "sandwich", "cake",
+    "chocolate", "candy", "gum",
+)
 MAX_PHRASE_WORDS = 15
 
 LLM_URL = "http://127.0.0.1:8771/intent"

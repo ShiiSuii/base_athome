@@ -40,7 +40,7 @@ MODELS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "models"
 SIM = os.environ.get("ATHOME_SIM") == "1"
 FRAME = "camera_color_optical_frame"
 SEARCH_PANS = (0.0, 30.0, -30.0, 60.0, -60.0)
-RAISED_HANDS_PANS = (-60.0, -30.0, 0.0, 30.0, 60.0)
+RAISED_HANDS_PANS = (0.0, -90.0, 0.0, 90.0, 0.0)
 RAISED_HANDS_VIEW_S = 2.0
 RAISED_HANDS_SETTLE_S = 1.5
 SEARCH_TILT = 0.0
@@ -78,6 +78,8 @@ class BagFinder(Node):
         self.pub_people = self.create_publisher(String, "/bag_finder/people", 5)
         self.pub_debug = self.create_publisher(Image, "/bag_finder/debug_image", 2)   # lo que detecta, para RViz
         self.rgb_stamp = None
+        self.rgb_received = 0.0
+        self.customer_tracking = None
         self.follow_stop = False
         self.pub_head = self.create_publisher(Vector3, "/pan_tilt/target_degrees", 5)
         self.head_stamp = 0.0
@@ -110,6 +112,7 @@ class BagFinder(Node):
     def _rgb(self, m):
         img = np.frombuffer(m.data, np.uint8).reshape(m.height, m.width, -1)
         with self.lock:
+            self.rgb_received = time.monotonic()
             self.rgb_stamp = m.header.stamp
             self.rgb = img[:, :, ::-1].copy() if m.encoding == "rgb8" else img.copy()
 
@@ -146,7 +149,13 @@ class BagFinder(Node):
 
     def _debug_tick(self):
         """Pose a ~3 Hz incluso durante barridos, sin depender de profundidad o cabeza quieta."""
-        if self.pub_debug.get_subscription_count() == 0:
+        tracking = getattr(self, "customer_tracking", None)
+        if tracking is not None and time.monotonic() >= tracking[1]:
+            with self.lock:
+                if self.customer_tracking == tracking:
+                    self.customer_tracking = None
+            tracking = None
+        if self.pub_debug.get_subscription_count() == 0 and tracking is None:
             return
         try:
             # Solo requiere RGB: no depende de profundidad, TF ni feedback de cabeza.
@@ -154,9 +163,49 @@ class BagFinder(Node):
                 rgb = None if self.rgb is None else self.rgb.copy()
                 stamp = self.rgb_stamp
             if rgb is not None:
-                self._publish_debug(rgb, self._poses(rgb), stamp)
+                people = self._poses(rgb)
+                self._publish_debug(rgb, people, stamp)
+                if tracking is not None:
+                    self._track_customer(rgb, people, stamp, tracking)
         except Exception as exc:
             self.get_logger().warn(f"No se pudo actualizar debug de pose: {exc}")
+
+    def _track_customer(self, rgb, people, stamp, tracking):
+        """Solo cabeza: asociar al cliente por mapa; nunca cambiar al mayor distractor."""
+        if (time.monotonic() >= tracking[1] or time.monotonic() - self.rgb_received > 0.5
+                or time.time() - self.head_stamp > 0.5):
+            return
+        if not self.serve_lock.acquire(blocking=False):
+            return
+        try:
+            cam = self._cam(stamp)
+            with self.lock:
+                depth = self.depth
+            if cam is None or depth is None or self.K is None:
+                return
+            best, distance = None, 0.8
+            for person in people:
+                xy = bv.person_map_position(person, depth, cam[0], cam[1], self.K)
+                if xy is not None:
+                    d = math.hypot(xy[0] - tracking[0][0], xy[1] - tracking[0][1])
+                    if d < distance:
+                        best, distance = person, d
+            if best is None:
+                return  # Sin cliente identificado, mantener posicion; no barrer.
+            u, v = bv.torso_pixel(best)
+            if best[2][0] >= 0.4:  # nariz: orientar camara y microfono a la cara
+                u, v = best[1][0]
+            if not (math.isfinite(u) and math.isfinite(v) and 0 <= u < rgb.shape[1] and 0 <= v < rgb.shape[0]):
+                return
+            dpan, dtilt = scene.face_tracking_step(
+                u, v, rgb.shape[1], rgb.shape[0], self.K[0], self.K[1],
+                gain=0.6, deadband_deg=3.0, max_step_deg=2.0)
+            with self.lock:
+                if self.customer_tracking == tracking and time.monotonic() < tracking[1]:
+                    if dpan or dtilt:
+                        self._send_head(self.head[0] + dpan, self.head[1] + dtilt)
+        finally:
+            self.serve_lock.release()
 
     def _head_still(self):
         """Con la cabeza en movimiento la imagen y el TF no son del mismo instante: esa medicion se descarta."""
@@ -214,7 +263,7 @@ class BagFinder(Node):
             self._send_head(self.head[0] + dpan, self.head[1] + dtilt)
 
     def _send_head(self, pan, tilt):
-        pan, tilt = max(-65.0, min(65.0, float(pan))), max(-35.0, min(25.0, float(tilt)))
+        pan, tilt = max(-90.0, min(90.0, float(pan))), max(-35.0, min(25.0, float(tilt)))
         self.head_cmd = (pan, tilt)
         self.pub_head.publish(Vector3(x=pan, y=tilt, z=0.0))
 
@@ -229,10 +278,7 @@ class BagFinder(Node):
         """Busca una persona barriendo con la cabeza. Devuelve (persona, rgb, depth) o None."""
         self._ensure_torque()
         for pan in SEARCH_PANS:
-            if "head_dps" in head_options:
-                self._move_head(pan, SEARCH_TILT, dps=head_options["head_dps"])
-            else:
-                self._move_head(pan, SEARCH_TILT)
+            self._move_head(pan, SEARCH_TILT)
             view_end = min(end, time.time() + SEARCH_VIEW_S)
             while time.time() < view_end:
                 rgb, depth = self._frames()
@@ -284,6 +330,14 @@ class BagFinder(Node):
 
     def _request(self, msg):
         req = json.loads(msg.data)
+        if req.get("mode") == "track_customer":
+            xy = req.get("xy")
+            valid = (isinstance(xy, (list, tuple)) and len(xy) == 2
+                     and all(isinstance(v, (int, float)) and not isinstance(v, bool)
+                             and math.isfinite(v) for v in xy))
+            with self.lock:
+                self.customer_tracking = (tuple(xy), time.monotonic() + 1.5) if valid else None
+            return
         if req.get("mode") == "stop_follow":
             self.follow_stop = True
             return
@@ -366,18 +420,19 @@ class BagFinder(Node):
                 head_options[name] = float(value)
         end = time.time() + timeout_s
 
-        # pans opcional en grados: Restaurant usa [0.0] mientras orienta la base.
-        # Validar antes de tocar la cabeza; sin el campo se conserva el barrido actual.
+        # pans opcional en grados: Restaurant usa [0.0, -90.0, 0.0, 90.0, 0.0] (centro, 90 der, centro, 90 izq, centro).
+        # Validar antes de tocar la cabeza; sin el campo se conserva el barrido por defecto.
         sweep_pans = req.get("pans", RAISED_HANDS_PANS) if search is None else RAISED_HANDS_PANS
         if search is None and "pans" in req and (not isinstance(sweep_pans, (list, tuple)) or not sweep_pans
                 or any(isinstance(p, bool) or not isinstance(p, (int, float))
-                       or not math.isfinite(p) or not -60.0 <= p <= 60.0 for p in sweep_pans)):
+                       or not math.isfinite(p) or not -90.0 <= p <= 90.0 for p in sweep_pans)):
             return {"id": req_id, "ok": False, "customers": [], "error": "invalid_pans"}
         self._ensure_torque()
         aggregator = RaisedHandsAggregator(min_frames=min_frames, match_dist_m=0.8) if search is None else None
 
-        fixed_head = search is None and "pans" in req
-        seen = dict(frames=0, people=0, raised=0)
+        fixed_head = search is None and "pans" in req and len(sweep_pans) == 1
+        seen = dict(frames=0, people=0, raised=0, mapped_raised=0, estimated_raised=0,
+                    no_tf=0, no_depth=0, no_intrinsics=0, invalid_position=0)
         pan_idx = 0
         last_stamp = None
         while time.time() < end:
@@ -424,14 +479,34 @@ class BagFinder(Node):
                         seen["raised"] += sum(1 for p in people if classify_raised_hand(p[1], p[2]).is_raised)
                         candidates = []
                         for person in people:
+                            is_raised = classify_raised_hand(person[1], person[2]).is_raised
                             # En simulacion los puntos del cuerpo no coinciden con el modelo dibujado: la profundidad del
                             # torso caia en la pared de atras (~2x de distancia). Ahi se usa la posicion de la persona simulada.
                             spot = self._sim_person_spot(person, cam) if SIM else None
+                            estimated = False
                             if spot is None and depth is not None and cam is not None and self.K is not None:
                                 spot = bv.person_map_position(person, depth, cam[0], cam[1], self.K)
+                            if spot is None and search is None and is_raised and cam is not None and self.K is not None:
+                                if hasattr(bv, "person_estimated_map_position"):
+                                    spot = bv.person_estimated_map_position(person, depth, cam[0], cam[1], self.K)
+                                    estimated = spot is not None
+                            if is_raised:
+                                if spot is not None:
+                                    seen["mapped_raised"] += 1
+                                    if estimated:
+                                        seen["estimated_raised"] += 1
+                                elif cam is None:
+                                    seen["no_tf"] += 1
+                                elif depth is None:
+                                    seen["no_depth"] += 1
+                                elif self.K is None:
+                                    seen["no_intrinsics"] += 1
+                                else:
+                                    seen["invalid_position"] += 1
                             if spot is not None:
                                 if search is None:
-                                    aggregator.update_observation(spot, keypoints=person[1], conf=person[2])
+                                    aggregator.update_observation(
+                                        spot, keypoints=person[1], conf=person[2], estimated=estimated)
                                 else:
                                     attrs = (extract_person_attributes(rgb, person[1], person[2])
                                              if search.descriptor.get("clothing") else None)
@@ -456,12 +531,15 @@ class BagFinder(Node):
         if search is not None:
             return search.build_response(req_id, self._robot_pos())
         robot_xy = self._robot_pos()
-        out = aggregator.build_response(req_id, robot_pos=robot_xy, error_msg="no_raised_hand")
+        reason = ("no_raised_hand" if not seen["raised"] else
+                  "unlocalized_raised_hand" if not seen["mapped_raised"] else "unconfirmed_raised_hand")
+        out = aggregator.build_response(req_id, robot_pos=robot_xy, error_msg=reason)
+        out["diagnostics"] = seen
         if out["ok"]:
             self.get_logger().info(f"Modo raised_hands: {len(out['customers'])} clientes encontrados")
         else:
             self.get_logger().info(f"Modo raised_hands: sin clientes ({out['error']}); cuadros={seen['frames']}, "
-                                   f"maximo de personas en un cuadro={seen['people']}, cuadros con mano levantada={seen['raised']}")
+                                   f"maximo de personas en un cuadro={seen['people']}, cuadros con mano levantada={seen['raised']}; diagnostico={seen}")
         return out
 
     def _wait_gesture(self, end):

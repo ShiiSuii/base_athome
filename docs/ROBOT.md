@@ -477,3 +477,16 @@ CAD o esquemas fuera del repo; uso de `can0` vs `can1` si se agrega otro disposi
 | [RoboCupAtHome/CommandGenerator](https://github.com/RoboCupAtHome/CommandGenerator) | ver repo | dataset GPSR oficial |
 | [socrob/doorbell_detector](https://github.com/socrob/doorbell_detector) | ninguna | timbre con YAMNet (reimplementar) |
 | [USTC-WrightEagle-AI](https://github.com/USTC-WrightEagle-AI) | ninguna | grasping, ASR offline sherpa-onnx |
+
+### Distancia de clientes Restaurant (CODIGO 2026-11-09)
+
+`bag_vision.person_depth_sample` mide la superficie de la persona con profundidad alineada:
+interior del cuadrilátero hombros/caderas reducido al 65 % para excluir el fondo; si las caderas
+no son visibles, parche central entre hombros; si no hay medida útil, parches de nariz y ojos
+con confianza >=0.4. Usa al menos 12 píxeles, soporte en tres filas/columnas, grupo dominante
+>=60 % y dispersión p90−p10 <=0.35 m, dentro de 0.3–6 m. Proyecta el píxel medido con TF;
+no deduce distancia por tamaño humano ni usa ceros como medida. Conserva rechazo con depth
+inexistente/ambiguo. Corrige el rechazo por huecos del centro del torso; no repara la falta física
+de profundidad de toda la persona. Pruebas sintéticas incluyen torso con hueco, ropa sin depth
+con cara válida, fondo distractor, dos superficies y confirmación de cliente que corta el barrido.
+Validación física de esta medición: **PENDIENTE**.

@@ -499,7 +499,7 @@ class Manipulacion(Node):
             return False, f"agarre vacio: la pinza cerro hasta {width:.0f} mm (sin bolsa)", dict(gripper_mm=round(width, 1))
         return True, f"bolsa recibida (pinza {width:.0f} mm)", dict(gripper_mm=round(width, 1))
 
-    def give_blocking(self, wait_s: float = 5.0):
+    def give_blocking(self, wait_s: float = 8.0):
         """Entrega: espera, abre la pinza y confirma por ancho. El brazo no se mueve. (ok, mensaje, datos)."""
         self.abort = False
         end = time.time() + wait_s

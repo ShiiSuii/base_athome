@@ -3,6 +3,7 @@ from contextlib import contextmanager
 from pathlib import Path
 import queue
 import threading
+import wave
 
 import pytest
 from base_athome_perception import speaker
@@ -44,8 +45,15 @@ def test_complete_wav_before_playback_and_stop(monkeypatch, cancel_phase):
             else:
                 assert locked[0] and 'complete' in events
                 assert argv == ['paplay', '-d', 'test_sink', paths[0]]
+                with wave.open(paths[0], 'rb') as wav:
+                    assert wav.getnframes() == 17640 + 100
+                    assert wav.readframes(17640) == b'\x00\x00' * 17640
+                    assert wav.readframes(100) == b'\x01\x02' * 100
         def communicate(self, input):
             assert input == 'Literal $text `safe`.'
+            with wave.open(paths[0], 'wb') as wav:
+                wav.setparams((1, 2, 22050, 0, 'NONE', 'not compressed'))
+                wav.writeframes(b'\x01\x02' * 100)
             events.append('complete')
             if cancel_phase == self.phase:
                 node.stop()

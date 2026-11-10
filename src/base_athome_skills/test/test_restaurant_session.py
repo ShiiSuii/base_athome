@@ -1355,3 +1355,108 @@ def test_default_head_scan_has_eighty_second_budget():
     session.deadline_s = h.clock() + 900.0
     session._look_around()
     assert ('detect_customers', (80.0, 3)) in h.events
+
+
+def test_node_tracking_lease_follows_customer_states_and_stops():
+    import json
+    path = Path(__file__).parents[1] / 'base_athome_skills/restaurant_node.py'
+    cls = next(n for n in ast.parse(path.read_text()).body if isinstance(n, ast.ClassDef) and n.name == 'RestaurantNode')
+    methods = [n for n in cls.body if isinstance(n, ast.FunctionDef)
+               and n.name in ('_on_session_state_change', '_refresh_customer_tracking')]
+    env = dict(Dict=Dict, Any=Any, String=NS, json=json)
+    exec(compile(ast.Module(body=methods, type_ignores=[]), str(path), 'exec'), env)
+    node = type('TrackingNode', (), {n.name: env[n.name] for n in methods})()
+    requests = []
+    node.session = NS(customers=[{'xy': [2., 3.]}], stopped=False, remaining_s=lambda: 50.)
+    node.pub_bag_request = NS(publish=lambda msg: requests.append(json.loads(msg.data)))
+    node.pub_state = NS(publish=lambda msg: None)
+    for state in ('APPROACHING_CUSTOMER', 'GREETING', 'TAKING_ORDER', 'CONFIRMING_ORDER', 'DELIVERING_TO_CUSTOMER'):
+        node._on_session_state_change({'state': state, 'customer_idx': 0})
+        assert requests[-1] == {'mode': 'track_customer', 'xy': [2., 3.]}
+    for state in ('RETURNING_TO_BAR', 'FAILED', 'COMPLETED'):
+        node._on_session_state_change({'state': state, 'customer_idx': 0})
+        assert requests[-1]['xy'] is None
+    node._head_customer_xy = [2., 3.]
+    node.session.stopped = True
+    node._refresh_customer_tracking()
+    assert requests[-1]['xy'] is None
+
+
+@pytest.mark.parametrize('reason, expected', [
+    ('unlocalized_raised_hand', 'cannot measure your distance'),
+    ('unconfirmed_raised_hand', 'hold it up'),
+    ('timeout', 'did not respond'),
+])
+def test_detection_failure_explains_actual_reason_without_navigation(reason, expected):
+    h = FakeRestaurantHarness()
+    session = h.make_session()
+    session.detect_customers_fn = lambda *args: {'ok': False, 'error': reason, 'customers': []}
+    assert session.run() is False
+    assert any(expected in phrase for phrase in h.spoken)
+    assert not any('do not see any customers' in phrase for phrase in h.spoken)
+    assert not h.nav_goals
+
+
+def test_batch_orders_takes_both_orders_first_then_delivers_both():
+    """Task planning fuerte para 2 personas: decide a cual ir primero (mas cercana/medida),
+    toma el pedido de la primera, va directo a la segunda a tomarle el pedido, y luego va al bar."""
+    h = FakeRestaurantHarness(
+        customers=[
+            {"id": "far", "xy": [4.0, 0.0]},
+            {"id": "near", "xy": [2.0, 0.0]},
+        ],
+        speech_script=[
+            "I want a coke and water",  # pedido cliente cercano (2.0, 0.0)
+            "please bring me coffee",   # pedido cliente lejano (4.0, 0.0)
+            "ready",                    # barman entrega orden 1
+            "done",                     # barman entrega orden 2
+        ],
+        initial_pose=(0.0, 0.0, 0.0),
+    )
+    session = h.make_session(batch_orders=True)
+    assert session.run() is True
+    assert session.state == SessionState.SUCCEEDED
+    assert session.served == 2
+    # El planner ordeno primero al mas cercano (2.0, 0.0) y segundo al mas lejano (4.0, 0.0)
+    assert [c["xy"] for c in session.customers] == [[2.0, 0.0], [4.0, 0.0]]
+
+    # Secuencia de navegacion:
+    # 0: mesa cliente 1 (~1.1, 0) -> 1: mesa cliente 2 (~3.1, 0) ->
+    # 2: bar (0, 0) -> 3: mesa cliente 1 (~1.1, 0) ->
+    # 4: bar (0, 0) -> 5: mesa cliente 2 (~3.1, 0) -> 6: bar final (0, 0)
+    assert len(h.nav_goals) == 7
+    assert h.nav_goals[0][0] == pytest.approx(1.1, abs=0.05)
+    assert h.nav_goals[1][0] == pytest.approx(3.1, abs=0.05)
+    assert h.nav_goals[2][:2] == pytest.approx((0.0, 0.0), abs=0.05)
+    assert h.nav_goals[3][0] == pytest.approx(1.1, abs=0.05)
+    assert h.nav_goals[4][:2] == pytest.approx((0.0, 0.0), abs=0.05)
+    assert h.nav_goals[5][0] == pytest.approx(3.1, abs=0.05)
+    assert h.nav_goals[6][:2] == pytest.approx((0.0, 0.0), abs=0.05)
+
+
+def test_estimated_far_customer_triggers_progressive_advance_and_relocalization():
+    """Cuando un cliente lejano fue localizado por estimacion sin depth (estimated=True),
+    el robot avanza primero un tramo intermedio con navegacion sin mapa, re-mide de cerca y se aproxima."""
+    h = FakeRestaurantHarness(
+        customers=[{"id": "1", "xy": [4.5, 0.0], "estimated": True}],
+        speech_script=["water please", "ready"],
+        initial_pose=(0.0, 0.0, 0.0),
+    )
+    detect_calls = []
+
+    def detect_customers(timeout_s, min_frames):
+        detect_calls.append((timeout_s, min_frames))
+        if len(detect_calls) == 1:
+            return [{"id": "1", "xy": [4.5, 0.0], "estimated": True}]
+        # Al haberse acercado, la RealSense ya mide profundidad real en (4.0, 0.2)
+        return [{"id": "1", "xy": [4.0, 0.2], "estimated": False}]
+
+    session = h.make_session(get_costmap_fn=make_grid)
+    session.detect_customers_fn = detect_customers
+    assert session.run() is True
+    assert session.served == 1
+    assert len(detect_calls) == 2
+    # Goal 0: avance progresivo intermedio (< 2.5 m); Goal 1: aproximacion final a ~0.9 m de (4.0, 0.2)
+    assert 0.6 <= h.nav_goals[0][0] <= 2.5
+    assert math.hypot(h.nav_goals[1][0] - 4.0, h.nav_goals[1][1] - 0.2) == pytest.approx(0.9, abs=0.25)
+    assert session.customers[0]["estimated"] is False
