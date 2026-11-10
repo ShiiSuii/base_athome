@@ -361,3 +361,26 @@ def test_face_sampling_uses_the_only_centered_face_even_with_people_behind():
                             clock_fn=lambda: clock[0], sleep_fn=lambda s: None)
     faces.recognizer = rec
     assert faces._samples(None, count=3) == [centered] * 3
+
+
+def test_slam_is_paused_for_a_turn_and_always_resumed_with_toggle_service():
+    m = node_methods("_set_slam_paused", "_slam_pause_begin", "_slam_pause_end")
+    state = {"paused": False, "toggles": 0}
+    node = NS(_slam_pause_cli=object(), _slam_paused_assumed=False, _slam_pause_depth=0,
+              get_logger=lambda: NS(info=lambda *_: None, warn=lambda *_: None))
+    node._slam_paused_state = lambda: state["paused"]
+    def call(_cli, _req, timeout_s=2.0):
+        state["paused"] = not state["paused"]
+        state["toggles"] += 1
+        return True
+    node._slam_call = call
+    m["SlamPause"] = NS(Request=lambda: None)
+    for name in ("_set_slam_paused", "_slam_pause_begin", "_slam_pause_end"):
+        setattr(node, name, (lambda f: lambda *a: f(node, *a))(m[name]))
+    node._slam_pause_begin()
+    node._slam_pause_begin()          # anidado (vuelta + giro): una sola pausa
+    assert state == {"paused": True, "toggles": 1}
+    node._slam_pause_end()
+    assert state["paused"] is True
+    node._slam_pause_end()
+    assert state == {"paused": False, "toggles": 2}

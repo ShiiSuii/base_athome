@@ -35,6 +35,7 @@ from ament_index_python.packages import get_package_share_directory
 from geometry_msgs.msg import Vector3
 from nav2_msgs.action import ComputePathToPose, NavigateToPose, Spin
 from nav_msgs.msg import OccupancyGrid
+from rcl_interfaces.srv import GetParameters
 import rclpy
 from rclpy.action import ActionClient
 from rclpy.callback_groups import ReentrantCallbackGroup
@@ -44,6 +45,10 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data
 from sensor_msgs.msg import Image, JointState
 from std_msgs.msg import Empty, String
+try:  # slam_toolbox solo hace falta para pausar el SLAM al girar en el lugar
+    from slam_toolbox.srv import Pause as SlamPause
+except ImportError:  # pragma: no cover - sin slam_toolbox el giro sigue sin pausa
+    SlamPause = None
 from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
 
@@ -119,6 +124,13 @@ class RestaurantNode(Node):
         self._navigation = RestaurantNavigation(self.nav_client, warn_fn=self.get_logger().warn)
         self.spin_client = ActionClient(self, Spin, "spin", callback_group=self.cb_group)
         self._spinning = RestaurantNavigation(self.spin_client, warn_fn=self.get_logger().warn)
+        # Pausa del SLAM durante giros en el lugar (decision del usuario 10/11); sin slam_toolbox no hace nada.
+        self._slam_pause_cli = (self.create_client(SlamPause, "/slam_toolbox/pause_new_measurements",
+                                                   callback_group=self.cb_group) if SlamPause else None)
+        self._slam_params_cli = self.create_client(GetParameters, "/slam_toolbox/get_parameters",
+                                                   callback_group=self.cb_group)
+        self._slam_paused_assumed = False
+        self._slam_pause_depth = 0
         # Solo consulta al planner (no mueve el robot): valida que exista camino antes de mandar el goal.
         self.plan_client = ActionClient(self, ComputePathToPose, "compute_path_to_pose", callback_group=self.cb_group)
 
@@ -316,8 +328,59 @@ class RestaurantNode(Node):
         finally:
             monitor.close()
 
+    # ------------------------------------------------------------------ SLAM en giros
+    # Prueba real 10/11: girando en el lugar (0,4 rad/s) slam_toolbox movio al robot 5,5 m en el mapa;
+    # despues Nav2 lo creia dentro de un obstaculo. Decision del usuario: pausar las mediciones nuevas
+    # del SLAM durante cada giro (la odometria de ruedas lo maneja bien) y reanudarlas siempre al final.
+    def _slam_call(self, client, request, timeout_s=2.0):
+        if client is None or not client.wait_for_service(timeout_sec=0.5):
+            return None
+        fut = client.call_async(request)
+        end = time.monotonic() + timeout_s
+        while not fut.done() and time.monotonic() < end:
+            time.sleep(0.02)
+        return fut.result() if fut.done() else None
+
+    def _slam_paused_state(self):
+        """True/False segun el parametro paused_new_measurements; None si no se puede leer."""
+        req = GetParameters.Request()
+        req.names = ["paused_new_measurements"]
+        res = self._slam_call(getattr(self, "_slam_params_cli", None), req)
+        if res is None or not res.values or res.values[0].type != 1:  # 1 = PARAMETER_BOOL
+            return None
+        return bool(res.values[0].bool_value)
+
+    def _set_slam_paused(self, want: bool) -> bool:
+        if getattr(self, "_slam_pause_cli", None) is None:
+            return False
+        state = self._slam_paused_state()
+        if state is None:
+            state = self._slam_paused_assumed
+        if state == want:
+            return True
+        if self._slam_call(self._slam_pause_cli, SlamPause.Request()) is None:
+            self.get_logger().warn(f"No pude {'pausar' if want else 'reanudar'} el SLAM (servicio no responde).")
+            return False
+        self._slam_paused_assumed = want
+        check = self._slam_paused_state()
+        if check is not None and check != want:  # alterno de mas: volver a alternar una vez
+            self._slam_call(self._slam_pause_cli, SlamPause.Request())
+            self._slam_paused_assumed = not check
+        self.get_logger().info("SLAM " + ("pausado para girar en el lugar." if want else "reanudado."))
+        return True
+
+    def _slam_pause_begin(self):
+        self._slam_pause_depth = getattr(self, "_slam_pause_depth", 0) + 1
+        if self._slam_pause_depth == 1:
+            self._set_slam_paused(True)
+
+    def _slam_pause_end(self):
+        self._slam_pause_depth = max(0, getattr(self, "_slam_pause_depth", 1) - 1)
+        if self._slam_pause_depth == 0:
+            self._set_slam_paused(False)
+
     def _spin(self, angle_rad: float) -> bool:
-        """Spin relativo con colisiones de Nav2, plazo acotado y el mismo stop que navegar."""
+        """Spin relativo con colisiones de Nav2, plazo acotado y el mismo stop que navegar; SLAM pausado."""
         if self.session.stopped or self.session.remaining_s() <= 0:
             return False
         timeout_s = min(self.spin_timeout_s, self.session.remaining_s())
@@ -325,6 +388,9 @@ class RestaurantNode(Node):
         goal.target_yaw = float(angle_rad)
         goal.time_allowance = Duration(seconds=timeout_s).to_msg()
         monitor = NavigationStopMonitor(self.voice, self.session.stop)
+        pause_end = getattr(self, "_slam_pause_end", None)
+        if getattr(self, "_slam_pause_begin", None):
+            self._slam_pause_begin()
         try:
             return self._spinning.navigate(
                 goal, deadline_s=self.session.deadline_s, timeout_s=timeout_s,
@@ -332,6 +398,8 @@ class RestaurantNode(Node):
             )
         finally:
             monitor.close()
+            if pause_end:
+                pause_end()
 
     def _plan(self, pose: Tuple[float, float, float], timeout_s: float = 2.0) -> Optional[float]:
         """Largo del plan de Nav2 desde la pose actual, None sin camino; lanza si no hay planner."""
@@ -448,13 +516,11 @@ class RestaurantNode(Node):
             "id": req_id, "mode": "people_here", "view_s": budget, "timeout_s": budget + 2.0, "min_frames": 2,
         })))
         time.sleep(1.5)  # bag_finder lleva la cabeza al frente y la deja quieta antes de girar
-        if on_first_step is None:
-            ok = self._spin(2.0 * math.pi)  # Nav2 corta si ve colision (p. ej. pegado a la barra)
-        else:
-            ok = self._spin(math.pi / 6)
-            if ok and not self.session.stopped:
-                on_first_step()
-            ok = ok and not self.session.stopped and self._spin(2.0 * math.pi - math.pi / 6)
+        self._slam_pause_begin()
+        try:
+            ok = self._scan_turn_spins(on_first_step)
+        finally:
+            self._slam_pause_end()
         self.pub_bag_request.publish(String(data=json.dumps({"id": req_id, "mode": "stop_scan"})))
         ev.wait(timeout=5.0)
         with self._bag_lock:
@@ -466,6 +532,16 @@ class RestaurantNode(Node):
             self.get_logger().info(f"Vuelta: persona xy={p.get('xy')} range_m={p.get('range_m')} "
                                    f"heading={p.get('heading_deg')} mano={p.get('raised_frames')}")
         return people, ok
+
+    def _scan_turn_spins(self, on_first_step):
+        if on_first_step is None:
+            ok = self._spin(2.0 * math.pi)  # Nav2 corta si ve colision (p. ej. pegado a la barra)
+        else:
+            ok = self._spin(math.pi / 6)
+            if ok and not self.session.stopped:
+                on_first_step()
+            ok = ok and not self.session.stopped and self._spin(2.0 * math.pi - math.pi / 6)
+        return ok
 
     def _odom_yaw(self):
         """Yaw de base_footprint en odom (rad): odometria de ruedas, sin saltos de SLAM."""
