@@ -2,10 +2,12 @@
 """Hook PreToolUse de Antigravity: aprobacion automatica ACOTADA (AGENTS.md §6).
 
 Aprueba solo comandos inocuos (inspeccion Git, git add/commit, lectura de archivos, pytest, colcon,
-xacro) ejecutados dentro de los worktrees de Base@Home. Todo lo demas -> "ask" (decide el humano);
+xacro, graphify query/explain/path y true) dentro de los worktrees de Base@Home.
+Todo lo demas -> "ask" (decide el humano);
 nunca "deny" para no trabar al humano. No es un auto-aprobador ciego: cada segmento de una linea
 compuesta (&&, ||, ;, |) tiene que estar en la lista; sustitucion de comandos, redirecciones a
-archivos, sudo, ssh, red, borrados, push y el dominio ROS 10 siempre preguntan.
+archivos (salvo /dev/null), sudo, ssh, red, borrados, push y el dominio ROS 10 siempre preguntan.
+Solo se aceptan > /dev/null (stdout/stderr) y 2>&1; no se evalua ni ejecuta el shell.
 Registro de decisiones: ~/.gemini/config/agy_bounded_allow.log
 """
 import json
@@ -28,37 +30,118 @@ FORBIDDEN_TOKENS = re.compile(r"`|\$\(|<\(|>\(|\bsudo\b|\bssh\b|\bscp\b|\brsync\
                               r"\brm\b|\bmv\b|\bchmod\b|\bchown\b|\bkill\b|\bpkill\b|\bsystemctl\b|"
                               r"ROS_DOMAIN_ID=10\b|\bpip3?\s+install\b|--force\b|\bpush\b|\breset\b|\bclean\b|"
                               r"\brebase\b|\bdd\b|\bmkfs\b|\.env\b|\bgh\b")
-REDIRECT_OK = re.compile(r"\s*(2>&1|>\s*/dev/null|2>\s*/dev/null)\s*")
 
 
-def _segment_ok(seg: str) -> bool:
-    seg = REDIRECT_OK.sub(" ", seg).strip()
-    if not seg:
-        return True
-    if re.search(r"[<>]", seg):
-        return False  # escritura/lectura de archivos por redireccion
-    try:
-        argv = shlex.split(seg)
-    except ValueError:
-        return False
+def _inside_workspace(path: str) -> bool:
+    resolved = os.path.realpath(path)
+    return os.path.isabs(path) and any(
+        os.path.commonpath((resolved, os.path.realpath(root))) == os.path.realpath(root)
+        for root in WORKSPACE_ROOTS
+    )
+
+
+def _shell_tokens(command: str):
+    """Tokeniza palabras y operadores sin perder comillas ni adyacencia de descriptores."""
+    i = 0
+    while i < len(command):
+        if command[i].isspace():
+            i += 1
+            continue
+        start = i
+        if command[i] in ";&|<>()":
+            i += 1
+            while i < len(command) and command[i] in ";&|<>()":
+                i += 1
+            yield command[start:i], True, start, i
+            continue
+        quote = None
+        while i < len(command):
+            char = command[i]
+            if char == "\\" and quote != "'":
+                i += 2
+                continue
+            if quote:
+                if char == quote:
+                    quote = None
+            elif char in "\"'":
+                quote = char
+            elif char.isspace() or char in ";&|<>()":
+                break
+            i += 1
+        # shlex valida comillas/escapes y conserva operadores citados como argumentos.
+        word, = shlex.split(command[start:i])
+        yield word, False, start, i
+
+
+def _command_segments(command: str):
+    tokens = list(_shell_tokens(command))
+    segments, argv = [], []
+    i = 0
+    last_word_index = None
+    while i < len(tokens):
+        value, operator, start, _ = tokens[i]
+        if not operator:
+            argv.append(value)
+            last_word_index = i
+        elif value in ("&&", "||", ";", "|"):
+            if not argv:
+                raise ValueError("segmento vacio")
+            segments.append(argv)
+            argv = []
+            last_word_index = None
+        elif value in (">", ">&"):
+            fd = None
+            if last_word_index == i - 1 and tokens[i - 1][3] == start:
+                raw = command[tokens[i - 1][2]:start]
+                if raw.isascii() and raw.isdigit():
+                    fd = argv.pop()
+            i += 1
+            if i >= len(tokens) or tokens[i][1]:
+                raise ValueError("redireccion incompleta")
+            target = tokens[i][0]
+            if not ((value == ">" and fd in (None, "1", "2") and target == "/dev/null")
+                    or (value == ">&" and fd == "2" and target == "1")):
+                raise ValueError("redireccion fuera de la lista")
+            last_word_index = None
+        else:
+            raise ValueError("operador fuera de la lista")
+        i += 1
+    if not argv:
+        raise ValueError("segmento vacio")
+    return segments + [argv]
+
+
+def _segment_ok(argv, directories) -> bool:
     while argv and re.fullmatch(r"[A-Z_][A-Z0-9_]*=[^ ]*", argv[0]):
         name, val = argv[0].split("=", 1)
         if name == "ROS_DOMAIN_ID" and val not in ("42", "77"):
             return False
         argv = argv[1:]
-    if argv[:2] == ["env", "-u"]:
-        argv = argv[3:]
+    if argv[:2] == ["env", "-u"] and len(argv) >= 3:
+        return _segment_ok(argv[3:], directories)
     if not argv:
-        return True
+        return False
     cmd, args = os.path.basename(argv[0]), argv[1:]
     if cmd in READ_ONLY:
         return True
     if cmd == "find":
         return not any(a in ("-exec", "-execdir", "-delete", "-ok", "-fprint", "-fls") for a in args)
-    if cmd in ("cd", "source", "."):
-        target = args[0] if args else ""
-        return cmd == "cd" and not target.startswith("/") or target.startswith("/opt/ros/jazzy/") \
-            or target.endswith("install/setup.bash") or target.startswith(WORKSPACE_ROOTS)
+    if cmd == "cd":
+        if len(args) != 1 or not args[0] or args[0].startswith(("-", "~")):
+            return False
+        targets = [os.path.realpath(os.path.join(base, args[0])) for base in directories]
+        if not all(_inside_workspace(target) for target in targets):
+            return False
+        # Un cd puede fallar o correr en un pipeline: validar tambien los directorios anteriores.
+        directories[:] = sorted(set(directories + targets))
+        return True
+    if cmd in ("source", "."):
+        if len(args) != 1:
+            return False
+        targets = [os.path.realpath(os.path.join(base, args[0])) for base in directories]
+        return all(target.startswith("/opt/ros/jazzy/") or
+                   (_inside_workspace(target) and target.endswith("/install/setup.bash"))
+                   for target in targets)
     if cmd == "mkdir":
         return all(not a.startswith("/") and ".." not in a for a in args if a != "-p")
     if cmd == "git":
@@ -70,6 +153,8 @@ def _segment_ok(seg: str) -> bool:
         if sub in GIT_LIST_ONLY:
             return len(args) == 1 and sub != "remote" or (len(args) > 1 and set(args[1:]) <= GIT_LIST_ONLY[sub])
         return False
+    if cmd == "graphify":
+        return bool(args) and args[0] in ("query", "explain", "path")
     if cmd in ("pytest", "py.test"):
         return True
     if re.fullmatch(r"python3?(\.\d+)?", cmd):
@@ -83,14 +168,24 @@ def _segment_ok(seg: str) -> bool:
     return False
 
 
-def decide(command: str, workspaces) -> dict:
-    inside = any(str(w).startswith(WORKSPACE_ROOTS) for w in (workspaces or []))
-    if not inside:
+def decide(command: str, workspaces, cwd=None) -> dict:
+    directories = [str(w) for w in (workspaces or [])]
+    if not directories or not all(_inside_workspace(w) for w in directories):
         return {"decision": "ask", "reason": "fuera de los worktrees de Base@Home"}
+    if cwd is not None:
+        if not isinstance(cwd, str) or not _inside_workspace(cwd):
+            return {"decision": "ask", "reason": "directorio de ejecucion fuera de los worktrees"}
+        directories = [cwd]
     if FORBIDDEN_TOKENS.search(command):
         return {"decision": "ask", "reason": "contiene una operacion que requiere confirmacion humana"}
-    segments = re.split(r"\s*(?:&&|\|\||;|\|)\s*", command.strip())
-    if all(_segment_ok(s) for s in segments):
+    try:
+        # Expansiones y saltos de linea quedan fuera de esta gramatica acotada.
+        if any(char in command for char in ("$", "`", "\n", "\r", "\x00")):
+            raise ValueError("expansion o salto de linea")
+        segments = _command_segments(command)
+    except ValueError:
+        return {"decision": "ask", "reason": "sintaxis de shell fuera de la lista acotada"}
+    if all(_segment_ok(s, directories) for s in segments):
         # El hook de Orca responde siempre "ask" y gana la decision mas restrictiva; por eso ademas se
         # otorga un permiso temporal para ESTE comando exacto (cada token se compara como regex anclada).
         grant = "command(" + " ".join(re.escape(t) for t in command.strip().split()) + ")"
@@ -109,8 +204,9 @@ def main():
     if call.get("name") != "run_command":
         print(json.dumps({"decision": "ask"}))
         return
-    cmd = str((call.get("args") or {}).get("CommandLine", ""))
-    out = decide(cmd, payload.get("workspacePaths"))
+    args = call.get("args") or {}
+    cmd = str(args.get("CommandLine", ""))
+    out = decide(cmd, payload.get("workspacePaths"), args.get("Cwd"))
     try:
         with open(LOG, "a") as f:
             f.write(json.dumps({"t": time.strftime("%Y-%m-%dT%H:%M:%S"), "decision": out["decision"],
