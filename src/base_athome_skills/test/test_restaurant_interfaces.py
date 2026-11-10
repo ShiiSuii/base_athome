@@ -343,3 +343,21 @@ def test_script_arm_opt_in_defaults_off_in_both_modes():
     invocations = [s for s in script.splitlines() if "session_run_terminal ros2 run" in s]
     assert len(invocations) == 2
     assert all('"${ARM_ARG[@]}"' in s for s in invocations)
+
+
+def test_face_sampling_uses_the_only_centered_face_even_with_people_behind():
+    from base_athome_skills.restaurant_interfaces import RestaurantFaces
+    import numpy as np
+    img = np.zeros((480, 640, 3), np.uint8)
+    centered = {"bbox": (300, 100, 40, 40), "quality_valid": True, "feature": [1.0]}
+    side = {"bbox": (20, 100, 40, 40), "quality_valid": True, "feature": [0.0]}
+    clock = [0.0]
+    rec = type("R", (), dict(cosine_thresh=0.5, similarity=lambda self, a, b: 1.0,
+                             detect_and_recognize=lambda self, image: [side, centered]))()
+    def frame():
+        clock[0] += 0.2
+        return img, clock[0] - 0.1
+    faces = RestaurantFaces(lambda db: rec, lambda p: True, frame,
+                            clock_fn=lambda: clock[0], sleep_fn=lambda s: None)
+    faces.recognizer = rec
+    assert faces._samples(None, count=3) == [centered] * 3

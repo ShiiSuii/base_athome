@@ -2086,3 +2086,19 @@ def test_blocked_turn_falls_back_to_head_sweep_instead_of_looping():
     found = session._look_around()
     assert len(sweeps) == 1 and [c['xy'] for c in found] == [[2., 1.]]
     assert rest.CUSTOMER_TURN in h.spoken
+
+
+def test_barman_is_faced_even_when_the_scan_turn_was_cut_short():
+    """Prueba real 10/11: Spin corto con 'Collision Ahead' y el robot le hablaba a otro lado."""
+    h = FakeRestaurantHarness(speech_script=['robot yes'])
+    turns, tracked = [], []
+    barman = {'xy': [9., 9.], 'range_m': 1.5, 'heading_deg': 90., 'raised_frames': 6}  # xy del SLAM corrido
+    fresh = {'xy': [0., 1.5], 'range_m': 1.5, 'bearing_deg': 1., 'raised_frames': 4}
+    session = h.make_session(spin_fn=lambda a: turns.append(a) or True,
+                             scan_turn_fn=lambda: ([barman], False), get_odom_yaw_fn=lambda: 0.,
+                             detect_people_fn=lambda *_: [fresh], track_person_fn=tracked.append)
+    session.deadline_s = h.clock() + 900.
+    session.bar_pose = (0., 0., 0.)
+    session._find_barman()
+    assert math.degrees(turns[0]) == pytest.approx(90.)
+    assert tracked == [fresh] and session.barman_position == (0., 1.5)  # posicion medida de frente

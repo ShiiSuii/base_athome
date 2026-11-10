@@ -1028,18 +1028,34 @@ class RestaurantSession:
         else:
             turn = 0.0
         turn = math.atan2(math.sin(turn), math.cos(turn))
-        if ok and abs(turn) > math.radians(self.BARMAN_ALIGN_TOL_DEG):
+        # Prueba real 10/11: la vuelta se corto ("Collision Ahead") y el robot no giraba hacia el
+        # barman: le hablaba a otro lado. El rumbo odom sigue valiendo aunque el SLAM salte, asi
+        # que se gira igual; despues se corrige mirando y se sigue con una deteccion fresca.
+        faced = abs(turn) <= math.radians(self.BARMAN_ALIGN_TOL_DEG)
+        if not faced:
             self._set_state(SessionState.FINDING_BARMAN, {"angle_rad": turn, "facing": list(nearest),
-                                                          "raised": bool(raised)})
-            if self.spin_fn(turn):
-                person = self._align_barman(person, dist(person), bool(raised)) or person
+                                                          "raised": bool(raised), "scan_complete": ok})
+            faced = bool(self.spin_fn(turn))
+        if self.stopped or self._is_timeout():
+            return
+        fresh = self._align_barman(person, dist(person), bool(raised)) if faced else None
+        if fresh is not None:
+            person = fresh  # xy medido ahora: el seguimiento de cabeza no usa la posicion vieja
+        elif heading is not None and self.point_head_fn:
+            # Nav2 no dejo girar la base: al menos la cabeza mira al barman (angulo relativo, sin mapa).
+            yaw = self.get_odom_yaw_fn()
+            if yaw is not None:
+                rel = math.degrees(math.atan2(math.sin(heading - yaw), math.cos(heading - yaw)))
+                self.point_head_fn(max(-90.0, min(90.0, rel)), 0.0)
         if self.stopped or self._is_timeout():
             return
         nearest = self._person_xy(person) or nearest
         self._set_state(SessionState.CONFIRMING_BARMAN, {"xy": list(nearest), "people": len(people),
                                                          "raised": bool(raised)})
         try:
-            if self.track_person_fn and not self.stopped and not self._is_timeout():
+            # Solo con una deteccion de ahora: con la posicion de la vuelta (SLAM corrido) la cabeza
+            # se iba a otro lado.
+            if fresh is not None and self.track_person_fn and not self.stopped and not self._is_timeout():
                 self.track_person_fn(person)
             answer = self._ask_yes_no("Are you the barman? Please answer robot yes or robot no.", attempts=1)
             if self.stopped or self._is_timeout():

@@ -137,12 +137,14 @@ class RestaurantFaces:
                 if stamp > after and 0 <= self.clock() - stamp < 1.0:
                     after = stamp
                     faces = self.recognizer.detect_and_recognize(image)
-                    # Una cara centrada y de calidad. Nunca memorizar al mas grande entre varios.
-                    if len(faces) == 1:
-                        face = faces[0]
-                        x, _y, width, _height = face["bbox"]
-                        centered = abs(x + width / 2 - image.shape[1] / 2) <= image.shape[1] * 0.20
-                        if centered and face.get("quality_valid") and face.get("feature") is not None:
+                    # La cabeza apunta a la persona: vale la UNICA cara centrada aunque haya otras de
+                    # fondo (prueba real 10/11: con alguien atras no se guardaba la cara del barman).
+                    # Dos caras centradas es ambiguo: no se memoriza ninguna, ni la mas grande.
+                    centered_faces = [f for f in faces
+                                      if abs(f["bbox"][0] + f["bbox"][2] / 2 - image.shape[1] / 2) <= image.shape[1] * 0.20]
+                    if len(centered_faces) == 1:
+                        face = centered_faces[0]
+                        if face.get("quality_valid") and face.get("feature") is not None:
                             if (not samples or self.recognizer.similarity(
                                     face["feature"], samples[0]["feature"]) >= self.recognizer.cosine_thresh):
                                 samples.append(face)
