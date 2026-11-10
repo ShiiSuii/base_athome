@@ -142,7 +142,8 @@ def test_protected_never_in_whitelist():
 def test_params_listing(client):
     data = client.get("/api/params").json()
     params = {p["name"]: p for p in data["params"]}
-    assert len(params) == 40
+    assert len(params) == 41  # +column_mount_z (montaje de la columna, cambio de manipulacion)
+    assert "column_mount_z" in params
     derived = {n for n, p in params.items() if p["kind"] == "derived"}
     assert {"head_base_x", "prism_offset_x", "prism_offset_z"} <= derived
     assert not any(params[n]["editable"] for n in derived)

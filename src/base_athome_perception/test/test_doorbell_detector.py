@@ -17,6 +17,7 @@ Verifica exhaustivamente el detector de timbre en modulo puro (sin ROS):
 """
 
 import os
+from typing import Optional
 import sys
 
 import numpy as np

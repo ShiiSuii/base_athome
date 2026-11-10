@@ -95,8 +95,10 @@ def test_sense_is_about_the_image_not_the_viewer():
 
 # ---------------------------------------------------------------- flujo con ROS
 os.environ.setdefault("ROS_DOMAIN_ID", "77")
-if os.environ.get("ROS_DOMAIN_ID") != "77":
-    pytest.skip("solo en el dominio 77", allow_module_level=True)
+# Antes: pytest.skip(allow_module_level=True) aca. Con ROS cargado eso vaciaba la recoleccion de
+# TODA la carpeta (la suite de percepcion no corria fuera del dominio 77). Ahora solo se saltean
+# los tests con el fixture rig, que crean nodos ROS.
+ROS_77 = os.environ.get("ROS_DOMAIN_ID") == "77"
 rclpy = pytest.importorskip("rclpy")
 from geometry_msgs.msg import Vector3  # noqa: E402
 from rclpy.executors import MultiThreadedExecutor  # noqa: E402
@@ -157,6 +159,8 @@ class FakeHead(Node):
 
 @pytest.fixture()
 def rig():
+    if not ROS_77:
+        pytest.skip("solo en el dominio 77")
     rclpy.init()
     head, said = FakeHead(), []
     node = tool.PanTiltCalibrator(use_ssh=False, out=said.append)

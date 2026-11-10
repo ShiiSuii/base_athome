@@ -40,8 +40,10 @@ def test_wizard_can_teach_only_the_floor_pose():
 
 
 rclpy = pytest.importorskip("rclpy")
-if os.environ.get("ROS_DOMAIN_ID") != "77":
-    pytest.skip("solo en el dominio 77", allow_module_level=True)
+# Antes: pytest.skip(allow_module_level=True) aca. Con ROS cargado eso vaciaba la recoleccion de
+# TODA la carpeta (la suite de percepcion no corria fuera del dominio 77). Ahora solo se saltean
+# los tests con el fixture rig, que crean nodos ROS.
+ROS_77 = os.environ.get("ROS_DOMAIN_ID") == "77"
 from rclpy.executors import MultiThreadedExecutor  # noqa: E402
 from rclpy.node import Node  # noqa: E402
 from sensor_msgs.msg import JointState  # noqa: E402
@@ -80,6 +82,8 @@ class FakeArm(Node):
 
 @pytest.fixture()
 def rig(tmp_path):
+    if not ROS_77:
+        pytest.skip("solo en el dominio 77")
     cfg = tmp_path / "poses.yaml"
     cfg.write_text("joint_limits_deg:\n  joint1: [-154, 154]\n  joint2: [0, 195]\n  joint3: [-175, 0]\n  joint4: [-110, 110]\n"
                    "  joint5: [-85, 85]\n  joint6: [-180, 180]\nnamed_poses: {}\n")
