@@ -77,10 +77,16 @@ def test_load_additive_merge_preserves_main_poses_limits_and_input(tmp_path):
     main = {"home": {"joints_deg": [1]*6}, "restaurant_carry":
             dict(calibrated_poses()["restaurant_carry"], calibrated=False, source="current")}
     before = deepcopy(main)
-    result = merge_restaurant_poses(main, CONFIG)
+    # Copia sin calibrar: el archivo real cambia cuando el usuario guarda poses con restaurantgrasping.
+    cfg = pose_store.load_pose_config(CONFIG)
+    for pose in cfg["named_poses"].values():
+        pose["calibrated"] = False
+    extra = tmp_path / "restaurant_arm_poses.yaml"
+    extra.write_text(yaml.safe_dump(cfg))
+    result = merge_restaurant_poses(main, extra)
     assert main == before
     assert result["restaurant_carry"] == main["restaurant_carry"]
-    assert set(result) == {"home", *RESTAURANT_POSES}
+    assert {"home", *RESTAURANT_POSES} <= set(result)
     assert not poses_calibrated(result)
     assert pose_store.load_pose_config(CONFIG).keys() == {"named_poses"}
 

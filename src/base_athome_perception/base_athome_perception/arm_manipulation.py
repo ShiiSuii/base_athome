@@ -59,7 +59,7 @@ from base_athome_skills.mission import bag_task
 from base_athome_perception import wrist_geometry as wg
 from base_athome_perception.moveit_bridge import MoveItBridge, decimate, pose_from, quat_from_matrix
 from base_athome_perception.piper_kinematics import PiperKinematicsSolver
-from base_athome_perception.teach_wizard import LABELS, POSES, TeachWizard
+from base_athome_perception.teach_wizard import POSES, TeachWizard
 from base_athome_perception.wrist_detector import TargetTracker, make_bag_detector, make_detector
 
 CONFIG = os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "config", "arm_poses_and_limits.yaml")

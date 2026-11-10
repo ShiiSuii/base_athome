@@ -344,7 +344,10 @@ class BagFinder(Node):
         view_end = min(end, time.time() + view_s)
         last_stamp = self.rgb_stamp
         while time.time() < view_end and getattr(self, "scan_stop_id", None) != req_id:
-            if not (self._head_still() and time.time() - self.head_stamp < 0.5):
+            stale = time.time() - self.head_stamp >= 0.5
+            # Cabeza quieta al frente: si el pan-tilt deja de dar feedback (falla USB conocida) se sigue
+            # mirando igual; antes devolvia 0 personas sin decir por que. Solo se espera si se esta moviendo.
+            if not stale and not self._head_still():
                 time.sleep(0.05)
                 continue
             rgb, depth, stamp = self._frames(with_stamp=True)
@@ -355,6 +358,7 @@ class BagFinder(Node):
             cam = self._cam(stamp)
             people = self._poses(rgb, cam)
             seen["frames"] += 1
+            seen["head_stale"] = seen.get("head_stale", 0) + int(stale)
             seen["people"] = max(seen["people"], len(people))
             for person in people:
                 spot = self._sim_person_spot(person, cam) if SIM else None
