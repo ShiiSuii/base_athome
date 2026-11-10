@@ -32,6 +32,7 @@ from base_athome_perception import scene_analysis as scene
 from base_athome_perception.raised_hand import RaisedHandsAggregator, classify_raised_hand
 from base_athome_perception.pose_debug import draw_pose_debug
 from base_athome_perception.person_search import PersonSearch, valid_descriptor
+from base_athome_perception.people_here import PeopleTally
 from base_athome_perception.person_attributes import extract_person_attributes
 from base_athome_perception.wrist_detector import make_bag_detector
 from base_athome_skills.mission import bag_task
@@ -269,8 +270,11 @@ class BagFinder(Node):
 
     def _move_head(self, pan, tilt, dps=HEAD_SWEEP_DPS):
         """Lleva la cabeza a (pan, tilt) de a pasos chicos a velocidad constante: barrido suave, sin saltos."""
+        deadline = getattr(self, "_sweep_deadline", None)
         start = getattr(self, "head_cmd", None) or (float(self.head[0]), float(self.head[1]))
         for p, t in head_ramp(start, (pan, tilt), dps, HEAD_STEP_S):
+            if deadline is not None and time.time() + HEAD_STEP_S > deadline:
+                break
             self._send_head(p, t)
             time.sleep(HEAD_STEP_S)
 
@@ -315,6 +319,55 @@ class BagFinder(Node):
         self.get_logger().info(f"Persona en ({person[0]:.2f}, {person[1]:.2f})")
         return dict(id=req.get("id"), ok=True, person=person)
 
+    def _people_here(self, req):
+        """Cabeza al frente (pan 0) y quieta: todas las personas que se ven, con posicion en el mapa.
+
+        Para el barman de Restaurant: la base gira y esto se pide en cada vista. No exige mano
+        levantada ni estima distancias: solo profundidad medida (o la persona simulada en SIM).
+        """
+        req_id = req.get("id", "people_here")
+        try:
+            timeout_s = min(max(float(req.get("timeout_s", 5.0)), 0.5), 15.0)
+            view_s = min(max(float(req.get("view_s", 2.0)), 0.5), 10.0)
+            min_frames = max(1, int(req.get("min_frames", 2)))
+        except (TypeError, ValueError):
+            return {"id": req_id, "ok": False, "customers": [], "error": "invalid_request"}
+        end = time.time() + timeout_s
+        self._ensure_torque()
+        self._move_head(0.0, SEARCH_TILT)
+        settle_end = min(end, time.time() + RAISED_HANDS_SETTLE_S)
+        while time.time() < settle_end and not (time.time() - self.head_stamp < 0.5 and self._head_still()):
+            time.sleep(0.05)
+        tally = PeopleTally(match_dist_m=0.7)
+        seen = dict(frames=0, people=0, mapped=0)
+        view_end = min(end, time.time() + view_s)
+        last_stamp = self.rgb_stamp
+        while time.time() < view_end:
+            if not (self._head_still() and time.time() - self.head_stamp < 0.5):
+                time.sleep(0.05)
+                continue
+            rgb, depth, stamp = self._frames(with_stamp=True)
+            if rgb is None or stamp is None or stamp == last_stamp:
+                time.sleep(0.08)
+                continue
+            last_stamp = stamp
+            cam = self._cam(stamp)
+            people = self._poses(rgb, cam)
+            seen["frames"] += 1
+            seen["people"] = max(seen["people"], len(people))
+            for person in people:
+                spot = self._sim_person_spot(person, cam) if SIM else None
+                if spot is None and depth is not None and cam is not None and self.K is not None:
+                    spot = bv.person_map_position(person, depth, cam[0], cam[1], self.K)
+                if spot is not None:
+                    seen["mapped"] += 1
+                    tally.add(spot)
+            self._publish_debug(rgb, people, stamp)
+        found = tally.result(self._robot_pos(), min_hits=min_frames)
+        self.get_logger().info(f"people_here: {len(found)} personas "
+                               + ", ".join(f"{p['range_m']:.2f} m" for p in found) + f"; {seen}")
+        return {"id": req_id, "ok": True, "customers": found, "diagnostics": seen}
+
     def _look_at(self, xy):
         """Lleva la cabeza a mirar el punto del piso, usando la pose actual de la cabeza."""
         cam = self._cam()
@@ -358,6 +411,8 @@ class BagFinder(Node):
             out = self._find_raised_hands(req)
         elif mode == "locate_person":
             out = self._locate_person(req)
+        elif mode == "people_here":
+            out = self._people_here(req)
         elif mode == "refine_bag":
             out = self._refine(req)
         else:
@@ -434,99 +489,110 @@ class BagFinder(Node):
         seen = dict(frames=0, people=0, raised=0, mapped_raised=0, estimated_raised=0,
                     no_tf=0, no_depth=0, no_intrinsics=0, invalid_position=0)
         pan_idx = 0
+        pan = 0.0
         last_stamp = None
-        while time.time() < end:
-            pan = sweep_pans[pan_idx % len(sweep_pans)]
-            pan_idx += 1
-            if "head_dps" in head_options:
-                self._move_head(pan, SEARCH_TILT, dps=head_options["head_dps"])
-            else:
-                self._move_head(pan, SEARCH_TILT)
-
-            settle_end = min(end, time.time() + RAISED_HANDS_SETTLE_S)
-            while time.time() < settle_end:
-                # Con la cabeza fija (pedido con "pans", la base es la que gira) no se espera llegar: alcanza con que este quieta.
-                if (time.time() - self.head_stamp < 0.5 and self._head_still()
-                        and (fixed_head or (abs(self.head[0] - pan) < 3.0 and abs(self.head[1] - SEARCH_TILT) < 3.0))):
-                    break
-                time.sleep(0.05)
-            else:
-                # La cabeza no llego (pan-tilt trabado o sin torque). Si hay feedback fresco y esta quieta, se mira igual
-                # desde donde esta: el TF usa la posicion medida, asi que la proyeccion sigue siendo correcta.
-                if time.time() - self.head_stamp < 0.5 and self._head_still():
-                    self.get_logger().warn(f"Barrido: la cabeza no llego a pan={pan:.0f} (esta en pan={self.head[0]:.0f}, "
-                                           f"tilt={self.head[1]:.0f}); miro desde ahi")
+        self._sweep_deadline = end
+        try:
+            while time.time() < end:
+                pan = sweep_pans[pan_idx % len(sweep_pans)]
+                pan_idx += 1
+                if "head_dps" in head_options:
+                    self._move_head(pan, SEARCH_TILT, dps=head_options["head_dps"])
                 else:
-                    self.get_logger().warn(f"Barrido: sin feedback fresco en pan={pan}")
-                    continue
-            view_end = min(end, time.time() + head_options.get("view_s", RAISED_HANDS_VIEW_S))
-            # Solo imagenes nuevas despues de llegar; una imagen congelada no cuenta
-            # de nuevo al cambiar de pan ni se proyecta con el TF de otra vista.
-            last_stamp = self.rgb_stamp
+                    self._move_head(pan, SEARCH_TILT)
 
-            while time.time() < view_end:
-                if self._head_still() and time.time() - self.head_stamp < 0.5:
-                    rgb, depth, stamp = self._frames(with_stamp=True)
-                    if stamp is None or stamp == last_stamp:
-                        time.sleep(0.12)
+                settle_end = min(end, time.time() + RAISED_HANDS_SETTLE_S)
+                while time.time() < settle_end:
+                    # Con la cabeza fija (pedido con "pans", la base es la que gira) no se espera llegar: alcanza con que este quieta.
+                    if (time.time() - self.head_stamp < 0.5 and self._head_still()
+                            and (fixed_head or (abs(self.head[0] - pan) < 3.0 and abs(self.head[1] - SEARCH_TILT) < 3.0))):
+                        break
+                    time.sleep(0.05)
+                else:
+                    # La cabeza no llego (pan-tilt trabado o sin torque). Si hay feedback fresco y esta quieta, se mira igual
+                    # desde donde esta: el TF usa la posicion medida, asi que la proyeccion sigue siendo correcta.
+                    if time.time() - self.head_stamp < 0.5 and self._head_still():
+                        self.get_logger().warn(f"Barrido: la cabeza no llego a pan={pan:.0f} (esta en pan={self.head[0]:.0f}, "
+                                               f"tilt={self.head[1]:.0f}); miro desde ahi")
+                    else:
+                        self.get_logger().warn(f"Barrido: sin feedback fresco en pan={pan}")
+                        if search is None and "pans" in req and pan_idx >= len(sweep_pans):
+                            break
                         continue
-                    last_stamp = stamp
-                    cam = self._cam(stamp)
-                    if rgb is not None:
-                        people = self._poses(rgb, cam)
-                        seen["frames"] += 1
-                        seen["people"] = max(seen["people"], len(people))
-                        seen["raised"] += sum(1 for p in people if classify_raised_hand(p[1], p[2]).is_raised)
-                        candidates = []
-                        for person in people:
-                            is_raised = classify_raised_hand(person[1], person[2]).is_raised
-                            # En simulacion los puntos del cuerpo no coinciden con el modelo dibujado: la profundidad del
-                            # torso caia en la pared de atras (~2x de distancia). Ahi se usa la posicion de la persona simulada.
-                            spot = self._sim_person_spot(person, cam) if SIM else None
-                            estimated = False
-                            if spot is None and depth is not None and cam is not None and self.K is not None:
-                                spot = bv.person_map_position(person, depth, cam[0], cam[1], self.K)
-                            if spot is None and search is None and is_raised and cam is not None and self.K is not None:
-                                if hasattr(bv, "person_estimated_map_position"):
-                                    spot = bv.person_estimated_map_position(person, depth, cam[0], cam[1], self.K)
-                                    estimated = spot is not None
-                            if is_raised:
-                                if spot is not None:
-                                    seen["mapped_raised"] += 1
-                                    if estimated:
-                                        seen["estimated_raised"] += 1
-                                elif cam is None:
-                                    seen["no_tf"] += 1
-                                elif depth is None:
-                                    seen["no_depth"] += 1
-                                elif self.K is None:
-                                    seen["no_intrinsics"] += 1
-                                else:
-                                    seen["invalid_position"] += 1
-                            if spot is not None:
-                                if search is None:
-                                    aggregator.update_observation(
-                                        spot, keypoints=person[1], conf=person[2], estimated=estimated)
-                                else:
-                                    attrs = (extract_person_attributes(rgb, person[1], person[2])
-                                             if search.descriptor.get("clothing") else None)
-                                    candidates.append(dict(xy=spot, bbox=person[0], keypoints=person[1],
-                                                           keypoints_conf=person[2], attributes=attrs))
-                        if search is not None:
-                            # La misma imagen no cuenta varias veces como evidencia temporal.
-                            search.update_frame(candidates)
-                        self._publish_debug(rgb, people, stamp)
-                        if (search is None and req.get("stop_on_first") is True
-                                and aggregator.get_confirmed_customers(self._robot_pos())):
-                            return aggregator.build_response(req_id, robot_pos=self._robot_pos())
-                time.sleep(0.12)
+                view_end = min(end, time.time() + head_options.get("view_s", RAISED_HANDS_VIEW_S))
+                # Solo imagenes nuevas despues de llegar; una imagen congelada no cuenta
+                # de nuevo al cambiar de pan ni se proyecta con el TF de otra vista.
+                last_stamp = self.rgb_stamp
 
-            # Si ya se cubrio el barrido completo al menos una vez y hay clientes confirmados, se devuelve
-            if pan_idx >= len(sweep_pans):
-                confirmed = (search.build_response(req_id, self._robot_pos())["ok"] if search is not None
-                             else aggregator.get_confirmed_customers(self._robot_pos()))
-                if confirmed:
-                    break
+                while time.time() < view_end:
+                    if self._head_still() and time.time() - self.head_stamp < 0.5:
+                        rgb, depth, stamp = self._frames(with_stamp=True)
+                        if stamp is None or stamp == last_stamp:
+                            time.sleep(0.12)
+                            continue
+                        last_stamp = stamp
+                        cam = self._cam(stamp)
+                        if rgb is not None:
+                            people = self._poses(rgb, cam)
+                            seen["frames"] += 1
+                            seen["people"] = max(seen["people"], len(people))
+                            seen["raised"] += sum(1 for p in people if classify_raised_hand(p[1], p[2]).is_raised)
+                            candidates = []
+                            for person in people:
+                                is_raised = classify_raised_hand(person[1], person[2]).is_raised
+                                # En simulacion los puntos del cuerpo no coinciden con el modelo dibujado: la profundidad del
+                                # torso caia en la pared de atras (~2x de distancia). Ahi se usa la posicion de la persona simulada.
+                                spot = self._sim_person_spot(person, cam) if SIM else None
+                                estimated = False
+                                if spot is None and depth is not None and cam is not None and self.K is not None:
+                                    spot = bv.person_map_position(person, depth, cam[0], cam[1], self.K)
+                                if spot is None and search is None and is_raised and cam is not None and self.K is not None:
+                                    if hasattr(bv, "person_estimated_map_position"):
+                                        spot = bv.person_estimated_map_position(person, depth, cam[0], cam[1], self.K)
+                                        estimated = spot is not None
+                                if is_raised:
+                                    if spot is not None:
+                                        seen["mapped_raised"] += 1
+                                        if estimated:
+                                            seen["estimated_raised"] += 1
+                                    elif cam is None:
+                                        seen["no_tf"] += 1
+                                    elif depth is None:
+                                        seen["no_depth"] += 1
+                                    elif self.K is None:
+                                        seen["no_intrinsics"] += 1
+                                    else:
+                                        seen["invalid_position"] += 1
+                                if spot is not None:
+                                    if search is None:
+                                        aggregator.update_observation(
+                                            spot, keypoints=person[1], conf=person[2], estimated=estimated)
+                                    else:
+                                        attrs = (extract_person_attributes(rgb, person[1], person[2])
+                                                 if search.descriptor.get("clothing") else None)
+                                        candidates.append(dict(xy=spot, keypoints=person[1],
+                                                               keypoints_conf=person[2], bbox=person[0], attributes=attrs))
+                            if search is not None:
+                                # La misma imagen no cuenta varias veces como evidencia temporal.
+                                search.update_frame(candidates)
+                            self._publish_debug(rgb, people, stamp)
+                            if (search is None and req.get("stop_on_first") is True
+                                    and aggregator.get_confirmed_customers(self._robot_pos())):
+                                return aggregator.build_response(req_id, robot_pos=self._robot_pos())
+                    time.sleep(0.12)
+
+                # Si ya se cubrio el barrido completo al menos una vez y hay clientes confirmados (o pans explicitos), se devuelve
+                if pan_idx >= len(sweep_pans):
+                    if search is None and "pans" in req:
+                        break
+                    confirmed = (search.build_response(req_id, self._robot_pos())["ok"] if search is not None
+                                 else aggregator.get_confirmed_customers(self._robot_pos()))
+                    if confirmed:
+                        break
+        finally:
+            self._sweep_deadline = None
+            if search is None and "pans" in req and abs(float(sweep_pans[-1])) <= 1e-3 and abs(float(pan)) > 1e-3:
+                self._send_head(0.0, SEARCH_TILT)
 
         if search is not None:
             return search.build_response(req_id, self._robot_pos())

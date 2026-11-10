@@ -344,10 +344,12 @@ class RestaurantSession:
         stow_fn: Optional[Callable[[], bool]] = None,
         arm: bool = True,
         detect_barman_fn: Optional[Callable[[float, int], Any]] = None,
+        detect_people_fn: Optional[Callable[[float, int], Any]] = None,
         track_person_fn: Optional[Callable[[dict], None]] = None,
         stop_tracking_fn: Optional[Callable[[], None]] = None,
     ):
         self.detect_barman_fn = detect_barman_fn
+        self.detect_people_fn = detect_people_fn
         self.track_person_fn = track_person_fn
         self.stop_tracking_fn = stop_tracking_fn
         self.barman_position: Optional[Tuple[float, float]] = None
@@ -418,6 +420,13 @@ class RestaurantSession:
 
     def _set_state(self, new_state: SessionState, info: Optional[Dict[str, Any]] = None) -> None:
         self.state = new_state
+        if new_state in {
+            SessionState.APPROACHING_CUSTOMER,
+            SessionState.RETURNING_TO_BAR,
+            SessionState.RETURNING_TO_BAR_FINAL,
+            SessionState.DELIVERING_TO_CUSTOMER,
+        }:
+            self._look_forward()
         if self.on_state_change_fn:
             payload = {
                 "state": new_state.value,
@@ -442,6 +451,7 @@ class RestaurantSession:
         """El adaptador recibe el deadline absoluto y debe cancelar/drenar al vencer."""
         if self.stopped or self._is_timeout():
             return False
+        self._stop_tracking()
         return self.navigate_fn(*pose, deadline_s=self.deadline_s)
 
     def _wait_for_pose(self) -> Optional[Tuple[float, float, float]]:
@@ -469,7 +479,9 @@ class RestaurantSession:
         if isinstance(raw, dict) and not raw.get("ok", True):
             self.detection_error = raw.get("error", "")
         view = (raw.get("customers", []) if raw.get("ok", True) else []) if isinstance(raw, dict) else raw
-        return [dict(c) for c in view if self._eligible_customer(c)] if isinstance(view, list) else []
+        eligible = [dict(c) for c in view if self._eligible_customer(c)] if isinstance(view, list) else []
+        self._look_forward()
+        return eligible
 
     def _handle_pose_failure(self) -> bool:
         if self.stopped:
@@ -728,6 +740,15 @@ class RestaurantSession:
             ok = False
         self._set_state(SessionState.ENROLLING_FACE, {"label": label, "ok": ok})
 
+    def _look_forward(self) -> None:
+        """Camara al frente (pan 0, tilt 0) antes de moverse: deja de seguir a la persona."""
+        self._stop_tracking()
+        if self.point_head_fn:
+            try:
+                self.point_head_fn(0.0, 0.0)
+            except Exception:
+                pass  # Sin cabeza la base igual puede navegar; Nav2 usa el LiDAR.
+
     def _stop_tracking(self) -> None:
         if self.stop_tracking_fn:
             try:
@@ -744,61 +765,77 @@ class RestaurantSession:
         except (TypeError, ValueError, IndexError):
             return None
 
-    def _find_barman(self) -> None:
-        """Vista frontal y pasos Spin de 30 grados, como maximo una vuelta.
+    BARMAN_STEP_RAD = math.pi / 6  # 12 vistas de 30 grados: una vuelta completa
+    BARMAN_VIEW_TIMEOUT_S = 6.0
 
-        detect_barman_fn mira con pan 0 y el tilt de busqueda, sin barrer.
-        Spin conserva la velocidad lenta del perfil Restaurant y debe esperar
-        resultado terminal/cancelacion antes de devolver el control.
+    def _find_barman(self) -> None:
+        """Vuelta completa en el lugar mirando al frente; el barman es la persona mas cercana.
+
+        En cada una de las 12 vistas (cada 30 grados) junta a todas las personas con
+        posicion en el mapa, sin pedir mano levantada. Al terminar gira de frente a la
+        mas cercana al robot, la sigue con la cabeza y pregunta si es el barman.
         """
         self.barman_position = None
         self._set_state(SessionState.FINDING_BARMAN)
         self._speak(rest.BARMAN_SEARCH)
-        detect = self.detect_barman_fn or self.detect_customers_fn
-        for step in range(13 if self.spin_fn else 1):
+        detect = self.detect_people_fn or self.detect_barman_fn or self.detect_customers_fn
+        steps = 12 if self.spin_fn else 1
+        seen: List[Tuple[Tuple[float, float], dict]] = []
+        spin_failed = False
+        if self.point_head_fn:
+            self.point_head_fn(0.0, 0.0)
+        for step in range(steps):
             if self.stopped or self._is_timeout():
                 return
-            self._speak(rest.SEARCHING_PEOPLE)
-            if self.stopped or self._is_timeout():
-                return
-            if step == 0 and self.point_head_fn:
-                self.point_head_fn(0.0, 0.0)  # SEARCH_TILT actual de bag_finder
-            spin_ok = True
-            if step:
-                self._set_state(SessionState.FINDING_BARMAN, {"angle_rad": math.pi / 6, "step": step})
-                if self.stopped or self._is_timeout():
-                    return
-                spin_ok = self.spin_fn(math.pi / 6)
-            if self.stopped or self._is_timeout():
-                return
-            raw = detect(min(14.0, self.remaining_s()), 3)
+            raw = detect(min(self.BARMAN_VIEW_TIMEOUT_S, self.remaining_s()), 2)
             if self.stopped or self._is_timeout():
                 return
             people = (raw.get("customers", []) if raw.get("ok", True) else []) if isinstance(raw, dict) else raw
-            if isinstance(people, list) and people:
-                def distance(person):
-                    xy = self._person_xy(person)
-                    return math.hypot(xy[0] - self.bar_pose[0], xy[1] - self.bar_pose[1]) if xy else float("inf")
-                person = min(people, key=distance)
-                self._set_state(SessionState.CONFIRMING_BARMAN)
-                try:
-                    if self.track_person_fn and not self.stopped and not self._is_timeout():
-                        self.track_person_fn(person)
-                    answer = self._ask_yes_no("Are you the barman? Please answer robot yes or robot no.", attempts=1)
-                    if self.stopped or self._is_timeout():
-                        return
-                    if answer is True:
-                        self.barman_position = self._person_xy(person)
-                        self._enroll_face("barman", person)
-                    else:
-                        self._speak("The barman was not confirmed. I will use my initial position as the bar.")
-                finally:
-                    self._stop_tracking()
-                return  # Al ver a alguien no se vuelve a girar, incluso si responde no.
-            # Yaw incierto tras un fallo: no encadenar mas giros relativos.
-            if not spin_ok:
+            for person in people if isinstance(people, list) else []:
+                xy = self._person_xy(person)
+                # Misma persona vista desde dos angulos: una sola entrada.
+                if xy and all(math.hypot(xy[0] - o[0], xy[1] - o[1]) >= 0.7 for o, _ in seen):
+                    seen.append((xy, person))
+            # Tras un giro fallido se mira una vez desde donde quedo, sin encadenar mas giros.
+            if step == steps - 1 or spin_failed:
                 break
-        self._speak("I could not find the barman. I will use my initial position as the bar.")
+            self._set_state(SessionState.FINDING_BARMAN, {"angle_rad": self.BARMAN_STEP_RAD, "step": step + 1,
+                                                          "people": len(seen)})
+            if self.stopped or self._is_timeout():
+                return
+            spin_failed = not self.spin_fn(self.BARMAN_STEP_RAD)
+        if self.stopped or self._is_timeout():
+            return
+        if not seen:
+            self._speak("I could not find the barman. I will use my initial position as the bar.")
+            return
+
+        pose = self.get_pose_fn() or self.bar_pose
+        origin = (pose[0], pose[1]) if pose else (0.0, 0.0)
+        nearest, person = min(seen, key=lambda s: math.hypot(s[0][0] - origin[0], s[0][1] - origin[1]))
+        # De frente al mas cercano; si un giro fallo, solo la cabeza lo sigue.
+        if self.spin_fn and pose and not spin_failed:
+            turn = math.atan2(nearest[1] - pose[1], nearest[0] - pose[0]) - pose[2]
+            turn = math.atan2(math.sin(turn), math.cos(turn))
+            if abs(turn) > math.radians(5):
+                self._set_state(SessionState.FINDING_BARMAN, {"angle_rad": turn, "facing": list(nearest)})
+                self.spin_fn(turn)
+        if self.stopped or self._is_timeout():
+            return
+        self._set_state(SessionState.CONFIRMING_BARMAN, {"xy": list(nearest), "people": len(seen)})
+        try:
+            if self.track_person_fn and not self.stopped and not self._is_timeout():
+                self.track_person_fn(person)
+            answer = self._ask_yes_no("Are you the barman? Please answer robot yes or robot no.", attempts=1)
+            if self.stopped or self._is_timeout():
+                return
+            if answer is True:
+                self.barman_position = nearest
+                self._enroll_face("barman", person)
+            else:
+                self._speak("The barman was not confirmed. I will use my initial position as the bar.")
+        finally:
+            self._stop_tracking()
 
     def _bar_target_pose(self) -> Tuple[float, float, float]:
         """Regresa al punto inicial mirando al barman localizado en map."""

@@ -170,6 +170,8 @@ class RestaurantFaces:
             return False
 
     def identify(self, person):
+        if not self.labels:
+            return None
         try:
             samples = self._samples(person, count=3)
             if len(samples) != 3:

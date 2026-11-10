@@ -210,6 +210,7 @@ class RestaurantNode(Node):
             batch_orders=batch_orders,
             spin_fn=self._spin,
             detect_barman_fn=self._detect_barman,
+            detect_people_fn=self._detect_people,
             track_person_fn=self._track_person,
             stop_tracking_fn=self._stop_tracking,
         )
@@ -404,6 +405,27 @@ class RestaurantNode(Node):
         except Exception as e:
             self.get_logger().warn(f"Error en escucha VoiceClient: {e}")
         return ""
+
+    def _detect_people(self, timeout_s: float, min_frames: int):
+        """Todas las personas que ve la camara al frente, con posicion en el mapa (sin mano levantada)."""
+        req_id = f"rest_people_{int(time.time() * 1000)}"
+        ev = threading.Event()
+        with self._bag_lock:
+            self._bag_pending[req_id] = (ev, {})
+        self.pub_bag_request.publish(String(data=json.dumps({
+            "id": req_id, "mode": "people_here", "view_s": 2.0,
+            "timeout_s": float(timeout_s), "min_frames": int(min_frames),
+        })))
+        ev.wait(timeout=max(0.0, min(timeout_s + 5.0, self.session.remaining_s())))
+        with self._bag_lock:
+            _, res_data = self._bag_pending.pop(req_id, (None, {}))
+        if not res_data or not res_data.get("ok", False):
+            self.get_logger().warn(f"Sin respuesta de personas de bag_finder ({res_data.get('error', 'timeout')}).")
+            return []
+        people = res_data.get("customers", [])
+        for p in people:
+            self.get_logger().info(f"Persona: xy={p.get('xy')} range_m={p.get('range_m')}")
+        return people
 
     def _detect_barman(self, timeout_s: float, min_frames: int):
         return self._detect_customers(timeout_s, min_frames, pans=[0.0], stop_on_first=True)
