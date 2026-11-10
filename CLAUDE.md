@@ -15,12 +15,14 @@ junto con Google Antigravity dentro de Orca. Al empezar:
    orca status --json    # si existe la CLI
    ```
    No imprimas `git remote -v` sin redactar. Si vas a tocar la Jetson, inspeccioná primero por SSH (`ubuntu@10.42.0.12`).
-6. **Coordiná con Antigravity** solo después de verificar su worktree, rama y que Orca realmente
-   despacha tareas (`AGENTS.md` §6). No afirmes que recibió algo sin evidencia.
+6. **Sos el orquestador maestro** (`AGENTS.md` §6): el código va a **Codex** (`codex exec` en su worktree, con
+   commits en su rama y tests ROS en dominios 42/77), la investigación y los documentos a **Antigravity**, y vos
+   integrás, revisás, corrés Gazebo y programás lo más difícil. No afirmes que un worker recibió o hizo algo sin
+   evidencia (log, commit, tests).
 7. **Desarrollá de forma autónoma:** investigar → hipótesis → implementar → probar → corregir → documentar
    → siguiente mejora, sin detenerte a pedir permiso entre etapas. Preguntá solo lo que `AGENTS.md` marca
-   como Nivel C (actuadores físicos, firmware, borrado irreversible, navegación funcional, `main`).
-   Mantené a Antigravity trabajando en paralelo en tareas independientes.
+   como Nivel C (actuadores físicos, firmware, borrado irreversible, radio/inflado de la navegación, `main`).
+   Mantené a Codex y Antigravity trabajando en paralelo en tareas independientes.
 
 Al terminar cada bloque: actualizá `STATUS.md`, `tools/debug_dashboard/capacidades.yaml` (y el documento
 maestro que corresponda) en el mismo commit, y respondé con hechos verificados, pruebas reales, qué no se probó, rollback y siguiente paso.

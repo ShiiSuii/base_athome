@@ -71,7 +71,7 @@ driver abra USB/CAN: revisar el launch antes.
 
 ## 4. Navegación protegida
 
-**Estudiar sí, modificar no.** La navegación funciona y es del usuario.
+**Estudiar sí, modificar con autorización.** La navegación funciona y es del usuario. El 2026-11-09 autorizó ajustarla: `max_obstacle_height`, costmap local 5 m, progress checker, AMCL, esperas del BT y el filtro `/scan_nav` ya están aplicados; perfiles nuevos solo de simulación (`simulation/base_athome_sim/config/nav2_params_*.yaml`) o de una prueba (`src/base_athome_skills/config/nav2_restaurant.yaml`) no necesitan autorización. Cambiar el radio o el inflado del robot sí (falta medir el brazo).
 
 - **Permitido sin pedir permiso:** leer todo (Nav2, AMCL, SLAM, mapas, costmaps, BT, driver y firmware de la base, odometría, TF, launch, parámetros, logs), observar tópicos de forma pasiva y acotada (`ros2 topic hz/info/echo --once`), reproducir en simulación aislada, comparar con proyectos externos y escribir propuestas en `docs/ROADMAP.md` §6.
 - **Prohibido sin autorización específica:** modificar Nav2, SLAM, AMCL, costmaps, planner, controller, BT, footprint, `map.pgm`/mapas, odometría, TF de navegación, driver o firmware de la base, parámetros de locomoción, launches de navegación; reiniciar sus servicios; enviar goals o `cmd_vel`; `ros2 param set`/`lifecycle set` sobre ellos.
@@ -107,17 +107,19 @@ secretos).
 
 ## 6. Coordinación en Orca
 
-- **Claude Code:** coordinador técnico, dueño del plan, integración, revisión final, recursos de host (SSH, Jetson, servicios) y de `STATUS.md`. También implementa.
-- **Antigravity:** implementa o revisa tareas acotadas en su worktree (editor URDF, simulación, tests, GPSR, HRI, investigación). Segundo revisor de los cambios de Claude cuando esté disponible.
+- **Claude Code — orquestador maestro:** dueño del plan, reparte el trabajo, integra (cherry-pick a su rama y push a `development`), revisa todo antes de integrar, corre Gazebo y pruebas con hardware, maneja recursos de host (SSH, Jetson, servicios) y `STATUS.md`. Programa él mismo lo más difícil o urgente.
+- **Codex (`gpt-6.1-sol`):** programador principal. Recibe tareas de código con tests en su propio worktree (`git worktree add`) y se lanza con `codex exec -C <worktree> -s workspace-write -c 'sandbox_workspace_write.writable_roots=["<repo>/.git"]' -c 'sandbox_workspace_write.network_access=true'`: puede commitear en su rama y correr tests con ROS en los dominios 42/77; nunca push. También hace revisiones de código (solo lectura).
+- **Antigravity (Gemini):** investigación, documentación (TDP, informes) y código acotado. Modelo fuerte disponible (`gemini-4-argon-high`); si se agota, `gemini-3.8-flash-high`. Si un worker se traba pidiendo aprobación por cada comando, la tarea pasa a Codex.
 - **Humano:** decide energía, movimiento, navegación, credenciales, `main` y acciones irreversibles.
 
 Reglas:
 1. **Verificar antes de coordinar:** `git worktree list`, rama y SHA de cada worktree, `orca status --json`. Si la orquestación (`orca skills get orchestration --full`) no está habilitada, no inventar Run/Task/IDs ni afirmar que Antigravity recibió algo.
+1b. **Graphify:** Claude y Codex lo usan antes de leer código. Los workers de Antigravity lo tienen permitido desde el 2026-11-10; si un worker no puede correrlo, que use `git grep`/`rg` y no se trabe.
 2. **Una tarea por worktree, un dueño por archivo.** Archivos comunes (`AGENTS.md`, `CLAUDE.md`, `README.md`, `docs/*.md`, `STATUS.md`, archivos ROS compartidos) los edita solo el integrador.
 3. **Los worktrees no son sandbox:** comparten ROS, USB, GPU, cámaras, red, `systemd` y cuentas. Reservar por escrito el recurso mutable (`JETSON_SSH_WRITE`, `NUC_SYSTEMD`, `REALSENSE_USB`, `ORBBEC_USB`, `PIPER_CAN`, `GPU_JETSON`, `ROS_DOMAIN_10/42`, `MAP_SEMANTIC`, `GIT_INTEGRATION`); uno a la vez.
 4. **Contrato de despacho:** ID real · dueño · modo · objetivo verificable · SHA base · worktree/rama · archivos de lectura y de escritura · recurso reservado · pruebas (comando y condición) · prohibiciones (navegación, ROS 1, Google, pagos, secretos, hardware) · entregables (diff, tests, rollback) · criterio de terminado.
 5. Estados: `PLANNED → DISPATCHED → ACKNOWLEDGED → IMPLEMENTING → REVIEW_READY → ACCEPTED` o `BLOCKED_WORKER`/`REJECTED`. Un `worker_done` no prueba nada: revisar `git status`, `git diff --stat`, `git diff --check`, tests y docs.
-6. **Recuperación:** si un worker cae por cuota/login, registrar `BLOCKED_WORKER` con rama/SHA y Claude retoma la tarea en un worktree nuevo; nunca sobre archivos a medio escribir ajenos ni borrando worktrees con trabajo sin integrar.
+6. **Recuperación:** si un worker de Antigravity cae por cuota, se relanza con `gemini-3.8-flash-high` sobre el mismo worktree; si cae por login, se trabó en aprobaciones o es Codex el que se cortó (por ejemplo, un reinicio de la NUC), se relanza pidiéndole que continúe desde `git status`/`git diff` del worktree. Nunca sobre archivos a medio escribir ajenos ni borrando worktrees con trabajo sin integrar.
 7. Documentación de Orca (leer la de la versión instalada antes de usar comandos): <https://www.onorca.dev/docs/cli/orchestration>, <https://www.onorca.dev/docs/agents/supported>, <https://www.onorca.dev/docs/settings>. Permisos de Claude Code: <https://code.claude.com/docs/en/permissions>.
 8. Orca debe correr sin `--dangerously-skip-permissions`/`--yolo` en hosts con hardware; nada de auto-aprobadores ciegos ni convertir una pregunta de un worker en aprobación humana. **Sí** se usa la aprobación acotada `tools/agents/agy_bounded_allow.py` (hook `PreToolUse` de Antigravity instalado en `~/.gemini/config/`): aprueba solo inspección Git, `git add/commit`, lectura, pytest, colcon y xacro dentro de los worktrees; lo demás pregunta. Ampliarla solo con tests.
 
