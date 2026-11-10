@@ -30,7 +30,7 @@ def main():
             # el pedido de este cliente; si el robot pide repetir, se repite el mismo
             text = "my order is " + ORDERS[min(state["customer"], len(ORDERS) - 1)]
         elif "are you the barman" in said:
-            text = "robot no"      # en Gazebo no hay modelo de barman: los que levantan la mano son clientes
+            text = "robot yes"     # el barman esta de pie detras de la barra (ultimo de ATHOME_SIM_CUSTOMERS en restaurant.sh)
         elif "robot yes" in said or "?" in said:
             # are you the barman / do you have an order / is that correct / tell me when done / did you take it
             text = "robot yes"

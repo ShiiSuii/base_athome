@@ -124,7 +124,7 @@ if [ "${SIM:-0}" = 1 ]; then
     export ATHOME_SIM_CUSTOMERS="${ATHOME_SIM_CUSTOMERS:-6.5,3.5,right,seated;8.55,0.1,left,seated}"
   else
     export ATHOME_SIM_WORLD=restaurant.sdf   # el simulador crea los clientes en este mundo: sin esto los pedia en otro y no aparecian
-    export ATHOME_SIM_CUSTOMERS="${ATHOME_SIM_CUSTOMERS:-2.0,2.8,right,seated;3.0,-2.9,left,seated}"   # sentados en las mesas 1 y 3 de restaurant.sdf (12 x 9 m)
+    export ATHOME_SIM_CUSTOMERS="${ATHOME_SIM_CUSTOMERS:-2.0,2.8,right,seated;3.0,-2.9,left,seated;-2.6,0.0,right,standing}"   # clientes sentados en las mesas 1 y 3 de restaurant.sdf (12 x 9 m); el ultimo es el barman, de pie detras de la barra (x=-2), a espaldas del arranque
   fi
   export ATHOME_SIM_NAV2=1      # la navegacion la hace Nav2 + SLAM, no el simulador
   [ -f "$HOME/cyclonedds_local.xml" ] && export CYCLONEDDS_URI=file://$HOME/cyclonedds_local.xml
