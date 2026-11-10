@@ -328,10 +328,8 @@ class BagFinder(Node):
         """
         req_id = req.get("id", "people_here")
         try:
-            # Restaurant mantiene esta vista durante dos Spins y una locucion.
-            # Los pedidos cortos conservan sus defaults; stop_scan termina antes.
-            timeout_s = min(max(float(req.get("timeout_s", 5.0)), 0.5), 120.0)
-            view_s = min(max(float(req.get("view_s", 2.0)), 0.5), 115.0)
+            timeout_s = min(max(float(req.get("timeout_s", 5.0)), 0.5), 60.0)
+            view_s = min(max(float(req.get("view_s", 2.0)), 0.5), 55.0)
             min_frames = max(1, int(req.get("min_frames", 2)))
         except (TypeError, ValueError):
             return {"id": req_id, "ok": False, "customers": [], "error": "invalid_request"}

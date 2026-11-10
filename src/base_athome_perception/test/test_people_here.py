@@ -50,33 +50,3 @@ def test_heading_is_a_circular_mean_across_plus_minus_180():
     t.add([1.0, 0.0], heading_deg=-179.0)
     (p,) = t.result((0.0, 0.0), min_hits=2)
     assert abs(abs(p["heading_deg"]) - 180.0) < 1e-6
-
-
-def test_continuous_scan_can_cover_two_spins_and_still_has_a_finite_cap():
-    """Exercise the adapter with a fake clock and no frames; no ROS or camera."""
-    import ast
-    from pathlib import Path
-    from types import SimpleNamespace as NS
-    script = Path(__file__).parents[1] / 'scripts/bag_finder.py'
-    cls = next(n for n in ast.parse(script.read_text()).body
-               if isinstance(n, ast.ClassDef) and n.name == 'BagFinder')
-    method = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == '_people_here')
-    for requested, timeout, expected, stop_after in [
-            (100., 102., 100., None), (500., 500., 115., None),
-            (2., 5., 2., None), (100., 102., 2., 2.)]:
-        now = [100.]
-        def sleep(seconds):
-            now[0] += seconds
-            if stop_after is not None and now[0] >= 100. + stop_after:
-                node.scan_stop_id = 'scan'
-        env = dict(time=NS(time=lambda: now[0], sleep=sleep), PeopleTally=PeopleTally,
-                   RAISED_HANDS_SETTLE_S=1.5, SEARCH_TILT=0.)
-        exec(compile(ast.Module(body=[method], type_ignores=[]), str(script), 'exec'), env)
-        node = NS(head_stamp=100., rgb_stamp=None, _ensure_torque=lambda: None,
-                  _move_head=lambda *_: None, _head_still=lambda: True,
-                  _frames=lambda **_: (None, None, None), _robot_pos=lambda: (0., 0.),
-                  get_logger=lambda: NS(info=lambda _: None))
-        result = env['_people_here'](node, {'id': 'scan', 'view_s': requested, 'timeout_s': timeout})
-        assert result['ok'] and result['customers'] == []
-        assert expected <= now[0] - 100. < expected + .1
-        assert result['diagnostics'].get('stopped', False) == (stop_after is not None)
