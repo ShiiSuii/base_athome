@@ -164,7 +164,7 @@ def test_barman_full_turn_then_faces_nearest_person_and_asks():
     session.deadline_s = h.clock() + 900.
     session.bar_pose = (0., 0., 0.)
     session._find_barman()
-    assert views == list(range(12))  # 12 vistas: vuelta completa antes de decidir
+    assert views == list(range(13))  # 12 vistas de la vuelta + 1 para corregir mirando
     assert turns[:11] == pytest.approx([math.pi / 6] * 11)
     want = math.atan2(near[1], near[0])
     assert len(turns) == 12 and h.robot_pose[2] == pytest.approx(want)  # de frente al mas cercano
@@ -173,6 +173,62 @@ def test_barman_full_turn_then_faces_nearest_person_and_asks():
     assert [v for k, v in h.events if k == 'head'][0] == (0., 0.)
     assert h.spoken == [rest.BARMAN_SEARCH, 'Are you the barman? Please answer robot yes or robot no.']
     assert h.events.index(('track', {'xy': near})) < h.events.index(('speak', h.spoken[-1]))
+
+
+def test_barman_is_nearest_with_raised_hand_and_turn_ignores_map_yaw():
+    """Prueba real 10/11: el yaw de SLAM se corrio al girar; el giro final sale de los giros contados."""
+    h = FakeRestaurantHarness(speech_script=['robot yes'])
+    turns, tracking = [], []
+    near_no_hand = {'xy': [1., 0.], 'range_m': 1.0, 'bearing_deg': 10., 'raised_frames': 0}
+    barman = {'xy': [-1.5, .3], 'range_m': 1.5, 'bearing_deg': -5., 'raised_frames': 8}
+    centered = dict(barman, bearing_deg=3.)
+    def detect(*_):
+        if len(turns) == 2:
+            return [near_no_hand]
+        if len(turns) == 5:
+            return [barman]
+        return [centered] if len(turns) == 12 else []
+    # spin falso que NO toca la pose: el yaw del mapa queda en 0 todo el tiempo.
+    session = h.make_session(spin_fn=lambda a: turns.append(a) or True, detect_people_fn=detect,
+                             track_person_fn=tracking.append, stop_tracking_fn=lambda: None)
+    session.deadline_s = h.clock() + 900.
+    session.bar_pose = (0., 0., 0.)
+    session._find_barman()
+    # rumbo del barman: 5 giros x 30 - 5 = 145 grados; robot en 330 -> girar +175
+    assert len(turns) == 12 and math.degrees(turns[-1]) == pytest.approx(175.)
+    assert tracking == [centered] and session.barman_position == (-1.5, .3)
+    assert rest.BARMAN_SEARCH in h.spoken and 'raised' in rest.BARMAN_SEARCH
+
+
+def test_barman_alignment_turns_until_centered_in_camera():
+    h = FakeRestaurantHarness(speech_script=['robot yes'])
+    turns = []
+    barman = {'xy': [0., 2.], 'range_m': 2.0, 'bearing_deg': 0., 'raised_frames': 5}
+    aligned = iter([[dict(barman, bearing_deg=20.)], [dict(barman, bearing_deg=-2.)]])
+    def detect(*_):
+        if len(turns) == 3:
+            return [barman]
+        return next(aligned) if len(turns) >= 12 else []
+    session = h.make_session(spin_fn=lambda a: turns.append(a) or True, detect_people_fn=detect)
+    session.deadline_s = h.clock() + 900.
+    session.bar_pose = (0., 0., 0.)
+    session._find_barman()
+    assert math.degrees(turns[11]) == pytest.approx(90. - 330. + 360.)
+    assert len(turns) == 13 and math.degrees(turns[12]) == pytest.approx(20.)  # una correccion y ya centrado
+    assert session.barman_position == (0., 2.)
+
+
+def test_barman_without_raised_hands_falls_back_to_nearest_person():
+    h = FakeRestaurantHarness(speech_script=['robot yes'])
+    turns = []
+    far = {'xy': [3., 0.], 'range_m': 3.0, 'bearing_deg': 0., 'raised_frames': 0}
+    near = {'xy': [0., -1.], 'range_m': 1.0, 'bearing_deg': 0., 'raised_frames': 1}  # 1 cuadro no alcanza
+    session = h.make_session(spin_fn=lambda a: turns.append(a) or True,
+                             detect_people_fn=lambda *_: [far, near] if not turns else [])
+    session.deadline_s = h.clock() + 900.
+    session.bar_pose = (0., 0., 0.)
+    session._find_barman()
+    assert session.barman_position == (0., -1.)
 
 
 def test_barman_nearest_already_in_front_does_not_turn_again():

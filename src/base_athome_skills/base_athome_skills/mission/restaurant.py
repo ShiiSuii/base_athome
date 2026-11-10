@@ -52,7 +52,7 @@ def limit_words(text: str, max_words: int = MAX_PHRASE_WORDS) -> str:
 # ------------------------------------------------------------------------------
 ROBOT_NAME = "Base"
 YES_NO_PROMPT = "Please answer robot yes or robot no."
-BARMAN_SEARCH = "I will search for the barman. I will turn around once to see everyone."
+BARMAN_SEARCH = "I will search for the barman. Barman, please keep your hand raised while I turn around."
 SEARCHING_PEOPLE = "Searching for people."
 CUSTOMER_SEARCH = (
     "Dear customers, I am now ready to collect your orders. "

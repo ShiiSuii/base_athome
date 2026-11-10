@@ -30,3 +30,15 @@ def test_distance_is_from_the_robot_not_the_map_origin():
         t.add([1.0, 0.0])
     out = t.result((5.5, 0.0), min_hits=2)
     assert out[0]["xy"] == [5.0, 0.0] and math.isclose(out[0]["range_m"], 0.5)
+
+
+def test_raised_frames_and_bearing_median_per_person():
+    t = PeopleTally()
+    t.add([1.0, 0.0], raised=True, bearing_deg=10.0)
+    t.add([1.05, 0.0], raised=True, bearing_deg=12.0)
+    t.add([1.0, 0.02], raised=False, bearing_deg=40.0)
+    t.add([0.0, 2.0], raised=False, bearing_deg=math.nan)
+    t.add([0.0, 2.0])
+    near, far = t.result((0.0, 0.0), min_hits=2)
+    assert near["raised_frames"] == 2 and near["bearing_deg"] == 12.0
+    assert far["raised_frames"] == 0 and "bearing_deg" not in far

@@ -339,7 +339,7 @@ class BagFinder(Node):
         while time.time() < settle_end and not (time.time() - self.head_stamp < 0.5 and self._head_still()):
             time.sleep(0.05)
         tally = PeopleTally(match_dist_m=0.7)
-        seen = dict(frames=0, people=0, mapped=0)
+        seen = dict(frames=0, people=0, mapped=0, raised=0)
         view_end = min(end, time.time() + view_s)
         last_stamp = self.rgb_stamp
         while time.time() < view_end:
@@ -361,11 +361,17 @@ class BagFinder(Node):
                     spot = bv.person_map_position(person, depth, cam[0], cam[1], self.K)
                 if spot is not None:
                     seen["mapped"] += 1
-                    tally.add(spot)
+                    raised = classify_raised_hand(person[1], person[2]).is_raised
+                    seen["raised"] += int(raised)
+                    bearing = None
+                    if self.K is not None:  # pan medido + angulo en la imagen; + a la izquierda, como el yaw
+                        bearing = self.head[0] - math.degrees(math.atan2(bv.torso_pixel(person)[0] - self.K[2], self.K[0]))
+                    tally.add(spot, raised=raised, bearing_deg=bearing)
             self._publish_debug(rgb, people, stamp)
         found = tally.result(self._robot_pos(), min_hits=min_frames)
         self.get_logger().info(f"people_here: {len(found)} personas "
-                               + ", ".join(f"{p['range_m']:.2f} m" for p in found) + f"; {seen}")
+                               + ", ".join(f"{p['range_m']:.2f} m a {p.get('bearing_deg', float('nan')):+.0f} grados"
+                                           f"{' mano' if p['raised_frames'] >= 2 else ''}" for p in found) + f"; {seen}")
         return {"id": req_id, "ok": True, "customers": found, "diagnostics": seen}
 
     def _look_at(self, xy):

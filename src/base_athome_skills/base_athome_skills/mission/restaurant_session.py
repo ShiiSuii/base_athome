@@ -767,21 +767,46 @@ class RestaurantSession:
 
     BARMAN_STEP_RAD = math.pi / 6  # 12 vistas de 30 grados: una vuelta completa
     BARMAN_VIEW_TIMEOUT_S = 6.0
+    BARMAN_ALIGN_TOL_DEG = 6.0
+    BARMAN_ALIGN_TRIES = 3
+
+    @staticmethod
+    def _people_list(raw) -> List[dict]:
+        people = (raw.get("customers", []) if raw.get("ok", True) else []) if isinstance(raw, dict) else raw
+        return [p for p in people if isinstance(p, dict)] if isinstance(people, list) else []
+
+    @staticmethod
+    def _bearing(person: dict) -> Optional[float]:
+        try:
+            b = float(person["bearing_deg"])
+            return b if math.isfinite(b) else None
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _raised(person: dict) -> bool:
+        try:
+            return int(person.get("raised_frames", 0)) >= 2
+        except (TypeError, ValueError):
+            return False
 
     def _find_barman(self) -> None:
-        """Vuelta completa en el lugar mirando al frente; el barman es la persona mas cercana.
+        """Vuelta completa en el lugar mirando al frente; el barman es el mas cercano con la mano levantada.
 
-        En cada una de las 12 vistas (cada 30 grados) junta a todas las personas con
-        posicion en el mapa, sin pedir mano levantada. Al terminar gira de frente a la
-        mas cercana al robot, la sigue con la cabeza y pregunta si es el barman.
+        12 vistas de 30 grados. De cada persona guarda el rumbo respecto del inicio (giros
+        contados + angulo medido en la imagen): el yaw del mapa se corre al girar en el lugar
+        (prueba real 10/11), asi que no se usa para orientarse. Elige al mas cercano con la mano
+        levantada (si nadie la levanta, al mas cercano), gira hacia ese rumbo y corrige mirando
+        hasta tenerlo al centro de la camara; despues lo sigue con la cabeza y pregunta.
         """
         self.barman_position = None
         self._set_state(SessionState.FINDING_BARMAN)
         self._speak(rest.BARMAN_SEARCH)
         detect = self.detect_people_fn or self.detect_barman_fn or self.detect_customers_fn
         steps = 12 if self.spin_fn else 1
-        seen: List[Tuple[Tuple[float, float], dict]] = []
+        seen: List[Dict[str, Any]] = []  # {xy, person, heading (rad desde el inicio o None), range}
         spin_failed = False
+        turned = 0.0
         if self.point_head_fn:
             self.point_head_fn(0.0, 0.0)
         for step in range(steps):
@@ -790,12 +815,24 @@ class RestaurantSession:
             raw = detect(min(self.BARMAN_VIEW_TIMEOUT_S, self.remaining_s()), 2)
             if self.stopped or self._is_timeout():
                 return
-            people = (raw.get("customers", []) if raw.get("ok", True) else []) if isinstance(raw, dict) else raw
-            for person in people if isinstance(people, list) else []:
+            for person in self._people_list(raw):
                 xy = self._person_xy(person)
-                # Misma persona vista desde dos angulos: una sola entrada.
-                if xy and all(math.hypot(xy[0] - o[0], xy[1] - o[1]) >= 0.7 for o, _ in seen):
-                    seen.append((xy, person))
+                if not xy:
+                    continue
+                bearing = self._bearing(person)
+                heading = None if bearing is None or spin_failed else turned + math.radians(bearing)
+                entry = {"xy": xy, "person": person, "heading": heading,
+                         "range": float(person.get("range_m", float("inf")) or float("inf"))}
+                same = next((e for e in seen if math.hypot(xy[0] - e["xy"][0], xy[1] - e["xy"][1]) < 0.7), None)
+                if same is None:
+                    seen.append(entry)
+                elif bearing is not None and (self._bearing(same["person"]) is None
+                                              or abs(bearing) < abs(self._bearing(same["person"]))):
+                    # La misma persona en otra vista: se queda la mas centrada (rumbo mas preciso).
+                    entry["raised_any"] = self._raised(person) or same.get("raised_any", self._raised(same["person"]))
+                    seen[seen.index(same)] = entry
+                elif self._raised(person):
+                    same["raised_any"] = True
             # Tras un giro fallido se mira una vez desde donde quedo, sin encadenar mas giros.
             if step == steps - 1 or spin_failed:
                 break
@@ -804,25 +841,39 @@ class RestaurantSession:
             if self.stopped or self._is_timeout():
                 return
             spin_failed = not self.spin_fn(self.BARMAN_STEP_RAD)
+            if not spin_failed:
+                turned += self.BARMAN_STEP_RAD
         if self.stopped or self._is_timeout():
             return
         if not seen:
             self._speak("I could not find the barman. I will use my initial position as the bar.")
             return
 
+        raised = [e for e in seen if e.get("raised_any", self._raised(e["person"]))]
+        pool = raised or seen
         pose = self.get_pose_fn() or self.bar_pose
         origin = (pose[0], pose[1]) if pose else (0.0, 0.0)
-        nearest, person = min(seen, key=lambda s: math.hypot(s[0][0] - origin[0], s[0][1] - origin[1]))
-        # De frente al mas cercano; si un giro fallo, solo la cabeza lo sigue.
-        if self.spin_fn and pose and not spin_failed:
-            turn = math.atan2(nearest[1] - pose[1], nearest[0] - pose[0]) - pose[2]
+        target = min(pool, key=lambda e: e["range"] if math.isfinite(e["range"])
+                     else math.hypot(e["xy"][0] - origin[0], e["xy"][1] - origin[1]))
+        person, nearest = target["person"], target["xy"]
+        if self.spin_fn and not spin_failed:
+            if target["heading"] is not None:
+                turn = target["heading"] - turned
+            elif pose:  # sin angulo medido: el yaw del mapa como ultimo recurso
+                turn = math.atan2(nearest[1] - pose[1], nearest[0] - pose[0]) - pose[2]
+            else:
+                turn = 0.0
             turn = math.atan2(math.sin(turn), math.cos(turn))
-            if abs(turn) > math.radians(5):
-                self._set_state(SessionState.FINDING_BARMAN, {"angle_rad": turn, "facing": list(nearest)})
-                self.spin_fn(turn)
+            if abs(turn) > math.radians(self.BARMAN_ALIGN_TOL_DEG):
+                self._set_state(SessionState.FINDING_BARMAN, {"angle_rad": turn, "facing": list(nearest),
+                                                              "raised": bool(raised)})
+                if self.spin_fn(turn):
+                    person = self._align_barman(person, target["range"], bool(raised)) or person
         if self.stopped or self._is_timeout():
             return
-        self._set_state(SessionState.CONFIRMING_BARMAN, {"xy": list(nearest), "people": len(seen)})
+        nearest = self._person_xy(person) or nearest
+        self._set_state(SessionState.CONFIRMING_BARMAN, {"xy": list(nearest), "people": len(seen),
+                                                         "raised": bool(raised)})
         try:
             if self.track_person_fn and not self.stopped and not self._is_timeout():
                 self.track_person_fn(person)
@@ -836,6 +887,32 @@ class RestaurantSession:
                 self._speak("The barman was not confirmed. I will use my initial position as the bar.")
         finally:
             self._stop_tracking()
+
+    def _align_barman(self, person: dict, range_m: float, want_raised: bool) -> Optional[dict]:
+        """Corrige mirando: gira hasta tener al barman al centro de la camara (lazo cerrado)."""
+        if not self.detect_people_fn:
+            return None
+        last = None
+        for _ in range(self.BARMAN_ALIGN_TRIES):
+            if self.stopped or self._is_timeout():
+                return last
+            view = [p for p in self._people_list(self.detect_people_fn(min(4.0, self.remaining_s()), 2))
+                    if self._bearing(p) is not None]
+            if want_raised and any(self._raised(p) for p in view):
+                view = [p for p in view if self._raised(p)]
+            if not view:
+                return last
+            def score(p):
+                r = float(p.get("range_m", range_m) or range_m)
+                return abs(self._bearing(p)) / 30.0 + (abs(r - range_m) if math.isfinite(range_m) else 0.0)
+            last = min(view, key=score)
+            bearing = self._bearing(last)
+            if abs(bearing) <= self.BARMAN_ALIGN_TOL_DEG:
+                return last
+            self._set_state(SessionState.FINDING_BARMAN, {"angle_rad": math.radians(bearing), "align": True})
+            if not self.spin_fn(math.radians(bearing)):
+                return last
+        return last
 
     def _bar_target_pose(self) -> Tuple[float, float, float]:
         """Regresa al punto inicial mirando al barman localizado en map."""
