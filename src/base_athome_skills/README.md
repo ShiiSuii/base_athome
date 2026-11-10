@@ -168,19 +168,41 @@ Arranca `torso_state` con `allow_motion:=false`: este flujo no usa el elevador.
 Estos controles no modifican los parámetros funcionales de la navegación
 habitual. Validación con Nav2, ASR y hardware reales: pendiente.
 
-Al iniciar Restaurant, la cabeza queda en pan 0 y la base usa la acción Nav2
-`spin` (`nav2_msgs/action/Spin`) con ángulos relativos +90°, −180°, +90°.
-Después de cada giro pide `raised_hands` con `"pans": [0.0]`, hasta 8 s por
-pedido. Sin `pans`, bag_finder conserva el barrido −60/−30/0/30/60°.
+Al iniciar Restaurant anuncia "I will search for the barman. Barman, please raise
+your hand above your head as high as you can." y "Searching for people.".
+Mira al frente (pan 0, tilt de búsqueda actual: 0°) y busca manos alzadas en
+esa vista. Si no encuentra a nadie, gira la base mediante la acción Nav2 `spin`
+en pasos de +30°, usando la velocidad lenta existente del perfil Restaurant,
+y detecta entre pasos con la cabeza fija. El límite total es 360°. Al ver a una
+persona deja de girar, renueva el lease `track_customer` durante "Are you the
+barman? Please answer robot yes or robot no." y, si responde sí, registra su
+cara como `barman` y su posición en `map` (`barman_position`). Al volver a la
+barra conserva el punto inicial y se orienta hacia esa posición. El barman se
+excluye como cliente por cara o cercanía menor que 0.8 m. Si responde no, no
+confirma o no aparece tras la vuelta, lo anuncia y conserva la pose inicial
+como barra, sin más giros de búsqueda del barman.
+
+La búsqueda de clientes anuncia "Searching for people." antes de cada pedido
+al detector y mantiene la base quieta. Envía `raised_hands` con
+`"pans": [-90.0, 90.0, 0.0]` (derecha, izquierda, centro), `head_dps=12.0`,
+`view_s=2.5` y `stop_on_first=false`, para reunir el lote visible. El barman usa
+`"pans": [0.0]`, `stop_on_first=true`, hasta 14 s por vista. Sin `pans`,
+bag_finder conserva su default `0, -90, 0, 90, 0`; GPSR/bag no se modifican.
 Espera feedback fresco de cabeza y cuenta imágenes distintas con su TF.
-La sesión fusiona clientes entre pedidos por distancia en `map` (<0.8 m),
-asigna ids únicos y atiende primero a los más cercanos al punto inicial.
+Atiende primero las posiciones medidas y más cercanas al punto inicial.
 Cada giro tiene `spin_timeout_s` (positivo, 40 s por defecto), acotado por
 el plazo global y cancelación por voz `stop`, usando la misma espera de
 resultado terminal que navegación. Si falla, mira desde donde quedó y sigue
-con los clientes reunidos, sin más giros relativos de orientación incierta.
-El adaptador puro `spin_fn(angle_rad) -> bool` debe cancelar y esperar ese
-resultado ante stop o plazo; sin adaptador, la sesión conserva la detección única.
+con la barra inicial si nadie se confirma, sin más giros relativos.
+
+Callbacks opcionales del contrato puro: `spin_fn(angle_rad) -> bool` debe
+cancelar y esperar resultado terminal ante stop o plazo;
+`detect_barman_fn(timeout_s, min_frames)` debe detectar con la cabeza frontal
+fija (si falta, se usa `detect_customers_fn`); `track_person_fn(person)` y
+`stop_tracking_fn()` inician/cancelan el seguimiento de confirmación. La captura
+facial usa el contrato existente `enroll_face_fn("barman", person)`. Sin Spin
+se evalúa una sola vista; sin callbacks de seguimiento no se controla la cabeza
+por lease. Validación física del flujo nuevo: pendiente.
 
 Solo el overlay `nav2_restaurant.yaml` usa un costmap global móvil de 20 × 20 m
 en `map`: el tamaño inicial de SLAM ya no deja a la base fuera del costmap.

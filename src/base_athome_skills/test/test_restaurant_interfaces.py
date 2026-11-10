@@ -1,6 +1,7 @@
 """Contrato del nodo con fakes de rostros, cabeza y voz; sin ROS ni biometria real."""
 
 import ast
+import json
 import math
 from pathlib import Path
 import sys
@@ -31,6 +32,57 @@ def test_kwargs_support_old_new_and_variadic_sessions():
     def positional(x, /, *, speak_fn):
         return speak_fn
     assert "x" not in supported_kwargs(positional, dict(x=1, speak_fn=callback))
+
+
+def test_node_detection_uses_customer_pans_and_fixed_barman_head():
+    methods = node_methods('_detect_customers', '_detect_barman')
+    methods['_detect_customers'].__globals__.update(json=json, threading=threading,
+                                                   time=NS(time=lambda: 100.))
+    requests = []
+    node = NS(_bag_lock=threading.Lock(), _bag_pending={},
+              session=NS(remaining_s=lambda: 50.),
+              get_logger=lambda: NS(info=lambda _: None, warn=lambda _: None))
+    def publish(msg):
+        request = json.loads(msg.data)
+        requests.append(request)
+        event, _ = node._bag_pending[request['id']]
+        node._bag_pending[request['id']] = (event, {'ok': True, 'customers': [{'xy': [1., 2.]}]})
+        event.set()
+    node.pub_bag_request = NS(publish=publish)
+    node._detect_customers = lambda *a, **kw: methods['_detect_customers'](node, *a, **kw)
+    assert node._detect_customers(80., 3) == [{'xy': [1., 2.]}]
+    assert requests[-1]['pans'] == [-90., 90., 0.]
+    assert requests[-1]['stop_on_first'] is False
+    assert methods['_detect_barman'](node, 14., 3) == [{'xy': [1., 2.]}]
+    assert requests[-1]['pans'] == [0.]
+    assert requests[-1]['stop_on_first'] is True
+    assert not node._bag_pending
+
+
+def test_node_barman_lease_survives_confirmation_and_enrollment_then_cancels():
+    methods = node_methods('_track_person', '_stop_tracking', '_refresh_customer_tracking',
+                           '_on_session_state_change')
+    methods['_track_person'].__globals__.update(person_map_point=person_map_point, json=json,
+                                               Dict=dict, Any=object)
+    node = type('TrackingNode', (), {k: v for k, v in methods.items() if k.startswith('_')})()
+    requests = []
+    node.session = NS(customers=[], stopped=False, remaining_s=lambda: 50.)
+    node._head_customer_xy = None
+    node._person_tracking_xy = None
+    node.pub_bag_request = NS(publish=lambda msg: requests.append(json.loads(msg.data)))
+    node.pub_state = NS(publish=lambda msg: None)
+    node._on_session_state_change({'state': 'CONFIRMING_BARMAN'})
+    node._track_person({'x': 2., 'y': 3.})
+    assert requests[-1] == {'mode': 'track_customer', 'xy': [2., 3.]}
+    node._on_session_state_change({'state': 'ENROLLING_FACE', 'info': {'label': 'barman'}})
+    node._refresh_customer_tracking()
+    assert requests[-1]['xy'] == [2., 3.]
+    node._stop_tracking()
+    assert requests[-1]['xy'] is None
+    node._track_person({'xy': [2., 3.]})
+    node.session.stopped = True
+    node._refresh_customer_tracking()
+    assert requests[-1]['xy'] is None
 
 
 def test_database_outside_repo_and_only_dedicated_database_is_cleared(tmp_path, monkeypatch):
@@ -198,7 +250,7 @@ def node_methods(*names):
     path = Path(__file__).parents[1] / "base_athome_skills/restaurant_node.py"
     cls = next(n for n in ast.parse(path.read_text()).body if isinstance(n, ast.ClassDef))
     methods = [n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name in names]
-    env = dict(Optional=Optional, String=NS)
+    env = dict(Optional=Optional, String=NS, Dict=dict, Any=object)
     exec(compile(ast.Module(body=methods, type_ignores=[]), str(path), "exec"), env)
     return env
 

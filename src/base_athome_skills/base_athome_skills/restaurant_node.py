@@ -208,6 +208,10 @@ class RestaurantNode(Node):
             max_customers=max_cust,
             plan_fn=self._plan,
             batch_orders=batch_orders,
+            spin_fn=self._spin,
+            detect_barman_fn=self._detect_barman,
+            track_person_fn=self._track_person,
+            stop_tracking_fn=self._stop_tracking,
         )
         # El otro worker agrega estos parametros en paralelo. Versiones anteriores
         # reciben solo los que aceptan; arm=false deja pick_item_fn=None (bandeja).
@@ -224,6 +228,7 @@ class RestaurantNode(Node):
         self.session = RestaurantSession(**session_kwargs)
 
         self._head_customer_xy = None
+        self._person_tracking_xy = None
         self.create_timer(0.5, self._refresh_customer_tracking, callback_group=self.cb_group)
         self._session_thread: Optional[threading.Thread] = None
         self._session_lock = threading.Lock()
@@ -400,7 +405,11 @@ class RestaurantNode(Node):
             self.get_logger().warn(f"Error en escucha VoiceClient: {e}")
         return ""
 
-    def _detect_customers(self, timeout_s: float = 45.0, min_frames: int = 3):
+    def _detect_barman(self, timeout_s: float, min_frames: int):
+        return self._detect_customers(timeout_s, min_frames, pans=[0.0], stop_on_first=True)
+
+    def _detect_customers(self, timeout_s: float = 45.0, min_frames: int = 3,
+                          *, pans=None, stop_on_first: bool = False):
         """Pide a /bag_finder detectar clientes con la mano alzada."""
         req_id = f"rest_cust_{int(time.time() * 1000)}"
         ev = threading.Event()
@@ -410,10 +419,10 @@ class RestaurantNode(Node):
         req_data = json.dumps({
             "id": req_id,
             "mode": "raised_hands",
-            "pans": [0.0, -90.0, 0.0, 90.0, 0.0],
+            "pans": [-90.0, 90.0, 0.0] if pans is None else pans,
             "head_dps": 12.0,
             "view_s": 2.5,
-            "stop_on_first": False,
+            "stop_on_first": stop_on_first,
             "timeout_s": float(timeout_s),
             "min_frames": int(min_frames),
         })
@@ -572,9 +581,19 @@ class RestaurantNode(Node):
         finally:
             self._face_aiming = was_aiming
 
+    def _track_person(self, person: dict) -> None:
+        point = person_map_point(person)
+        self._person_tracking_xy = list(point[:2]) if point is not None else None
+        self._refresh_customer_tracking()
+
+    def _stop_tracking(self) -> None:
+        self._person_tracking_xy = None
+        self._head_customer_xy = None
+        self._refresh_customer_tracking()
+
     def _refresh_customer_tracking(self):
         """Lease corto: si Restaurant termina o se cae, la cabeza deja de seguir."""
-        xy = self._head_customer_xy
+        xy = getattr(self, "_person_tracking_xy", None) or self._head_customer_xy
         if self.session.stopped or self.session.remaining_s() <= 0:
             xy = None
         if getattr(self, "_face_aiming", False):

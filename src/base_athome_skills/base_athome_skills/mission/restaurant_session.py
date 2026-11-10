@@ -343,7 +343,14 @@ class RestaurantSession:
         release_fn: Optional[Callable[[], bool]] = None,
         stow_fn: Optional[Callable[[], bool]] = None,
         arm: bool = True,
+        detect_barman_fn: Optional[Callable[[float, int], Any]] = None,
+        track_person_fn: Optional[Callable[[dict], None]] = None,
+        stop_tracking_fn: Optional[Callable[[], None]] = None,
     ):
+        self.detect_barman_fn = detect_barman_fn
+        self.track_person_fn = track_person_fn
+        self.stop_tracking_fn = stop_tracking_fn
+        self.barman_position: Optional[Tuple[float, float]] = None
         self.enroll_face_fn = enroll_face_fn
         self.identify_face_fn = identify_face_fn
         self.detect_item_fn = detect_item_fn
@@ -386,7 +393,6 @@ class RestaurantSession:
         if not math.isfinite(self.delivery_wait_s) or self.delivery_wait_s < 0:
             raise ValueError("delivery_wait_s must be non-negative and finite")
         self.served = 0
-        self.stop_look_on_customer = True     # cortar el barrido inicial en cuanto aparece un cliente
         self.use_tray = bool(use_tray)
         self.max_customers = int(max_customers)
         if self.max_customers <= 0:
@@ -451,64 +457,19 @@ class RestaurantSession:
         return None
 
     def _look_around(self) -> List[Dict[str, Any]]:
-        """Tres vistas con pan fijo; spin_fn debe cancelar/drenar ante stop o deadline.
-
-        Los ids de bag_finder son locales a cada pedido: asociar por distancia en map
-        (0.8 m, igual que RaisedHandsAggregator), nunca por id ni por rango de camara.
-        Sin adaptador Spin conserva la deteccion unica para clientes existentes.
-        """
+        """Barrido de cabeza con base quieta; el adaptador define los pans."""
         self.detection_error = ""
-        customers: List[Dict[str, Any]] = []
-        angles = (math.pi / 2, -math.pi, math.pi / 2) if self.spin_fn else (None,)
-        for angle in angles:
-            if self.stopped or self._is_timeout():
-                break
-            spin_ok = True
-            if angle is not None:
-                if self.point_head_fn:
-                    self.point_head_fn(0.0, 0.0)
-                self._set_state(SessionState.LOOKING_AROUND, {"angle_rad": angle})
-                spin_ok = self.spin_fn(angle)
-            if self.stopped or self._is_timeout():
-                break
-            self._set_state(SessionState.DETECTING_CUSTOMERS)
-            if self.stopped or self._is_timeout():
-                break
-            raw = self.detect_customers_fn(min(14.0 if self.spin_fn else HEAD_LOOK_AROUND_TIMEOUT_S, self.remaining_s()), 3)   # 8 s era poco con YOLO en la CPU
-            if isinstance(raw, dict) and not raw.get("ok", True):
-                self.detection_error = raw.get("error", "")
-            view = (raw.get("customers", []) if raw.get("ok", True) else []) if isinstance(raw, dict) else raw
-            if isinstance(view, list):
-                for customer in view:
-                    if not self._eligible_customer(customer):
-                        continue
-                    if not self.spin_fn:
-                        customers.append(dict(customer))
-                        continue
-                    xy = customer.get("xy", (customer.get("x"), customer.get("y")))
-                    try:
-                        x, y = map(float, xy)
-                    except (TypeError, ValueError):
-                        continue
-                    if not math.isfinite(x) or not math.isfinite(y):
-                        continue
-                    if not any(math.hypot(x - c["xy"][0], y - c["xy"][1]) < 0.8 for c in customers):
-                        customers.append(dict(customer, xy=[x, y]))
-            # Pedido del usuario: apenas ve a alguien con la mano levantada, corta el barrido y va hacia esa persona
-            # (su posicion en el mapa ya quedo guardada). No sigue girando.
-            if customers and self.spin_fn and self.stop_look_on_customer:
-                self._set_state(SessionState.DETECTING_CUSTOMERS, {"stopped_look_at_angle": angle, "customers": len(customers)})
-                break
-            # Tras un giro fallido no se conoce el yaw alcanzado. Aprovechar esta vista
-            # y las anteriores, sin encadenar giros relativos que ya no volverian al frente.
-            if not spin_ok:
-                break
-        if self.spin_fn:
-            customers.sort(key=lambda c: math.hypot(c["xy"][0] - self.bar_pose[0],
-                                                    c["xy"][1] - self.bar_pose[1]))
-            for idx, customer in enumerate(customers, 1):
-                customer["id"] = str(idx)
-        return customers
+        if self.stopped or self._is_timeout():
+            return []
+        self._set_state(SessionState.DETECTING_CUSTOMERS)
+        self._speak(rest.SEARCHING_PEOPLE)
+        if self.stopped or self._is_timeout():
+            return []
+        raw = self.detect_customers_fn(min(HEAD_LOOK_AROUND_TIMEOUT_S, self.remaining_s()), 3)
+        if isinstance(raw, dict) and not raw.get("ok", True):
+            self.detection_error = raw.get("error", "")
+        view = (raw.get("customers", []) if raw.get("ok", True) else []) if isinstance(raw, dict) else raw
+        return [dict(c) for c in view if self._eligible_customer(c)] if isinstance(view, list) else []
 
     def _handle_pose_failure(self) -> bool:
         if self.stopped:
@@ -523,6 +484,7 @@ class RestaurantSession:
     def stop(self) -> None:
         """Detiene inmediatamente la ejecucion."""
         self.stopped = True
+        self._stop_tracking()
         try:
             self.cancel_nav_fn()
         except Exception:
@@ -570,6 +532,9 @@ class RestaurantSession:
     ) -> Optional[Tuple[float, float]]:
         """Re-detecta al cliente desde mas cerca para reemplazar una posicion estimada por una medida."""
         if self.stopped or self._is_timeout() or self.remaining_s() <= 1.0:
+            return None
+        self._speak(rest.SEARCHING_PEOPLE)
+        if self.stopped or self._is_timeout():
             return None
         try:
             raw = self.detect_customers_fn(min(6.0, self.remaining_s()), 2)
@@ -763,38 +728,94 @@ class RestaurantSession:
             ok = False
         self._set_state(SessionState.ENROLLING_FACE, {"label": label, "ok": ok})
 
+    def _stop_tracking(self) -> None:
+        if self.stop_tracking_fn:
+            try:
+                self.stop_tracking_fn()
+            except Exception:
+                pass  # El lease vence solo; un fallo de publicacion no debe impedir cancelar Nav2.
+
+    @staticmethod
+    def _person_xy(person: dict) -> Optional[Tuple[float, float]]:
+        xy = person.get("xy") or (person.get("x"), person.get("y"))
+        try:
+            x, y = float(xy[0]), float(xy[1])
+            return (x, y) if math.isfinite(x) and math.isfinite(y) else None
+        except (TypeError, ValueError, IndexError):
+            return None
+
     def _find_barman(self) -> None:
-        # Dos intentos totales. Nunca se le pide al barman confirmar clientes.
-        for _ in range(2):
+        """Vista frontal y pasos Spin de 30 grados, como maximo una vuelta.
+
+        detect_barman_fn mira con pan 0 y el tilt de busqueda, sin barrer.
+        Spin conserva la velocidad lenta del perfil Restaurant y debe esperar
+        resultado terminal/cancelacion antes de devolver el control.
+        """
+        self.barman_position = None
+        self._set_state(SessionState.FINDING_BARMAN)
+        self._speak(rest.BARMAN_SEARCH)
+        detect = self.detect_barman_fn or self.detect_customers_fn
+        for step in range(13 if self.spin_fn else 1):
             if self.stopped or self._is_timeout():
                 return
-            self._set_state(SessionState.FINDING_BARMAN)
-            self._speak(rest.BARMAN_SEARCH)
+            self._speak(rest.SEARCHING_PEOPLE)
             if self.stopped or self._is_timeout():
                 return
-            raw = self.detect_customers_fn(min(HEAD_LOOK_AROUND_TIMEOUT_S, self.remaining_s()), 3)
+            if step == 0 and self.point_head_fn:
+                self.point_head_fn(0.0, 0.0)  # SEARCH_TILT actual de bag_finder
+            spin_ok = True
+            if step:
+                self._set_state(SessionState.FINDING_BARMAN, {"angle_rad": math.pi / 6, "step": step})
+                if self.stopped or self._is_timeout():
+                    return
+                spin_ok = self.spin_fn(math.pi / 6)
+            if self.stopped or self._is_timeout():
+                return
+            raw = detect(min(14.0, self.remaining_s()), 3)
             if self.stopped or self._is_timeout():
                 return
             people = (raw.get("customers", []) if raw.get("ok", True) else []) if isinstance(raw, dict) else raw
-            if not people:
-                continue
-            def distance(person):
-                xy = person.get("xy") or (person.get("x"), person.get("y"))
+            if isinstance(people, list) and people:
+                def distance(person):
+                    xy = self._person_xy(person)
+                    return math.hypot(xy[0] - self.bar_pose[0], xy[1] - self.bar_pose[1]) if xy else float("inf")
+                person = min(people, key=distance)
+                self._set_state(SessionState.CONFIRMING_BARMAN)
                 try:
-                    d = math.hypot(float(xy[0]) - self.bar_pose[0], float(xy[1]) - self.bar_pose[1])
-                    return d if math.isfinite(d) else float("inf")
-                except (TypeError, ValueError, IndexError):
-                    return float("inf")
-            person = min(people, key=distance)
-            self._set_state(SessionState.CONFIRMING_BARMAN)
-            answer = self._ask_yes_no("Are you the barman? Please answer robot yes or robot no.", attempts=1)
-            if answer is True:
-                self._enroll_face("barman", person)
-                return
+                    if self.track_person_fn and not self.stopped and not self._is_timeout():
+                        self.track_person_fn(person)
+                    answer = self._ask_yes_no("Are you the barman? Please answer robot yes or robot no.", attempts=1)
+                    if self.stopped or self._is_timeout():
+                        return
+                    if answer is True:
+                        self.barman_position = self._person_xy(person)
+                        self._enroll_face("barman", person)
+                    else:
+                        self._speak("The barman was not confirmed. I will use my initial position as the bar.")
+                finally:
+                    self._stop_tracking()
+                return  # Al ver a alguien no se vuelve a girar, incluso si responde no.
+            # Yaw incierto tras un fallo: no encadenar mas giros relativos.
+            if not spin_ok:
+                break
+        self._speak("I could not find the barman. I will use my initial position as the bar.")
+
+    def _bar_target_pose(self) -> Tuple[float, float, float]:
+        """Regresa al punto inicial mirando al barman localizado en map."""
+        x, y, yaw = self.bar_pose
+        if self.barman_position is not None:
+            dx, dy = self.barman_position[0] - x, self.barman_position[1] - y
+            if math.hypot(dx, dy) > 0.01:
+                yaw = math.atan2(dy, dx)
+        return x, y, yaw
 
     def _eligible_customer(self, person: dict) -> bool:
         if self.stopped or self._is_timeout():
             return False
+        xy = self._person_xy(person)
+        if self.barman_position is not None and xy is not None:
+            if math.hypot(xy[0] - self.barman_position[0], xy[1] - self.barman_position[1]) < 0.8:
+                return False
         label = None
         if self.identify_face_fn is not None:
             try:
@@ -939,7 +960,7 @@ class RestaurantSession:
             return False
         self._set_state(SessionState.RETURNING_TO_BAR)
         self._speak("Moving to the barman table.")
-        nav_bar_ok = self._navigate_to(self.bar_pose)
+        nav_bar_ok = self._navigate_to(self._bar_target_pose())
         if self.stopped or self._is_timeout():
             return False
         if not nav_bar_ok:
@@ -1024,7 +1045,7 @@ class RestaurantSession:
     def _return_to_bar(self, final: bool = False) -> bool:
         self._set_state(SessionState.RETURNING_TO_BAR_FINAL if final else SessionState.RETURNING_TO_BAR)
         self._speak("Moving to the barman table.")
-        ok = self._navigate_to(self.bar_pose)
+        ok = self._navigate_to(self._bar_target_pose())
         if self._interrupted():
             return False
         if not ok:
@@ -1043,6 +1064,7 @@ class RestaurantSession:
         self._visited_customers = []
         self._holding_item = False
         self.bar_pose = None
+        self.barman_position = None
         self.customers = []
         self.orders = {}
         self.current_customer_idx = 0
@@ -1113,7 +1135,7 @@ class RestaurantSession:
                 pose = self._wait_for_pose()
                 if pose is None:
                     return self._handle_pose_failure()
-                if pose != self.bar_pose and not self._return_to_bar(final=self.served >= self.max_customers):
+                if pose != self._bar_target_pose() and not self._return_to_bar(final=self.served >= self.max_customers):
                     return False
         if self._interrupted():
             return False
@@ -1129,6 +1151,7 @@ class RestaurantSession:
 
     def _handle_stop(self) -> bool:
         self.stopped = True
+        self._stop_tracking()
         try:
             self.cancel_nav_fn()
         except Exception:

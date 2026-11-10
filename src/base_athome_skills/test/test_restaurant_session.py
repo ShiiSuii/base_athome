@@ -100,6 +100,9 @@ class FakeRestaurantHarness:
     def detect_customers(self, timeout_s: float, min_frames: int) -> List[Dict[str, Any]]:
         self.events.append(("detect_customers", (timeout_s, min_frames)))
         self.current_time += 1.0
+        if self.states and self.states[-1]["state"] == "FINDING_BARMAN":
+            rx, ry, yaw = self.robot_pose
+            return [{"id": "barman", "xy": [rx + .1 * math.cos(yaw), ry + .1 * math.sin(yaw)]}] if self.customers else []
         return list(self.customers)
 
     def ask_order(self, text: str, menu: Sequence[str]) -> List[str]:
@@ -128,6 +131,138 @@ class FakeRestaurantHarness:
             max_time_s=max_time_s,
             **kwargs,
         )
+
+
+def test_barman_found_after_second_turn_tracks_before_question_and_stops_turning():
+    h = FakeRestaurantHarness(speech_script=['robot yes'])
+    turns, tracking, enrolled = [], [], []
+    barman = {'xy': [0., 2.]}
+    def detect(*_):
+        h.events.append(('barman_search', len(turns)))
+        return [barman] if len(turns) == 2 else []
+    session = h.make_session(
+        spin_fn=lambda angle: turns.append(angle) or True,
+        detect_barman_fn=detect,
+        track_person_fn=lambda p: tracking.append(p) or h.events.append(('track', p)),
+        stop_tracking_fn=lambda: tracking.append(None),
+        point_head_fn=lambda p, t: h.events.append(('head', (p, t))),
+        enroll_face_fn=lambda label, p: enrolled.append((label, p)) or True,
+    )
+    session.deadline_s = h.clock() + 900.
+    session.bar_pose = (0., 0., 0.)
+    session._find_barman()
+    assert turns == pytest.approx([math.pi / 6] * 2)
+    assert session.barman_position == (0., 2.)
+    assert tracking == [barman, None] and enrolled == [('barman', barman)]
+    assert [v for k, v in h.events if k == 'head'] == [(0., 0.)]
+    assert h.spoken == [
+        'I will search for the barman. Barman, please raise your hand above your head as high as you can.',
+        'Searching for people.', 'Searching for people.', 'Searching for people.',
+        'Are you the barman? Please answer robot yes or robot no.',
+    ]
+    question = h.events.index(('speak', h.spoken[-1]))
+    assert h.events.index(('track', barman)) < question
+    for idx, (event, _) in enumerate(h.events):
+        if event == 'barman_search':
+            assert next(v for k, v in reversed(h.events[:idx]) if k == 'speak') == 'Searching for people.'
+
+
+def test_barman_full_circle_without_people_continues_with_initial_bar():
+    h = FakeRestaurantHarness(customers=[{'id': '1', 'xy': [2., 0.]}],
+                              speech_script=['yes', 'water', 'yes', 'yes', 'yes'])
+    turns = []
+    session = h.make_session(spin_fn=lambda angle: turns.append(angle) or True,
+                             detect_barman_fn=lambda *_: [])
+    assert session.run()
+    assert len(turns) == 12 and sum(turns) == pytest.approx(math.tau)
+    assert session.barman_position is None and session.bar_pose == (0., 0., 0.)
+    assert 'I could not find the barman. I will use my initial position as the bar.' in h.spoken
+
+
+@pytest.mark.parametrize('label', [None, 'new_customer'])
+def test_barman_position_filters_customers_even_without_matching_face(label):
+    h = FakeRestaurantHarness()
+    session = h.make_session(identify_face_fn=lambda _: label)
+    session.barman_position = (2., 1.)
+    assert not session._eligible_customer({'xy': [2.79, 1.]})
+    assert session._eligible_customer({'x': 2.81, 'y': 1.})
+
+
+def test_customers_search_never_spins_base_and_announces_detection():
+    h = FakeRestaurantHarness()
+    turns = []
+    session = h.make_session(spin_fn=lambda a: turns.append(a) or True)
+    session.deadline_s = h.clock() + 900.
+    session.bar_pose = (0., 0., 0.)
+    assert session._look_around()
+    assert turns == []
+    assert h.events[0] == ('speak', 'Searching for people.')
+    assert h.events[1][0] == 'detect_customers'
+
+
+@pytest.mark.parametrize('answer', ['robot no', 'unclear'])
+def test_barman_rejected_stops_turning_cancels_tracking_and_retains_bar(answer):
+    h = FakeRestaurantHarness(speech_script=[answer])
+    turns, tracking, enrolled = [], [], []
+    session = h.make_session(
+        spin_fn=lambda a: turns.append(a) or True,
+        detect_barman_fn=lambda *_: [{'xy': [0., 2.]}] if turns else [],
+        track_person_fn=lambda p: tracking.append(p),
+        stop_tracking_fn=lambda: tracking.append(None),
+        enroll_face_fn=lambda *a: enrolled.append(a) or True,
+    )
+    session.deadline_s = h.clock() + 900.
+    session.bar_pose = (0., 0., .5)
+    session._find_barman()
+    assert turns == [math.pi / 6] and tracking == [{'xy': [0., 2.]}, None]
+    assert not enrolled and session.barman_position is None
+    assert session._bar_target_pose() == (0., 0., .5)
+    assert h.spoken[-1] == 'The barman was not confirmed. I will use my initial position as the bar.'
+
+
+@pytest.mark.parametrize('batch', [False, True])
+def test_confirmed_barman_position_orients_every_bar_return_and_filters_scan(batch):
+    h = FakeRestaurantHarness(customers=[{'id': '1', 'xy': [2., 0.]}],
+                              speech_script=one_customer_protocol())
+    enrolled = []
+    session = h.make_session(batch_orders=batch, detect_barman_fn=lambda *_: [{'xy': [0., 2.]}],
+                             enroll_face_fn=lambda label, p: enrolled.append(label) or False)
+    views = iter([[], [{'xy': [0., 2.1]}, {'id': '1', 'xy': [2., 0.]}]])
+    def detect(*args):
+        h.events.append(('customer_search', args))
+        return next(views)
+    session.detect_customers_fn = detect
+    assert session.run()
+    assert session.barman_position == (0., 2.)  # memoria espacial aunque falle el enrolamiento
+    assert [c['id'] for c in session.customers] == ['1']
+    assert enrolled == ['barman', 'customer_1']
+    returns = [goal for goal in h.nav_goals if goal[:2] == (0., 0.)]
+    assert len(returns) == 2
+    assert all(goal[2] == pytest.approx(math.pi / 2, abs=1e-4) for goal in returns)
+    assert session.bar_pose == (0., 0., 0.)
+    assert h.spoken.count(rest.CUSTOMER_SEARCH) == 2
+    for idx, (event, _) in enumerate(h.events):
+        if event == 'customer_search':
+            assert h.events[idx-1] == ('speak', 'Searching for people.')
+
+
+@pytest.mark.parametrize('interrupt', ['stop', 'timeout'])
+def test_barman_tracking_stops_on_interruption_during_answer(interrupt):
+    h = FakeRestaurantHarness()
+    tracking = []
+    session = h.make_session(detect_barman_fn=lambda *_: [{'xy': [0., 2.]}],
+                             track_person_fn=lambda p: tracking.append(p),
+                             stop_tracking_fn=lambda: tracking.append(None))
+    def listen(_):
+        if interrupt == 'stop':
+            session.stop()
+        else:
+            h.current_time = session.deadline_s
+        return 'robot yes'
+    session.listen_fn = listen
+    assert not session.run()
+    assert tracking[0] == {'xy': [0., 2.]} and tracking[-1] is None
+    assert session.barman_position is None and not h.nav_goals
 
 
 # ------------------------------------------------------------------------------
@@ -1162,62 +1297,51 @@ def test_session_skips_customer_without_any_planned_approach(restaurant_grid):
     assert len(h.nav_goals) == 4                       # cliente 2, barra, entrega, barra final
 
 
-def test_initial_spin_order_fixed_head_and_three_views_merge_in_map():
+def test_customer_snapshot_is_ranked_without_turning_base():
     h = FakeRestaurantHarness(speech_script=['yes', 'yes', 'water', 'yes', 'yes', 'yes', 'yes', 'beer', 'yes', 'yes', 'yes'])
     views = iter([
-        [{'id': 'bar', 'xy': [0., 1.]}],  # deteccion independiente del barman
-        [{'id': '1', 'xy': [4., 2.]}],
-        {'ok': True, 'customers': [{'id': '1', 'xy': [2., -1.]}]},
-        [{'id': '1', 'xy': [4.1, 2.1]}, {'id': '2', 'xy': [2.1, -1.1]}],
+        [{'id': 'bar', 'xy': [0., 1.]}],
+        {'ok': True, 'customers': [{'id': '1', 'xy': [4., 2.]}, {'id': '2', 'xy': [2., -1.]}]},
     ])
-    events = []
-
-    def spin(angle):
-        events.append(('spin', angle))
-        return True
-
+    turns, looks = [], []
     def detect(timeout_s, min_frames):
-        events.append(('look', (timeout_s, min_frames)))
+        looks.append((timeout_s, min_frames))
         return next(views)
-
-    session = h.make_session(spin_fn=spin, point_head_fn=lambda p, t: events.append(('head', (p, t))))
+    session = h.make_session(spin_fn=lambda a: turns.append(a) or True)
     session.detect_customers_fn = detect
-    session.stop_look_on_customer = False      # este test mira las tres vistas completas
     assert session.run()
-    assert [v for e, v in events if e == 'spin'] == [math.pi / 2, -math.pi, math.pi / 2]
-    assert [e for e, _ in events[1:10]] == ['head', 'spin', 'look'] * 3
-    assert all(v == (0., 0.) for e, v in events[:9] if e == 'head')
-    assert len(session.customers) == 2
+    assert turns == []  # el barman aparecio en la vista frontal; clientes con base quieta
     assert [c['xy'] for c in session.customers] == [[2., -1.], [4., 2.]]
     assert len(set(c['id'] for c in session.customers)) == 2
     assert len(session.orders) == 2 and session.served == 2
-    assert [v for e, v in events if e == 'look'] == [(80., 3)] + [(14., 3)] * 3      # 14 s por mirada: 8 era poco con YOLO en la CPU
+    assert looks == [(14., 3), (80., 3)]
 
 
 @pytest.mark.parametrize('failed_spin', [1, 2, 3])
-def test_failed_spin_keeps_customers_and_continues_without_blind_relative_turns(failed_spin):
-    h = FakeRestaurantHarness(customers=[{'xy': [2., 0.]}], speech_script=['yes', 'yes', 'water', 'yes', 'yes', 'yes'])
-    turns = []
-
+def test_failed_barman_spin_stops_turns_and_continues_with_customer_orders(failed_spin):
+    h = FakeRestaurantHarness(customers=[{'xy': [2., 0.]}], speech_script=one_customer_protocol()[1:])
+    turns, looks = [], []
     def spin(angle):
         turns.append(angle)
         return len(turns) != failed_spin
-
-    session = h.make_session(spin_fn=spin)
-    session.stop_look_on_customer = False      # aca importa que hace un giro fallido, no el corte por cliente
+    def barman(*args):
+        looks.append(args)
+        return []
+    session = h.make_session(spin_fn=spin, detect_barman_fn=barman)
     assert session.run()
-    assert len(turns) == failed_spin
-    assert len([e for e, _ in h.events if e == 'detect_customers']) == failed_spin + 1  # incluye barman
+    assert turns == pytest.approx([math.pi / 6] * failed_spin)
+    assert len(looks) == failed_spin + 1  # vista frontal mas una por giro completado/fallido
     assert len(session.customers) == 1 and session.served == 1
 
 
-def test_failed_second_spin_retains_customer_from_first_view_when_next_is_empty():
-    h = FakeRestaurantHarness(speech_script=['yes', 'yes', 'water', 'yes', 'yes', 'yes'])
+def test_failed_second_barman_spin_can_still_use_person_in_last_view():
+    h = FakeRestaurantHarness(customers=[{'xy': [2., 1.]}], speech_script=one_customer_protocol())
     results = iter([True, False])
-    views = iter([[{'xy': [0., 1.]}], [{'xy': [2., 1.]}], {'ok': False, 'customers': []}])
-    session = h.make_session(spin_fn=lambda _: next(results), max_customers=1)
-    session.detect_customers_fn = lambda *_: next(views)
+    views = iter([[], [], [{'xy': [0., 1.]}]])
+    session = h.make_session(spin_fn=lambda _: next(results),
+                             detect_barman_fn=lambda *_: next(views))
     assert session.run()
+    assert session.barman_position == (0., 1.)
     assert session.customers[0]['xy'] == [2., 1.]
 
 
@@ -1234,10 +1358,10 @@ def test_interrupt_during_initial_spin_prevents_detection_and_navigation(interru
             h.current_time = session.deadline_s
         return False
 
-    session = h.make_session(spin_fn=spin)
+    session = h.make_session(spin_fn=spin, detect_barman_fn=lambda *_: h.detect_customers(14., 3) and [])
     assert not session.run()
     assert session.state == (SessionState.ABORTED if interrupt == 'stop' else SessionState.TIMEOUT)
-    assert turns == [math.pi / 2] and h.nav_cancelled
+    assert turns == [math.pi / 6] and h.nav_cancelled
     assert not h.nav_goals
     assert len([e for e, _ in h.events if e == 'detect_customers']) == 1  # barman antes del giro
 
@@ -1254,12 +1378,13 @@ def test_node_spin_voice_stop_cancels_even_before_acceptance_and_drains(stop_at)
     node = NS(_navigation=NS(cancel=lambda: nav_cancel.append(True)), _spinning=action.nav,
               voice=voice, session=session, spin_timeout_s=40.)
     session.spin_fn = lambda angle: methods['_spin'](node, angle)
+    session.detect_barman_fn = lambda *_: h.detect_customers(14., 3) and []
     session.cancel_nav_fn = lambda: methods['_cancel_nav'](node)
     assert not session.run()
     assert session.state == SessionState.ABORTED
     assert action.cancels and action.result.done() and not action.nav.pending
     assert len(action.sent) == 1 and nav_cancel
-    assert action.sent[0].target_yaw == math.pi / 2
+    assert action.sent[0].target_yaw == math.pi / 6
     assert not h.nav_goals
     assert len([e for e, _ in h.events if e == 'detect_customers']) == 1  # barman antes del giro
 
@@ -1300,7 +1425,7 @@ def test_restaurant_rolling_overlay_preserves_slam_obstacles_and_unknown_space()
 
 
 
-def test_look_around_stops_at_the_first_customer_and_goes_there():
+def test_barman_front_view_avoids_spin_and_customer_search_goes_there():
     """Pedido del usuario: en cuanto ve a alguien con la mano levantada deja de girar y navega hacia esa persona."""
     h = FakeRestaurantHarness(speech_script=['yes', 'yes', 'water', 'yes', 'yes', 'yes'])
     spins, looks = [], []
@@ -1317,7 +1442,7 @@ def test_look_around_stops_at_the_first_customer_and_goes_there():
     session = h.make_session(spin_fn=spin, max_customers=1)
     session.detect_customers_fn = detect
     assert session.run()
-    assert spins == [math.pi / 2] and len(looks) == 2          # no siguio con -180 ni +90
+    assert spins == [] and len(looks) == 2  # barman frontal y clientes sin girar la base
     assert [c['xy'] for c in session.customers] == [[3., 1.]]
     assert h.nav_goals, "tiene que navegar hacia la persona detectada"
 
@@ -1421,7 +1546,9 @@ def test_estimated_far_customer_triggers_progressive_advance_and_relocalization(
 
     def detect_customers(timeout_s, min_frames):
         detect_calls.append((timeout_s, min_frames))
-        if len(detect_calls) <= 2:  # barman y busqueda inicial de clientes
+        if len(detect_calls) == 1:  # barman separado del cliente
+            return [{"xy": [0., .1]}]
+        if len(detect_calls) == 2:
             return [{"id": "1", "xy": [4.5, 0.0], "estimated": True}]
         # Al haberse acercado, la RealSense ya mide profundidad real en (4.0, 0.2)
         return [{"id": "1", "xy": [4.0, 0.2], "estimated": False}]
@@ -1478,30 +1605,30 @@ def manipulation_callbacks(h, **overrides):
     return callbacks
 
 
-@pytest.mark.parametrize('answers', [['robot no', 'no'], ['', 'maybe']])
-def test_barman_not_confirmed_twice_does_not_block_customer_orders(answers):
+@pytest.mark.parametrize('answers', [['robot no'], ['maybe']])
+def test_barman_not_confirmed_does_not_block_customer_orders(answers):
     h = FakeRestaurantHarness(customers=[{'id': '1', 'x': 2., 'y': 0.}],
                               speech_script=answers + one_customer_protocol()[1:])
     enrollments = []
     session = h.make_session(enroll_face_fn=lambda label, person: enrollments.append((label, person)) or True)
     assert session.run()
-    assert h.spoken.count(rest.BARMAN_SEARCH) == 2
+    assert h.spoken.count(rest.BARMAN_SEARCH) == 1
     assert [label for label, _ in enrollments] == ['customer_1']
     assert not any('customer' in phrase.lower() and 'barman' in phrase.lower() for phrase in h.spoken)
     assert session.bar_pose == (0., 0., 0.)
 
 
-def test_barman_missing_twice_continues_and_closest_person_is_selected_when_present():
+def test_barman_missing_continues_and_closest_person_is_selected_when_present():
     h = FakeRestaurantHarness(customers=[{'id': '1', 'xy': [2., 0.]}],
                               speech_script=one_customer_protocol()[1:])
     session = h.make_session()
     calls = []
     def detect(*args):
         calls.append(args)
-        return [] if len(calls) <= 2 else h.customers
+        return [] if len(calls) == 1 else h.customers
     session.detect_customers_fn = detect
     assert session.run()
-    assert len(calls) == 3
+    assert len(calls) == 2
 
     h = FakeRestaurantHarness(customers=[{'id': '1', 'xy': [2., 0.]}],
                               speech_script=one_customer_protocol())
@@ -1542,13 +1669,13 @@ def test_barman_only_view_does_not_end_customer_scan():
     views = iter([[{'xy': [0., 1.]}], [{'xy': [0., 1.], 'label': 'barman'}], [{'xy': [2., 0.]}]])
     session.detect_customers_fn = lambda *_: next(views)
     assert session.run()
-    assert turns == [math.pi / 2, -math.pi]
+    assert turns == []
 
 
 def test_no_customers_retries_then_serves_without_exceeding_deadline():
     h = FakeRestaurantHarness(customers=[{'id': '1', 'xy': [2., 0.]}], speech_script=one_customer_protocol())
     session = h.make_session()
-    views = iter([h.customers, [], h.customers])
+    views = iter([[{'xy': [0., .1]}], [], h.customers])
     session.detect_customers_fn = lambda *_: next(views)
     assert session.run()
     assert h.spoken.count(rest.SEARCH_AGAIN) == 1
@@ -1752,20 +1879,20 @@ def test_known_new_face_is_not_discarded_by_previous_customer_position():
     h = FakeRestaurantHarness(customers=[{'id': '1', 'xy': [2., 0.]}],
                               speech_script=one_customer_protocol() + one_customer_protocol()[1:])
     session = h.make_session(max_customers=2, identify_face_fn=lambda person: person.get('label'))
-    views = iter([h.customers, h.customers, [{'id': '2', 'xy': [2., 0.], 'label': 'new_customer'}]])
+    views = iter([[{'xy': [0., .1]}], h.customers, [{'id': '2', 'xy': [2., 0.], 'label': 'new_customer'}]])
     session.detect_customers_fn = lambda *_: next(views)
     assert session.run()
     assert session.served == 2 and set(session.orders) == {'1', '2'}
 
 
-def test_barman_can_confirm_on_second_attempt():
+def test_barman_negative_answer_does_not_restart_barman_search():
     h = FakeRestaurantHarness(customers=[{'id': '1', 'xy': [2., 0.]}],
-                              speech_script=['no'] + one_customer_protocol())
+                              speech_script=['no'] + one_customer_protocol()[1:])
     enrolled = []
     session = h.make_session(enroll_face_fn=lambda label, person: enrolled.append(label) or True)
     assert session.run()
-    assert enrolled == ['barman', 'customer_1']
-    assert h.spoken.count(rest.BARMAN_SEARCH) == 2
+    assert enrolled == ['customer_1']
+    assert h.spoken.count(rest.BARMAN_SEARCH) == 1
 
 
 def test_barman_wait_uses_yes_and_timeout_and_never_accepts_no_as_done():

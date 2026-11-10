@@ -333,6 +333,26 @@ def test_sweep_observes_both_extremes_after_measured_head_arrives():
     assert h.now < 118.
 
 
+def test_restaurant_explicit_pans_right_left_center_preserves_default_sweep():
+    h = SweepHarness()
+    def move(pan, tilt, dps):
+        # _move_head real bloquea durante la rampa (15 s para -90 -> +90 a 12 grados/s).
+        duration = abs(pan - h.node.head[0]) / dps
+        h.send_head(pan, tilt)
+        h.advance(duration)
+    h.node._move_head = move
+    result = h.node._find_raised_hands(dict(id='restaurant', timeout_s=80., min_frames=3,
+                                          pans=[-90., 90., 0.], stop_on_first=False,
+                                          head_dps=12., view_s=2.5))
+    assert result['ok']
+    assert {tuple(c['xy']) for c in result['customers']} == {(1.5, 2.3), (2.5, -2.4)}
+    assert h.commands == [-90., 90., 0.]
+    # GPSR/bag conservan los defaults: Restaurant los sobreescribe en el pedido.
+    defaults = SweepHarness()
+    assert defaults.run()['ok']
+    assert defaults.commands == [0., -90., 0., 90., 0.]
+
+
 def test_sweep_without_measured_feedback_does_not_confirm_customers():
     h = SweepHarness(feedback=False, always_visible=True)
     assert not h.run()["ok"]
