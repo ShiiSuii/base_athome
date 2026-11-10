@@ -1034,11 +1034,13 @@ def test_voice_stop_during_node_navigation_cancels_and_aborts_session(speech):
     h = FakeRestaurantHarness(customers=[{'xy': [2., 0.]}])
     session = h.make_session()
     session.clock_fn = lambda: action.now
-    methods = node_methods('_navigate', '_cancel_nav')
+    methods = node_methods('_navigate', '_navigate_goal', '_cancel_nav')
     node = NS(_navigation=action.nav, _spinning=NS(cancel=lambda: None),
               voice=voice, session=session, navigation_timeout_s=90.,
               get_logger=lambda: NS(info=lambda _: None),
               get_clock=lambda: NS(now=lambda: NS(to_msg=lambda: None)))
+    node._navigate_goal = lambda x, y, yaw, *, deadline_s: methods['_navigate_goal'](
+        node, x, y, yaw, deadline_s=deadline_s)
     session.navigate_fn = lambda *pose, **kw: methods['_navigate'](node, *pose, **kw)
     session.cancel_nav_fn = lambda: methods['_cancel_nav'](node)
     assert not session.run()
@@ -2186,3 +2188,46 @@ def test_no_progress_round_limit_resets_after_a_customer_is_served():
     assert session.run()
     assert session.served == 2
     assert h.spoken.count(rest.CUSTOMER_SEARCH) == 6
+
+
+@pytest.mark.parametrize('remaining', [900., .2])
+def test_simulated_table_retreat_is_slow_bounded_and_announced(remaining):
+    action = FakeActionHarness(finish_after=.05)
+    voice = FakeVoice(action)
+    methods = node_methods('_back_away_from_table')
+    methods['_back_away_from_table'].__globals__['BackUp'] = NS(Goal=lambda: NS(target=NS()))
+    spoken = []
+    node = NS(_backing=action.nav, voice=voice, _speak=spoken.append,
+              session=NS(stopped=False, remaining_s=lambda: remaining, deadline_s=1000., stop=lambda: None))
+    assert methods['_back_away_from_table'](node)
+    assert spoken and action.sent[0].target.x == -.45
+    assert action.sent[0].speed == .05
+    assert action.sent[0].time_allowance.seconds == min(30., remaining)
+    assert voice.cancelled
+
+
+def test_failed_table_retreat_stops_before_sending_another_navigation_goal():
+    events = []
+    methods = node_methods('_navigate')
+    node = NS(_needs_table_retreat=True, _back_away_from_table=lambda: False,
+              session=NS(stop=lambda: events.append('stop')))
+    assert not methods['_navigate'](node, 1., 2., 0., deadline_s=1000.)
+    assert events == ['stop'] and node._needs_table_retreat
+
+
+def test_bar_return_keeps_retreat_armed_until_both_waypoints_succeed():
+    methods = node_methods('_navigate')
+    methods['_navigate'].__globals__.update(math=math)
+    goals = []
+    node = NS(_needs_table_retreat=True, _nav_aborted=False,
+              _back_away_from_table=lambda: True,
+              _navigate_goal=lambda x, y, yaw, *, deadline_s: goals.append((x, y, yaw)) or len(goals) > 1,
+              session=NS(stopped=False, stop=lambda: None),
+              get_logger=lambda: NS(info=lambda _: None))
+    assert not methods['_navigate'](node, 0., 0., -math.pi, deadline_s=100.)
+    assert node._needs_table_retreat
+    goals.clear()
+    node._navigate_goal = lambda x, y, yaw, *, deadline_s: goals.append((x, y, yaw)) or True
+    assert methods['_navigate'](node, 0., 0., -math.pi, deadline_s=100.)
+    assert goals[0][:2] == (1.79, -.10) and goals[1][:2] == (0., 0.)
+    assert not node._needs_table_retreat

@@ -408,3 +408,19 @@ def test_customer_scan_window_covers_both_spins_and_announcement(remaining):
     assert methods['_scan_turn'](node, lambda: None) == ([], True)
     assert requests[0]['view_s'] == min(100., remaining)
     assert requests[-1]['mode'] == 'stop_scan'
+
+
+def test_simulated_retreat_is_armed_only_after_table_dialogue_and_cleared_on_restart():
+    method = node_methods('_on_session_state_change')['_on_session_state_change']
+    method.__globals__['json'] = json
+    node = NS(_sim_table_retreat=True, _previous_state=None, _needs_table_retreat=False,
+              session=NS(customers=[]), _refresh_customer_tracking=lambda: None,
+              pub_state=NS(publish=lambda _: None))
+    for state in ['FINDING_BARMAN', 'APPROACHING_CUSTOMER']:
+        method(node, {'state': state})
+    assert not node._needs_table_retreat
+    method(node, {'state': 'CONFIRMING_ORDER'})
+    method(node, {'state': 'APPROACHING_CUSTOMER'})
+    assert node._needs_table_retreat
+    method(node, {'state': 'STARTING'})
+    assert not node._needs_table_retreat

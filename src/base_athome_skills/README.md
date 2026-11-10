@@ -137,6 +137,11 @@ cancelación a mitad de navegación (goal cancelado, base quieta). Con Nav2 real
 
 ## Restaurant: aproximación y barrido
 
+Ensayo opcional: `SIM=1 SIM_TABLE_RETREAT=1` retrocede 0.45 m a 0.05 m/s
+antes de abandonar una mesa y usa el waypoint del pasillo al volver a la barra.
+Nav2 mantiene su comprobación de colisión; si falla un tramo, los reintentos
+conservan la retirada pendiente. Solo se permite con `ATHOME_SIM=1` en dominio 42.
+
 Si Nav2 corta la vuelta de búsqueda, se aprovechan los clientes con mano levantada
 confirmada que ya se vieron. Cuando alcanzan para los clientes pendientes, se omite
 el barrido adicional de cabeza (hasta 80 s). Se excluyen el barman, los clientes
