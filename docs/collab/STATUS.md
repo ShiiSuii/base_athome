@@ -3,9 +3,14 @@
 Corto y actualizado: se **reemplaza** lo viejo, no se acumula (`AGENTS.md` §9). Lo histórico se
 recupera por commit (§8). Editado por el integrador (Claude).
 
-**Última actualización:** 2026-11-10 · Claude Code · modo `DESARROLLO` · integrado el trabajo de Restaurant del 09/11 (clientes lejanos, 2 pedidos), la validación estática de la arena y receptionist con atributos y timbre. 1448 tests pasan. Nada de esto se probó todavía en el robot.
+**Última actualización:** 2026-11-10 (tarde) · Claude Code · `DESARROLLO` · Restaurant nuevo (barman, voz robot yes/no, rostros, brazo bloqueado hasta calibrar) integrado con 907 tests; **falla en Gazebo**: el detector de clientes no responde a tiempo y no ve personas simuladas (Codex investigando). Arena: con radio 0.44 no pasa puertas de 0.90 m.
 
 ## Integración 2026-11-10 (Claude)
+
+- **Restaurant nuevo (bfe4e0c, c279518, fea6723, 4f30f54):** busca al barman girando la base 30° por paso con la cámara al frente, frena al ver a alguien, lo sigue con la cabeza y pregunta "Are you the barman?"; guarda cara y posición. Clientes: "Searching for people." y pan -90, +90, 0. Pedido con "robot yes/no", 3 intentos. Barra: primer ítem al mostrador y agarre (pregrasp/grasp/postgrasp/carry), resto a bandeja; entrega "three, two, one" justo antes de abrir. Brazo apagado por defecto (`ARM=1`) y bloqueado mientras las 4 poses de `restaurant_arm_poses.yaml` tengan `calibrated: false`. Caras fuera del repo, borradas en cada prueba. `order_asr.py` (errores de Whisper) aún sin conectar.
+- **Gazebo Restaurant 10/11: FALLA.** "The customer detector did not respond in time" en cada búsqueda: el nodo espera 85 s y el barrido de bag_finder tarda ~103 s; además bag_finder no vio ninguna persona simulada (máx 0 en ~175 cuadros). Codex en `codex/rest-simfix`. Log: `/tmp/restaurant_180262`.
+- **Antigravity:** `agy_bounded_allow.py` ahora aprueba cadenas `a && b` si cada parte está permitida (6b9a936); hay que reinstalar la copia de `~/.gemini/config/` para que valga.
+- **Reglas Restaurant 2026:** en `docs/MATRIZ_REGLAS_HABILIDADES.txt` §5 (b121344).
 
 - **Restaurant (034c221):** el trabajo del 09/11 de Antigravity y Codex que había quedado sin commit (ver abajo). Cambió el barrido inicial: ahora recorre `0, -90, 0, +90, 0` y junta hasta 2 clientes, en vez de cortar al primero. Inflado 0.54 m solo en el overlay de Restaurant.
 - **Arena (cf72c67, Codex):** prueba estática con la huella del robot: 29 waypoints y 406 pares conectados, 5 puertas transitables, poses de Restaurant libres. Se movieron dos puntos de escenario que caían sobre muebles inflados. Falta Gazebo.
