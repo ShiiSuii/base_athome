@@ -83,6 +83,12 @@ WINDOW = "Manipulacion Base@Home"
 
 
 class Manipulacion(Node):
+    # Juego de 3 poses que ensena la ventana ([T], [4-6], [1-3]); Restaurant usa otro.
+    TEACH_POSES = POSES
+    TEACH_LABELS: dict = {}
+    TEACH_HINTS: dict = {}
+    OPEN_GRIPPER_POSES = ("pre_grasp",)
+
     def __init__(self):
         super().__init__("manipulacion_simple")
         self.lock = threading.Lock()
@@ -143,7 +149,7 @@ class Manipulacion(Node):
         self.moveit = MoveItBridge(self, torso_provider=lambda: self.torso_pos if self.torso_known() else None)
         self.move_group_proc = None
         threading.Thread(target=self._ensure_move_group, daemon=True).start()
-        self.wizard = TeachWizard(self.set_torque, self.save_pose)
+        self.wizard = TeachWizard(self.set_torque, self.save_pose, self.TEACH_POSES, self.TEACH_LABELS, self.TEACH_HINTS)
         threading.Thread(target=self._vision_loop, daemon=True).start()
 
     # ---------------------------------------------------------------- ROS
@@ -197,7 +203,7 @@ class Manipulacion(Node):
         return ok
 
     def save_pose(self, name: str, joints_deg, gripper_mm: float) -> Optional[str]:
-        if name == "pre_grasp":
+        if name in self.OPEN_GRIPPER_POSES:
             gripper_mm = GRIPPER_OPEN_MM  # el pre-agarre siempre con la pinza abierta
         res = pose_store.save_named_pose(name, joints_deg, gripper_mm, path=CONFIG, source="teach_wizard")
         if not res:
@@ -228,7 +234,7 @@ class Manipulacion(Node):
             return
         pose = self.poses.get(name)
         if not pose:
-            self.status = f"{LABELS[name]} no esta guardada. Usa [T] para ensenarla."
+            self.status = f"{self.wizard.labels.get(name, name)} no esta guardada. Usa [T] para ensenarla."
             return
         if not self.feedback_ok:
             self.status = "Sin datos reales del brazo: no lo muevo."
@@ -246,18 +252,18 @@ class Manipulacion(Node):
                 plan = self.moveit.plan_to_joints([math.radians(v) for v in self.joints_deg],
                                                   [math.radians(v) for v in target], vel_scale=self.vel_scale())
             if plan:
-                self.status = f"Yendo a {LABELS[name]} (MoveIt)..."
+                self.status = f"Yendo a {self.wizard.labels.get(name, name)} (MoveIt)..."
                 self._execute(plan)
             else:
                 dmax = max(abs(a - b) for a, b in zip(target, self.joints_deg))
                 dps = 60.0 * self.vel_scale()  # 100 % = 60 grados/s, 30 % = 18 grados/s
                 dur = float(np.clip(dmax / max(dps, 3.0), 1.0, 20.0))
-                self.status = f"Yendo a {LABELS[name]} ({dur:.1f} s)..."
+                self.status = f"Yendo a {self.wizard.labels.get(name, name)} ({dur:.1f} s)..."
                 self.send_joints(target, dur)
                 time.sleep(dur + 0.3)
             self.gripper(pose.get("gripper_mm", GRIPPER_OPEN_MM))
             if not self.abort:
-                self.status = f"En {LABELS[name]}."
+                self.status = f"En {self.wizard.labels.get(name, name)}."
         finally:
             self.busy = False
 
@@ -904,20 +910,21 @@ class Manipulacion(Node):
         y += 6
         if self.wizard.active:
             cv2.rectangle(panel, (8, y - 22), (512, y + 62), (0, 110, 220), -1)
-            put(f"ENSENANDO {LABELS[self.wizard.current]}  ({self.wizard.index + 1}/{len(self.wizard.sequence)})",
+            put(f"ENSENANDO {self.wizard.labels[self.wizard.current]}  ({self.wizard.index + 1}/{len(self.wizard.sequence)})",
                 (255, 255, 255), 0.7, 2, 30)
             put("Mueve el brazo a mano y presiona ENTER", (255, 255, 255), 0.6, 1, 40)
-        for i, name in enumerate(POSES, start=1):
+        for i, name in enumerate(self.TEACH_POSES, start=1):
             p = self.poses.get(name)
             mark = ">" if self.wizard.current == name else " "
             if p:
                 diff = max(abs(a - b) for a, b in zip(p["joints_deg"], q))
-                put(f"{mark}[{i}] {LABELS[name]:<10} dif {diff:5.1f} grados", (120, 230, 120) if diff < 2 else (230, 230, 230))
+                put(f"{mark}[{i}] {self.wizard.labels[name]:<10} dif {diff:5.1f} grados", (120, 230, 120) if diff < 2 else (230, 230, 230))
                 put("     " + " ".join(f"{v:.0f}" for v in p["joints_deg"]), (170, 170, 170), 0.45, 1, 22)
             else:
-                put(f"{mark}[{i}] {LABELS[name]:<10} (sin guardar)", (60, 160, 255))
+                put(f"{mark}[{i}] {self.wizard.labels[name]:<10} (sin guardar)", (60, 160, 255))
         y += 8
-        put("[T] ensenar las 3   [4][5][6] ensenar solo HOME/PRE/POST", (200, 200, 200), 0.5)
+        put("[T] ensenar las 3   [4][5][6] ensenar solo " + "/".join(self.wizard.labels[p] for p in self.TEACH_POSES),
+            (200, 200, 200), 0.5)
         put("[ENTER] guardar   [ESC] cancelar", (200, 200, 200), 0.5)
         put("[1][2][3] ir a pose  [O]/[C] pinza  [A] alinear  [G] agarrar", (200, 200, 200), 0.5)
         put(f"[M] calibrar distancia (Medido_cm = {self.measured_cm:.0f})   [Q] salir", (200, 200, 200), 0.5)
@@ -946,13 +953,13 @@ class Manipulacion(Node):
                 self.wizard.start()
         elif key in (ord("4"), ord("5"), ord("6")):  # ensenar SOLO una pose: 4 HOME, 5 PRE, 6 POST
             if not self.busy and not self.wizard.active:
-                self.wizard.start(only=POSES[key - ord("4")])
+                self.wizard.start(only=self.TEACH_POSES[key - ord("4")])
         elif key in (13, 10):
             with self.lock:
                 q, g, fb = list(self.joints_deg), self.gripper_mm, self.feedback_ok
             self.wizard.confirm(q, g, fb)
         elif key in (ord("1"), ord("2"), ord("3")):
-            self.go_to(POSES[key - ord("1")])
+            self.go_to(self.TEACH_POSES[key - ord("1")])
         elif key in (ord("o"), ord("O")):
             self.gripper(GRIPPER_OPEN_MM)
         elif key in (ord("c"), ord("C")):

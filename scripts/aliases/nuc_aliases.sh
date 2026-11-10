@@ -18,8 +18,13 @@ alias editor_urdf='urdf_editor'
 function gpsr_parser {  # gpsr_parser "bring me a coke from the kitchen"  -> plan JSON + frase
     (cd "$WS_ATHOME/tools/gpsr_parser" && env -u PYTHONPATH python3 -m gpsr_parser "$@")
 }
-restaurantgrasping() {  # restaurantgrasping [pregrasp|postgrasp|handover]: guarda donde esta el brazo ahora (no lo mueve)
-    (cd "$WS_ATHOME" && _ros && python3 -m base_athome_perception.restaurant_grasping "$@")
+restaurantgrasping() {  # ventana de manipulacion con las poses de Restaurant: [T] ensenar, [ENTER] guardar, [1-3] ir
+    _ros
+    if ! pgrep -f "^/opt/ros/jazzy/lib/robot_state_publisher/robot_state_publisher" >/dev/null; then
+        (DISPLAY="${DISPLAY:-:1}" ros2 launch hoverboard_base view_robot.launch.py > /tmp/view_robot.log 2>&1 &)
+        sleep 3
+    fi
+    DISPLAY="${DISPLAY:-:1}" /home/athome/ros2_vision_venv/bin/python3 "$WS_ATHOME/src/base_athome_perception/scripts/restaurant_grasping_window.py" "$@"
 }
 alias puerta='_ros && ros2 launch base_athome_skills door_open_detector.launch.py'
 alias detector_puerta='puerta'

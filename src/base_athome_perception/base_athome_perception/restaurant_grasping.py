@@ -1,6 +1,8 @@
-"""Guardar las poses del brazo de Restaurant leyendo donde esta el brazo ahora. No mueve nada.
+"""Poses del brazo de Restaurant. La ventana (alias restaurantgrasping) es la de manipulacion
+con PRE-GRASP / POST-GRASP / HANDOVER de Restaurant; esta linea de comandos es el respaldo
+sin ventana: lee donde esta el brazo ahora y lo guarda. No mueve nada.
 
-Uso (alias restaurantgrasping):
+Uso sin ventana (python3 -m base_athome_perception.restaurant_grasping):
     restaurantgrasping              muestra las 3 poses y la posicion actual
     restaurantgrasping pregrasp     guarda la posicion actual como restaurant_pregrasp
     restaurantgrasping postgrasp    ... restaurant_postgrasp
@@ -58,7 +60,11 @@ def read_arm(timeout_s=5.0):
 
 
 def save(short, joints_deg, gripper_mm, config_dir):
-    """Valida contra los limites del brazo y guarda en restaurant_arm_poses.yaml. Devuelve error o None."""
+    """Valida contra los limites del brazo y guarda en restaurant_arm_poses.yaml. Devuelve error o None.
+
+    `short` acepta 'pregrasp' o el nombre completo 'restaurant_pregrasp'.
+    """
+    short = short.replace("restaurant_", "", 1)
     limits = config_dir / "arm_poses_and_limits.yaml"
     valid = pose_store.validate_joints(joints_deg, path=limits)
     if not valid:
@@ -102,6 +108,45 @@ def main(argv=None):
     print(f"Guardada {POSES[argv[0]]}: {[round(v, 1) for v in arm[0]]}, pinza {arm[1]:.0f} mm")
     show(config_dir, arm)
     return 0
+
+
+def window_class():
+    """Ventana de manipulacion con las 3 poses de Restaurant (importa ROS solo al usarla)."""
+    from .arm_manipulation import GRIPPER_OPEN_MM, Manipulacion
+
+    config_dir = _config_dir()
+
+    class RestaurantGrasping(Manipulacion):
+        TEACH_POSES = tuple(POSES.values())
+        TEACH_LABELS = {"restaurant_pregrasp": "PRE-GRASP", "restaurant_postgrasp": "POST-GRASP",
+                        "restaurant_handover": "HANDOVER"}
+        TEACH_HINTS = {
+            "restaurant_pregrasp": "Pinza abierta, donde el barman pone el objeto.",
+            "restaurant_postgrasp": "Brazo recogido con el objeto: asi viaja al cliente.",
+            "restaurant_handover": "Adelante, para que el cliente tome el objeto.",
+        }
+        OPEN_GRIPPER_POSES = ("pre_grasp", "restaurant_pregrasp")
+
+        def save_pose(self, name, joints_deg, gripper_mm):
+            if name not in self.TEACH_POSES:
+                return super().save_pose(name, joints_deg, gripper_mm)
+            if name in self.OPEN_GRIPPER_POSES:
+                gripper_mm = GRIPPER_OPEN_MM
+            err = save(name, list(joints_deg), float(gripper_mm), config_dir)
+            if err:
+                return err
+            self.reload_poses()
+            self.get_logger().info(f"Pose {name} guardada (calibrated: true): {[round(v, 1) for v in joints_deg]}")
+            return None
+
+        def reload_poses(self):
+            super().reload_poses()
+            extra = pose_store.load_named_poses(config_dir / "restaurant_arm_poses.yaml")
+            for name in self.TEACH_POSES:
+                if name in extra:
+                    self.poses[name] = extra[name]
+
+    return RestaurantGrasping
 
 
 if __name__ == "__main__":

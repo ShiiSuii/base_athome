@@ -8,9 +8,9 @@ import rclpy
 
 from base_athome_perception.arm_manipulation import WINDOW, Manipulacion
 
-def main():
+def main(node_cls=Manipulacion):
     rclpy.init()
-    node = Manipulacion()
+    node = node_cls()
     threading.Thread(target=rclpy.spin, args=(node,), daemon=True).start()
     cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(WINDOW, 1160, 520)
