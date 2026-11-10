@@ -51,8 +51,8 @@ D2R = math.pi / 180.0
 WS = os.path.expanduser("~/base_athome_ws")
 ARM_CONFIG = os.path.join(WS, "src/base_athome_perception/config/arm_poses_and_limits.yaml")
 DEFAULT_FACES = ["/opt/ros/jazzy/share/rqt_image_view/resource/lena.png", "/usr/share/pixmaps/faces/surfer.jpg"]
-AUTO_LINES = ["My name is Robin and my favorite drink is iced tea", "yes",
-              "My name is Charlie and I like orange juice", "yes"]
+AUTO_LINES = ["My name is Robin and my favorite drink is iced tea",
+              "My name is Morgan and my favorite drink is coffee"]
 
 
 def yaw_quat(yaw):
@@ -435,8 +435,11 @@ class SimRobot(Node):
         self.get_logger().info(f"Escucha {rid} abierta (espera {start_timeout or self.mic.start_timeout:.0f} s; "
                                f"prompt: '{(prompt or self.prompt)[:50]}')")
         if self.auto_guest:
-            line = AUTO_LINES[self.auto_idx % len(AUTO_LINES)]
-            self.auto_idx += 1
+            if "answer yes or no" in (prompt or self.prompt).lower():
+                line = "yes"
+            else:
+                line = AUTO_LINES[self.auto_idx % len(AUTO_LINES)]
+                self.auto_idx += 1
             threading.Timer(1.0, lambda: self._speech(String(data=line))).start()
 
     def _listen_request(self, msg):
