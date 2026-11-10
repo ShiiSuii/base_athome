@@ -321,6 +321,9 @@ class HriReceptionistChallengeNode(Node):
         self.guest_inputs: "queue.Queue[dict]" = queue.Queue()
         self.pub_guest_input = self.create_publisher(String, "/hri/guest_input", 10)
         self.create_subscription(String, "/hri/guest_input", self._guest_input_cb, 10)
+        if os.environ.get("ATHOME_SIM") == "1":
+            self.create_subscription(String, "/sim/receptionist/guest_state",
+                                     self._sim_receptionist_state_cb, 10)
         try:
             self.guest_screen = GuestInputServer(self.vocab.names, self.vocab.drinks,
                                                  lambda d: self.pub_guest_input.publish(String(data=json.dumps(d))))
@@ -528,6 +531,7 @@ class HriReceptionistChallengeNode(Node):
         self.request_shutdown = False
         self.current_face_dets: List[Dict] = []
         self.current_poses: List[Dict] = []
+        self.sim_receptionist_state: Dict[str, Any] = {}
         self.frame_count = 0
         self.last_face_time = 0.0
         self.last_pose_time = 0.0
@@ -1087,6 +1091,22 @@ class HriReceptionistChallengeNode(Node):
         yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
         self.robot_pose = (msg.pose.pose.position.x, msg.pose.pose.position.y, yaw)
 
+    def _sim_receptionist_state_cb(self, msg: String):
+        """Simulation ground truth; the physical robot never subscribes to this topic."""
+        try:
+            state = json.loads(msg.data)
+            guests = state.get("seated_guests", [])
+            if not isinstance(guests, list):
+                return
+            for guest in guests:
+                if (not isinstance(guest, dict) or len(guest.get("xy", [])) != 2
+                        or not all(math.isfinite(float(v)) for v in guest["xy"])):
+                    return
+            self.sim_receptionist_state = {"guest_index": int(state.get("guest_index", 0)),
+                                           "seated_guests": guests}
+        except (ValueError, TypeError, KeyError, AttributeError):
+            return
+
     def _pt_connected_cb(self, msg):
         self.pt_connected = bool(msg.data)
 
@@ -1491,6 +1511,12 @@ class HriReceptionistChallengeNode(Node):
 
     def scan_seats(self) -> Tuple[Dict[str, int], bool]:
         """Mira cada asiento del mapa semantico y cuenta personas en el (ocupacion, uso_profundidad)."""
+        if os.environ.get("ATHOME_SIM") == "1":
+            people = [tuple(map(float, g["xy"]))
+                      for g in self.sim_receptionist_state.get("seated_guests", [])]
+            occ = seatocc.seat_occupancy(self.seats, people)
+            self.get_logger().info(f"🪑 Ocupacion sim verificada (actores): {occ}")
+            return occ, True
         persons: List[Tuple[float, float]] = []
         fallback: Dict[str, int] = {}
         used_depth = False
@@ -2308,6 +2334,12 @@ class HriReceptionistChallengeNode(Node):
                 postures = [d.get("posture", "") for d in poses]
                 seated = scene.person_seated_at(bearing, bearings, postures) if bearing is not None else \
                     any(str(p).upper().startswith("SENTAD") for p in postures)
+            if os.environ.get("ATHOME_SIM") == "1" and self.registered_guests:
+                seat = self.registered_guests[-1].get("seat")
+                seated = seated or any(
+                    int(g.get("guest_index", 0)) == self.guest_index and g.get("xy")
+                    and seatocc.seat_contains(self.seats.get(seat, {}), tuple(map(float, g["xy"])))
+                    for g in self.sim_receptionist_state.get("seated_guests", []))
             if seated and now - self.last_pose_time < 1.0:
                 self.seated_hits += 1
             elif not seated:

@@ -155,8 +155,11 @@ class SimRobot(Node):
         self.pub_torso_js = self.create_publisher(JointState, "/torso/joint_states", 10)
         self.pub_torso_st = self.create_publisher(String, "/torso/status", 10)
         self.pub_people = self.create_publisher(String, "/sim/people", 5)
+        self.pub_receptionist_state = self.create_publisher(String, "/sim/receptionist/guest_state", 5)
         self.guest_present = False
         self.guest_idx = 0
+        self.receptionist_seated_guests = []
+        self.receptionist_seat_xy = None
         self.guest_d = float(gp("guest_distance_m"))
         faces = [f for f in gp("faces") if f] or sorted(glob.glob(os.path.expanduser("~/sim_faces/*.jpg"))) or DEFAULT_FACES
         self.faces = [im for im in (cv2.imread(f) for f in faces) if im is not None]
@@ -195,6 +198,7 @@ class SimRobot(Node):
         self.pub_map = self.create_publisher(OccupancyGrid, "/map", latched)
         self.pub_world = self.create_publisher(MarkerArray, "/sim/world", 5)
         self.pub_pt_conn.publish(Bool(data=True))
+        self.create_timer(0.5, self._publish_receptionist_state)
 
         # --- Suscripciones / servicios ---
         sub = lambda t, n, f, q=10: self.create_subscription(t, n, f, q, callback_group=self.cb)
@@ -305,6 +309,8 @@ class SimRobot(Node):
         elif cmd == "next":
             self.guest_idx += 1
             self.guest_present = True
+            if self.gz:
+                threading.Thread(target=self._gz_reset_reception_guest, daemon=True).start()
         self.get_logger().info(f"Invitado #{self.guest_idx + 1}: {'presente' if self.guest_present else 'ausente'}")
 
     def _goal_pose(self, msg):
@@ -557,6 +563,8 @@ class SimRobot(Node):
         elif self.customers_xy:     # Restaurant: clientes sin bolsa. Sin esto /sim/people nunca se publicaba
             self.create_timer(0.2, self._gz_people)
             threading.Thread(target=self._gz_spawn_scene, daemon=True).start()
+        elif self.auto_guest:
+            threading.Thread(target=self._gz_spawn_scene, daemon=True).start()
 
     def _tcp_in_map(self):
         tcp = self._lookup("base_footprint", "tcp_link")[1]
@@ -592,6 +600,8 @@ class SimRobot(Node):
             models.append(gz_model.bag_sdf(self.bag_map[:2], self.bag_top))
         if self.person_xy is not None and (self.bag_map is not None or "ATHOME_SIM_PERSON" in os.environ):
             models.append(gz_model.person_sdf(self.person_xy))
+        if self.auto_guest:
+            models.append(gz_model.customer_sdf("recep_guest", self.person_xy, hand="none", seated=False))
         if self.bag2 is not None:
             models.append(gz_model.bag_sdf(self.bag2[:2], self.bag2[2]).replace(f'name="{gz_model.BAG_MODEL}"', 'name="bolsa_2"')
                           .replace(gz_model.BAG_ODOM_TOPIC, "/sim/gz/bolsa_2/odometry"))
@@ -762,12 +772,49 @@ class SimRobot(Node):
     def _heard_robot(self, msg):
         """La persona simulada obedece: senala cuando el robot se lo pide."""
         text = msg.data.lower()
+        if self.guest_present and "please take a seat" in text:
+            seat_xy = [3.5, 1.5] if "left" in text else [3.5, -1.5]
+            self.receptionist_seat_xy = seat_xy
+            if self.gz:
+                threading.Thread(target=self._gz_seat_guest, args=(seat_xy, self.guest_idx + 1), daemon=True).start()
+            else:
+                self._record_seated_guest(seat_xy, self.guest_idx + 1)
         if "follow you" in text and self.person_walk and self.walk_start is None:
             self.walk_start = time.time()
         if "point" in text and self.person_points:
             self.person_pointing = True
         if "between my fingers" in text and self.bag_map is not None and self.person_hands_over:   # plan B: se la da en la mano
             self.bag_in_hand = True
+
+    def _publish_receptionist_state(self):
+        self.pub_receptionist_state.publish(String(data=json.dumps({
+            "guest_index": self.guest_idx + 1,
+            "seated_guests": self.receptionist_seated_guests,
+        })))
+
+    def _record_seated_guest(self, xy, guest_index):
+        self.receptionist_seated_guests = [g for g in self.receptionist_seated_guests
+                                           if g["guest_index"] != guest_index]
+        self.receptionist_seated_guests.append({"guest_index": guest_index, "xy": list(xy)})
+
+    def _gz_seat_guest(self, xy, guest_index):
+        """Walk the visible actor to the offered chair, then show its seated pose."""
+        start = list(self.person_xy)
+        for step in range(1, 9):
+            t = step / 8.0
+            pos = [start[i] + t * (xy[i] - start[i]) for i in range(2)]
+            self._gz_run(gz_model.set_pose_command(GZ_WORLD, "recep_guest", (pos[0], pos[1], 0.81)))
+            time.sleep(0.2)
+        self._gz_run(gz_model.remove_command(GZ_WORLD, "recep_guest"))
+        sdf = gz_model.customer_sdf("recep_guest", xy, hand="none", seated=True)
+        self._gz_run(gz_model.create_command(GZ_WORLD, sdf))
+        self._record_seated_guest(xy, guest_index)
+
+    def _gz_reset_reception_guest(self):
+        """Bring the next scripted guest back to the reception area before the HRI greeting."""
+        self._gz_run(gz_model.remove_command(GZ_WORLD, "recep_guest"))
+        sdf = gz_model.customer_sdf("recep_guest", self.person_xy, hand="none", seated=False)
+        self._gz_run(gz_model.create_command(GZ_WORLD, sdf))
 
     def _walked_to(self, elapsed, start):
         """Camina por los puntos de ATHOME_SIM_PERSON_WALK a velocidad de persona, y se queda en el ultimo."""
