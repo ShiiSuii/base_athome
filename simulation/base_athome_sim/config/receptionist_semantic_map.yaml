@@ -1,0 +1,21 @@
+# Simulation only: chair coordinates from worlds/casa_simple.sdf.
+# --sim-nav exercises HRI without executing these waypoint targets.
+waypoints:
+  door: {x: -2.0, y: 0.0, qz: 0.0, qw: 1.0}
+  living_room: {x: 2.0, y: 0.0, qz: 0.0, qw: 1.0}
+zones: {}
+seats:
+  chair_left:
+    name: chair on the left
+    x: 3.5
+    y: 1.5
+    capacity: 1
+    type: chair
+    polygon: [[3.25, 1.25], [3.75, 1.25], [3.75, 1.75], [3.25, 1.75]]
+  chair_right:
+    name: chair on the right
+    x: 3.5
+    y: -1.5
+    capacity: 1
+    type: chair
+    polygon: [[3.25, -1.75], [3.75, -1.75], [3.75, -1.25], [3.25, -1.25]]

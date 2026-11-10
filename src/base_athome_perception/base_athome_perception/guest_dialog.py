@@ -46,7 +46,14 @@ def extract_name_and_drink(text: str, vocab=None) -> Tuple[Optional[str], Option
             name = official
         elif name:
             name = vocab.match_name(name) or name
-        drink = vocab.match_drink(text) or drink
+        matched_drink = vocab.match_drink(text)
+        # A short fallback vocabulary must not erase an explicitly recognized
+        # qualifier: "apple juice" is more specific than its entry "Juice".
+        specific_raw = (drink and matched_drink and drink.lower() in COMMON_DRINKS
+                        and drink.lower() != matched_drink.lower()
+                        and re.search(r'\b' + re.escape(matched_drink.lower()) + r'\b', drink.lower()))
+        if not specific_raw:
+            drink = matched_drink or drink
     return name, drink
 
 

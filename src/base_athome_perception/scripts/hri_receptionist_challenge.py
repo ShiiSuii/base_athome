@@ -700,6 +700,9 @@ class HriReceptionistChallengeNode(Node):
         # era una causa de cortes (USB re-enumerando). Para cerrarlo: pkill -f realsense2_camera_node
         if hasattr(self, "face_worker_stop"):
             self.face_worker_stop.set()
+        worker = getattr(self, "face_worker", None)
+        if worker is not None and worker is not threading.current_thread():
+            worker.join(timeout=5.0)
         super().destroy_node()
 
     # --------------------------------------------------------------------------
@@ -711,6 +714,8 @@ class HriReceptionistChallengeNode(Node):
         semantic_path = os.path.join(
             self.pkg_dir, "..", "base_athome_navigation", "config", "semantic_map.yaml"
         )
+        if os.environ.get("ATHOME_SIM") == "1":
+            semantic_path = os.environ.get("ATHOME_SIM_SEMANTIC_MAP") or semantic_path
         wp_path = os.path.join(
             self.pkg_dir, "..", "base_athome_navigation", "config", "waypoints.yaml"
         )
