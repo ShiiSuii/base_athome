@@ -1,29 +1,10 @@
-"""Maquina de estados pura (sin ROS) para la prueba Restaurant (RoboCup@Home 2026.2 §5.5).
+"""Flujo Restaurant por voz con callbacks inyectados y sin dependencia de ROS.
 
-Estrategia:
-  1. Inicio junto al kitchen bar: registra pose inicial como 'kitchen_bar'.
-  2. Barre con la cabeza, con la base quieta, hasta confirmar un cliente.
-  3. Informa cuantos clientes vio ("I see one customer" / "I see two customers").
-  4. Por cada cliente (hasta 2, en orden de cercania):
-     - Navega a un punto a ~0.9 m del cliente mirandolo de frente (orientacion hacia el comensal).
-     - Saluda brevemente (<= 15 palabras).
-     - Escucha el pedido; extrae items con LLM o fallback al menu.
-     - Si no entiende, pide repetir una vez. Si vuelve a fallar, cancela la atencion de ese cliente.
-     - Confirma el pedido en una frase breve (<= 15 palabras).
-     - Navega al kitchen bar.
-     - Comunica el pedido al barman y pide que lo coloque en la bandeja (frase corta <= 15 palabras).
-     - Espera colocacion / respuesta "ready"/"done" o timeout de 30 s (opcionalmente verifica con VLM).
-     - Regresa a la mesa del cliente mirandolo.
-     - Avisa la entrega: "Here is your order, please take it from my tray."
-  5. Regresa al kitchen bar y finaliza ("Mission complete. I am back at the kitchen bar.").
-
-Reglas estrictas de competencia:
-  - Sin confirmar direccion (-30 pts).
-  - Mirar al cliente de frente mientras habla (orientacion y pan-tilt).
-  - Frases breves de maximo 15 palabras.
-  - Cancelacion inmediata con 'stop' por voz o señal de aborto.
-  - Limite de tiempo global de 15 minutos (900 s).
-  - Sin HRI alternativo (teclado/pantalla para el pedido penaliza -80 pts).
+La barra es la pose inicial medida. Busca al barman, registra caras si hay
+adaptadores, confirma cada pedido y sirve en ciclos hasta el limite global.
+Con callbacks None se omite reconocimiento/manipulacion y se usa la bandeja.
+El audio es bloqueante y precede a la accion anunciada. batch_orders=False es
+el flujo secuencial; True recoge el lote visible antes de preparar cada orden.
 """
 
 from enum import Enum
@@ -33,7 +14,6 @@ import time
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from . import restaurant as rest
-from . import vlm
 from .restaurant_navigation import is_stop_command
 
 
@@ -43,6 +23,17 @@ HEAD_LOOK_AROUND_TIMEOUT_S = 80.0
 class SessionState(str, Enum):
     IDLE = "IDLE"
     STARTING = "STARTING"
+    FINDING_BARMAN = "FINDING_BARMAN"
+    CONFIRMING_BARMAN = "CONFIRMING_BARMAN"
+    ENROLLING_FACE = "ENROLLING_FACE"
+    CLEARING_COUNTER = "CLEARING_COUNTER"
+    CHECKING_ORDER = "CHECKING_ORDER"
+    DETECTING_ITEM = "DETECTING_ITEM"
+    PICKING_ITEM = "PICKING_ITEM"
+    HANDING_OVER = "HANDING_OVER"
+    RELEASING_ITEM = "RELEASING_ITEM"
+    STOWING_ARM = "STOWING_ARM"
+    WAITING_CUSTOMER = "WAITING_CUSTOMER"
     LOOKING_AROUND = "LOOKING_AROUND"
     DETECTING_CUSTOMERS = "DETECTING_CUSTOMERS"
     APPROACHING_CUSTOMER = "APPROACHING_CUSTOMER"
@@ -307,7 +298,15 @@ def validate_with_planner(
 
 
 class RestaurantSession:
-    """Maquina de estados pura con interfaces inyectadas para la mision Restaurant."""
+    """Maquina de estados pura con interfaces inyectadas para Restaurant.
+
+    Los siete callbacks de cara/manipulacion son opcionales. arm=False o
+    pick_item_fn=None fuerza bandeja, incluso con use_tray=False (parametro
+    heredado). delivery_wait_s se acepta por compatibilidad; ahora la descarga
+    se confirma por voz. Los callbacks son sincronicos y deben respetar stop
+    y sus propios limites de ejecucion; la sesion comprueba el deadline antes
+    y despues de cada llamada.
+    """
 
     def __init__(
         self,
@@ -336,7 +335,26 @@ class RestaurantSession:
         plan_fn: Optional[Callable[[Tuple[float, float, float]], Optional[float]]] = None,
         spin_fn: Optional[Callable[[float], bool]] = None,
         batch_orders: bool = False,
+        enroll_face_fn: Optional[Callable[[str, Optional[dict]], bool]] = None,
+        identify_face_fn: Optional[Callable[[dict], Optional[str]]] = None,
+        detect_item_fn: Optional[Callable[[str, float], bool]] = None,
+        pick_item_fn: Optional[Callable[[str], bool]] = None,
+        handover_fn: Optional[Callable[[], bool]] = None,
+        release_fn: Optional[Callable[[], bool]] = None,
+        stow_fn: Optional[Callable[[], bool]] = None,
+        arm: bool = True,
     ):
+        self.enroll_face_fn = enroll_face_fn
+        self.identify_face_fn = identify_face_fn
+        self.detect_item_fn = detect_item_fn
+        self.pick_item_fn = pick_item_fn
+        self.handover_fn = handover_fn
+        self.release_fn = release_fn
+        self.stow_fn = stow_fn
+        self.arm = bool(arm)
+        self.served_labels: set[str] = set()
+        self._visited_customers: List[Dict[str, Any]] = []
+        self._holding_item = False
         self.spin_fn = spin_fn
         self.plan_fn = plan_fn
         self.batch_orders = bool(batch_orders)
@@ -371,6 +389,8 @@ class RestaurantSession:
         self.stop_look_on_customer = True     # cortar el barrido inicial en cuanto aparece un cliente
         self.use_tray = bool(use_tray)
         self.max_customers = int(max_customers)
+        if self.max_customers <= 0:
+            raise ValueError("max_customers must be positive")
 
         self.state: SessionState = SessionState.IDLE
         self.stopped: bool = False
@@ -382,9 +402,11 @@ class RestaurantSession:
         self.orders: Dict[str, List[str]] = {}
         self.spoken_phrases: List[str] = []
 
-    def _speak(self, text: str) -> None:
-        """Envia frase asegurando tope estricto de 15 palabras y registro."""
-        clean = rest.limit_words(text, max_words=15)
+    def _speak(self, text: str, *, terminal: bool = False) -> None:
+        """Audio bloqueante, completo; no cortar instrucciones ni confirmaciones."""
+        if not terminal and (self.stopped or self._is_timeout()):
+            return
+        clean = text.strip()
         self.spoken_phrases.append(clean)
         self.speak_fn(clean)
 
@@ -450,12 +472,16 @@ class RestaurantSession:
             if self.stopped or self._is_timeout():
                 break
             self._set_state(SessionState.DETECTING_CUSTOMERS)
+            if self.stopped or self._is_timeout():
+                break
             raw = self.detect_customers_fn(min(14.0 if self.spin_fn else HEAD_LOOK_AROUND_TIMEOUT_S, self.remaining_s()), 3)   # 8 s era poco con YOLO en la CPU
             if isinstance(raw, dict) and not raw.get("ok", True):
                 self.detection_error = raw.get("error", "")
             view = (raw.get("customers", []) if raw.get("ok", True) else []) if isinstance(raw, dict) else raw
             if isinstance(view, list):
                 for customer in view:
+                    if not self._eligible_customer(customer):
+                        continue
                     if not self.spin_fn:
                         customers.append(dict(customer))
                         continue
@@ -531,35 +557,13 @@ class RestaurantSession:
         return filtered[:2]
 
     def _wait_for_barman(self, order_items: Sequence[str], max_wait_s: float = 30.0) -> None:
-        """Espera a que el barman coloque los objetos en la bandeja o pasen 30 s."""
-        t0 = self.clock_fn()
-        while self.clock_fn() - t0 < max_wait_s:
-            if self.stopped or self._is_timeout():
+        """Confirmacion por voz o espera acotada; firma heredada conserva order_items."""
+        end = min(self.deadline_s, self.clock_fn() + max_wait_s)
+        while not self.stopped and self.clock_fn() < end:
+            speech = self._listen(min(3.0, end - self.clock_fn()))
+            if self.stopped or self._is_timeout() or rest.yes_no_answer(speech) is True:
                 return
-
-            if self.ask_vlm_fn and self.get_camera_image_fn and order_items:
-                img_bytes = self.get_camera_image_fn()
-                if img_bytes:
-                    try:
-                        if rest.verify_item_on_tray(
-                                img_bytes, order_items[0], timeout_s=min(3.0, self.remaining_s())):
-                            return
-                    except Exception:
-                        pass
-
-            listen_s = min(3.0, self.remaining_s(), max_wait_s - (self.clock_fn() - t0))
-            if self.stopped or listen_s <= 0:
-                return
-            speech = self.listen_fn(listen_s)
-            if speech:
-                lower = speech.lower()
-                if is_stop_command(speech):
-                    self.stop()
-                    return
-                if any(w in lower for w in ("ready", "done", "finished", "here", "ok")):
-                    return
-            else:
-                self.sleep_fn(min(0.2, self.remaining_s()))
+            self.sleep_fn(min(0.2, max(0.0, end - self.clock_fn())))
 
     def _relocalize_customer_near(
         self, expected_xy: Sequence[float], max_gate_m: float = 2.5
@@ -624,6 +628,7 @@ class RestaurantSession:
                     SessionState.APPROACHING_CUSTOMER,
                     {"target": step_pose, "customer_index": idx, "customer_xy": list(c_xy), "progressive": True},
                 )
+                self._speak("Moving to the customer table.")
                 step_ok = self._navigate_to(step_pose)
                 if self.stopped or self._is_timeout():
                     return None
@@ -664,6 +669,7 @@ class RestaurantSession:
                     SessionState.APPROACHING_CUSTOMER,
                     {"target": step_pose, "customer_index": idx, "customer_xy": list(c_xy), "progressive": True},
                 )
+                self._speak("Moving to the customer table.")
                 if self._navigate_to(step_pose):
                     robot_pose = self._wait_for_pose()
                     if robot_pose is None:
@@ -700,6 +706,7 @@ class RestaurantSession:
                 "reachable": len(candidates) if validated else None,
             },
         )
+        self._speak("Moving to the customer table.")
         nav_ok = self._navigate_to(approach_pose)
         if (
             not nav_ok
@@ -714,6 +721,7 @@ class RestaurantSession:
                 SessionState.APPROACHING_CUSTOMER,
                 {"target": approach_pose, "customer_index": idx, "retry": 1},
             )
+            self._speak("Moving to the customer table.")
             nav_ok = self._navigate_to(approach_pose)
         if self.stopped or self._is_timeout():
             return None
@@ -722,253 +730,396 @@ class RestaurantSession:
             return None
         return approach_pose, candidates, candidate_idx
 
+    def _listen(self, timeout_s: float = 15.0) -> str:
+        if self.stopped or self._is_timeout():
+            return ""
+        speech = self.listen_fn(min(timeout_s, self.remaining_s())) or ""
+        if is_stop_command(speech):
+            self.stop()
+        return speech if not self.stopped and not self._is_timeout() else ""
+
+    def _ask_yes_no(self, prompt: str, retry_prompt: Optional[str] = None,
+                    attempts: int = 3) -> Optional[bool]:
+        for attempt in range(attempts):
+            if self.stopped or self._is_timeout():
+                return None
+            self._speak(prompt if attempt == 0 else (retry_prompt or prompt))
+            answer = rest.yes_no_answer(self._listen())
+            if self.stopped or self._is_timeout():
+                return None
+            if answer is not None:
+                return answer
+        return None
+
+    def _enroll_face(self, label: str, person: Optional[dict]) -> None:
+        if self.enroll_face_fn is None or self.stopped or self._is_timeout():
+            return
+        self._set_state(SessionState.ENROLLING_FACE, {"label": label})
+        if self.stopped or self._is_timeout():
+            return
+        try:
+            ok = bool(self.enroll_face_fn(label, person))
+        except Exception:
+            ok = False
+        self._set_state(SessionState.ENROLLING_FACE, {"label": label, "ok": ok})
+
+    def _find_barman(self) -> None:
+        # Dos intentos totales. Nunca se le pide al barman confirmar clientes.
+        for _ in range(2):
+            if self.stopped or self._is_timeout():
+                return
+            self._set_state(SessionState.FINDING_BARMAN)
+            self._speak(rest.BARMAN_SEARCH)
+            if self.stopped or self._is_timeout():
+                return
+            raw = self.detect_customers_fn(min(HEAD_LOOK_AROUND_TIMEOUT_S, self.remaining_s()), 3)
+            if self.stopped or self._is_timeout():
+                return
+            people = (raw.get("customers", []) if raw.get("ok", True) else []) if isinstance(raw, dict) else raw
+            if not people:
+                continue
+            def distance(person):
+                xy = person.get("xy") or (person.get("x"), person.get("y"))
+                try:
+                    d = math.hypot(float(xy[0]) - self.bar_pose[0], float(xy[1]) - self.bar_pose[1])
+                    return d if math.isfinite(d) else float("inf")
+                except (TypeError, ValueError, IndexError):
+                    return float("inf")
+            person = min(people, key=distance)
+            self._set_state(SessionState.CONFIRMING_BARMAN)
+            answer = self._ask_yes_no("Are you the barman? Please answer robot yes or robot no.", attempts=1)
+            if answer is True:
+                self._enroll_face("barman", person)
+                return
+
+    def _eligible_customer(self, person: dict) -> bool:
+        if self.stopped or self._is_timeout():
+            return False
+        label = None
+        if self.identify_face_fn is not None:
+            try:
+                label = self.identify_face_fn(person)
+            except Exception:
+                label = None
+            if label == "barman" or label in self.served_labels:
+                return False
+            if any(label == c.get("_face_label") for c in self._visited_customers if label):
+                return False
+        if label:
+            return not self.stopped and not self._is_timeout()
+        # Los ids del detector cambian entre barridos. Sin cara disponible,
+        # conservar la asociacion espacial del barrido, no deduplicar por id.
+        xy = person.get("xy") or (person.get("x"), person.get("y"))
+        for previous in self._visited_customers:
+            old = previous.get("xy") or (previous.get("x"), previous.get("y"))
+            try:
+                if math.hypot(float(xy[0]) - float(old[0]), float(xy[1]) - float(old[1])) < 0.8:
+                    return False
+            except (TypeError, ValueError, IndexError):
+                pass
+        return not self.stopped and not self._is_timeout()
+
     def _take_customer_order(self, idx: int, cust: Dict[str, Any]) -> List[str]:
-        """Saluda al cliente, escucha su pedido con hasta 2 intentos y confirma la orden."""
         if self._is_timeout() or self.stopped:
             return []
+        label = f"customer_{len(self._visited_customers) + 1}"
+        cust["_face_label"] = label
+        self._visited_customers.append(cust)
         self._set_state(SessionState.GREETING)
         self._speak(rest.greeting_phrase())
+        self._enroll_face(label, cust)
+        self._set_state(SessionState.CHECKING_ORDER)
+        has_order = self._ask_yes_no(rest.HAS_ORDER, rest.REPEAT_HAS_ORDER)
+        cust_id = str(cust.get("id", idx + 1))
+        if cust_id in self.orders:
+            cust_id = label
+        self.orders[cust_id] = []
+        if has_order is not True:
+            return []
 
-        self._set_state(SessionState.TAKING_ORDER)
-        order_items: List[str] = []
-        for attempt in range(2):
-            if self._is_timeout() or self.stopped:
-                return []
-
-            speech = self.listen_fn(min(15.0, self.remaining_s())) or ""
-            if is_stop_command(speech):
-                self.stop()
+        for attempt in range(3):
             if self.stopped or self._is_timeout():
                 return []
-
+            self._set_state(SessionState.TAKING_ORDER, {"attempt": attempt + 1})
+            self._speak(rest.ORDER_PROMPT)
+            speech = self._listen()
+            if self.stopped or self._is_timeout():
+                return []
             items = self.extract_order(speech)
             if self.stopped or self._is_timeout():
                 return []
             if items:
-                order_items = items
-                break
-            if attempt == 0:
+                self._set_state(SessionState.CONFIRMING_ORDER, {"items": items, "attempt": attempt + 1})
+                # Una respuesta incomprensible consume el intento, igual que un no.
+                accepted = self._ask_yes_no(rest.confirm_order_phrase(items), attempts=1)
+                if self.stopped or self._is_timeout():
+                    return []
+                if accepted is True:
+                    self.orders[cust_id] = items
+                    self._speak(f"Thank you. I will ask the barman for: {rest.joined_items(items)}.")
+                    return items
+                if attempt < 2:
+                    self._speak(rest.ORDER_CORRECTION)
+            elif attempt < 2:
                 self._speak(rest.repeat_order_phrase())
-            else:
-                self._speak(rest.cancel_order_phrase())
+        self._speak(rest.cancel_order_phrase())
+        return []
 
-        cust_id = str(cust.get("id", idx + 1))
-        self.orders[cust_id] = order_items
-        if not order_items:
-            return []
-
-        self._set_state(SessionState.CONFIRMING_ORDER, {"items": order_items})
-        self._speak(rest.confirm_order_phrase(order_items))
-        return order_items
-
-    def _fulfill_and_deliver_order(
-        self,
-        idx: int,
-        cust: Dict[str, Any],
-        order_items: Sequence[str],
-        approach_pose: Tuple[float, float, float],
-        candidates: Sequence[Tuple[float, float, float]],
-        candidate_idx: int,
-    ) -> bool:
-        """Regresa al kitchen bar, solicita la orden al barman, vuelve a la mesa y entrega."""
-        if self._is_timeout() or self.stopped:
+    def _arm_action(self, state: SessionState, callback: Optional[Callable],
+                    *args, emit_state: bool = True) -> bool:
+        if self.stopped or self._is_timeout():
+            return False
+        if emit_state:
+            self._set_state(state, {"item": args[0]} if args else {})
+        if self.stopped or self._is_timeout():
+            return False
+        try:
+            return bool(callback(*args)) if callback is not None else False
+        except Exception:
+            # Una excepcion no garantiza brazo seguro, a diferencia de pick=False.
+            self._abort_run = True
+            self._set_state(SessionState.FAILED, {"reason": "arm_callback_error", "action": state.value})
             return False
 
+    def _prepare_order(self, items: Sequence[str]) -> Tuple[Optional[str], List[str]]:
+        held = None
+        tray = list(items)
+        if self.arm and self.pick_item_fn is not None and items:
+            item = items[0]
+            self._speak(rest.counter_request_phrase(item))
+            detected = self.detect_item_fn is None  # adaptadores antiguos sin detector
+            for attempt in range(3) if self.detect_item_fn is not None else ():
+                if self.stopped or self._is_timeout():
+                    return None, []
+                self._set_state(SessionState.DETECTING_ITEM, {"item": item, "attempt": attempt + 1})
+                if self.stopped or self._is_timeout():
+                    return None, []
+                try:
+                    detected = bool(self.detect_item_fn(item, min(10.0, self.remaining_s())))
+                except Exception:
+                    detected = False
+                if self.stopped or self._is_timeout():
+                    return None, []
+                if detected:
+                    break
+                self._speak(f"I cannot see the {item}. Can you please slightly move and rotate it?")
+            if detected:
+                for _ in range(2):
+                    self._speak(f"I will now pick the {item}.")
+                    if self._arm_action(SessionState.PICKING_ITEM, self.pick_item_fn, item):
+                        held = item
+                        self._holding_item = True
+                        tray = list(items[1:])
+                        break
+                    if self._abort_run or self.stopped or self._is_timeout():
+                        return None, []
+            if held is None:
+                self._speak(f"Please place the {item} on my tray instead.")
+        for item in tray:
+            if self.stopped or self._is_timeout() or self._abort_run:
+                break
+            # Tambien el fallback pide posicion acostada y confirmacion por item.
+            self._speak(rest.tray_request_phrase(item))
+            self._speak("Tell me robot yes when you are done.")
+            self._set_state(SessionState.WAITING_BARMAN, {"item": item})
+            self._wait_for_barman([item])
+        return held, tray
+
+    def _delivery_failed(self, reason: str) -> bool:
+        self._abort_run = True
+        self._set_state(SessionState.FAILED, {"reason": reason})
+        return False
+
+    def _fulfill_and_deliver_order(
+        self, idx: int, cust: Dict[str, Any], order_items: Sequence[str],
+        approach_pose: Tuple[float, float, float],
+        candidates: Sequence[Tuple[float, float, float]], candidate_idx: int,
+    ) -> bool:
+        if self._is_timeout() or self.stopped:
+            return False
         self._set_state(SessionState.RETURNING_TO_BAR)
+        self._speak("Moving to the barman table.")
         nav_bar_ok = self._navigate_to(self.bar_pose)
         if self.stopped or self._is_timeout():
             return False
         if not nav_bar_ok:
             self._speak("I could not reach the bar.")
             return False
-
         self._set_state(SessionState.ORDERING_BARMAN)
-        self._speak(rest.barman_request_phrase(order_items, use_tray=self.use_tray))
-
-        self._set_state(SessionState.WAITING_BARMAN)
-        self._wait_for_barman(order_items, max_wait_s=30.0)
-        if self.stopped or self._is_timeout():
+        self._speak(rest.barman_request_phrase(order_items))
+        held, tray = self._prepare_order(order_items)
+        if self.stopped or self._is_timeout() or self._abort_run:
             return False
-
+        # Nunca viajar con un objeto que no se puede entregar con este contrato.
+        if held and not all((self.handover_fn, self.release_fn, self.stow_fn)):
+            return self._delivery_failed("missing_delivery_callback")
         self._set_state(SessionState.DELIVERING_TO_CUSTOMER)
+        self._speak("Moving to the customer table.")
         nav_back_ok = self._navigate_to(approach_pose)
-        if (
-            not nav_back_ok
-            and not self.stopped
-            and not self._is_timeout()
-            and self.nav_aborted_fn()
-            and candidate_idx + 1 < len(candidates)
-        ):
+        if (not nav_back_ok and not self.stopped and not self._is_timeout()
+                and self.nav_aborted_fn() and candidate_idx + 1 < len(candidates)):
             candidate_idx += 1
             approach_pose = candidates[candidate_idx]
-            self._set_state(
-                SessionState.DELIVERING_TO_CUSTOMER,
-                {"target": approach_pose, "customer_index": idx, "retry": 1},
-            )
+            self._set_state(SessionState.DELIVERING_TO_CUSTOMER,
+                            {"target": approach_pose, "customer_index": idx, "retry": 1})
+            self._speak("Moving to the customer table.")
             nav_back_ok = self._navigate_to(approach_pose)
         if self.stopped or self._is_timeout():
             return False
         if not nav_back_ok:
             self._speak("I could not return to the customer.")
+            if held:
+                return self._delivery_failed("held_item_customer_unreachable")
             return False
-
-        self._speak("Here is your order, please take it from my tray.")
-        t_deliv = self.clock_fn()
-        while self.clock_fn() - t_deliv < self.delivery_wait_s:
-            if self.stopped or self._is_timeout():
-                break
-            self.sleep_fn(min(0.2, self.remaining_s()))
+        self._speak(rest.deliver_phrase(order_items))
+        if held:
+            self._speak("Let me give you the object in my hand.")
+            if not self._arm_action(SessionState.HANDING_OVER, self.handover_fn):
+                if self.stopped or self._is_timeout() or self._abort_run:
+                    return False
+                return self._delivery_failed("handover_failed")
+            # El tablero se actualiza antes de contar: despues de "one" solo
+            # se comprueban stop/deadline y se llama al adaptador de apertura.
+            self._set_state(SessionState.RELEASING_ITEM)
+            self._speak("Please grab the object in my hand. I will open my hand in three,")
+            self._speak("two,")
+            self._speak("one.")
+            if not self._arm_action(SessionState.RELEASING_ITEM, self.release_fn, emit_state=False):
+                if self.stopped or self._is_timeout() or self._abort_run:
+                    return False
+                return self._delivery_failed("release_failed")
+            self._holding_item = False
+            self._speak("I will now stow my arm.")
+            if not self._arm_action(SessionState.STOWING_ARM, self.stow_fn):
+                if self.stopped or self._is_timeout() or self._abort_run:
+                    return False
+                return self._delivery_failed("stow_failed")
+        if tray:
+            self._set_state(SessionState.WAITING_CUSTOMER)
+            taken = self._ask_yes_no("Please take the objects on my tray. Did you take your order? "
+                                     "Please answer robot yes or robot no.")
+            if taken is not True:
+                if self.stopped or self._is_timeout():
+                    return False
+                # No llevarse la bandeja antes de que el cliente confirme la descarga.
+                return self._delivery_failed("tray_not_taken")
+        if self.stopped or self._is_timeout():
+            return False
+        self._speak("Enjoy your order. See you soon.")
         if self.stopped or self._is_timeout():
             return False
         self.served += 1
+        self.served_labels.add(cust["_face_label"])
         return True
 
+    def _interrupted(self) -> bool:
+        if self.stopped:
+            self._handle_stop()
+            return True
+        if self._is_timeout():
+            self._handle_timeout()
+            return True
+        return self._abort_run
+
+    def _return_to_bar(self, final: bool = False) -> bool:
+        self._set_state(SessionState.RETURNING_TO_BAR_FINAL if final else SessionState.RETURNING_TO_BAR)
+        self._speak("Moving to the barman table.")
+        ok = self._navigate_to(self.bar_pose)
+        if self._interrupted():
+            return False
+        if not ok:
+            self._set_state(SessionState.FAILED, {"reason": "bar_unreachable"})
+            self._speak("I could not reach the bar.")
+        return ok
+
     def run(self) -> bool:
-        """Ejecuta la mision completa."""
+        """Atencion secuencial o por lotes; vuelve a buscar hasta max_customers/deadline."""
         self.start_time = self.clock_fn()
         self.deadline_s = self.start_time + self.max_time_s
         self.stopped = False
         self._abort_run = False
         self.served = 0
+        self.served_labels.clear()
+        self._visited_customers = []
+        self._holding_item = False
         self.bar_pose = None
         self.customers = []
         self.orders = {}
+        self.current_customer_idx = 0
         self._set_state(SessionState.STARTING)
-
-        # 1. Pose de inicio como kitchen_bar
         self.bar_pose = self._wait_for_pose()
         if self.bar_pose is None:
             return self._handle_pose_failure()
-
-        # 2. Deteccion de clientes
-        if self._is_timeout():
-            return self._handle_timeout()
-        if self.stopped:
-            return self._handle_stop()
-
-        customers_list = self._look_around()
-        if self.stopped:
-            return self._handle_stop()
-        if self._is_timeout():
-            return self._handle_timeout()
-
-        if not customers_list:
-            reason = getattr(self, "detection_error", "")
-            phrases = {
-                "unlocalized_raised_hand": "I see your raised hand, but I cannot measure your distance. Please move closer.",
-                "unconfirmed_raised_hand": "I see your hand. Please hold it up a little longer.",
-                "timeout": "The customer detector did not respond in time.",
-            }
-            self._speak(phrases.get(reason, "I do not see any customers calling."))
-            self._set_state(SessionState.FAILED, {"reason": "no_customers"})   # sin clientes no se hizo la prueba
+        self._find_barman()
+        if self._interrupted():
             return False
+        self._set_state(SessionState.CLEARING_COUNTER)
+        self._speak("Please remove all the objects from the counter. When I have the orders, "
+                    "I will ask you to place each object.")
 
-        self.customers = rank_customers(customers_list, self.bar_pose)[: self.max_customers]
-        n_cust = len(self.customers)
-        word_map = {1: "one", 2: "two", 3: "three"}
-        num_word = word_map.get(n_cust, str(n_cust))
-        if n_cust == 1:
-            self._speak("I see one customer.")
-        else:
-            self._speak(f"I see {num_word} customers.")
-
-        if self.batch_orders and len(self.customers) >= 2:
-            # 3A. Task planning para 2 clientes: primero tomar ambos pedidos en orden optimo, luego ir al bar y entregar.
-            pending_deliveries: List[Tuple[int, Dict[str, Any], List[str], Tuple[float, float, float], List[Tuple[float, float, float]], int]] = []
+        while self.served < self.max_customers:
+            if self._interrupted():
+                return False
+            self._speak(rest.CUSTOMER_SEARCH)
+            customers = self._look_around()
+            if self._interrupted():
+                return False
+            if not customers:
+                reason = getattr(self, "detection_error", "")
+                phrases = {
+                    "unlocalized_raised_hand": "I see your raised hand, but I cannot measure your distance. Please move closer.",
+                    "unconfirmed_raised_hand": "I see your hand. Please hold it up a little longer.",
+                    "timeout": "The customer detector did not respond in time.",
+                }
+                if reason in phrases:
+                    self._speak(phrases[reason])
+                self._speak(rest.SEARCH_AGAIN)
+                # Evitar bucle ocupado con detectores/fakes que devuelven inmediatamente.
+                self.sleep_fn(min(0.2, self.remaining_s()))
+                continue
+            self.customers = rank_customers(customers, self.bar_pose)
+            self._speak(f"I have found {len(self.customers)} customers.")
+            pending = []
             for idx, cust in enumerate(self.customers):
+                if self.served + len(pending) >= self.max_customers:
+                    break
                 self.current_customer_idx = idx
-                if self._is_timeout():
-                    return self._handle_timeout()
-                if self.stopped:
-                    return self._handle_stop()
-
                 reached = self._approach_customer(idx, cust)
-                if getattr(self, "_abort_run", False):
+                if self._interrupted():
                     return False
-                if self.stopped:
-                    return self._handle_stop()
-                if self._is_timeout():
-                    return self._handle_timeout()
                 if reached is None:
                     continue
-                approach_pose, candidates, candidate_idx = reached
-
-                order_items = self._take_customer_order(idx, cust)
-                if self.stopped:
-                    return self._handle_stop()
-                if self._is_timeout():
-                    return self._handle_timeout()
-                if not order_items:
-                    continue
-                pending_deliveries.append((idx, cust, order_items, approach_pose, candidates, candidate_idx))
-
-            for idx, cust, order_items, approach_pose, candidates, candidate_idx in pending_deliveries:
-                self.current_customer_idx = idx
-                self._fulfill_and_deliver_order(
-                    idx, cust, order_items, approach_pose, candidates, candidate_idx
-                )
-                if self.stopped:
-                    return self._handle_stop()
-                if self._is_timeout():
-                    return self._handle_timeout()
-        else:
-            # 3B. Atencion secuencial de clientes (1 cliente o modo secuencial)
-            for idx, cust in enumerate(self.customers):
-                self.current_customer_idx = idx
-
-                if self._is_timeout():
-                    return self._handle_timeout()
-                if self.stopped:
-                    return self._handle_stop()
-
-                reached = self._approach_customer(idx, cust)
-                if getattr(self, "_abort_run", False):
+                items = self._take_customer_order(idx, cust)
+                if self._interrupted():
                     return False
-                if self.stopped:
-                    return self._handle_stop()
-                if self._is_timeout():
-                    return self._handle_timeout()
-                if reached is None:
+                if not items:
                     continue
-                approach_pose, candidates, candidate_idx = reached
-
-                order_items = self._take_customer_order(idx, cust)
-                if self.stopped:
-                    return self._handle_stop()
-                if self._is_timeout():
-                    return self._handle_timeout()
-                if not order_items:
-                    continue
-
-                self._fulfill_and_deliver_order(
-                    idx, cust, order_items, approach_pose, candidates, candidate_idx
-                )
-                if self.stopped:
-                    return self._handle_stop()
-                if self._is_timeout():
-                    return self._handle_timeout()
-
-        # 4. Regreso final al kitchen bar
-        if self._is_timeout():
-            return self._handle_timeout()
-        if self.stopped:
-            return self._handle_stop()
-
-        self._set_state(SessionState.RETURNING_TO_BAR_FINAL)
-        final_nav_ok = self._navigate_to(self.bar_pose)
-        if self.stopped:
-            return self._handle_stop()
-        if self._is_timeout():
-            return self._handle_timeout()
-        if not final_nav_ok:
-            self._speak("I could not reach the bar.")
-            self._set_state(SessionState.FAILED, {"reason": "bar_unreachable"})
-            return False
-        if not self.served:     # volver a la barra sin haber atendido a nadie no es un exito
-            self._speak("I could not serve any customer.")
-            self._set_state(SessionState.FAILED, {"reason": "no_customer_served"})
+                if self.batch_orders:
+                    pending.append((idx, cust, items, *reached))
+                else:
+                    self._fulfill_and_deliver_order(idx, cust, items, *reached)
+                    if self._interrupted():
+                        return False
+                    if not self._return_to_bar(final=self.served >= self.max_customers):
+                        return False
+            for idx, cust, items, pose, candidates, candidate_idx in pending:
+                self.current_customer_idx = idx
+                self._fulfill_and_deliver_order(idx, cust, items, pose, candidates, candidate_idx)
+                if self._interrupted():
+                    return False
+            # El modo por lotes retorna una vez tras entregar el lote. Sin pedido
+            # tambien regresa a la barra antes de volver a buscar clientes nuevos.
+            if self.batch_orders or self.served < self.max_customers:
+                pose = self._wait_for_pose()
+                if pose is None:
+                    return self._handle_pose_failure()
+                if pose != self.bar_pose and not self._return_to_bar(final=self.served >= self.max_customers):
+                    return False
+        if self._interrupted():
             return False
         self._speak("Mission complete. I am back at the kitchen bar.")
+        if self._interrupted():
+            return False
         self._set_state(SessionState.SUCCEEDED, {"served": self.served})
         return True
 
@@ -982,7 +1133,7 @@ class RestaurantSession:
             self.cancel_nav_fn()
         except Exception:
             pass
-        self._speak("Stopping mission.")
+        self._speak("Stopping mission.", terminal=True)
         self._set_state(SessionState.ABORTED)
         return False
 
@@ -991,6 +1142,6 @@ class RestaurantSession:
             self.cancel_nav_fn()
         except Exception:
             pass
-        self._speak("Time limit reached. Stopping mission.")
+        self._speak("Time limit reached. Stopping mission.", terminal=True)
         self._set_state(SessionState.TIMEOUT)
         return False

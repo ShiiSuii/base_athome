@@ -3,7 +3,7 @@ Sin ROS y sin llamar a la red:
 - Dos clientes -> dos misiones en orden estricto.
 - Cliente sin pedido entendible -> pide repetir una vez y sigue con el otro.
 - Gramatica GBNF solo con items del menu.
-- Respuestas y frases en una sola oracion de <= 15 palabras.
+- Confirmaciones por voz completas, sin truncamiento de items ni instrucciones.
 - Pregunta de verificacion de bandeja con VLM y short_answer.
 """
 
@@ -17,9 +17,9 @@ from base_athome_skills.mission import vlm
 
 
 # ------------------------------------------------------------------------------
-# 1. Frases del Robot (<= 15 palabras y oracion unica)
+# 1. Frases completas del protocolo
 # ------------------------------------------------------------------------------
-def test_all_phrases_are_single_sentence_and_at_most_15_words():
+def test_protocol_phrases_preserve_complete_voice_confirmations():
     phrases = [
         rest.greeting_phrase(),
         rest.confirm_order_phrase(["coke", "water"]),
@@ -33,7 +33,7 @@ def test_all_phrases_are_single_sentence_and_at_most_15_words():
 
     for p in phrases:
         words = p.strip().split()
-        assert len(words) <= 15, f"Frase excede 15 palabras ({len(words)}): '{p}'"
+        assert len(words) > 0
         assert len(words) >= 3, f"Frase demasiado corta: '{p}'"
         assert p.endswith((".", "!", "?")), f"Frase no termina con puntuacion: '{p}'"
 
@@ -128,7 +128,7 @@ def test_customer_unintelligible_order_retries_once_then_continues():
     assert st_cust2.attempts == 1
     assert set(st_cust2.items) == {"beer", "water"}
     assert st_cust2.speech == rest.confirm_order_phrase(st_cust2.items)
-    assert len(st_cust2.speech.split()) <= 15
+    assert rest.YES_NO_PROMPT in st_cust2.speech
 
 
 def test_customer_understands_on_second_attempt():
@@ -258,3 +258,25 @@ def test_verify_item_on_tray_with_mock_vlm():
     # Servidor desconectado (None)
     with patch.object(vlm, "ask_vlm", return_value=None):
         assert rest.verify_item_on_tray(b"fake_jpeg", "coke") is False
+
+
+@pytest.mark.parametrize('speech, answer', [
+    ('robot yes', True), ('yes', True), ('Robot, YES!', True),
+    ('robot no', False), ('no', False), ('NO.', False),
+    ('', None), ('yesterday', None), ('nobody', None), ('yes no', None),
+    ('robot yes no', None), ('I said yes', None), ('not yes', None),
+])
+def test_yes_no_answers_are_explicit_and_unambiguous(speech, answer):
+    assert rest.yes_no_answer(speech) is answer
+
+
+def test_order_phrases_keep_long_menu_names_and_confirmation():
+    items = ['chocolate milk', 'orange juice']
+    assert rest.confirm_order_phrase(items) == (
+        'Your order is: chocolate milk and orange juice. Is that correct? '
+        'Please answer robot yes or robot no.')
+    assert rest.barman_request_phrase(items) == (
+        'Dear barman, I have received an order with: chocolate milk and orange juice.')
+    assert rest.greeting_phrase() == (
+        f'Hello, my name is {rest.ROBOT_NAME}. Please answer me after the beep.')
+    assert rest.tray_request_phrase('water') == 'Please place the water on my tray, laying down.'

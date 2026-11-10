@@ -1,22 +1,8 @@
-"""Planificacion y toma de pedidos para la prueba Restaurant (RoboCup@Home). Logica pura sin ROS.
+"""Dialogo por voz, extraccion de pedidos y planes Restaurant, sin ROS.
 
-Organiza la atencion secuencial de clientes:
-  1. Para cada cliente en orden:
-     - Navega / se aproxima a la mesa del cliente.
-     - Saluda brevemente (frase corta <= 15 palabras).
-     - Escucha el pedido.
-     - Confirma el pedido en una sola frase (<= 15 palabras). Si no entiende, pide repetir una vez;
-       si vuelve a fallar, pide disculpas y continua con el siguiente cliente.
-     - Navega al kitchen bar ('kitchen_bar' o parametro).
-     - Pide al barman los items del pedido (frase corta <= 15 palabras).
-     - Espera la colocacion en bandeja (o toma los items).
-     - Regresa a la mesa del cliente.
-     - Entrega la orden (frase corta <= 15 palabras).
-     - Recien entonces pasa al siguiente cliente.
-  2. Modulo de LLM (local): genera prompt messages() y gramatica GBNF limitada exclusivamente
-     a los items del menu, valida y descarta items desconocidos con to_order().
-  3. Modulo VLM: formula preguntas breves de confirmacion para verificar con vlm.short_answer
-     la presencia de los objetos en la bandeja del robot.
+Las frases del protocolo no se truncan: la confirmacion robot yes/no debe
+escucharse completa. RestaurantSession ejecuta el dialogo interactivo; el planner
+inferior conserva su interfaz para los consumidores de planes estaticos.
 """
 
 from dataclasses import dataclass, field
@@ -62,53 +48,72 @@ def limit_words(text: str, max_words: int = MAX_PHRASE_WORDS) -> str:
 
 
 # ------------------------------------------------------------------------------
-# Generacion de Frases Breves (<= 15 palabras)
+# Frases completas del protocolo por voz
 # ------------------------------------------------------------------------------
-def greeting_phrase() -> str:
-    """Saludo corto inicial al llegar a la mesa del cliente."""
-    return limit_words("Hello! What would you like to order today?")
+ROBOT_NAME = "Base"
+YES_NO_PROMPT = "Please answer robot yes or robot no."
+BARMAN_SEARCH = (
+    "Hey barman, I will search for you. Please raise your hand above your head as high as you can."
+)
+CUSTOMER_SEARCH = (
+    "Dear customers, I am now ready to collect your orders. "
+    "Please wave at me with your hand above your head."
+)
+SEARCH_AGAIN = "I could not find any customers calling. I am going to search again."
+HAS_ORDER = "Please answer with robot yes or robot no. Do you have an order?"
+REPEAT_HAS_ORDER = (
+    "I did not understand what you said. Could you please repeat? Do you have an order?"
+)
+ORDER_PROMPT = "Please say my order is, and then the items of your order. What is your order?"
+ORDER_CORRECTION = "Sorry for my mistake. Let's try again."
+
+
+def joined_items(items: Sequence[str]) -> str:
+    return " and ".join(str(it).strip().lower() for it in items if str(it).strip())
+
+
+def yes_no_answer(speech: str) -> Optional[bool]:
+    """Solo respuestas completas; no confundir yes/no dentro de otra frase."""
+    words = re.findall(r"[a-z]+", (speech or "").lower())
+    if words in (["yes"], ["robot", "yes"]):
+        return True
+    if words in (["no"], ["robot", "no"]):
+        return False
+    return None
+
+
+def greeting_phrase(robot_name: str = ROBOT_NAME) -> str:
+    return f"Hello, my name is {robot_name}. Please answer me after the beep."
 
 
 def confirm_order_phrase(items: Sequence[str]) -> str:
-    """Confirmacion inmediata del pedido al comensal."""
-    clean = [str(it).strip().lower() for it in items if str(it).strip()]
-    if not clean:
-        return limit_words("I have taken your order and will bring it right away.")
-    if len(clean) == 1:
-        text = f"I will bring you a {clean[0]} right away."
-    else:
-        text = f"I will bring you {' and '.join(clean)} right away."
-    return limit_words(text)
+    return f"Your order is: {joined_items(items)}. Is that correct? {YES_NO_PROMPT}"
 
 
 def repeat_order_phrase() -> str:
-    """Peticion de repetir el pedido cuando no se entendio el primer intento."""
-    return limit_words("I did not understand. Could you please repeat your order?")
+    return "I did not understand. Could you please repeat your order?"
 
 
 def cancel_order_phrase() -> str:
-    """Aviso al cliente de que no se pudo tomar su pedido y se procede con el resto."""
-    return limit_words("Sorry, I could not understand. I will serve the next table.")
+    return "Sorry, I could not understand. I will serve the next table."
 
 
 def barman_request_phrase(items: Sequence[str], use_tray: bool = True) -> str:
-    """Instruccion breve al barman en el Kitchen-bar."""
-    clean = [str(it).strip().lower() for it in items if str(it).strip()]
-    joined = " and ".join(clean) if clean else "the order"
-    if use_tray:
-        text = f"Please place {joined} on my tray."
-    else:
-        text = f"I am here to collect {joined}."
-    return limit_words(text)
+    # use_tray se conserva por compatibilidad con el planner estatico.
+    return f"Dear barman, I have received an order with: {joined_items(items)}."
+
+
+def tray_request_phrase(item: str) -> str:
+    return f"Please place the {item} on my tray, laying down."
+
+
+def counter_request_phrase(item: str) -> str:
+    return (f"Please place the {item} on the counter, on the side closest to me. "
+            "No other object should be on the counter.")
 
 
 def deliver_phrase(items: Sequence[str]) -> str:
-    """Frase de entrega de los items al cliente."""
-    clean = [str(it).strip().lower() for it in items if str(it).strip()]
-    if clean:
-        joined = " and ".join(clean)
-        return limit_words(f"Here is your order of {joined}. Enjoy!")
-    return limit_words("Here is your order, please take it from my tray.")
+    return "Dear customer, I have your order."
 
 
 # ------------------------------------------------------------------------------
