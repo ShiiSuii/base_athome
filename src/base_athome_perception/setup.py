@@ -36,6 +36,7 @@ setup(
             'calibrar_aruco_manipulacion = scripts.calibrar_aruco_manipulacion:main',
             'calibrar_aruco_manipulacion.py = scripts.calibrar_aruco_manipulacion:main',
             'hri_receptionist = scripts.hri_receptionist_challenge:main',
+            'doorbell_audio_publisher = base_athome_perception.doorbell_audio_publisher:main',
             'hri_receptionist.py = scripts.hri_receptionist_challenge:main',
             'challenge_hri = scripts.hri_receptionist_challenge:main',
             'animated_face = scripts.animated_face_node:main',

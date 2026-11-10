@@ -17,9 +17,10 @@
 #  10. Returns to door to receive Guest 2, and introduces Guest 2 to both
 #      the host and Guest 1.
 # Optional --wait-doorbell waits up to --doorbell-timeout-s (default 30 s) before
-# each trip to the door. --doorbell-audio-topic (default /hri/doorbell/audio) needs
-# an external live PCM source: std_msgs/Int16MultiArray, mono 16 kHz, <=1600 samples
-# per message. This node does not open a microphone. Timeout continues without
+# each trip to the door. --start-doorbell-audio also enables --wait-doorbell and
+# starts a companion publisher using --doorbell-audio-device (PortAudio default
+# if empty). Otherwise --doorbell-audio-topic needs an external live PCM source:
+# std_msgs/Int16MultiArray, mono 16 kHz, <=1600 samples per message. Timeout continues without
 # claiming detection. ROS parameters have the same names with underscores.
 # Guest 1's trusted torso/legs colors and garment types are saved and described
 # to Guest 2 in one sentence (<=20 words); unsupported attributes are omitted.
@@ -2525,6 +2526,10 @@ def main():
     parser.add_argument("--max-guests", type=int, default=2, help="Cantidad de invitados a recibir")
     parser.add_argument("--wait-doorbell", action="store_true",
                         help="Esperar timbre antes de ir a la puerta, para cada invitado")
+    parser.add_argument("--start-doorbell-audio", action="store_true",
+                        help="Lanzar publicador de microfono y activar --wait-doorbell")
+    parser.add_argument("--doorbell-audio-device", default="",
+                        help="Nombre o indice sounddevice; vacio usa el microfono predeterminado")
     parser.add_argument("--doorbell-timeout-s", type=float, default=30.0,
                         help="Tope de espera del timbre; al vencer continua hacia la puerta")
     parser.add_argument("--doorbell-audio-topic", default="/hri/doorbell/audio",
@@ -2550,13 +2555,23 @@ def main():
         arm_gestures=args.arm_gestures,
         track_faces=args.track_faces,
         gentle_tracking=not args.no_gentle_tracking,
-        wait_doorbell=args.wait_doorbell,
+        wait_doorbell=args.wait_doorbell or args.start_doorbell_audio,
         doorbell_timeout_s=args.doorbell_timeout_s,
         doorbell_audio_topic=args.doorbell_audio_topic,
     )
 
     executor = MultiThreadedExecutor(num_threads=4)
     executor.add_node(node)
+    audio_node = None
+    if args.start_doorbell_audio and node.wait_doorbell:
+        from rclpy.parameter import Parameter
+        from base_athome_perception.doorbell_audio_publisher import DoorbellAudioPublisher
+
+        audio_node = DoorbellAudioPublisher(parameter_overrides=[
+            Parameter("device", value=args.doorbell_audio_device),
+            Parameter("topic", value=node.doorbell_audio_topic),
+        ])
+        executor.add_node(audio_node)
 
     def _safe_spin():
         try:
@@ -2596,6 +2611,8 @@ def main():
         if not args.no_gui:
             cv2.destroyAllWindows()
         executor.shutdown()
+        if audio_node is not None:
+            audio_node.destroy_node()
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
