@@ -84,8 +84,39 @@ Regenerate the map after editing the world, then run the tests that check doors,
 
 ```bash
 python3 simulation/scripts/hacer_mapa.py simulation/base_athome_sim/worlds/arena.sdf simulation/config/arena -4.5 -5.0 16 12
-python3 -m pytest simulation/base_athome_sim/test/test_arena_world.py
+python3 -m pytest simulation/base_athome_sim/test/test_arena_world.py simulation/base_athome_sim/test/test_arena_nav2_reachability.py
 ```
+
+**STATIC_PASS / UNIT_PASS (2026-11-10), Gazebo pending.** The offline Nav2 test reads the robot's
+`nav2_params.yaml` without changing it: radius 0.44 m, resolution 0.05 m, inflation radius 0.59 m,
+scaling 4.0, SmacPlanner2D. Nav2 Jazzy 1.3.10's installed `inflation_layer.hpp::computeCost` and
+libraries confirm costs 254 at obstacles, 253 at distances <= the inscribed radius, then
+`floor(252 * exp(-4 * (distance - inscribed_radius)))`. Distances are between cell centers; the
+inflation support is `ceil(0.59 / 0.05) = 12` cells (0.60 m). The default 0.01 m coordinate padding
+of the 16-vertex circular footprint gives an inscribed radius of 0.44130138 m. Smac's indexed
+`GridCollisionChecker::inCollision` rejects known raw costs >= 253; published OccupancyGrid costs
+253/254 become 99/100. The tests use those two scales separately.
+
+All 406 pairs of the 29 semantic waypoints have conservative 8-connected A* paths (no diagonal
+corner cutting), with maximum path length 20.27 m and maximum raw cost 243. Each door also passes
+a search restricted to its immediate neighborhood, so a remote detour cannot hide a blocked door.
+All five openings are 0.90 m, checked against the SDF collision-box edges (also the closed front
+door). Sealing each opening breaks its local path, and all six object approach poses are reachable.
+In the raster, hall-bedroom and dining-laundry have
+0.85 m of free cells and one traversable center; the other three have 0.90 m and two centers.
+Their best crossing cost is 243 (published 94). These are cell counts, not measured physical
+clearances; no widening or map regeneration was needed for static connectivity.
+
+Restaurant reads its arena defaults from `restaurant.sh`: start/bar `(7.75, 4.4)` facing -90 degrees,
+customers `(6.5, 3.5)` and `(8.55, 0.1)`. `approach_candidates` returns 55 and 37 poses with published
+cost < 99, inside the dining room and reachable from the bar. The preferred poses `(7.393, 4.143)`
+and `(8.883, 1.043)` both have cost 0. Trash and nav_eval points are also checked from home, including
+walking destinations and the auxiliary bag; `sin_persona`'s `(-8, -8)` is an explicit absence sentinel.
+The trash `apunta_mal` bag moved from `(0.5, 1.3)` to `(0.5, 0.9)` and nav_eval's retreat from
+`(5.9, 1.4)` to `(5.8, 1.3)` because both old positions had raw cost 253.
+
+These checks model the static arena map, not dynamic people/bags, online SLAM visibility, perception,
+controller execution or physical clearance. No arena mission has yet been run in Gazebo.
 
 The low coffee table in the living room (0.35 m) is below the lidar (0.38 m): it is not in the map and Nav2 does not see
 it, as on the real robot. The older worlds and their scenarios still work without `ATHOME_SIM_ARENA`.

@@ -161,7 +161,34 @@ def test_arena_doors_have_declared_width(semantic, map_info):
         assert 0.8 <= d["width_m"] <= 0.95, f"{name}: ancho fuera de 0.80-0.95 m"
         gap = _gap_m(map_info, d["x"], d["y"], d["axis"])
         assert abs(gap - d["width_m"]) <= 2 * map_info["res"], f"{name}: hueco de {gap:.2f} m, declarado {d['width_m']} m"
-        assert gap >= 0.85 - 1e-6, f"{name}: en el mapa quedan {gap:.2f} m; con menos de 0.85 m el robot (0.88 m) no pasa"
+        # Geometria rasterizada solamente: la transitabilidad real del costmap
+        # (costos < 253) se comprueba en test_arena_nav2_reachability.py.
+        assert gap >= 0.85 - 1e-6, f"{name}: en el mapa quedan {gap:.2f} m libres"
+
+
+def test_arena_door_widths_match_sdf_wall_edges(semantic):
+    """Medir los huecos en las cajas del SDF, sin inferirlos del PGM ni del encabezado."""
+    walls = ET.parse(WORLD_SDF).getroot().find(".//model[@name='paredes']")
+    # Este mundo expresa las cajas de pared en coordenadas globales, sin rotarlas.
+    assert walls.find("pose") is None and walls.find("link/pose") is None
+    boxes = []
+    for collision in walls.findall("link/collision"):
+        pose = [float(v) for v in collision.findtext("pose").split()]
+        assert pose[3:] == [0, 0, 0]
+        size = [float(v) for v in collision.findtext("geometry/box/size").split()]
+        boxes.append((pose, size))
+    for name, door in semantic["doors"].items():
+        axis = 0 if door["axis"] == "x" else 1
+        normal = 1 - axis
+        center = (door["x"], door["y"])
+        intervals = [(p[axis] - s[axis] / 2, p[axis] + s[axis] / 2)
+                     for p, s in boxes
+                     if abs(p[normal] - center[normal]) <= s[normal] / 2]
+        left = max(hi for lo, hi in intervals if hi <= center[axis])
+        right = min(lo for lo, hi in intervals if lo >= center[axis])
+        assert not any(lo < center[axis] < hi for lo, hi in intervals), name
+        assert right - left == pytest.approx(door["width_m"], abs=1e-9), name
+        assert door["width_m"] == pytest.approx(0.90), name
 
 
 # ----------------------------------------------------------------------------- mapa semantico
@@ -248,7 +275,7 @@ def test_arena_nav_eval_scenarios(semantic, map_info, monkeypatch):
 
 
 def test_arena_all_waypoints_connected_for_robot_radius(semantic, map_info):
-    """Con el mapa engordado por el radio del robot, desde 'home' se llega a todos los waypoints (pasando las puertas)."""
+    """Chequeo geometrico grueso; el inflado Nav2 exacto y A* se prueban por separado."""
     grid, res = map_info["grid"], map_info["res"]
     h, w = grid.shape
     n = int(math.ceil(ROBOT_RADIUS_M / res))
@@ -256,7 +283,7 @@ def test_arena_all_waypoints_connected_for_robot_radius(semantic, map_info):
     rows, cols = np.nonzero(grid)
     for dr in range(-n, n + 1):
         for dc in range(-n, n + 1):
-            if math.hypot(dr * res, dc * res) < ROBOT_RADIUS_M:        # menor estricto: como el radio inscripto del costmap
+            if math.hypot(dr * res, dc * res) <= ROBOT_RADIUS_M:
                 blocked[np.clip(rows + dr, 0, h - 1), np.clip(cols + dc, 0, w - 1)] = True
     c0, r0 = _cell(map_info, 0.0, 0.0)
     reach = np.zeros_like(grid)

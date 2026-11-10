@@ -147,7 +147,8 @@ ARENA_ENV: Dict[str, Dict[str, str]] = {
     "distractor": {"ATHOME_SIM_BAG": ARENA_BAG, "ATHOME_SIM_PERSON": ARENA_PERSON, "ATHOME_SIM_BAG2": "1.0,0.2,0.25"},
     "alta": {"ATHOME_SIM_BAG": "1.5,1.0,0.45", "ATHOME_SIM_PERSON": ARENA_PERSON},
     "sin_persona": {"ATHOME_SIM_BAG": ARENA_BAG, "ATHOME_SIM_PERSON": "-8,-8"},          # fuera de la casa
-    "apunta_mal": {"ATHOME_SIM_BAG": "0.5,1.3,0.30", "ATHOME_SIM_PERSON": ARENA_PERSON, "ATHOME_SIM_POINT_ERR_M": "1.0"},
+    # y=1.3 cae en costo inscrito 253 del mueble TV; y=0.9 mantiene libre la bolsa.
+    "apunta_mal": {"ATHOME_SIM_BAG": "0.5,0.9,0.30", "ATHOME_SIM_PERSON": ARENA_PERSON, "ATHOME_SIM_POINT_ERR_M": "1.0"},
     "seguir": {"ATHOME_SIM_BAG": "0.5,-3.4,0.30", "ATHOME_SIM_PERSON": "2.0,0.0", "ATHOME_SIM_PERSON_POINTS": "0",
                "ATHOME_SIM_PERSON_WALK": "3.5,0.0;3.5,-1.5;2.5,-1.5"},
 }

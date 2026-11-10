@@ -39,7 +39,8 @@ ARENA_SCENARIOS = {
     # una persona quieta en el medio del living, con lugar para rodearla
     "persona": dict(command="go to the dining room", person="2.5,0.2"),
     # una persona parada en la puerta living-comedor, que entra al comedor a los 12 s
-    "se_corre": dict(command="go to the bar", person="5.0,0.5", walk="5.9,1.4", walk_after_s="12"),
+    # (5.9,1.4) pisa el inflado de la silla 1; el waypoint dining_room queda libre.
+    "se_corre": dict(command="go to the bar", person="5.0,0.5", walk="5.8,1.3", walk_after_s="12"),
 }
 if ARENA:
     SCENARIOS, FAR = ARENA_SCENARIOS, ARENA_FAR
