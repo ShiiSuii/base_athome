@@ -18,6 +18,7 @@ alias editor_urdf='urdf_editor'
 function gpsr_parser {  # gpsr_parser "bring me a coke from the kitchen"  -> plan JSON + frase
     (cd "$WS_ATHOME/tools/gpsr_parser" && env -u PYTHONPATH python3 -m gpsr_parser "$@")
 }
+alias restaurantgrasping='(cd "$WS_ATHOME" && _ros && python3 -m base_athome_perception.restaurant_arm_teach)'  # ensenar poses del brazo de Restaurant (pregrasp, postgrasp, handover); Restaurant cerrado
 alias puerta='_ros && ros2 launch base_athome_skills door_open_detector.launch.py'
 alias detector_puerta='puerta'
 alias compilar='(cd $WS_ATHOME && source /opt/ros/jazzy/setup.bash && colcon build --symlink-install) && _ros'
@@ -55,7 +56,7 @@ alias camara_muneca='_ros && ros2 run rqt_image_view rqt_image_view /arm_camera/
 ayuda_robot() {
     cat <<'EOF'
 Workspace:     ws | devel | sws  (= source install/setup.bash)
-Herramientas:  urdf_editor | gpsr_parser "<comando>" | puerta | compilar | editor_mapa
+Herramientas:  urdf_editor | gpsr_parser "<comando>" | restaurantgrasping | puerta | compilar | editor_mapa
 Red/Jetson:    jetson (ssh) | red_jetson | deploy_jetson[_dry] | jetson_stats
 Cabeza:        head_start | head_stop | head_restart | head_status | head_logs
 Manipulacion:  manipulacion (incluye MoveIt) | manipulacion_avanzada | rviz_manipulacion | agarrar_botella | teach_record
