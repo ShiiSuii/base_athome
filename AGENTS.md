@@ -123,6 +123,22 @@ Reglas:
 7. Documentación de Orca (leer la de la versión instalada antes de usar comandos): <https://www.onorca.dev/docs/cli/orchestration>, <https://www.onorca.dev/docs/agents/supported>, <https://www.onorca.dev/docs/settings>. Permisos de Claude Code: <https://code.claude.com/docs/en/permissions>.
 8. Orca debe correr sin `--dangerously-skip-permissions`/`--yolo` en hosts con hardware; nada de auto-aprobadores ciegos ni convertir una pregunta de un worker en aprobación humana. **Sí** se usa la aprobación acotada `tools/agents/agy_bounded_allow.py` (hook `PreToolUse` de Antigravity instalado en `~/.gemini/config/`): aprueba solo inspección Git, `git add/commit`, lectura, pytest, colcon y xacro dentro de los worktrees; lo demás pregunta. Ampliarla solo con tests.
 
+### 6b. Herramientas de Claude Code (pedidas por el usuario el 2026-11-10)
+
+Las instala el usuario (los comandos `/plugin` y los permisos son de la interfaz); las claves de API van en su entorno, nunca en el repo ni en mensajes. Revisadas por Claude antes de instalar (licencias MIT/Apache).
+
+| Herramienta | Para qué | Instalación |
+|---|---|---|
+| i-have-adhd | Respuestas cortas, paso a paso | `/plugin marketplace add ayghri/i-have-adhd` y `/plugin install i-have-adhd` |
+| Superpowers | Flujos de trabajo (plan, TDD, depuración) | `/plugin install superpowers@claude-plugins-official` |
+| Codex plugin | Revisiones y tareas de Codex desde Claude | `/plugin marketplace add openai/codex-plugin-cc` y `/plugin install codex@openai-codex` |
+| Claude HUD | Barra de estado (contexto, herramientas, agentes) | `/plugin marketplace add jarrodwatts/claude-hud`, `/plugin install claude-hud`, luego `/hud` |
+| gstack | Skills de Garry Tan (navegador, revisión, QA) | Necesita Bun ≥ 1.4.2; `git clone --depth 1 https://github.com/garrytan/gstack ~/.claude/skills/gstack && cd ~/.claude/skills/gstack && ./setup` |
+| Perplexity (MCP) | Búsqueda web con fuentes | `claude mcp add perplexity -s user -e PERPLEXITY_API_KEY=<clave> -- npx -y @perplexity-ai/mcp-server` |
+| Firecrawl (MCP) | Leer y rastrear páginas web | `claude mcp add firecrawl -s user -e FIRECRAWL_API_KEY=<clave> -- npx -y firecrawl-mcp` |
+
+Uso: Perplexity y Firecrawl para investigación (reglas, papers, hardware); nunca para cuentas de Google, compras ni datos privados.
+
 ## 7. Git y GitHub
 
 - Nunca commit directo a `main`, force-push, rebase de ramas ajenas, `git reset --hard` o `git clean -fdx` sobre trabajo ajeno.
