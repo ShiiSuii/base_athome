@@ -449,6 +449,59 @@ PENALIDADES EN DOING LAUNDRY:
 - Human assistance environment changes: -40 pts por item.
 
 
+2.5. RESTAURANT (max. 2360 pts)
+--------------------------------------------------------------------------------
+Detalle normativo y hoja completa en la seccion "5. Restaurant 2026" de este archivo.
+
+ITEM 5.1: Detecting a calling or waving customer
+- Puntos: 160 pts
+- Detalle: 160 pts (2 x 80)
+- Habilidad que requiere: Vuelta continua de 360 con la camara al frente; mano levantada por YOLO pose (bag_finder people_here).
+- Skill o nodo nuestro que lo cubre: restaurant_session.py: _look_around / _scan_turn; bag_finder.py: _people_here
+
+ITEM 5.2: Reaching the customer's table
+- Puntos: 160 pts
+- Detalle: 160 pts (2 x 80); ayuda de guia -80 c/u
+- Habilidad que requiere: Acercamiento en dos etapas con re-deteccion de cerca; parada a 0,8 m.
+- Skill o nodo nuestro que lo cubre: restaurant_session.py: _approach_customer / _relocalize_customer_near
+
+ITEM 5.3: Understanding and confirming the order
+- Puntos: 320 pts
+- Detalle: 320 pts (2 x 160); HRI alternativa -80, sin contacto visual -60
+- Habilidad que requiere: Whisper + robot yes/no, 3 intentos.
+- Skill o nodo nuestro que lo cubre: restaurant_session.py: _take_customer_order
+
+ITEM 5.4: Communicating the order to the barman
+- Puntos: 160 pts
+- Detalle: 160 pts (2 x 80)
+- Habilidad que requiere: Barman: mas cercano con la mano levantada tras la vuelta; vuelve a la barra mirandolo.
+- Skill o nodo nuestro que lo cubre: restaurant_session.py: _find_barman / _find_barman_continuous
+
+ITEM 5.5: Picking the ordered objects from the bar
+- Puntos: 500 pts
+- Detalle: 500 pts (4 x 100 + 100 primer pick); si el barman entrega el objeto -100 c/u
+- Habilidad que requiere: Plan simple: el barman pone el primer objeto en la pinza abierta (pregrasp); el resto en bandeja.
+- Skill o nodo nuestro que lo cubre: restaurant_arm.py: present_gripper / grip_item
+
+ITEM 5.6: Returning to the customer's table with the order
+- Puntos: 160 pts
+- Detalle: 160 pts (2 x 80)
+- Habilidad que requiere: Navega con el objeto en postgrasp.
+- Skill o nodo nuestro que lo cubre: restaurant_session.py: _fulfill_and_deliver_order
+
+ITEM 5.7: Serving the objects to the customer
+- Puntos: 500 pts
+- Detalle: 500 pts (4 x 100 + 100 primer place); si el cliente retira de pinza/bandeja -100 c/u
+- Habilidad que requiere: Handover y apertura de pinza; bandeja: el cliente retira.
+- Skill o nodo nuestro que lo cubre: restaurant_arm.py: handover / release
+
+ITEM 5.8: Transporting with an unattached tray
+- Puntos: 400 pts
+- Detalle: 400 pts (2 x 200)
+- Habilidad que requiere: NO HAY: la bandeja actual no es removible.
+- Skill o nodo nuestro que lo cubre: NINGUNO
+
+
 ================================================================================
 3. LOS 10 ITEMS DE MAS PUNTOS POR ESFUERZO (ROI DE INTEGRACION)
 ================================================================================

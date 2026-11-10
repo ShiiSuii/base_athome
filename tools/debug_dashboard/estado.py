@@ -14,7 +14,7 @@ MATRIX = WS / "docs" / "MATRIZ_REGLAS_HABILIDADES.txt"
 COMMANDS = WS / "tools" / "gpsr_parser" / "data" / "commands.jsonl"
 SCENARIOS = Path.home() / ".local" / "share" / "base_athome" / "sim_escenarios.json"
 STAGES = ("robot", "gazebo", "simulador", "tests", "parcial", "falta")
-TESTS = {"1": "HRI", "2": "PP", "3": "GPSR", "4": "LAUNDRY"}
+TESTS = {"1": "HRI", "2": "PP", "3": "GPSR", "4": "LAUNDRY", "5": "RESTAURANT"}
 READY = ("robot",)
 WORKING = ("gazebo", "simulador", "tests", "parcial")
 

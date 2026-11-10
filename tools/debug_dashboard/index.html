@@ -878,6 +878,11 @@
             <div class="run-cmd"><span>calibrador:</span> <code>abrir_puerta</code></div>
           </div>
           <div class="run-card">
+            <div class="run-title">🍽️ Restaurant</div>
+            <div class="run-desc">Barman y clientes con una vuelta continua de 360°, pedido por voz, objeto en la pinza (pregrasp → postgrasp) y bandeja.</div>
+            <div class="run-cmd"><span>robot:</span> <code>restaurant</code> / <code>ARM=1 restaurant</code> · <span>poses brazo:</span> <code>restaurantgrasping</code></div>
+          </div>
+          <div class="run-card">
             <div class="run-title">🗣️ Sesión GPSR & Voice Dialog</div>
             <div class="run-desc">Arranque por puerta, diálogo con Whisper, LLM local Qwen 1.5B y ejecutor.</div>
             <div class="run-cmd"><span>robot/sim:</span> <code>gpsr</code> / <code>commander</code></div>
@@ -1126,7 +1131,7 @@
         { key: 'PP', label: 'Pick and Place (Manipulación)', icon: '🦾' },
         { key: 'GPSR', label: 'GPSR (Órdenes de voz)', icon: '🗣️' },
         { key: 'LAUNDRY', label: 'Laundry (Hacer la colada)', icon: '🧺' },
-        { key: 'Restaurant', label: 'Restaurant', icon: '🍽️', sinDesglose: true },
+        { key: 'RESTAURANT', label: 'Restaurant', icon: '🍽️' },
         { key: 'Final', label: 'Final', icon: '🏁', sinDesglose: true }
       ];
 
@@ -1163,7 +1168,7 @@
 
       // 3. Agrupación de capacidades por prueba
       // Pruebas: HRI, Pick and Place, GPSR, Laundry, Restaurant, Final y General
-      const testMap = { '1': 'HRI', '2': 'Pick and Place', '3': 'GPSR', '4': 'Laundry' };
+      const testMap = { '1': 'HRI', '2': 'Pick and Place', '3': 'GPSR', '4': 'Laundry', '5': 'Restaurant' };
       const groups = {
         'HRI': { title: '👥 HRI (Interacción Humano-Robot)', caps: [], desc: 'Recepción de invitados, apertura de puerta, seguimiento de anfitrión y diálogo.' },
         'Pick and Place': { title: '🦾 Pick and Place', caps: [], desc: 'Reconocimiento y agarre de objetos en mesas y estantes.' },
@@ -1225,7 +1230,7 @@
                 </div>
                 <div class="resumen-col-body">
                   ${robotCaps.length === 0 ? `
-                    <div class="resumen-empty">${groupKey === 'Restaurant' || groupKey === 'Final' ? 'Sin capacidades asignadas todavía.' : 'Todavía no hay ninguna capacidad validada en el robot real.'}</div>
+                    <div class="resumen-empty">${groupKey === 'Final' ? 'Sin capacidades asignadas todavía.' : 'Todavía no hay ninguna capacidad validada en el robot real.'}</div>
                   ` : `
                     <ul class="resumen-list">
                       ${robotCaps.map(c => renderCapLine(c, 'robot')).join('')}
@@ -1243,7 +1248,7 @@
                 </div>
                 <div class="resumen-col-body">
                   ${avanceCaps.length === 0 ? `
-                    <div class="resumen-empty">${groupKey === 'Restaurant' || groupKey === 'Final' ? 'Sin capacidades asignadas todavía.' : 'Ninguna capacidad en desarrollo para esta prueba.'}</div>
+                    <div class="resumen-empty">${groupKey === 'Final' ? 'Sin capacidades asignadas todavía.' : 'Ninguna capacidad en desarrollo para esta prueba.'}</div>
                   ` : `
                     <ul class="resumen-list">
                       ${avanceCaps.map(c => renderCapLine(c, 'avance')).join('')}
@@ -1261,7 +1266,7 @@
                 </div>
                 <div class="resumen-col-body">
                   ${faltaCaps.length === 0 ? `
-                    <div class="resumen-empty">${groupKey === 'Restaurant' || groupKey === 'Final' ? 'Sin capacidades asignadas todavía.' : 'No hay pendientes sin empezar en esta prueba.'}</div>
+                    <div class="resumen-empty">${groupKey === 'Final' ? 'Sin capacidades asignadas todavía.' : 'No hay pendientes sin empezar en esta prueba.'}</div>
                   ` : `
                     <ul class="resumen-list">
                       ${faltaCaps.map(c => renderCapLine(c, 'falta')).join('')}
