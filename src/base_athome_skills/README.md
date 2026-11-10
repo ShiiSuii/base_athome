@@ -137,6 +137,18 @@ cancelación a mitad de navegación (goal cancelado, base quieta). Con Nav2 real
 
 ## Restaurant: aproximación y barrido
 
+Si Nav2 corta la vuelta de búsqueda, se aprovechan los clientes con mano levantada
+confirmada que ya se vieron. Cuando alcanzan para los clientes pendientes, se omite
+el barrido adicional de cabeza (hasta 80 s). Se excluyen el barman, los clientes
+ya visitados y las detecciones duplicadas; si faltan clientes, se conserva el barrido.
+El detector permanece activo durante ambos giros y la locución intermedia: su
+ventana admite un giro adicional y 15 s de voz, siempre limitada por el plazo
+global; `stop_scan` la termina al acabar la vuelta. El nodo limita la búsqueda a
+`max_no_progress_rounds=3` rondas sin servir a otro cliente y termina en `FAILED`
+con `reason=no_customer_progress`; cada entrega reinicia ese contador. El contrato
+puro acepta `max_no_progress_rounds=None` para conservar el comportamiento anterior
+hasta el plazo global en adaptadores existentes.
+
 `restaurant_node` consume `/global_costmap/costmap` (`nav_msgs/OccupancyGrid`,
 transient local, marco `map`). La sesión evalúa 12 ángulos por radio (standoff,
 0.8 y 1.1 m), ordenados por distancia al robot, con radio circular de 0.3 m:

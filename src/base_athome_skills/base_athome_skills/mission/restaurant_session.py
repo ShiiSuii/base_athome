@@ -352,7 +352,12 @@ class RestaurantSession:
         grip_item_fn: Optional[Callable[[], bool]] = None,
         track_person_fn: Optional[Callable[[dict], None]] = None,
         stop_tracking_fn: Optional[Callable[[], None]] = None,
+        max_no_progress_rounds: Optional[int] = None,
     ):
+        if max_no_progress_rounds is not None and (
+                not isinstance(max_no_progress_rounds, int) or max_no_progress_rounds < 1):
+            raise ValueError("max_no_progress_rounds must be a positive integer or None")
+        self.max_no_progress_rounds = max_no_progress_rounds
         self.detect_barman_fn = detect_barman_fn
         self.detect_people_fn = detect_people_fn
         self.present_gripper_fn = present_gripper_fn
@@ -522,6 +527,20 @@ class RestaurantSession:
                 self._speak(rest.CUSTOMER_TURN)
             people, turned = self._scan_turn(announce)
             if not turned and not (self.stopped or self._is_timeout()):
+                # Un giro cortado puede haber visto ya a todos los clientes que
+                # faltan. No gastar otro barrido completo de cabeza en ese caso.
+                confirmed = []
+                for person in people:
+                    xy = self._person_xy(person)
+                    if (xy and self._raised(person) and self._eligible_customer(person)
+                            and all(math.hypot(xy[0] - p["xy"][0], xy[1] - p["xy"][1]) >= 0.7
+                                    for p in confirmed)):
+                        confirmed.append(dict(person, xy=list(xy)))
+                if len(confirmed) >= self.max_customers - self.served:
+                    if not announced:
+                        self._speak(rest.CUSTOMER_TURN)
+                    self._look_forward()
+                    return confirmed
                 # Prueba real 10/11: pegado a la barra, Nav2 corta el Spin ("Collision Ahead") a los
                 # pocos grados y la busqueda se repetia sin fin. Se mira con la cabeza, base quieta.
                 if not announced:
@@ -1396,9 +1415,24 @@ class RestaurantSession:
         self._speak("Please remove all the objects from the counter. When I have the orders, "
                     "I will ask you to place each object.")
 
+        no_progress_rounds = 0
+        last_served = self.served
         while self.served < self.max_customers:
             if self._interrupted():
                 return False
+            if self.served > last_served:
+                no_progress_rounds = 0
+                last_served = self.served
+            if (self.max_no_progress_rounds is not None
+                    and no_progress_rounds >= self.max_no_progress_rounds):
+                self._speak("I could not make progress serving customers. I will stop the search.")
+                if self._interrupted():
+                    return False
+                self._set_state(SessionState.FAILED, {"reason": "no_customer_progress",
+                                                     "rounds": no_progress_rounds,
+                                                     "served": self.served})
+                return False
+            no_progress_rounds += 1
             self._speak(rest.CUSTOMER_SEARCH)
             customers = self._look_around()
             if self._interrupted():

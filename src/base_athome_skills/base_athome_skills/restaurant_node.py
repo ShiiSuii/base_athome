@@ -86,6 +86,7 @@ class RestaurantNode(Node):
         self.declare_parameter("restaurant_arm_poses_file", "")
         self.declare_parameter("face_height_m", 1.2)  # sentado; face_z medido tiene prioridad
         self.declare_parameter("max_customers", 2)
+        self.declare_parameter("max_no_progress_rounds", 3)
         self.declare_parameter("standoff_dist", 0.8)  # 10/11: un poco mas cerca del cliente (antes 0.9)
         self.declare_parameter("delivery_wait_s", 7.0)
         self.declare_parameter("batch_orders", True)
@@ -218,6 +219,7 @@ class RestaurantNode(Node):
             delivery_wait_s=delivery_wait_s,
             use_tray=use_tray,
             max_customers=max_cust,
+            max_no_progress_rounds=self.get_parameter("max_no_progress_rounds").value,
             plan_fn=self._plan,
             batch_orders=batch_orders,
             spin_fn=self._spin,
@@ -511,7 +513,13 @@ class RestaurantNode(Node):
         ev = threading.Event()
         with self._bag_lock:
             self._bag_pending[req_id] = (ev, {})
-        budget = min(self.SCAN_TURN_MAX_S, max(1.0, self.session.remaining_s()))
+        # La busqueda de clientes contiene dos acciones Spin y una locucion
+        # bloqueante entre ambas. El detector debe seguir activo hasta el stop_scan,
+        # tambien si la simulacion tarda en completar los giros.
+        scan_limit = self.SCAN_TURN_MAX_S
+        if on_first_step is not None:
+            scan_limit += self.spin_timeout_s + 15.0
+        budget = min(scan_limit, max(1.0, self.session.remaining_s()))
         self.pub_bag_request.publish(String(data=json.dumps({
             "id": req_id, "mode": "people_here", "view_s": budget, "timeout_s": budget + 2.0, "min_frames": 2,
         })))

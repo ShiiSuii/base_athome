@@ -384,3 +384,27 @@ def test_slam_is_paused_for_a_turn_and_always_resumed_with_toggle_service():
     assert state["paused"] is True
     node._slam_pause_end()
     assert state == {"paused": False, "toggles": 2}
+
+
+@pytest.mark.parametrize('remaining', [900., 20.])
+def test_customer_scan_window_covers_both_spins_and_announcement(remaining):
+    methods = node_methods('_scan_turn')
+    methods['_scan_turn'].__globals__.update(json=json, threading=threading,
+                                            time=NS(time=lambda: 100., sleep=lambda _: None))
+    requests = []
+    node = NS(_bag_lock=threading.Lock(), _bag_pending={},
+              session=NS(remaining_s=lambda: remaining), SCAN_TURN_MAX_S=45., spin_timeout_s=40.,
+              _slam_pause_begin=lambda: None, _slam_pause_end=lambda: None,
+              _scan_turn_spins=lambda cb: True,
+              get_logger=lambda: NS(warn=lambda _: None, info=lambda _: None))
+    def publish(msg):
+        request = json.loads(msg.data)
+        requests.append(request)
+        if request['mode'] == 'people_here':
+            event, _ = node._bag_pending[request['id']]
+            node._bag_pending[request['id']] = (event, {'ok': True, 'customers': []})
+            event.set()
+    node.pub_bag_request = NS(publish=publish)
+    assert methods['_scan_turn'](node, lambda: None) == ([], True)
+    assert requests[0]['view_s'] == min(100., remaining)
+    assert requests[-1]['mode'] == 'stop_scan'
