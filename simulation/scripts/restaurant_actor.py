@@ -7,7 +7,7 @@ import threading
 import rclpy
 from std_msgs.msg import String
 
-ORDERS = ["I would like a coke and a water please", "a juice and a tea please"]
+ORDERS = ["coke and water", "juice and tea"]
 
 
 def main():
@@ -24,15 +24,20 @@ def main():
         if msg.data != "LISTENING" or state["answered"] == id(state["last"]):
             return
         said = state["last"]
-        if "here is your" in said or "mission complete" in said:     # entrega o fin: el cliente no pide de nuevo
+        if "mission complete" in said or "enjoy your order" in said:
             return
-        if "order" in said or "would you like" in said or "what can i" in said:
-            text = ORDERS[min(state["customer"], len(ORDERS) - 1)]
-            state["customer"] += 1
-        elif "tray" in said or "barman" in said or "please place" in said or "please put" in said:
-            text = "ready"
-        elif "?" in said:
-            text = "yes"
+        if "what is your order" in said or "would you like" in said or "what can i" in said:
+            # el pedido de este cliente; si el robot pide repetir, se repite el mismo
+            text = "my order is " + ORDERS[min(state["customer"], len(ORDERS) - 1)]
+        elif "are you the barman" in said:
+            text = "robot no"      # en Gazebo no hay modelo de barman: los que levantan la mano son clientes
+        elif "robot yes" in said or "?" in said:
+            # are you the barman / do you have an order / is that correct / tell me when done / did you take it
+            text = "robot yes"
+            if "is that correct" in said or "your order is" in said:
+                state["customer"] += 1
+        elif "tray" in said or "please place" in said or "please put" in said:
+            text = "robot yes"
         else:
             return
         state["answered"] = id(said)
