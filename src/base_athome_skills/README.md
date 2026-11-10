@@ -143,7 +143,9 @@ el barrido adicional de cabeza (hasta 80 s). Se excluyen el barman, los clientes
 ya visitados y las detecciones duplicadas; si faltan clientes, se conserva el barrido.
 El detector permanece activo durante ambos giros y la locución intermedia: su
 ventana admite un giro adicional y 15 s de voz, siempre limitada por el plazo
-global; `stop_scan` la termina al acabar la vuelta. El nodo limita la búsqueda a
+global; `stop_scan` la termina al acabar la vuelta. `bag_finder` admite hasta
+115 s de vista y 120 s de timeout para `people_here` (defaults cortos sin cambios).
+El nodo limita la búsqueda a
 `max_no_progress_rounds=3` rondas sin servir a otro cliente y termina en `FAILED`
 con `reason=no_customer_progress`; cada entrega reinicia ese contador. El contrato
 puro acepta `max_no_progress_rounds=None` para conservar el comportamiento anterior
