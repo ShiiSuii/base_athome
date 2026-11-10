@@ -145,6 +145,10 @@ El detector permanece activo durante ambos giros y la locución intermedia: su
 ventana admite un giro adicional y 15 s de voz, siempre limitada por el plazo
 global; `stop_scan` la termina al acabar la vuelta. `bag_finder` admite hasta
 115 s de vista y 120 s de timeout para `people_here` (defaults cortos sin cambios).
+En SIM, la asociación de clientes usa la proyección de sus keypoints visibles,
+incluidos los sentados; no supone un torso a 1.2 m para asociarlos al mundo.
+Esto corrige posiciones fantasma del adaptador simulado y no valida profundidad
+ni deriva de SLAM en el robot real.
 El nodo limita la búsqueda a
 `max_no_progress_rounds=3` rondas sin servir a otro cliente y termina en `FAILED`
 con `reason=no_customer_progress`; cada entrega reinicia ese contador. El contrato
