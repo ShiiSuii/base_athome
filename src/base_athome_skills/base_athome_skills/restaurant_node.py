@@ -449,7 +449,7 @@ class RestaurantNode(Node):
         })))
         time.sleep(1.5)  # bag_finder lleva la cabeza al frente y la deja quieta antes de girar
         if on_first_step is None:
-            ok = self._spin(2.0 * math.pi)
+            ok = self._spin(2.0 * math.pi)  # Nav2 corta si ve colision (p. ej. pegado a la barra)
         else:
             ok = self._spin(math.pi / 6)
             if ok and not self.session.stopped:
@@ -460,6 +460,8 @@ class RestaurantNode(Node):
         with self._bag_lock:
             _, res = self._bag_pending.pop(req_id, (None, {}))
         people = res.get("customers", []) if res and res.get("ok") else []
+        if not ok:
+            self.get_logger().warn("Vuelta incompleta: Nav2 no dejo girar; se busca con la cabeza.")
         for p in people:
             self.get_logger().info(f"Vuelta: persona xy={p.get('xy')} range_m={p.get('range_m')} "
                                    f"heading={p.get('heading_deg')} mano={p.get('raised_frames')}")
@@ -607,10 +609,24 @@ class RestaurantNode(Node):
             self._face_aiming = False
 
     def _enroll_face(self, label: str, person: Optional[dict] = None) -> bool:
-        return self._with_face_target(lambda: self._faces.enroll(label, person))
+        ok = self._with_face_target(lambda: self._faces.enroll(label, person))
+        logger = getattr(self, "get_logger", None)
+        if logger is not None and ok:
+            logger().info(f"Cara guardada: {label}")
+        elif logger is not None:
+            why = ("sin audio (no se apunta la cabeza)" if not getattr(self, "_audio_ok", True)
+                   else "no vi una sola cara centrada y nitida")
+            logger().warn(f"Cara NO guardada para {label}: {why}")
+        return ok
 
     def _identify_face(self, person: dict) -> Optional[str]:
-        return self._with_face_target(lambda: self._faces.identify(person))
+        label = self._with_face_target(lambda: self._faces.identify(person))
+        logger = getattr(self, "get_logger", None)
+        if logger is not None:
+            logger().info(f"Cara en xy={person.get('xy') if isinstance(person, dict) else None}: {label or 'desconocida'}")
+        return label
+
+
 
     def _on_head_feedback(self, msg):
         joints = dict(zip(msg.name, msg.position))

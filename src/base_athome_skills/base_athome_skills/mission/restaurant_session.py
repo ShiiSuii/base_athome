@@ -18,6 +18,7 @@ from .restaurant_navigation import is_stop_command
 
 
 HEAD_LOOK_AROUND_TIMEOUT_S = 80.0
+BARMAN_EXCLUDE_M = 1.0  # nadie a menos de esto del barman cuenta como cliente (antes 0.8)
 
 
 class SessionState(str, Enum):
@@ -515,11 +516,29 @@ class RestaurantSession:
             return []
         if self.spin_fn and self.scan_turn_fn:
             self._look_forward()  # deja de mirar al barman antes de girar
-            people, _ = self._scan_turn(lambda: self._speak(rest.CUSTOMER_TURN))
+            announced = []
+            def announce():
+                announced.append(True)
+                self._speak(rest.CUSTOMER_TURN)
+            people, turned = self._scan_turn(announce)
+            if not turned and not (self.stopped or self._is_timeout()):
+                # Prueba real 10/11: pegado a la barra, Nav2 corta el Spin ("Collision Ahead") a los
+                # pocos grados y la busqueda se repetia sin fin. Se mira con la cabeza, base quieta.
+                if not announced:
+                    self._speak(rest.CUSTOMER_TURN)
+                try:
+                    raw = self.detect_customers_fn(min(HEAD_LOOK_AROUND_TIMEOUT_S, self.remaining_s()), 3)
+                except Exception:
+                    raw = []
+                swept = (raw.get("customers", []) if raw.get("ok", True) else []) if isinstance(raw, dict) else raw
+                # El barrido de cabeza ya exige mano levantada confirmada.
+                people = list(people) + [dict(c, raised_frames=max(2, int(c.get("raised_frames", 2) or 2)))
+                                         for c in (swept if isinstance(swept, list) else []) if isinstance(c, dict)]
             view = []
             for p in people:
                 xy = self._person_xy(p)
-                if self._raised(p) and all(math.hypot(xy[0] - v["xy"][0], xy[1] - v["xy"][1]) >= 0.7 for v in view):
+                if xy and self._raised(p) and all(
+                        math.hypot(xy[0] - v["xy"][0], xy[1] - v["xy"][1]) >= 0.7 for v in view):
                     view.append(dict(p, xy=[xy[0], xy[1]]))
             if not view:
                 self.detection_error = "no_raised_hand"
@@ -1073,7 +1092,7 @@ class RestaurantSession:
             return False
         xy = self._person_xy(person)
         if self.barman_position is not None and xy is not None:
-            if math.hypot(xy[0] - self.barman_position[0], xy[1] - self.barman_position[1]) < 0.8:
+            if math.hypot(xy[0] - self.barman_position[0], xy[1] - self.barman_position[1]) < BARMAN_EXCLUDE_M:
                 return False
         label = None
         if self.identify_face_fn is not None:

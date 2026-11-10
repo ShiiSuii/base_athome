@@ -50,9 +50,9 @@ def limit_words(text: str, max_words: int = MAX_PHRASE_WORDS) -> str:
 # ------------------------------------------------------------------------------
 # Frases completas del protocolo por voz
 # ------------------------------------------------------------------------------
-ROBOT_NAME = "Base"
+ROBOT_NAME = "Robbie"
 YES_NO_PROMPT = "Please answer robot yes or robot no."
-BARMAN_SEARCH = "I will search for the barman. Barman, please keep your hand raised while I turn around."
+BARMAN_SEARCH = "Hello, I am Robbie. I will search for the barman. Barman, please keep your hand raised while I turn around."
 SEARCHING_PEOPLE = "Searching for people."
 CUSTOMER_TURN = "I am looking for customers. Please keep your hand raised."
 CUSTOMER_SEARCH = (

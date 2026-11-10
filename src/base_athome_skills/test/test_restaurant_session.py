@@ -261,8 +261,8 @@ def test_barman_position_filters_customers_even_without_matching_face(label):
     h = FakeRestaurantHarness()
     session = h.make_session(identify_face_fn=lambda _: label)
     session.barman_position = (2., 1.)
-    assert not session._eligible_customer({'xy': [2.79, 1.]})
-    assert session._eligible_customer({'x': 2.81, 'y': 1.})
+    assert not session._eligible_customer({'xy': [2.99, 1.]})  # 1 m alrededor del barman
+    assert session._eligible_customer({'x': 3.01, 'y': 1.})
 
 
 def test_customers_search_never_spins_base_and_announces_detection():
@@ -2072,3 +2072,17 @@ def test_continuous_customer_turn_announces_after_first_step_and_keeps_raised_ha
     assert [c['xy'] for c in found] == [[2., 0.]]
     started = h.events.index(('turn_started', None))
     assert h.events.index(('speak', rest.CUSTOMER_TURN)) > started
+
+
+def test_blocked_turn_falls_back_to_head_sweep_instead_of_looping():
+    """Prueba real 10/11: pegado a la barra, Nav2 corta el Spin y la busqueda se repetia sin fin."""
+    h = FakeRestaurantHarness()
+    sweeps = []
+    session = h.make_session(spin_fn=lambda a: False, scan_turn_fn=lambda cb=None: ([], False),
+                             get_odom_yaw_fn=lambda: 0.)
+    session.detect_customers_fn = lambda *a: sweeps.append(a) or [{'id': 'c', 'xy': [2., 1.]}]
+    session.deadline_s = h.clock() + 900.
+    session.bar_pose = (0., 0., 0.)
+    found = session._look_around()
+    assert len(sweeps) == 1 and [c['xy'] for c in found] == [[2., 1.]]
+    assert rest.CUSTOMER_TURN in h.spoken
