@@ -298,6 +298,9 @@ class Manipulacion(Node):
             msg.points.append(p)
         if self.fjt is not None and self.fjt.wait_for_server(timeout_sec=0.5):
             return self._execute_fjt(msg, pts[-1][1])
+        if getattr(self, "require_feedback_action", False):
+            self.last_exec_msg = "sin accion follow_joint_trajectory: movimiento rechazado"
+            return False
         self.pub_traj.publish(msg)
         t_end = time.time() + pts[-1][1] + 0.5
         while time.time() < t_end:

@@ -199,6 +199,7 @@ def save_named_pose(
     path: Union[str, Path, None] = None,
     timestamp: Optional[str] = None,
     source: Optional[str] = None,
+    calibrated: Optional[bool] = None,
 ) -> ValidationResult:
     """Guarda una pose nombrada en el archivo YAML de forma atomica y validada.
 
@@ -257,6 +258,8 @@ def save_named_pose(
     }
     if source is not None:
         new_entry["source"] = source
+    if calibrated is not None:
+        new_entry["calibrated"] = bool(calibrated)
 
     named_poses[clean_name] = new_entry
 

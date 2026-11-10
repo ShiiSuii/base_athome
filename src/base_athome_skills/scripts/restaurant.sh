@@ -9,6 +9,11 @@
 #     SIM=1 ATHOME_SIM_ARENA=1: lo mismo en el comedor de la casa completa (worlds/arena.sdf), SLAM sin mapa previo.
 # ==============================================================================
 set -u
+ARM=${ARM:-0}  # ARM=1: brazo opcional; requiere poses calibradas y habilitacion humana previa
+ARM_MOTION=false
+[ "$ARM" = 1 ] && ARM_MOTION=true
+# Parametro acotado al nodo Restaurant: nunca propagar este permiso al elevador.
+ARM_ARG=(-p "arm:=$ARM_MOTION" -p "restaurant_node:allow_motion:=$ARM_MOTION")
 HERE=$(cd "$(dirname "$0")" && pwd)
 WS=$(cd "$HERE/../../.." && pwd)
 
@@ -164,7 +169,7 @@ if [ "${SIM:-0}" = 1 ]; then
 
   echo "Iniciando restaurant_node..."
   AUTO_ARG=(); [ "${AUTO:-0}" = 1 ] && AUTO_ARG=(-p auto_start:=true)   # AUTO=1: sin esperar ENTER (pruebas automaticas)
-  session_run_terminal ros2 run base_athome_skills restaurant_node --ros-args "${AUTO_ARG[@]}"
+  session_run_terminal ros2 run base_athome_skills restaurant_node --ros-args "${AUTO_ARG[@]}" "${ARM_ARG[@]}"
   exit $?     # al terminar la mision se cierra toda la sesion: quedarse esperando dejaba SLAM y Gazebo abiertos
 fi
 
@@ -228,4 +233,4 @@ start_rviz
 # 9. Nodo visible con stdin preservado; wait permite ejecutar los traps inmediatamente
 echo "Iniciando nodo Restaurant..."
 AUTO_ARG=(); [ "${AUTO:-0}" = 1 ] && AUTO_ARG=(-p auto_start:=true)
-session_run_terminal ros2 run base_athome_skills restaurant_node --ros-args "${AUTO_ARG[@]}"
+session_run_terminal ros2 run base_athome_skills restaurant_node --ros-args "${AUTO_ARG[@]}" "${ARM_ARG[@]}"

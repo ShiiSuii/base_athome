@@ -10,16 +10,28 @@ Conecta la maquina de estados RestaurantSession con:
   - LLM local (ask_order en 127.0.0.1:8771)
   - VLM local (ask_vlm / verify_item_on_tray en 127.0.0.1:8772)
   - /restaurant/state (monitoreo del estado JSON en vivo)
+
+Brazo opcional: arm:=true y allow_motion:=true, controlador ya habilitado por el
+humano, feedback fresco y cuatro poses calibrated: true. Las poses iniciales en
+restaurant_arm_poses.yaml NO habilitan movimiento. En LAB_SUPERVISADO usar
+``python3 -m base_athome_perception.restaurant_arm_teach``: GRABAR/GUARDAR del
+TeachPanel llama save_pose con articulaciones medidas, solo al archivo extra.
+Ensenar pregrasp frente al objeto, postgrasp retirado, carry dentro del chasis y
+handover frente al cliente; validar cada recorrido antes de marcar calibrated:
+true. No se modifica arm_poses_and_limits.yaml. La entrega conserva la pinza
+cerrada hasta release_fn; no habilita torque ni mueve el elevador.
 """
 
 import json
 import math
+from pathlib import Path
 import sys
 import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from action_msgs.msg import GoalStatus
+from ament_index_python.packages import get_package_share_directory
 from geometry_msgs.msg import Vector3
 from nav2_msgs.action import ComputePathToPose, NavigateToPose, Spin
 from nav_msgs.msg import OccupancyGrid
@@ -30,18 +42,26 @@ from rclpy.duration import Duration
 from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import Image, JointState
 from std_msgs.msg import Empty, String
 from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
 
 from base_athome_perception.speaker import RoboCupSpeaker
 from base_athome_perception.voice_client import VoiceClient
+from base_athome_perception import pose_store
+from base_athome_perception.restaurant_arm import (
+    RestaurantArm, create_restaurant_manipulation, merge_restaurant_poses,
+)
 
 from .mission import restaurant as rest
 from .mission import vlm
 from .mission.restaurant_navigation import NavigationStopMonitor, RestaurantNavigation
 from .mission.restaurant_session import RestaurantSession, path_length
+from .restaurant_interfaces import (
+    RestaurantFaces, head_angles, make_face_recognizer, person_map_point,
+    supported_kwargs, transform_point,
+)
 
 
 class RestaurantNode(Node):
@@ -56,6 +76,10 @@ class RestaurantNode(Node):
         self.declare_parameter("menu", list(rest.DEFAULT_MENU))
         self.declare_parameter("timeout_s", 900.0)
         self.declare_parameter("tray", True)
+        self.declare_parameter("arm", False)
+        self.declare_parameter("allow_motion", False)
+        self.declare_parameter("restaurant_arm_poses_file", "")
+        self.declare_parameter("face_height_m", 1.2)  # sentado; face_z medido tiene prioridad
         self.declare_parameter("max_customers", 2)
         self.declare_parameter("standoff_dist", 0.9)
         self.declare_parameter("delivery_wait_s", 7.0)
@@ -116,6 +140,32 @@ class RestaurantNode(Node):
 
         self.pub_say = self.create_publisher(String, "/hri/say_something", 10)
         self.pub_head = self.create_publisher(Vector3, "/pan_tilt/target_degrees", 5)
+        self._audio_ok = self.speaker is not None
+        self._face_aiming = False
+        self._head_feedback = None
+        self.create_subscription(JointState, "/pan_tilt/joint_states", self._on_head_feedback,
+                                 qos_profile_sensor_data, callback_group=self.cb_group)
+
+        self.ros_executor = None  # main agrega la unica Manipulacion a este executor, como mission/node.py
+        self._manip = None
+        self._manip_lock = threading.Lock()
+        perception_share = Path(get_package_share_directory("base_athome_perception"))
+        extra_poses = (self.get_parameter("restaurant_arm_poses_file").value
+                       or str(perception_share / "config/restaurant_arm_poses.yaml"))
+        try:
+            poses = merge_restaurant_poses(pose_store.load_named_poses(), extra_poses)
+        except Exception as exc:
+            self.get_logger().warn(f"Restaurant: poses invalidas, solo bandeja ({exc})")
+            poses = {}
+        self._arm = RestaurantArm(
+            self._manipulation, poses, self._arm_permitted,
+            unsafe_fn=lambda: self.session.stop(), warn_fn=self.get_logger().warn,
+        )
+        self._faces = RestaurantFaces(
+            lambda db: make_face_recognizer(perception_share / "models", db),
+            self._aim_at_person, self._face_frame,
+            active_fn=self._session_active, warn_fn=self.get_logger().warn,
+        )
 
         # Monitoreo de estado
         latched_qos = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
@@ -123,6 +173,7 @@ class RestaurantNode(Node):
 
         # Camara para verificacion visual con VLM
         self._latest_image_bytes: Optional[bytes] = None
+        self._latest_face_frame = None
         self.create_subscription(
             Image,
             "/camera/camera/color/image_raw",
@@ -135,7 +186,7 @@ class RestaurantNode(Node):
         self.create_subscription(Empty, "/restaurant/start", lambda _: self.start_mission(), 5, callback_group=self.cb_group)
 
         # Instanciar sesion
-        self.session = RestaurantSession(
+        session_kwargs = dict(
             navigate_fn=self._navigate,
             get_costmap_fn=lambda: self._costmap,
             nav_aborted_fn=lambda: self._nav_aborted,
@@ -158,6 +209,19 @@ class RestaurantNode(Node):
             plan_fn=self._plan,
             batch_orders=batch_orders,
         )
+        # El otro worker agrega estos parametros en paralelo. Versiones anteriores
+        # reciben solo los que aceptan; arm=false deja pick_item_fn=None (bandeja).
+        arm_enabled = bool(self.get_parameter("arm").value)
+        session_kwargs.update(supported_kwargs(RestaurantSession, dict(
+            enroll_face_fn=self._enroll_face,
+            identify_face_fn=self._identify_face,
+            detect_item_fn=self._detect_item,
+            pick_item_fn=self._arm.pick_item if arm_enabled else None,
+            handover_fn=self._arm.handover if arm_enabled else None,
+            release_fn=self._arm.release if arm_enabled else None,
+            stow_fn=self._arm.stow if arm_enabled else None,
+        )))
+        self.session = RestaurantSession(**session_kwargs)
 
         self._head_customer_xy = None
         self.create_timer(0.5, self._refresh_customer_tracking, callback_group=self.cb_group)
@@ -198,6 +262,8 @@ class RestaurantNode(Node):
 
     def _run_session(self):
         try:
+            # Cada prueba comienza sin perfiles/embeddings de la anterior.
+            self._faces.reset()
             ok = self.session.run()
             self.get_logger().info(f"Mision Restaurant terminada. Resultado: {ok}")
         except Exception as e:
@@ -305,14 +371,19 @@ class RestaurantNode(Node):
         return rest.ask_order(text, menu, timeout_s=min(rest.LLM_TIMEOUT_S, remaining))
 
     def _speak(self, text: str) -> None:
-        """Emite voz con Piper TTS y publica en /hri/say_something."""
+        """Bloquea hasta terminar el audio; si falla, impide el movimiento anunciado."""
         self.get_logger().info(f"🗣️ Robot: '{text}'")
         self.pub_say.publish(String(data=text))
         if self.speaker:
             try:
                 self.speaker.speak(text, blocking=True)
             except Exception as e:
+                self._audio_ok = False
+                self.session.stop()
                 self.get_logger().warn(f"Error reproduciendo con RoboCupSpeaker: {e}")
+        else:
+            self._audio_ok = False
+            self.session.stop()
 
     def _listen(self, timeout_s: float = 15.0) -> Optional[str]:
         """Escucha la respuesta del interlocutor con VoiceClient."""
@@ -405,6 +476,7 @@ class RestaurantNode(Node):
 
             bridge = CvBridge()
             cv_img = bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
+            self._latest_face_frame = (cv_img.copy(), time.monotonic())
             ok, buf = cv2.imencode(".jpg", cv_img)
             if ok:
                 self._latest_image_bytes = buf.tobytes()
@@ -414,10 +486,98 @@ class RestaurantNode(Node):
     def _get_camera_image(self) -> Optional[bytes]:
         return self._latest_image_bytes
 
+    def _session_active(self):
+        session = getattr(self, "session", None)
+        return session is not None and not session.stopped and session.remaining_s() > 0
+
+    def _arm_permitted(self):
+        return (bool(self.get_parameter("arm").value)
+                and bool(self.get_parameter("allow_motion").value)
+                and self._audio_ok and self._session_active())
+
+    def _manipulation(self):
+        """Una instancia headless, sin competir con otro nodo de manipulacion activo."""
+        with self._manip_lock:
+            if self._manip is None:
+                if self.ros_executor is None or not self._arm_permitted():
+                    return None
+                if any(name in {"manipulacion_simple", "manipulacion_autonoma_node", "mission_executor"}
+                       for name in self.get_node_names()):
+                    self.get_logger().warn("Otro ejecutor de brazo esta activo; Restaurant usara la bandeja.")
+                    return None
+                self._manip = create_restaurant_manipulation(self._arm.poses, self._arm_permitted)
+                self.ros_executor.add_node(self._manip)
+                # Solo espera feedback; no habilita, no mueve y no cambia limites.
+                end = time.monotonic() + min(3.0, self.session.remaining_s())
+                while self._session_active() and time.monotonic() < end and not self._manip.motion_ready():
+                    time.sleep(0.05)
+            return self._manip
+
+    def _detect_item(self, item: str, timeout_s: float) -> bool:
+        if not self._session_active():
+            return False
+        return self._arm.detect_item(item, min(timeout_s, self.session.remaining_s()))
+
+    def _face_frame(self):
+        return self._latest_face_frame
+
+    def _with_face_target(self, fn):
+        self._face_aiming = True
+        try:
+            self._refresh_customer_tracking()
+            return fn()
+        finally:
+            self._face_aiming = False
+
+    def _enroll_face(self, label: str, person: Optional[dict] = None) -> bool:
+        return self._with_face_target(lambda: self._faces.enroll(label, person))
+
+    def _identify_face(self, person: dict) -> Optional[str]:
+        return self._with_face_target(lambda: self._faces.identify(person))
+
+    def _on_head_feedback(self, msg):
+        joints = dict(zip(msg.name, msg.position))
+        if all(name in joints and math.isfinite(joints[name]) for name in ("pan_joint", "tilt_joint")):
+            self._head_feedback = (math.degrees(joints["pan_joint"]),
+                                   math.degrees(joints["tilt_joint"]), time.monotonic())
+
+    def _aim_at_person(self, person) -> bool:
+        """map -> pan_tilt_base_link por TF completo; confirma apuntado con feedback."""
+        if not self._audio_ok or not self._session_active():
+            return False
+        point = person_map_point(person, float(self.get_parameter("face_height_m").value))
+        if point is None:
+            return False
+        try:
+            tf = self.tf_buffer.lookup_transform("pan_tilt_base_link", "map", rclpy.time.Time())
+            angles = head_angles(transform_point(point, tf.transform))
+            if angles is None:
+                return False
+        except Exception:
+            return False
+        was_aiming = self._face_aiming
+        self._face_aiming = True
+        try:
+            self._refresh_customer_tracking()  # cancelar lease de bag_finder mientras apuntamos
+            sent = time.monotonic()
+            self._point_head(*angles)
+            end = sent + min(8.0, self.session.remaining_s())
+            while self._session_active() and time.monotonic() < end:
+                feedback = self._head_feedback
+                if (feedback and feedback[2] > sent and time.monotonic() - feedback[2] < 0.5
+                        and max(abs(feedback[i] - angles[i]) for i in (0, 1)) < 3.0):
+                    return True
+                time.sleep(0.05)
+            return False
+        finally:
+            self._face_aiming = was_aiming
+
     def _refresh_customer_tracking(self):
         """Lease corto: si Restaurant termina o se cae, la cabeza deja de seguir."""
         xy = self._head_customer_xy
         if self.session.stopped or self.session.remaining_s() <= 0:
+            xy = None
+        if getattr(self, "_face_aiming", False):
             xy = None
         self.pub_bag_request.publish(String(data=json.dumps({
             "mode": "track_customer", "xy": xy,
@@ -439,6 +599,7 @@ def main(args=None):
     rclpy.init(args=args)
     node = RestaurantNode()
     executor = MultiThreadedExecutor()
+    node.ros_executor = executor
     executor.add_node(node)
     try:
         executor.spin()
@@ -446,6 +607,11 @@ def main(args=None):
         pass
     finally:
         node.session.stop()
+        if node._manip is not None:
+            node._manip.abort = True
+            node._manip.stop_move_group()
+            executor.remove_node(node._manip)
+            node._manip.destroy_node()
         node.destroy_node()
         rclpy.try_shutdown()
 

@@ -212,6 +212,58 @@ Calculado con FK propia sobre el URDF expandido y comparado con el modelo DH del
 - **Elevador:** nodo `torso_state` (`base_athome_bringup`, solo lectura: envía `?`) publica `/torso/joint_states` únicamente
   si el ESP32 está calibrado; la manipulación y MoveIt usan esa altura. Sin probar en el robot (ESP32 no conectado).
 
+### 5.1b.1 Brazo y rostros de Restaurant (2026-11-10, `CODIGO`; calibración pendiente)
+
+Restaurant reutiliza una sola `Manipulacion` headless en el executor del nodo, como el ejecutor de
+misiones; si detecta otro ejecutor de brazo, usa la bandeja. `ARM=0` es el valor por defecto de
+`scripts/restaurant.sh`; `ARM=1` pasa `arm:=true` y `restaurant_node:allow_motion:=true` solo al nodo
+Restaurant. El elevador conserva `allow_motion:=false`. Estos parámetros no habilitan torque:
+el controlador debe estar habilitado por el humano en una prueba autorizada y entregar feedback
+válido y fresco. Se exige la acción FollowJointTrajectory; no hay ejecución por tiempo en Restaurant.
+
+Las poses de `src/base_athome_perception/config/restaurant_arm_poses.yaml` se agregan a las actuales
+sin reemplazarlas ni alterar límites. Sus valores iniciales provienen de `pre_grasp`, `post_grasp` y
+`home`; **las cuatro tienen `calibrated: false` y no son poses verificadas**. Si falta cualquiera de
+las cuatro marcas `true`, los callbacks no crean el backend ni mueven el brazo y el agarre devuelve
+`False`, para usar la bandeja. Puede seleccionarse una copia extra mediante
+`restaurant_arm_poses_file:=<ruta>`; no editar `arm_poses_and_limits.yaml` para esta tarea.
+
+Para enseñar las poses, con Restaurant/commander/manipulación cerrados y una sesión `LAB_SUPERVISADO`
+acordada (sostener el brazo antes de liberar torque, E-stop y área libre):
+
+1. Tras compilar y cargar `install/setup.bash`, ejecutar
+   `python3 -m base_athome_perception.restaurant_arm_teach`. `--poses-file <ruta>` permite enseñar
+   en una copia del archivo extra. Se reutiliza `TeachPanel`, con botones **GRABAR**, **GUARDAR** y
+   **TERMINAR**; `save_pose` valida las articulaciones medidas y escribe únicamente el archivo extra,
+   con respaldo `<nombre>_previous`. Cada guardado deja `calibrated: false`.
+2. Enseñar `restaurant_pregrasp`: pinza abierta frente al objeto sobre el mostrador, con vista de
+   muñeca y margen para la aproximación. Enseñar `restaurant_postgrasp`: retirada libre del borde
+   tras agarrar. Enseñar `restaurant_carry`: transporte dentro de la envolvente medida del robot.
+   Enseñar `restaurant_handover`: presentación frente al cliente, manteniendo la sujeción.
+3. Revisar límites, mesa/colisiones y cada recorrido completo en una prueba supervisada. Solo tras
+   validarlo, cambiar `named_poses.<nombre>.calibrated` a `true` para **cada** pose enseñada. Reiniciar
+   Restaurant para cargar el archivo. No basta con cambiar las marcas de los valores iniciales.
+
+El agarre recorre pregrasp → agarre visual → postgrasp → carry. El transporte y `handover_fn`
+conservan el ancho **medido** de pinza; solo `release_fn` abre y confirma la apertura. Un fallo de
+agarre intenta carry/home; si no puede confirmarlos, detiene la sesión para impedir una navegación
+con el brazo sin recoger. Los items sin clase YOLO conocida quedan en bandeja. El mapa de clases
+está en `restaurant_arm.py`; una clase genérica `bottle` no distingue marcas o contenido de bebidas.
+La voz termina antes del siguiente movimiento; un fallo reportado de audio detiene la sesión.
+
+Los rostros usan `FaceRecognizer`/SFace del receptionist, pero con una base exclusiva en
+`~/.local/share/base_athome/restaurant_faces/`, vaciada al empezar **cada prueba**. No se importa la
+base anterior ni el PKL legado, y no se guardan miniaturas. El apuntado transforma la posición `map`
+a `pan_tilt_base_link` con TF y confirma pan/tilt medidos; `face_z` tiene prioridad sobre la altura
+provisional `face_height_m` (1,2 m para un cliente sentado). Se requieren varios cuadros frescos,
+una sola cara centrada y de calidad, y similitud por encima del umbral de SFace. Sin match fiable
+se devuelve `None`; no se usa el tamaño de la cara para escoger entre varias personas.
+
+**PENDIENTE:** enseñanza, mesa en MoveIt, precisión/altura de apuntado con clientes reales,
+reconocimiento facial con cámara real, sujeción y entrega física. Las pruebas con fakes y el build
+no validan estas condiciones. La conexión de callbacks filtra kwargs por firma para admitir también
+la sesión anterior; el flujo completo requiere integrar el cambio de `RestaurantSession`.
+
 ### 5.1c Teleoperación con Meta Quest 2 (2026-11-03, `SIM_PASS`; real parcial)
 
 - **Cadena:** Quest 2 por USB a la **Jetson** → navegador del Quest abre `http://localhost:8765` (túnel `adb reverse`,

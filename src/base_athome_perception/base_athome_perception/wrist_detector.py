@@ -74,6 +74,7 @@ class WristDetector:
         self.world = None
         self.misses = 0
         self.source = ""
+        self.coco_classes = list(COCO_CLASSES)  # configurable por instancia, sin cambiar otros usuarios
 
     def _load_coco(self):
         if self.coco is None:
@@ -96,7 +97,7 @@ class WristDetector:
 
     def detect(self, frame) -> List[Tuple[Box, float, str]]:
         self._load_coco()
-        r = self.coco.predict(frame, imgsz=self.imgsz, conf=0.2, classes=COCO_CLASSES, verbose=False, device="cpu")[0]
+        r = self.coco.predict(frame, imgsz=self.imgsz, conf=0.2, classes=self.coco_classes, verbose=False, device="cpu")[0]
         dets = [(tuple(float(v) for v in b.xyxy[0].tolist()), float(b.conf), r.names[int(b.cls)]) for b in r.boxes]
         self.source = "YOLOv8n"
         if dets:
