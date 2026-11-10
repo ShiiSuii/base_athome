@@ -54,7 +54,7 @@ ROBOT_NAME = "Base"
 YES_NO_PROMPT = "Please answer robot yes or robot no."
 BARMAN_SEARCH = "I will search for the barman. Barman, please keep your hand raised while I turn around."
 SEARCHING_PEOPLE = "Searching for people."
-CUSTOMER_TURN = "I will now turn around to look for customers. Please keep your hand raised."
+CUSTOMER_TURN = "I am looking for customers. Please keep your hand raised."
 CUSTOMER_SEARCH = (
     "Dear customers, I am now ready to collect your orders. "
     "Please wave at me with your hand above your head."

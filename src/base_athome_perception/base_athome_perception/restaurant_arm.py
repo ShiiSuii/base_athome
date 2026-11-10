@@ -34,6 +34,10 @@ ITEM_YOLO_CLASSES = {
     "coffee": "cup", "tea": "cup", "wine": "wine glass",
     "sandwich": "sandwich", "cake": "cake",
 }
+# Mismos valores que arm_manipulation (no se importa: este modulo no carga ROS).
+GRIPPER_OPEN_MM = 105.0
+GRIPPER_CLOSE_ITEM_MM = 0.0   # cierra con la fuerza del controlador; para en el objeto
+GRIPPER_EMPTY_MAX_MM = 2.0    # cerro casi del todo: no hay nada entre los dedos
 RESTAURANT_COCO_CLASSES = (39, 40, 41, 46, 47, 48, 49, 61)
 
 
@@ -251,6 +255,35 @@ class RestaurantArm:
                 self._recover(m)
             return ok
         return self._run(pick)
+
+    def present_gripper(self):
+        """Plan simple 10/11: brazo en restaurant_pregrasp con la pinza abierta para que el barman ponga el objeto."""
+        def present(m):
+            if not m.go_to_blocking("restaurant_pregrasp")[0]:
+                self._recover(m)
+                return False
+            m.gripper(GRIPPER_OPEN_MM)
+            return True
+        return self._run(present)
+
+    def grip_item(self):
+        """Cierra, confirma por ancho que hay algo entre los dedos y sube a postgrasp (asi viaja al cliente)."""
+        def grip(m):
+            try:
+                m.gripper(GRIPPER_CLOSE_ITEM_MM)
+                time.sleep(2.0)
+                if float(m.gripper_mm) <= GRIPPER_EMPTY_MAX_MM:
+                    m.gripper(GRIPPER_OPEN_MM)  # cerro vacio: no viajar con la pinza cerrada sin objeto
+                    self._recover(m)
+                    return False
+                ok = m.go_to_holding("restaurant_postgrasp")[0]
+            except Exception:
+                self._recover(m)
+                raise
+            if not ok:
+                self._recover(m)
+            return ok
+        return self._run(grip)
 
     def handover(self):
         return self._run(lambda m: m.go_to_holding("restaurant_handover")[0])

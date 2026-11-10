@@ -81,7 +81,7 @@ class RestaurantNode(Node):
         self.declare_parameter("restaurant_arm_poses_file", "")
         self.declare_parameter("face_height_m", 1.2)  # sentado; face_z medido tiene prioridad
         self.declare_parameter("max_customers", 2)
-        self.declare_parameter("standoff_dist", 0.9)
+        self.declare_parameter("standoff_dist", 0.8)  # 10/11: un poco mas cerca del cliente (antes 0.9)
         self.declare_parameter("delivery_wait_s", 7.0)
         self.declare_parameter("batch_orders", True)
         self.declare_parameter("navigation_timeout_s", 90.0)
@@ -222,6 +222,8 @@ class RestaurantNode(Node):
             identify_face_fn=self._identify_face,
             detect_item_fn=self._detect_item,
             pick_item_fn=self._arm.pick_item if arm_enabled else None,
+            present_gripper_fn=self._arm.present_gripper if arm_enabled else None,
+            grip_item_fn=self._arm.grip_item if arm_enabled else None,
             handover_fn=self._arm.handover if arm_enabled else None,
             release_fn=self._arm.release if arm_enabled else None,
             stow_fn=self._arm.stow if arm_enabled else None,

@@ -345,11 +345,15 @@ class RestaurantSession:
         arm: bool = True,
         detect_barman_fn: Optional[Callable[[float, int], Any]] = None,
         detect_people_fn: Optional[Callable[[float, int], Any]] = None,
+        present_gripper_fn: Optional[Callable[[], bool]] = None,
+        grip_item_fn: Optional[Callable[[], bool]] = None,
         track_person_fn: Optional[Callable[[dict], None]] = None,
         stop_tracking_fn: Optional[Callable[[], None]] = None,
     ):
         self.detect_barman_fn = detect_barman_fn
         self.detect_people_fn = detect_people_fn
+        self.present_gripper_fn = present_gripper_fn
+        self.grip_item_fn = grip_item_fn
         self.track_person_fn = track_person_fn
         self.stop_tracking_fn = stop_tracking_fn
         self.barman_position: Optional[Tuple[float, float]] = None
@@ -489,6 +493,8 @@ class RestaurantSession:
                                                                "customers": len(found)})
             if not self.spin_fn(self.BARMAN_STEP_RAD):
                 break  # Yaw incierto tras un fallo: se sigue con lo que ya vio.
+            if step == 0:
+                self._speak(rest.CUSTOMER_TURN)  # pedido del usuario: avisar ya girando, no mirando al barman
         if not found:
             self.detection_error = "no_raised_hand"
         return found
@@ -505,7 +511,6 @@ class RestaurantSession:
             return []
         if self.spin_fn and self.detect_people_fn:
             self._look_forward()  # deja de mirar al barman antes de girar
-            self._speak(rest.CUSTOMER_TURN)
             view = self._spin_scan_customers()
             eligible = [dict(c) for c in view if self._eligible_customer(c)]
             self._look_forward()
@@ -1069,7 +1074,27 @@ class RestaurantSession:
     def _prepare_order(self, items: Sequence[str]) -> Tuple[Optional[str], List[str]]:
         held = None
         tray = list(items)
-        if self.arm and self.pick_item_fn is not None and items:
+        if self.arm and self.present_gripper_fn and self.grip_item_fn and items:
+            # Plan simple del usuario 10/11: el barman pone el primer objeto en la pinza abierta;
+            # el resto va a la bandeja. El agarre por vision (pick_item_fn) queda para despues.
+            item = items[0]
+            if self._arm_action(SessionState.PICKING_ITEM, self.present_gripper_fn):
+                self._speak(f"Dear barman, please put the {item} in my gripper. "
+                            "Tell me robot yes when you are done.")
+                self._wait_for_barman([item])
+                if self.stopped or self._is_timeout():
+                    return None, []
+                if self._arm_action(SessionState.PICKING_ITEM, self.grip_item_fn):
+                    held = item
+                    self._holding_item = True
+                    tray = list(items[1:])
+                elif not (self._abort_run or self.stopped or self._is_timeout()):
+                    self._speak(f"I could not hold the {item}.")
+            if self._abort_run or self.stopped or self._is_timeout():
+                return None, []
+            if held is None:
+                self._speak(f"Please place the {item} on my tray instead.")
+        elif self.arm and self.pick_item_fn is not None and items:
             # Pedido del usuario 10/11: agarrar al menos uno de los dos primeros objetos.
             # Se prueba en orden; el primero que la camara ve y el brazo levanta va en la pinza.
             for item in list(items[:2]):

@@ -2024,3 +2024,17 @@ def test_picks_second_item_when_first_is_not_visible_and_rest_goes_to_tray():
     session._abort_run = False
     held, tray = session._prepare_order(["chips", "coke"])
     assert held == 'coke' and picked == ['coke'] and tray == ['chips']
+
+
+def test_barman_puts_first_item_in_gripper_and_second_on_tray():
+    h = FakeRestaurantHarness(speech_script=['robot yes', 'robot yes'])
+    arm = []
+    session = h.make_session(arm=True, present_gripper_fn=lambda: arm.append('present') or True,
+                             grip_item_fn=lambda: arm.append('grip') or True,
+                             pick_item_fn=lambda _i: pytest.fail('sin agarre por vision'))
+    session.deadline_s = h.clock() + 900.
+    session._abort_run = False
+    held, tray = session._prepare_order(['coke', 'chips'])
+    assert (held, tray, arm) == ('coke', ['chips'], ['present', 'grip'])
+    assert 'Dear barman, please put the coke in my gripper. Tell me robot yes when you are done.' in h.spoken
+    assert rest.tray_request_phrase('chips') in h.spoken

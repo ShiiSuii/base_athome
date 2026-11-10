@@ -304,3 +304,32 @@ def test_teaching_only_writes_extra_file_and_invalidates_calibration(tmp_path):
     assert save_pose("home", q, 64, extra_path=extra, limits_path=limits)
     assert save_pose("restaurant_carry", q, 64, extra_path=limits, limits_path=limits)
     assert limits.read_bytes() == before
+
+
+def _gripper_manip(width_after_close):
+    m = FakeManip()
+    m.gripper_mm = 105.0
+    def gripper(mm):
+        m.events.append(("gripper", mm))
+        m.gripper_mm = width_after_close if mm == 0.0 else mm
+    m.gripper = gripper
+    return m
+
+
+def test_hand_in_item_goes_to_pregrasp_open_then_grips_and_travels_in_postgrasp(monkeypatch):
+    monkeypatch.setattr("base_athome_perception.restaurant_arm.time.sleep", lambda _s: None)
+    m = _gripper_manip(62.0)  # botella entre los dedos
+    arm = RestaurantArm(lambda: m, calibrated_poses(), lambda: True, unsafe_fn=lambda: pytest.fail("sin parada"))
+    assert arm.present_gripper()
+    assert m.events == [("go", "restaurant_pregrasp"), ("gripper", 105.0)]
+    assert arm.grip_item()
+    assert m.events[-2:] == [("gripper", 0.0), ("hold", "restaurant_postgrasp")]
+
+
+def test_empty_grip_opens_and_stows_without_traveling(monkeypatch):
+    monkeypatch.setattr("base_athome_perception.restaurant_arm.time.sleep", lambda _s: None)
+    m = _gripper_manip(0.5)  # cerro vacio
+    arm = RestaurantArm(lambda: m, calibrated_poses(), lambda: True, unsafe_fn=lambda: pytest.fail("sin parada"))
+    assert not arm.grip_item()
+    assert ("gripper", 105.0) in m.events and ("hold", "restaurant_postgrasp") not in m.events
+    assert m.events[-1] == ("hold", "restaurant_carry")
