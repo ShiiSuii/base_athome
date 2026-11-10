@@ -18,7 +18,9 @@ alias editor_urdf='urdf_editor'
 function gpsr_parser {  # gpsr_parser "bring me a coke from the kitchen"  -> plan JSON + frase
     (cd "$WS_ATHOME/tools/gpsr_parser" && env -u PYTHONPATH python3 -m gpsr_parser "$@")
 }
-alias restaurantgrasping='(cd "$WS_ATHOME" && _ros && python3 -m base_athome_perception.restaurant_arm_teach)'  # ensenar poses del brazo de Restaurant (pregrasp, postgrasp, handover); Restaurant cerrado
+restaurantgrasping() {  # restaurantgrasping [pregrasp|postgrasp|handover]: guarda donde esta el brazo ahora (no lo mueve)
+    (cd "$WS_ATHOME" && _ros && python3 -m base_athome_perception.restaurant_grasping "$@")
+}
 alias puerta='_ros && ros2 launch base_athome_skills door_open_detector.launch.py'
 alias detector_puerta='puerta'
 alias compilar='(cd $WS_ATHOME && source /opt/ros/jazzy/setup.bash && colcon build --symlink-install) && _ros'
