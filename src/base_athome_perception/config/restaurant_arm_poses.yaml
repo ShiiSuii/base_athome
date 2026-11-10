@@ -1,24 +1,95 @@
-# PENDIENTE: valores iniciales copiados de poses similares, NO son calibracion.
-# Ensenar con restaurant_arm_teach; validar recorrido completo antes de marcar true.
-# Este archivo solo agrega nombres restaurant_*; nunca reemplaza poses/limites actuales.
 named_poses:
   restaurant_pregrasp:
-    calibrated: false
-    source: seed_pre_grasp
-    joints_deg: [71.98, 184.71, -78.28, 75.36, -74.83, -80.41]
+    joints_deg:
+    - 8.62
+    - 163.36
+    - -84.72
+    - 19.05
+    - -3.87
+    - -99.57
     gripper_mm: 105.0
+    timestamp: '2026-11-10T17:00:22'
+    source: restaurantgrasping
+    calibrated: true
   restaurant_postgrasp:
-    calibrated: false
-    source: seed_post_grasp
-    joints_deg: [76.21, 155.13, -50.83, 79.34, -74.83, -80.34]
-    gripper_mm: 50.0
+    joints_deg:
+    - 57.39
+    - 168.91
+    - -90.92
+    - 59.24
+    - -34.5
+    - -101.95
+    gripper_mm: 50.1
+    timestamp: '2026-11-10T17:00:32'
+    source: restaurantgrasping
+    calibrated: true
   restaurant_carry:
+    joints_deg:
+    - 42.87
+    - 155.46
+    - -93.71
+    - 2.38
+    - 21.87
+    - -46.34
+    gripper_mm: 98.5
+    timestamp: '2026-11-10T16:41:42'
+    source: restaurant_teach_panel
+    calibrated: false
+  restaurant_handover:
+    joints_deg:
+    - 35.92
+    - 162.44
+    - -80.89
+    - 96.59
+    - -63.65
+    - -168.54
+    gripper_mm: 50.1
+    timestamp: '2026-11-10T17:00:46'
+    source: restaurantgrasping
+    calibrated: true
+  restaurant_pregrasp_previous:
+    joints_deg:
+    - 0.34
+    - 174.12
+    - -110.85
+    - 3.41
+    - 15.79
+    - -113.44
+    gripper_mm: 98.5
+    timestamp: '2026-11-10T16:41:17'
+    source: restaurant_teach_panel
+    calibrated: false
+  restaurant_postgrasp_previous:
+    joints_deg:
+    - 61.72
+    - 174.31
+    - -141.68
+    - 40.39
+    - 0.0
+    - -113.44
+    gripper_mm: 98.5
+    timestamp: '2026-11-10T16:41:26'
+    source: restaurant_teach_panel
+    calibrated: false
+  restaurant_carry_previous:
     calibrated: false
     source: seed_home
-    joints_deg: [84.74, 172.79, -160.31, -20.99, -10.47, 1.49]
+    joints_deg:
+    - 84.74
+    - 172.79
+    - -160.31
+    - -20.99
+    - -10.47
+    - 1.49
     gripper_mm: 50.0
-  restaurant_handover:
+  restaurant_handover_previous:
     calibrated: false
     source: seed_post_grasp
-    joints_deg: [76.21, 155.13, -50.83, 79.34, -74.83, -80.34]
+    joints_deg:
+    - 76.21
+    - 155.13
+    - -50.83
+    - 79.34
+    - -74.83
+    - -80.34
     gripper_mm: 50.0
