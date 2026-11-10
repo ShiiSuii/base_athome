@@ -18,6 +18,7 @@ class PeopleTally:
         self.people: list[list[tuple[float, float]]] = []
         self.raised: list[int] = []      # cuadros con mano levantada, por persona
         self.bearings: list[list[float]] = []  # grados respecto del frente del robot, por persona
+        self.headings: list[list[float]] = []  # grados en odom (rumbo absoluto de ruedas), por persona
 
     @staticmethod
     def _valid(xy) -> bool:
@@ -30,7 +31,7 @@ class PeopleTally:
     def _center(spots):
         return (median(s[0] for s in spots), median(s[1] for s in spots))
 
-    def add(self, xy, *, raised: bool = False, bearing_deg=None) -> None:
+    def add(self, xy, *, raised: bool = False, bearing_deg=None, heading_deg=None) -> None:
         if not self._valid(xy):
             return
         xy = (float(xy[0]), float(xy[1]))
@@ -44,17 +45,20 @@ class PeopleTally:
             self.people.append([])
             self.raised.append(0)
             self.bearings.append([])
+            self.headings.append([])
             best = len(self.people) - 1
         self.people[best].append(xy)
         self.raised[best] += int(bool(raised))
         if bearing_deg is not None and math.isfinite(bearing_deg):
             self.bearings[best].append(float(bearing_deg))
+        if heading_deg is not None and math.isfinite(heading_deg):
+            self.headings[best].append(float(heading_deg))
 
     def result(self, robot_xy, min_hits: int = 2) -> list[dict]:
         """Personas con al menos `min_hits` observaciones, de la mas cercana a la mas lejana."""
         rx, ry = float(robot_xy[0]), float(robot_xy[1])
         out = []
-        for spots, raised, bearings in zip(self.people, self.raised, self.bearings):
+        for spots, raised, bearings, headings in zip(self.people, self.raised, self.bearings, self.headings):
             if len(spots) < max(1, int(min_hits)):
                 continue
             x, y = self._center(spots)
@@ -62,5 +66,9 @@ class PeopleTally:
                       "raised_frames": raised}
             if bearings:
                 person["bearing_deg"] = median(bearings)
+            if headings:  # promedio circular: el rumbo puede cruzar +-180
+                person["heading_deg"] = math.degrees(math.atan2(
+                    sum(math.sin(math.radians(h)) for h in headings),
+                    sum(math.cos(math.radians(h)) for h in headings)))
             out.append(person)
         return sorted(out, key=lambda p: p["range_m"])

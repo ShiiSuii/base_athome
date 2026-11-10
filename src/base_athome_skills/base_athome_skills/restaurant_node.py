@@ -211,6 +211,8 @@ class RestaurantNode(Node):
             spin_fn=self._spin,
             detect_barman_fn=self._detect_barman,
             detect_people_fn=self._detect_people,
+            scan_turn_fn=self._scan_turn,
+            get_odom_yaw_fn=self._odom_yaw,
             track_person_fn=self._track_person,
             stop_tracking_fn=self._stop_tracking,
         )
@@ -428,6 +430,48 @@ class RestaurantNode(Node):
         for p in people:
             self.get_logger().info(f"Persona: xy={p.get('xy')} range_m={p.get('range_m')}")
         return people
+
+    SCAN_TURN_MAX_S = 45.0
+
+    def _scan_turn(self, on_first_step=None):
+        """Vuelta continua de 360 grados con Nav2 Spin mientras bag_finder detecta (people_here largo).
+
+        Con on_first_step: gira 30 grados, llama (p. ej. avisar por voz) y completa la vuelta.
+        Devuelve (personas, giro_ok). Cada persona trae heading_deg en odom.
+        """
+        req_id = f"rest_scan_{int(time.time() * 1000)}"
+        ev = threading.Event()
+        with self._bag_lock:
+            self._bag_pending[req_id] = (ev, {})
+        budget = min(self.SCAN_TURN_MAX_S, max(1.0, self.session.remaining_s()))
+        self.pub_bag_request.publish(String(data=json.dumps({
+            "id": req_id, "mode": "people_here", "view_s": budget, "timeout_s": budget + 2.0, "min_frames": 2,
+        })))
+        time.sleep(1.5)  # bag_finder lleva la cabeza al frente y la deja quieta antes de girar
+        if on_first_step is None:
+            ok = self._spin(2.0 * math.pi)
+        else:
+            ok = self._spin(math.pi / 6)
+            if ok and not self.session.stopped:
+                on_first_step()
+            ok = ok and not self.session.stopped and self._spin(2.0 * math.pi - math.pi / 6)
+        self.pub_bag_request.publish(String(data=json.dumps({"id": req_id, "mode": "stop_scan"})))
+        ev.wait(timeout=5.0)
+        with self._bag_lock:
+            _, res = self._bag_pending.pop(req_id, (None, {}))
+        people = res.get("customers", []) if res and res.get("ok") else []
+        for p in people:
+            self.get_logger().info(f"Vuelta: persona xy={p.get('xy')} range_m={p.get('range_m')} "
+                                   f"heading={p.get('heading_deg')} mano={p.get('raised_frames')}")
+        return people, ok
+
+    def _odom_yaw(self):
+        """Yaw de base_footprint en odom (rad): odometria de ruedas, sin saltos de SLAM."""
+        try:
+            q = self.tf_buffer.lookup_transform("odom", "base_footprint", rclpy.time.Time()).transform.rotation
+            return 2.0 * math.atan2(q.z, q.w)
+        except Exception:
+            return None
 
     def _detect_barman(self, timeout_s: float, min_frames: int):
         return self._detect_customers(timeout_s, min_frames, pans=[0.0], stop_on_first=True)

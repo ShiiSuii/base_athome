@@ -2038,3 +2038,37 @@ def test_barman_puts_first_item_in_gripper_and_second_on_tray():
     assert (held, tray, arm) == ('coke', ['chips'], ['present', 'grip'])
     assert 'Dear barman, please put the coke in my gripper. Tell me robot yes when you are done.' in h.spoken
     assert rest.tray_request_phrase('chips') in h.spoken
+
+
+def test_continuous_turn_faces_barman_by_odom_heading_not_map_yaw():
+    h = FakeRestaurantHarness(speech_script=['robot yes'])
+    turns, calls = [], []
+    barman = {'xy': [-1.5, .3], 'range_m': 1.5, 'heading_deg': 170., 'raised_frames': 6}
+    other = {'xy': [1., 0.], 'range_m': 1.0, 'heading_deg': 0., 'raised_frames': 0}
+    def scan(on_first_step=None):
+        calls.append(on_first_step)
+        return [other, barman], True
+    session = h.make_session(spin_fn=lambda a: turns.append(a) or True, scan_turn_fn=scan,
+                             get_odom_yaw_fn=lambda: math.radians(-10.),  # odom tras la vuelta
+                             detect_people_fn=lambda *_: [dict(barman, bearing_deg=2.)])
+    session.deadline_s = h.clock() + 900.
+    session.bar_pose = (0., 0., 0.)
+    session._find_barman()
+    assert calls == [None] and len(turns) == 1
+    assert math.degrees(turns[0]) == pytest.approx(180.)  # 170 - (-10)
+    assert session.barman_position == (-1.5, .3)
+
+
+def test_continuous_customer_turn_announces_after_first_step_and_keeps_raised_hands():
+    h = FakeRestaurantHarness()
+    def scan(on_first_step=None):
+        h.events.append(('turn_started', None))
+        on_first_step()
+        return [{'xy': [2., 0.], 'raised_frames': 4}, {'xy': [0., 3.], 'raised_frames': 0}], True
+    session = h.make_session(spin_fn=lambda a: True, scan_turn_fn=scan, get_odom_yaw_fn=lambda: 0.)
+    session.deadline_s = h.clock() + 900.
+    session.bar_pose = (0., 0., 0.)
+    found = session._look_around()
+    assert [c['xy'] for c in found] == [[2., 0.]]
+    started = h.events.index(('turn_started', None))
+    assert h.events.index(('speak', rest.CUSTOMER_TURN)) > started

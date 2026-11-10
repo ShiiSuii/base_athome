@@ -346,6 +346,8 @@ class RestaurantSession:
         detect_barman_fn: Optional[Callable[[float, int], Any]] = None,
         detect_people_fn: Optional[Callable[[float, int], Any]] = None,
         present_gripper_fn: Optional[Callable[[], bool]] = None,
+        scan_turn_fn: Optional[Callable[..., Any]] = None,
+        get_odom_yaw_fn: Optional[Callable[[], Optional[float]]] = None,
         grip_item_fn: Optional[Callable[[], bool]] = None,
         track_person_fn: Optional[Callable[[dict], None]] = None,
         stop_tracking_fn: Optional[Callable[[], None]] = None,
@@ -353,6 +355,8 @@ class RestaurantSession:
         self.detect_barman_fn = detect_barman_fn
         self.detect_people_fn = detect_people_fn
         self.present_gripper_fn = present_gripper_fn
+        self.scan_turn_fn = scan_turn_fn
+        self.get_odom_yaw_fn = get_odom_yaw_fn
         self.grip_item_fn = grip_item_fn
         self.track_person_fn = track_person_fn
         self.stop_tracking_fn = stop_tracking_fn
@@ -509,6 +513,19 @@ class RestaurantSession:
             self._speak(rest.SEARCHING_PEOPLE)
         if self.stopped or self._is_timeout():
             return []
+        if self.spin_fn and self.scan_turn_fn:
+            self._look_forward()  # deja de mirar al barman antes de girar
+            people, _ = self._scan_turn(lambda: self._speak(rest.CUSTOMER_TURN))
+            view = []
+            for p in people:
+                xy = self._person_xy(p)
+                if self._raised(p) and all(math.hypot(xy[0] - v["xy"][0], xy[1] - v["xy"][1]) >= 0.7 for v in view):
+                    view.append(dict(p, xy=[xy[0], xy[1]]))
+            if not view:
+                self.detection_error = "no_raised_hand"
+            eligible = [dict(c) for c in view if self._eligible_customer(c)]
+            self._look_forward()
+            return eligible
         if self.spin_fn and self.detect_people_fn:
             self._look_forward()  # deja de mirar al barman antes de girar
             view = self._spin_scan_customers()
@@ -857,6 +874,9 @@ class RestaurantSession:
         self.barman_position = None
         self._set_state(SessionState.FINDING_BARMAN)
         self._speak(rest.BARMAN_SEARCH)
+        if self.scan_turn_fn and self.get_odom_yaw_fn and self.spin_fn:
+            self._find_barman_continuous()
+            return
         detect = self.detect_people_fn or self.detect_barman_fn or self.detect_customers_fn
         steps = 12 if self.spin_fn else 1
         seen: List[Dict[str, Any]] = []  # {xy, person, heading (rad desde el inicio o None), range}
@@ -928,6 +948,76 @@ class RestaurantSession:
             return
         nearest = self._person_xy(person) or nearest
         self._set_state(SessionState.CONFIRMING_BARMAN, {"xy": list(nearest), "people": len(seen),
+                                                         "raised": bool(raised)})
+        try:
+            if self.track_person_fn and not self.stopped and not self._is_timeout():
+                self.track_person_fn(person)
+            answer = self._ask_yes_no("Are you the barman? Please answer robot yes or robot no.", attempts=1)
+            if self.stopped or self._is_timeout():
+                return
+            if answer is True:
+                self.barman_position = nearest
+                self._enroll_face("barman", person)
+            else:
+                self._speak("The barman was not confirmed. I will use my initial position as the bar.")
+        finally:
+            self._stop_tracking()
+
+    def _scan_turn(self, on_first_step=None) -> Tuple[List[dict], bool]:
+        """Vuelta continua del adaptador: (personas con xy y heading_deg en odom, giro_ok)."""
+        if self.point_head_fn:
+            self.point_head_fn(0.0, 0.0)
+        try:
+            out = self.scan_turn_fn(on_first_step) if on_first_step else self.scan_turn_fn()
+        except Exception:
+            return [], False
+        people, ok = out if isinstance(out, tuple) else (out, True)
+        return [p for p in self._people_list(people) if self._person_xy(p)], bool(ok)
+
+    def _find_barman_continuous(self) -> None:
+        """Una vuelta de 360 sin paradas (~10 s); el barman es el mas cercano con la mano levantada.
+
+        El giro hacia el sale del rumbo en odom de cada deteccion (ruedas, sin saltos de SLAM)
+        menos el yaw odom actual; despues se corrige mirando, como en la busqueda por pasos.
+        """
+        people, ok = self._scan_turn()
+        if self.stopped or self._is_timeout():
+            return
+        if not people:
+            self._speak("I could not find the barman. I will use my initial position as the bar.")
+            return
+        raised = [p for p in people if self._raised(p)]
+        pool = raised or people
+        pose = self.get_pose_fn() or self.bar_pose
+        def dist(p):
+            r = p.get("range_m")
+            try:
+                return float(r) if r is not None and math.isfinite(float(r)) else float("inf")
+            except (TypeError, ValueError):
+                return float("inf")
+        person = min(pool, key=dist)
+        nearest = self._person_xy(person)
+        try:
+            heading = math.radians(float(person["heading_deg"]))
+        except (KeyError, TypeError, ValueError):
+            heading = None
+        yaw_now = self.get_odom_yaw_fn()
+        if heading is not None and yaw_now is not None:
+            turn = heading - yaw_now
+        elif pose:
+            turn = math.atan2(nearest[1] - pose[1], nearest[0] - pose[0]) - pose[2]
+        else:
+            turn = 0.0
+        turn = math.atan2(math.sin(turn), math.cos(turn))
+        if ok and abs(turn) > math.radians(self.BARMAN_ALIGN_TOL_DEG):
+            self._set_state(SessionState.FINDING_BARMAN, {"angle_rad": turn, "facing": list(nearest),
+                                                          "raised": bool(raised)})
+            if self.spin_fn(turn):
+                person = self._align_barman(person, dist(person), bool(raised)) or person
+        if self.stopped or self._is_timeout():
+            return
+        nearest = self._person_xy(person) or nearest
+        self._set_state(SessionState.CONFIRMING_BARMAN, {"xy": list(nearest), "people": len(people),
                                                          "raised": bool(raised)})
         try:
             if self.track_person_fn and not self.stopped and not self._is_timeout():

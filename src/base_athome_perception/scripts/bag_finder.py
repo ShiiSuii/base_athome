@@ -82,6 +82,7 @@ class BagFinder(Node):
         self.rgb_received = 0.0
         self.customer_tracking = None
         self.follow_stop = False
+        self.scan_stop_id = None               # id del people_here a cortar (vuelta continua)
         self.pub_head = self.create_publisher(Vector3, "/pan_tilt/target_degrees", 5)
         self.head_stamp = 0.0
         self.head = (0.0, 0.0)                 # posicion MEDIDA, en grados
@@ -327,8 +328,8 @@ class BagFinder(Node):
         """
         req_id = req.get("id", "people_here")
         try:
-            timeout_s = min(max(float(req.get("timeout_s", 5.0)), 0.5), 15.0)
-            view_s = min(max(float(req.get("view_s", 2.0)), 0.5), 10.0)
+            timeout_s = min(max(float(req.get("timeout_s", 5.0)), 0.5), 60.0)
+            view_s = min(max(float(req.get("view_s", 2.0)), 0.5), 55.0)
             min_frames = max(1, int(req.get("min_frames", 2)))
         except (TypeError, ValueError):
             return {"id": req_id, "ok": False, "customers": [], "error": "invalid_request"}
@@ -342,7 +343,7 @@ class BagFinder(Node):
         seen = dict(frames=0, people=0, mapped=0, raised=0)
         view_end = min(end, time.time() + view_s)
         last_stamp = self.rgb_stamp
-        while time.time() < view_end:
+        while time.time() < view_end and getattr(self, "scan_stop_id", None) != req_id:
             if not (self._head_still() and time.time() - self.head_stamp < 0.5):
                 time.sleep(0.05)
                 continue
@@ -366,13 +367,30 @@ class BagFinder(Node):
                     bearing = None
                     if self.K is not None:  # pan medido + angulo en la imagen; + a la izquierda, como el yaw
                         bearing = self.head[0] - math.degrees(math.atan2(bv.torso_pixel(person)[0] - self.K[2], self.K[0]))
-                    tally.add(spot, raised=raised, bearing_deg=bearing)
+                    # Rumbo en odom (ruedas) al momento de la imagen: no salta como el yaw de SLAM al girar.
+                    odom_yaw = self._odom_yaw(stamp)
+                    heading = None if bearing is None or odom_yaw is None else odom_yaw + bearing
+                    tally.add(spot, raised=raised, bearing_deg=bearing, heading_deg=heading)
             self._publish_debug(rgb, people, stamp)
         found = tally.result(self._robot_pos(), min_hits=min_frames)
+        if getattr(self, "scan_stop_id", None) == req_id:
+            seen["stopped"] = True
         self.get_logger().info(f"people_here: {len(found)} personas "
                                + ", ".join(f"{p['range_m']:.2f} m a {p.get('bearing_deg', float('nan')):+.0f} grados"
                                            f"{' mano' if p['raised_frames'] >= 2 else ''}" for p in found) + f"; {seen}")
         return {"id": req_id, "ok": True, "customers": found, "diagnostics": seen}
+
+    def _odom_yaw(self, stamp):
+        """Yaw de base_footprint en odom (grados) en el instante de la imagen; el ultimo si no hay de ese instante."""
+        for when in (rclpy.time.Time.from_msg(stamp) if stamp is not None else None, rclpy.time.Time()):
+            if when is None:
+                continue
+            try:
+                q = self.tf_buf.lookup_transform("odom", "base_footprint", when).transform.rotation
+                return math.degrees(math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z)))
+            except Exception:  # noqa: BLE001 - sin TF de ese instante se prueba el ultimo
+                continue
+        return None
 
     def _look_at(self, xy):
         """Lleva la cabeza a mirar el punto del piso, usando la pose actual de la cabeza."""
@@ -399,6 +417,9 @@ class BagFinder(Node):
             return
         if req.get("mode") == "stop_follow":
             self.follow_stop = True
+            return
+        if req.get("mode") == "stop_scan":  # corta un people_here largo (vuelta continua de Restaurant)
+            self.scan_stop_id = req.get("id")
             return
         threading.Thread(target=self._serve, args=(req,), daemon=True).start()
 

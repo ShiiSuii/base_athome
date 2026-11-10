@@ -42,3 +42,11 @@ def test_raised_frames_and_bearing_median_per_person():
     near, far = t.result((0.0, 0.0), min_hits=2)
     assert near["raised_frames"] == 2 and near["bearing_deg"] == 12.0
     assert far["raised_frames"] == 0 and "bearing_deg" not in far
+
+
+def test_heading_is_a_circular_mean_across_plus_minus_180():
+    t = PeopleTally()
+    t.add([1.0, 0.0], heading_deg=179.0)
+    t.add([1.0, 0.0], heading_deg=-179.0)
+    (p,) = t.result((0.0, 0.0), min_hits=2)
+    assert abs(abs(p["heading_deg"]) - 180.0) < 1e-6
