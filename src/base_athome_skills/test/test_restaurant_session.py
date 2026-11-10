@@ -1399,23 +1399,38 @@ def test_session_skips_customer_without_any_planned_approach(restaurant_grid):
     assert len(h.nav_goals) == 4                       # cliente 2, barra, entrega, barra final
 
 
-def test_customer_snapshot_is_ranked_without_turning_base():
+def _phase_detector(session_ref, barman_view, customer_views):
+    """Detector de personas falso: el barman en su busqueda; clientes por giro durante DETECTING_CUSTOMERS."""
+    turns = {'customers': 0}
+    def detect(*_):
+        if session_ref[0].state == SessionState.DETECTING_CUSTOMERS:
+            return customer_views.get(turns['customers'], [])
+        return barman_view
+    def spin(_):
+        if session_ref[0].state == SessionState.DETECTING_CUSTOMERS:
+            turns['customers'] += 1
+        return True
+    return detect, spin, turns
+
+
+def test_customers_found_by_full_base_turn_with_raised_hand_and_ranked():
+    """Pedido del usuario 10/11: tras el barman, cabeza al frente y vuelta con la base buscando manos levantadas."""
     h = FakeRestaurantHarness(speech_script=['yes', 'yes', 'water', 'yes', 'yes', 'yes', 'yes', 'beer', 'yes', 'yes', 'yes'])
-    views = iter([{'ok': True, 'customers': [{'id': '1', 'xy': [4., 2.]}, {'id': '2', 'xy': [2., -1.]}]}])
-    turns, looks = [], []
-    def detect(timeout_s, min_frames):
-        looks.append((timeout_s, min_frames))
-        return next(views)
-    session = h.make_session(spin_fn=lambda a: turns.append(a) or True,
-                             detect_people_fn=lambda *_: [{'id': 'bar', 'xy': [0., 1.]}])
-    session.detect_customers_fn = detect
+    ref = [None]
+    hand = {'raised_frames': 4}
+    detect, spin, turns = _phase_detector(ref, [{'xy': [0., 1.], 'raised_frames': 5}], {
+        3: [dict(hand, id='1', xy=[4., 2.])],
+        7: [dict(hand, id='2', xy=[2., -1.]), {'id': 'no_hand', 'xy': [1.5, 1.5], 'raised_frames': 0}],
+    })
+    session = h.make_session(spin_fn=spin, detect_people_fn=detect,
+                             point_head_fn=lambda p, t: h.events.append(('head', (p, t))))
+    ref[0] = session
+    session.detect_customers_fn = lambda *_: pytest.fail('sin barrido del pan-tilt')
     assert session.run()
-    # Solo gira la vuelta del barman (11 x 30 grados) y para ponerse de frente: los clientes, con base quieta.
-    assert len(turns) == 12 and turns[-1] == pytest.approx(math.pi / 2)
+    assert turns['customers'] == 11  # vuelta completa: 12 vistas
     assert [c['xy'] for c in session.customers] == [[2., -1.], [4., 2.]]
-    assert len(set(c['id'] for c in session.customers)) == 2
     assert len(session.orders) == 2 and session.served == 2
-    assert looks == [(80., 3)]
+    assert {v for k, v in h.events if k == 'head'} == {(0., 0.)}  # la cabeza solo mira al frente
 
 
 @pytest.mark.parametrize('failed_spin', [1, 2, 3])
@@ -1526,27 +1541,14 @@ def test_restaurant_rolling_overlay_preserves_slam_obstacles_and_unknown_space()
 
 
 
-def test_barman_full_turn_then_customer_search_without_turning_goes_there():
-    """Pedido del usuario 2026-11-10: vuelta completa para el barman; los clientes se buscan sin girar la base."""
+def test_customer_scan_without_raised_hands_searches_again():
     h = FakeRestaurantHarness(speech_script=['yes', 'yes', 'water', 'yes', 'yes', 'yes'])
-    spins, looks = [], []
-    views = iter([[{'id': '1', 'xy': [3., 1.]}], [], []])
-
-    def spin(angle):
-        spins.append(angle)
-        return True
-
-    def detect(timeout_s, min_frames):
-        looks.append(timeout_s)
-        return next(views)
-
-    session = h.make_session(spin_fn=spin, max_customers=1,
-                             detect_people_fn=lambda *_: [{'id': 'bar', 'xy': [0., 1.]}])
-    session.detect_customers_fn = detect
-    assert session.run()
-    assert len(spins) == 12 and len(looks) == 1
-    assert [c['xy'] for c in session.customers] == [[3., 1.]]
-    assert h.nav_goals, "tiene que navegar hacia la persona detectada"
+    ref = [None]
+    detect, spin, turns = _phase_detector(ref, [], {5: [{'id': 'quiet', 'xy': [2., 0.], 'raised_frames': 0}]})
+    session = h.make_session(spin_fn=spin, detect_people_fn=detect, max_customers=1, max_time_s=200.)
+    ref[0] = session
+    assert not session.run()  # nadie levanta la mano: busca de nuevo hasta el tiempo limite
+    assert h.spoken.count(rest.SEARCH_AGAIN) >= 1 and not session.customers
 
 
 def test_default_head_scan_has_eighty_second_budget():
@@ -1763,17 +1765,16 @@ def test_face_filter_discards_barman_and_served_customer_after_detector_ids_chan
     assert len(h.nav_goals) == 8  # dos ciclos completos y regreso antes de nueva busqueda
 
 
-def test_barman_only_view_does_not_end_customer_scan():
+def test_barman_with_raised_hand_is_not_taken_as_customer():
     h = FakeRestaurantHarness(customers=[{'xy': [2., 0.]}], speech_script=one_customer_protocol())
-    turns = []
-    session = h.make_session(spin_fn=lambda a: turns.append(a) or True,
-                             identify_face_fn=lambda p: p.get('label'),
-                             detect_people_fn=lambda *_: [{'xy': [0., 1.]}])
-    views = iter([[{'xy': [0., 1.], 'label': 'barman'}], [{'xy': [2., 0.]}]])
-    session.detect_customers_fn = lambda *_: next(views)
+    ref = [None]
+    barman = {'xy': [0., 1.], 'raised_frames': 5}
+    detect, spin, turns = _phase_detector(ref, [barman], {0: [barman], 4: [{'xy': [2., 0.], 'raised_frames': 3}]})
+    session = h.make_session(spin_fn=spin, detect_people_fn=detect)
+    ref[0] = session
     assert session.run()
-    assert len(turns) == 12  # solo la busqueda del barman gira
-    assert session.served == 1
+    assert session.barman_position == (0., 1.)
+    assert [c['xy'] for c in session.customers] == [[2., 0.]] and session.served == 1
 
 
 def test_no_customers_retries_then_serves_without_exceeding_deadline():

@@ -466,8 +466,35 @@ class RestaurantSession:
             self.sleep_fn(min(0.1, max(0.0, deadline - self.clock_fn())))
         return None
 
+    def _spin_scan_customers(self) -> List[Dict[str, Any]]:
+        """Cabeza al frente y vuelta completa con la base (12 x 30 grados): personas con la mano levantada.
+
+        Pedido del usuario 10/11: igual que la busqueda del barman, sin barrido del pan-tilt.
+        Los filtros por cara/barman se aplican al final, para no mover la cabeza durante la vuelta.
+        """
+        found: List[Dict[str, Any]] = []
+        if self.point_head_fn:
+            self.point_head_fn(0.0, 0.0)
+        for step in range(12):
+            if self.stopped or self._is_timeout():
+                return []
+            for person in self._people_list(self.detect_people_fn(min(self.BARMAN_VIEW_TIMEOUT_S, self.remaining_s()), 2)):
+                xy = self._person_xy(person)
+                if xy and self._raised(person) and all(
+                        math.hypot(xy[0] - f["xy"][0], xy[1] - f["xy"][1]) >= 0.7 for f in found):
+                    found.append(dict(person, xy=[xy[0], xy[1]]))
+            if step == 11 or self.stopped or self._is_timeout():
+                break
+            self._set_state(SessionState.DETECTING_CUSTOMERS, {"angle_rad": self.BARMAN_STEP_RAD, "step": step + 1,
+                                                               "customers": len(found)})
+            if not self.spin_fn(self.BARMAN_STEP_RAD):
+                break  # Yaw incierto tras un fallo: se sigue con lo que ya vio.
+        if not found:
+            self.detection_error = "no_raised_hand"
+        return found
+
     def _look_around(self) -> List[Dict[str, Any]]:
-        """Barrido de cabeza con base quieta; el adaptador define los pans."""
+        """Clientes con la mano levantada: vuelta con la base si hay giro y detector de personas; si no, barrido de cabeza."""
         self.detection_error = ""
         if self.stopped or self._is_timeout():
             return []
@@ -475,6 +502,11 @@ class RestaurantSession:
         self._speak(rest.SEARCHING_PEOPLE)
         if self.stopped or self._is_timeout():
             return []
+        if self.spin_fn and self.detect_people_fn:
+            view = self._spin_scan_customers()
+            eligible = [dict(c) for c in view if self._eligible_customer(c)]
+            self._look_forward()
+            return eligible
         raw = self.detect_customers_fn(min(HEAD_LOOK_AROUND_TIMEOUT_S, self.remaining_s()), 3)
         if isinstance(raw, dict) and not raw.get("ok", True):
             self.detection_error = raw.get("error", "")
