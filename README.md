@@ -1,6 +1,6 @@
-# Base@Home (`base_athome`)
+# Robbie@Home
 
-**Base@Home** is the domestic service robot developed by **UruBots** (Uruguay) for the **RoboCup@Home Open Platform League (OPL)**. It is a mobile manipulation and human-robot interaction (HRI) platform running entirely on **ROS 2 Jazzy Jalisco** (Ubuntu 24.04 LTS) across two onboard computers connected over Gigabit Ethernet.
+**Robbie@Home** is **ROBBIE**, the domestic service robot developed by **UruBots** (Uruguay) for the **RoboCup@Home Open Platform League (OPL)**. The ROS 2 packages keep their original `base_athome_*` names (the project was called Base@Home). It is a mobile manipulation and human-robot interaction (HRI) platform running entirely on **ROS 2 Jazzy Jalisco** (Ubuntu 24.04 LTS) across two onboard computers connected over Gigabit Ethernet.
 
 ---
 
@@ -33,7 +33,7 @@
 
 ```text
 +---------------------------------------------------------------------------------------------------+
-|                                   Base@Home Distributed System                                    |
+|                                   Robbie@Home Distributed System                                  |
 |                                                                                                   |
 |   NUC (Ubuntu 24.04 · ROS 2 Jazzy)                    Jetson Orin Nano (L4T R39.2.1 · Jazzy)      |
 |  +------------------------------------------------+  +-----------------------------------------+  |
@@ -131,7 +131,7 @@ python3 -m venv ~/ros2_vision_venv --system-site-packages
 ### 5.3 Build the Workspace
 
 ```bash
-git clone https://github.com/ShiiSuii/base_athome.git ~/base_athome_ws
+git clone https://github.com/ShiiSuii/robbie-at-home.git ~/base_athome_ws
 cd ~/base_athome_ws
 source /opt/ros/jazzy/setup.bash
 colcon build --symlink-install

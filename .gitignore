@@ -45,3 +45,10 @@ src/base_athome_perception/config/faces_database/
 # Grafo de graphify: se regenera local
 graphify-out/
 .claude/settings.json.graphify-bak
+
+# Pesos de modelos y paquetes generados (no se versionan)
+weights/
+*.zip
+tdp/**/main.pdf
+# Worktrees de agentes locales
+.claude/worktrees/
