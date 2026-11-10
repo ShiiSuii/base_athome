@@ -551,3 +551,225 @@ Los 10 mejores items ordenados por retorno de puntos por esfuerzo:
   1. HRI Challenge y GPSR representan las fuentes mas seguras de puntaje con la arquitectura actual (NUC + Jetson con Whisper, pan-tilt y Nav2). Permiten asegurar ~800-1000 pts con esfuerzo predominantemente de software.
   2. En Pick and Place, enfocarse en la combinacion Pick + Place de objetos estandar (Pringles, latas) y el vertido (leche/cereal), descartando apertura de lavavajillas y destape de carton que conllevan alto riesgo mecanico para un solo brazo.
   3. En Doing Laundry, enfocarse unicamente en la navegacion y retiro de ropa del tambor (315 pts), descartando el doblado manual bimanual.
+
+
+================================================================================
+5. Restaurant 2026
+================================================================================
+VERIFICADO 2026-11-10: investigación documental; no acredita ejecución del robot.
+Referencia normativa: release oficial 2026.2, publicada el 2026-05-11, commit
+b844d5a6d6ebf4307c3250a01d1eca4ba56f8452. El PDF de master ya dice borrador 2027;
+no se mezclaron sus reglas con las de 2026. La liga 2026 es unificada (OPL).
+
+Fuentes primarias (los identificadores se citan en los cinco puntos):
+[R1] Release y cambios oficiales:
+https://github.com/RoboCupAtHome/RuleBook/releases/tag/2026.2
+[R2] PDF oficial 2026.2, §5.5, páginas impresas 51–54; hoja completa en p. 54:
+https://github.com/RoboCupAtHome/RuleBook/releases/download/2026.2/rulebook.pdf
+SHA256 verificado: d35e93c7f291a59a823691905b47dcd7e8de14ab3a4c546aca55ba20b30ce128
+[R3] Fuente de la hoja de puntaje de Restaurant:
+https://github.com/RoboCupAtHome/RuleBook/blob/2026.2/scoresheets/Restaurant.tex
+[R4] Descripción, procedimiento y excepciones de Restaurant:
+https://github.com/RoboCupAtHome/RuleBook/blob/2026.2/tasks/Restaurant.tex
+[R5] §3.7: ayuda humana, verificación y alternativas a ASR:
+https://github.com/RoboCupAtHome/RuleBook/blob/2026.2/pages/general_rules/ContinueRules.tex
+[R6] §3.6: inicio, autonomía y límites generales:
+https://github.com/RoboCupAtHome/RuleBook/blob/2026.2/pages/general_rules/Procedure.tex
+[R7] §3.8: penalizaciones especiales y desempeño destacado:
+https://github.com/RoboCupAtHome/RuleBook/blob/2026.2/pages/general_rules/PenaltiesBonuses.tex
+[R8] §3.2.5: objetos estándar y objetos comunes:
+https://github.com/RoboCupAtHome/RuleBook/blob/2026.2/pages/general_rules/Scenario.tex
+[R9] Objetos publicados por la organización de Incheon 2026 (snapshot oficial):
+https://github.com/RoboCupAtHome/Incheon2026/blob/993bb7015566b8c943cd379db781257cbd6ff81b/objects/objects.md
+[R10] Nombres e índices de las 80 clases COCO usados por Ultralytics YOLO:
+https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/datasets/coco.yaml
+
+1) HOJA DE PUNTAJE COMPLETA Y AYUDA HUMANA [R2, R3, R5, R7]
+
+Concepto                                            Veces x puntos       Total
+Recompensas regulares:
+ Detectar cliente llamando o saludando                  2 x   80           160
+ Llegar a la mesa del cliente                           2 x   80           160
+   Ayuda: ser guiado hasta la mesa                      2 x  -80          -160
+ Entender y confirmar el pedido al cliente              2 x  160           320
+   Usar HRI alternativa                                2 x  -80          -160
+   No mantener contacto visual al tomar el pedido       2 x  -60          -120
+ Comunicar el pedido al barman                          2 x   80           160
+ Recoger los objetos pedidos de la barra                4 x  100           400
+   Bonus por el primer pick                            1 x  100           100
+   Ayuda: pedir al barman que entregue el objeto        4 x -100          -400
+ Volver a la mesa del cliente con el pedido             2 x   80           160
+ Servir los objetos al cliente                          4 x  100           400
+   Bonus por el primer place                           1 x  100           100
+   Ayuda: cliente retira objeto de bandeja o pinza       4 x -100          -400
+Recompensas extra:
+ Transportar usando bandeja SIN FIJAR al robot           2 x  200           400
+Penalizaciones:
+ No llegar a barra: el barman debe salir para atender    2 x  -60          -120
+ Pedir confirmación de dirección                        2 x  -30           -60
+ Pedir que indiquen/señalen mesa o barra                 2 x  -40           -80
+Especiales, mostradas en la hoja PDF:
+ No presentarse sin aviso reglamentario                 1 x -500          -500
+ Usar señal alternativa de inicio                       1 x -100          -100
+ Desempeño destacado (discrecional, hasta 10 %)          1 x  236          +236
+
+Máximo publicado: 2360 puntos, antes de especiales; no incluye automáticamente
+el bonus discrecional de 236. La hoja puntúa dos pedidos de dos objetos cada uno.
+Primer pick y primer place: +100 cada uno, una sola vez por prueba, no por pedido.
+
+Interpretaciones y límites que afectan al plan:
+- Pedir ayuda no tiene una multa universal: se aplica la fila correspondiente.
+  Por defecto, la subtarea hecha por un humano vale cero (§3.7.2), salvo excepción
+  expresa. No sumar el valor íntegro de pick/place asistidos ni duplicar una
+  reducción específica con una segunda penalización inventada.
+- El barman PUEDE cargar una cesta/bandeja si el robot lo pide [R4]. No encontré
+  una fila independiente «cargar bandeja»: la fila publicada de ayuda en recogida
+  es -100 por objeto entregado por el barman. No está explicitado si toda carga
+  de bandeja se contabiliza exactamente como ese handover ni cómo afecta al
+  bonus de bandeja; requiere aclaración del TC. No presupuestar picks autónomos
+  ni el máximo de bandeja cuando la carga la hizo el humano.
+- Una bandeja fija no cumple «unattached»: no se le puede atribuir el +200.
+  La secuencia autónoma descrita es cargar objetos, recoger/transportar bandeja
+  y servir en mesa, colocando objetos directamente o dejando primero la bandeja.
+- Entregar en mano no equivale a colocar: si el cliente retira el objeto, la hoja
+  resta 100 por objeto. Todos los objetos entregados deben quedar en su mesa [R4].
+  No encontré un bonus de handover al cliente en Restaurant.
+- La ayuda es último recurso [R5]. Debe ser explícita y verificarse por percepción
+  o diálogo. Solicitudes repetidas sin progreso autónomo pueden terminar la prueba
+  desde la segunda; no es una estrategia garantizada pedir carga y descarga humanas.
+- La hoja incluye -100 por inicio alternativo, pero §3.6.8 exige inicio manual del
+  árbitro cuando no se entra desde fuera de la arena y admite voz. No explica
+  claramente qué alternativa se penaliza en Restaurant: confirmar en inspección
+  la señal aceptada y su tratamiento; no afirmar que arrancar por voz evita -100.
+- Además de la hoja: trampa/falta de fair play implica descalificación y -500;
+  no aportar árbitro/asistente a tiempo, -250; colisiones graves pueden implicar
+  cero puntos/descalificación [R7]. No inventar multas por derrame/objeto equivocado:
+  no encontré filas específicas de esos conceptos en esta hoja.
+
+2) VOZ CON CLIENTES Y BARMAN [R4, R5, R6]
+
+- Confirmar cortésmente el pedido al recibirlo es parte expresa del objetivo de
+  160 puntos por cliente. Ejemplo propuesto, no frase obligatoria: «You ordered
+  an apple and a milk. Is that correct?». Restaurant no contiene la penalización
+  por preguntas de confirmación innecesarias de HRI Challenge: no importarla.
+- Se puede pedir repetición: §3.7.4 permite al operador predeterminado repetir el
+  comando hasta tres veces sin reducción por ASR. No se exige pantalla ni botones.
+- Comunicar verbalmente los dos objetos al barman satisface la modalidad de HRI
+  esperada. Confirmar «Did you receive the order?» o «Are both items on the tray?»
+  es una aplicación razonada del diálogo natural y de verificar la ayuda; no hay
+  puntos adicionales ni penalización específica por esas frases en Restaurant.
+  No hay una lista cerrada de frases autorizadas.
+- El robot dispone de hasta dos minutos por pedido para instruir al barman, dentro
+  de los 15 minutos, sin prórroga publicada. Puede pedir que guíe/señale o cargue
+  la bandeja; las ayudas conservan sus restricciones y reducciones del punto 1.
+- Confirmar el contenido del pedido no equivale a confirmar una dirección:
+  «Is that the correct table/direction?» cae en la fila -30; que le indiquen/señalen
+  dónde está mesa/barra, -40; que lo guíen a la mesa, -80. Hablar no hace gratis
+  la ayuda de localización/manipulación.
+- El robot debe dirigirse al cliente y mantener contacto visual al tomar el pedido
+  para evitar -60. El equipo no puede ayudar ni instruir a los clientes. Cambiar
+  a un operador del equipo no es la solución al ruido: la regla general de ASR
+  prevé reducción del 10 % por operador personalizado, con aplicación a aclarar
+  con el TC; no invento una fila adicional en puntos de Restaurant.
+
+3) TIEMPO E INICIO [R2, R4, R6]
+
+- Límite: 15:00 minutos desde señal del árbitro, que también inicia el reloj.
+- Robot junto a Kitchen-bar, orientado hacia las mesas, en restaurante desconocido
+  fuera de la arena. Barman al otro lado de la barra; objetos sobre ella. El equipo
+  se retira tras la señal y un miembro del TC sigue al robot listo para el E-stop.
+- Inicio manual por el árbitro, aprobado en inspección; el robot anuncia que está
+  listo y cómo activarlo. Voz es una opción permitida. Ratón/teclado están prohibidos
+  como señal del árbitro [R6]; la ambigüedad de -100 se registra en el punto 1.
+- Al frente de la cola se permite arrancar software con robot quieto. Al ser llamado,
+  llevarlo directo al inicio: ajustes menores, sin idas y vueltas ni giros completos.
+  Se prohíbe mapear de antemano y tocar el robot tras la señal (descalificación).
+  El reinicio anunciado tiene un procedimiento específico que permite recolocarlo.
+- Restaurant permite UN reinicio, anunciado al árbitro, volviendo al inicio, en un
+  máximo de 2 minutos; el reloj sigue y se pierden TODOS los puntos anteriores.
+  Es la excepción explícita frente al límite general de 60 segundos para reiniciar.
+- No asumir Wi-Fi, cómputo externo ni enchufes. Contacto físico con personas o muebles:
+  E-stop inmediato según Restaurant. Esto debe conciliarse con la colocación requerida
+  en mesa; no interpretar como permiso para que base/brazo choquen con el mobiliario.
+
+4) OBJETOS/BEBIDAS Y COBERTURA YOLO COCO [R4, R8, R9, R10]
+
+Cada pedido: DOS objetos aleatorios entre comestibles/bebibles de la lista estándar.
+No hay un menú universal cerrado de Restaurant en el rulebook. Como evidencia
+concreta, la organización de Incheon 2026 publicó estos objetos elegibles por tipo;
+no encontré una lista separada que pruebe cuáles usó efectivamente en Restaurant:
+
+Objeto(s) publicados en Incheon                    Clase YOLO COCO exacta
+apple (manzana)                                    apple, índice 47
+peach, mangostane, lemon                           Ninguna
+yellow_bellpepper, red_bellpepper                   Ninguna
+pringles, seaweed                                  Ninguna
+instant_noodles, cornflakes                        Ninguna
+coke, red_bull, milk, soju, pepsi                   Ninguna por bebida/marca
+
+COCO reconoce envases bottle (39), wine glass (40), cup (41), y bowl (45).
+Una bebida EN BOTELLA puede detectarse genéricamente como bottle, pero eso no
+identifica marca/contenido; COCO no tiene can/lata, milk/cartón de leche, red_bull,
+pepsi ni pringles. No inferir envase concreto de los nombres de la lista.
+Banana (46), orange (49), sandwich (48) también son clases COCO útiles si figuran
+en la lista local; NO aparecen en ese snapshot de Incheon. Lemon no es orange,
+ni un paquete de noodles es bowl por definición.
+Para la escena hay person (0), chair (56), dining table (60); no hay tray/bandeja.
+Los índices son base cero de YOLO, no los category_id originales no consecutivos
+del dataset COCO. Clase disponible no demuestra detección fiable ni agarre válido.
+
+Conclusión de percepción [inferencia]: COCO solo no cubre el menú. Asociar nombres
+oficiales a un detector entrenado con objetos de competencia o método de reconocimiento
+adicional, y verificar identidad con RGB/profundidad; no servir una botella cualquiera.
+Red Bull y Pringles también están explícitos en los objetos comunes de 2026 [R8].
+Rubik/Colgate pertenecen al conjunto general, pero no son pedidos comestibles/bebibles.
+
+5) ESTRATEGIA PARA BASE@HOME SIN PANTALLA, CON PIPER Y BANDEJA [inferencia]
+
+- Priorizar dos clientes, pedido hablado con confirmación y mirada, llegada autónoma
+  a mesa/barra y retorno correcto. Esas cinco categorías suman teóricamente 960 puntos
+  (160 + 160 + 320 + 160 + 160), si se cumplen todas sin reducciones. No son puntos
+  garantizados ni justifican omitir sistemáticamente la manipulación.
+- Primer objetivo de manipulación: al menos UN objeto recogido de barra y colocado
+  autónomamente en mesa del cliente. Sus 100 + 100 y los dos primeros bonus +100 +100
+  aportan 400 puntos: escenario teórico 1360 con las cinco categorías anteriores.
+- Los cuatro objetos con pick/place autónomos aportan 800 + 200 de primeros bonus:
+  máximo 1960 sin bonus de bandeja. Priorizar esto frente a ayuda humana habitual.
+- Para alcanzar 2360: además transportar ambos pedidos con bandeja no fijada, +400.
+  Con un solo Piper, cargarla apoyada en barra, levantarla por un agarre estable,
+  transportarla y apoyarla en mesa; después colocar objetos autónomamente si hace
+  falta. Confirmar con el TC cómo acredita servicio dejar bandeja cargada en mesa:
+  el texto dice colocar primero la bandeja, pero no detalla el criterio de descarga.
+  No dejar que el cliente retire objetos si se pretende conservar el place completo.
+- Bandeja ligera con agarre compatible y carga centrada es una propuesta mecánica,
+  NO una capacidad verificada del Piper. No se midieron aquí carga útil, alcance,
+  altura de barra/mesas ni estabilidad. Si no es fiable dentro de 15 minutos,
+  transportar objetos individualmente sigue permitido y puede conservar hasta 1960;
+  una bandeja fijada como soporte no obtiene los +400.
+- La mayor ganancia esperada depende de éxito/tiempo medidos: no se puede prometer
+  que la bandeja maximiza puntos reales solo porque suba el techo teórico. Atender
+  un pedido por vez simplifica asociación y libera capacidad; tomar varios antes
+  de entregar también está permitido. Elegir con tiempos de ensayo, no por intuición.
+- Pedir ayuda solo para desbloquear progreso y verificarla por voz/percepción.
+  Evitar que barman cargue y cliente descargue como procedimiento principal: pierde
+  manipulación y puede activar la detención por ayuda repetida (§3.7.3).
+- Sin pantalla: ASR/TTS con nombres del menú, corrección de los dos objetos y mirada
+  al hablante. Si se detecta un cliente pero no se llega, se exige identificarlo
+  claramente para puntos parciales; la foto es un ejemplo, no obligación de pantalla.
+  Proponer descripción verbal inequívoca (mesa/ropa) y validarla con el árbitro;
+  no afirmar que una frase genérica alcanza para puntuar.
+
+PENDIENTE TC: carga humana de bandeja y su bonus; servicio dejando bandeja cargada;
+señal de inicio y -100; tratamiento de alternativas ASR no tabuladas específicamente.
+PENDIENTE robot: ensayos supervisados de Piper/bandeja y medición de tiempos/éxito.
+
+Trazabilidad de esta entrega: rama codex/rest-reglas, HEAD base
+a16a637b8be977811865010b75a257ec4aaaabc5; único archivo editado: esta matriz.
+Verificación documental: PDF descargado y contrastado con fuentes del tag 2026.2;
+STATIC_PASS: 18 filas específicas y 3 especiales contrastadas, productos y suma
+positiva 2360 correctos; git diff --check limpio. git add falló por filesystem de
+solo lectura al crear index.lock; entrega sin stage ni commit, sin intentar sortearlo.
+Sin cambios de código, navegación, hosts ni servicios;
+sin ROS ni comandos a actuadores; sin validación física. Rollback: retirar solamente
+esta sección mediante diff inverso propio. STATUS.md queda para el integrador,
+conforme a la propiedad exclusiva de archivos comunes de AGENTS.md §6.2.
