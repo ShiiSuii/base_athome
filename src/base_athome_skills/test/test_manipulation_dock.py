@@ -96,3 +96,10 @@ def test_rear_sensor_required_and_obstacles_stop_retreat():
 def test_config_validation(kw):
     with pytest.raises(ValueError):
         DockConfig(**kw)
+
+
+def test_body_return_behind_front_is_not_in_forward_swept_area():
+    scan = wall()
+    # Self return at 120deg: x=.07, y=.26, behind the laser and front bumper.
+    scan = Scan(scan.angles + (math.radians(120),), scan.ranges + (.3,), 1.)
+    assert step(scan=scan) == (.04, None)

@@ -8,7 +8,9 @@ LiDAR at the rear bumper; the real robot has no equivalent sensor installed.
 Fuel Coke is loaded from the public Fuel cache (download it with gz fuel).
 Results distinguish measured docking/retreat from UNTESTED physical grasp,
 Nav2 delivery and collision contacts. A dock-only result is always PARCIAL in
-the shared ledger. All child processes are owned and terminated on exit.
+the shared ledger. Invoke through sim_lab/tools/gz_turno.sh to reserve a turn.
+Camera resolution and rates match the production simulator; only the rear
+sensor is added. All child processes are owned and terminated on exit.
 """
 import argparse
 import datetime
@@ -53,11 +55,6 @@ def main():
     <lidar><scan><horizontal><samples>361</samples><min_angle>-1.5707963268</min_angle><max_angle>1.5707963268</max_angle>
     </horizontal></scan><range><min>0.04</min><max>8</max></range></lidar><always_on>1</always_on></sensor></gazebo>'''
     robot = gz_model.gazebo_urdf(urdf.read_text()).replace('</robot>', rear+'</robot>')
-    # Own sim profile: reduce image load, preserve geometry and watchdog thresholds.
-    robot = robot.replace('<width>640</width><height>480</height>', '<width>320</width><height>240</height>')
-    robot = robot.replace('<update_rate>15</update_rate>', '<update_rate>5</update_rate>')
-    robot = robot.replace('<gz_frame_id>restaurant_rear_laser</gz_frame_id><update_rate>5</update_rate>',
-                          '<gz_frame_id>restaurant_rear_laser</gz_frame_id><update_rate>10</update_rate>')
     model_path = out/'robot.urdf'
     model_path.write_text(robot)
     coke = Path.home()/'.gz/fuel/fuel.gazebosim.org/openrobotics/models/coke/6'
@@ -99,6 +96,8 @@ def main():
         node = Node('manipulation_dock_probe')
         node.cb_group = ReentrantCallbackGroup()
         dock = RestaurantDocking(node, lambda: rclpy.ok(), lambda: True)
+        sensor_times = {'front': [], 'rear': [], 'odom': []}
+        node.create_timer(.05, lambda: sensor_times['front'].append((time.monotonic(), dock.scan.received_at if dock.scan else None)), callback_group=node.cb_group)
         executor = MultiThreadedExecutor(4)
         executor.add_node(node)
         thread = threading.Thread(target=executor.spin, daemon=True)
@@ -113,6 +112,8 @@ def main():
                 (out/f'rear_scan_{trial}.json').write_text(json.dumps(vars(dock.rear_scan)))
             ok = dock.run()
             c = dock.controller
+            if dock.scan:
+                (out/f'front_scan_{trial}.json').write_text(json.dumps(vars(dock.scan)))
             approach = dict(ok=ok, reason=c.result if c else 'preflight',
                             travel_m=c.travel_m if c else None,
                             clearance_m=c.final_clearance_m if c else None)
@@ -122,8 +123,12 @@ def main():
                            approach=approach, retreat_ok=exit_ok, retreat_reason=c.result if c else None,
                            grasp='UNTESTED', navigation='UNTESTED', collision_contacts='UNTESTED')
             summaries.append(summary)
+            (out/f'sensor_times_{trial}.json').write_text(json.dumps(sensor_times))
             print(json.dumps(summary),flush=True)
             (out/'summary.json').write_text(json.dumps(summaries,indent=2)+'\n')
+            subprocess.run(['gz','service','-s','/gui/follow','--reqtype','gz.msgs.StringMsg',
+                            '--reptype','gz.msgs.Boolean','--timeout','3000','--req',
+                            'data: '+json.dumps(gz_model.MODEL)],env=env,timeout=5,check=False)
             subprocess.run(['/home/athome/sim_lab/tools/capturar.sh',f'restaurant-manip/{args.iteration}_{trial+1}'],
                            env=env,timeout=20,check=False)
             if not ok or not exit_ok:

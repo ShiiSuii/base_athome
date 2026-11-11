@@ -149,6 +149,6 @@ class ManipulationDock:
         for a, r in zip(scan.angles, scan.ranges):
             if math.isfinite(r):
                 x, y = self.cfg.laser_x_m + r*math.cos(a), r*math.sin(a)
-                if 0 < x < surface_x - 0.06 and abs(y) <= self.cfg.half_width_m:
+                if self.cfg.front_m <= x < surface_x - 0.06 and abs(y) <= self.cfg.half_width_m:
                     return stop('blocked')
         return min(self.cfg.speed_mps, max(0.005, float(decision.value)))
