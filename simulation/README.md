@@ -60,6 +60,25 @@ GAZEBO=1 NAV2=1 python3 simulation/scripts/sim_escenarios.py
 
 Everything runs in `ROS_DOMAIN_ID=42`. `SIM_DOMAIN` changes it. Never use the robot's domain, 10.
 
+For the shared Receptionist laboratory, use explicit commands rather than the `sim_*` aliases
+(those aliases reset the domain to 42):
+
+```bash
+export ROS_DOMAIN_ID=77 GZ_PARTITION=receplab DISPLAY=:1 ATHOME_SIM=1
+export ATHOME_FACES_DB=/home/athome/sim_lab/receptionist_synthetic_db
+export ATHOME_SIM_SEMANTIC_MAP=$PWD/simulation/base_athome_sim/config/receptionist_semantic_map.yaml
+ros2 launch base_athome_sim sim.launch.py gazebo:=true gz_gui:=true rviz:=true auto_guest:=true
+# In another terminal with the same environment and workspace sourced:
+ros2 topic pub --once /sim/guest std_msgs/msg/String '{data: door}'
+python3 src/base_athome_perception/scripts/hri_receptionist_challenge.py --sim-nav --no-wait
+```
+
+`auto_guest` supplies Robin/iced tea and Morgan/coffee in successive registration requests.
+An explicit yes/no confirmation receives `yes` without consuming the next guest's introduction.
+It does not seat guests, change their camera image, or simulate acoustic doorbell detection;
+use `/sim/guest` and `/sim/speech` to control those interactions. Model weights must already
+be installed in the worktree's perception `models/` directory; do not reuse a real facial database.
+
 ## Arena: one house, one map, every test
 
 `worlds/arena.sdf` is a 14 x 10 m house (hall with a closed front door, living room, bedroom, kitchen, dining room with a
@@ -158,3 +177,12 @@ MoveIt, the URDF and, with `NAV2=1`, Nav2 with the robot's `nav2_params.yaml`. I
 - A grasp succeeds when the gripper closes within 6 cm of the knot point.
 
 **A result here does not show the robot is safe or that a real grasp works.**
+
+Receptionist's shared dialogue parser also keeps specific common drink names (for example,
+`Apple Juice` or `Green Tea`) when a shorter fallback vocabulary matches only `Juice` or `Tea`.
+Whisper aliases and longer official vocabulary matches still apply. The semantic overlay above uses
+the two chair positions from `casa_simple.sdf`; Receptionist honors this override only with
+`ATHOME_SIM=1`. Its waypoints are simulation fixtures, not measured robot poses. `--sim-nav`
+does not move the Gazebo base, so these runs do not validate navigation or physical seating.
+Receptionist waits up to five seconds for its vision worker to finish during shutdown before
+tearing down its ROS node, reducing native vision cleanup races during repeated laboratory runs.

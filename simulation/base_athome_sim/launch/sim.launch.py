@@ -29,9 +29,6 @@ def _setup(context):
     actions = [
         Node(package="robot_state_publisher", executable="robot_state_publisher", output="log",
              parameters=[{"robot_description": urdf}]),
-        Node(package="base_athome_sim", executable="sim_robot", output="screen",
-             parameters=[{"gazebo": use_gz,
-                          "auto_guest": LaunchConfiguration("auto_guest").perform(context).lower() == "true"}]),
     ]
     if use_gz:
         shares = {os.path.dirname(get_package_share_directory(p)) for p in ("piper_description", "hoverboard_base")}
@@ -44,6 +41,8 @@ def _setup(context):
             world = world_env if os.path.isabs(world_env) else os.path.join(sim_share, "worlds", world_env)
         else:
             world = os.path.join(sim_share, "worlds", "casa_basura.sdf" if os.environ.get("ATHOME_SIM_BAG") else "casa_simple.sdf")
+        # Keep sim_robot's /world/<name>/create calls aligned with the world selected above.
+        actions.append(SetEnvironmentVariable(name="ATHOME_SIM_WORLD", value=os.path.basename(world)))
         # ATHOME_SIM_START="x,y,yaw_deg": donde aparece el robot (por defecto el origen del mundo). Con Nav2, nav2_sim.launch.py
         # da la misma pose a AMCL; con SLAM el mapa nace ahi. La odometria de gz sim es la pose en el mundo: mapa = mundo.
         start = [float(v) for v in os.environ.get("ATHOME_SIM_START", "0,0,0").split(",")]
@@ -60,6 +59,9 @@ def _setup(context):
                  arguments=gz_model.bridge_args(),
                  parameters=[{"override_timestamps_with_wall_time": True}]),
         ]
+    actions.append(Node(package="base_athome_sim", executable="sim_robot", output="screen",
+                        parameters=[{"gazebo": use_gz,
+                                     "auto_guest": LaunchConfiguration("auto_guest").perform(context).lower() == "true"}]))
     return actions
 
 
