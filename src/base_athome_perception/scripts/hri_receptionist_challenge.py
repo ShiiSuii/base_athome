@@ -194,6 +194,9 @@ class HriReceptionistChallengeNode(Node):
     STATE_ASK_CONFIRM = 17     # "Your name is X and you like Y. Is that correct?"
     STATE_WAIT_CONFIRM = 18
     STATE_WAIT_DOORBELL = 19
+    STATE_SIM_BAG_HANDOVER = 20
+    STATE_SIM_BAG_FOLLOW = 21
+    STATE_SIM_BAG_DROP = 22
 
     STATE_NAMES = {
         STATE_INIT: "0/7: INICIALIZANDO SISTEMA",
@@ -216,6 +219,9 @@ class HriReceptionistChallengeNode(Node):
         STATE_ASK_CONFIRM: "3/7: VERIFICANDO LO QUE ENTENDI",
         STATE_WAIT_CONFIRM: "3/7: ESCUCHANDO SI / NO",
         STATE_WAIT_DOORBELL: "ESPERANDO TIMBRE ANTES DE IR A LA PUERTA",
+        STATE_SIM_BAG_HANDOVER: "BOLSA SIM: RECIBIENDO DEL INVITADO",
+        STATE_SIM_BAG_FOLLOW: "BOLSA SIM: SIGUIENDO AL ANFITRION",
+        STATE_SIM_BAG_DROP: "BOLSA SIM: DEJANDO EN EL AREA",
     }
     # Estados en los que la cabeza sigue la cara del interlocutor
     TRACKING_STATES = {STATE_WAIT_DOOR, STATE_GREET_AND_PROMPT, STATE_WAIT_NAME_DRINK, STATE_PROMPT_MISSING_INFO,
@@ -321,6 +327,9 @@ class HriReceptionistChallengeNode(Node):
         self.guest_inputs: "queue.Queue[dict]" = queue.Queue()
         self.pub_guest_input = self.create_publisher(String, "/hri/guest_input", 10)
         self.create_subscription(String, "/hri/guest_input", self._guest_input_cb, 10)
+        if os.environ.get("ATHOME_SIM") == "1":
+            self.create_subscription(String, "/sim/receptionist/guest_state",
+                                     self._sim_receptionist_state_cb, 10)
         try:
             self.guest_screen = GuestInputServer(self.vocab.names, self.vocab.drinks,
                                                  lambda d: self.pub_guest_input.publish(String(data=json.dumps(d))))
@@ -360,6 +369,11 @@ class HriReceptionistChallengeNode(Node):
 
         # 5. Publicadores ROS 2
         self.pub_say = self.create_publisher(String, "/hri/say_something", 10)
+        self.pub_sim_receptionist_task = None
+        if os.environ.get("ATHOME_SIM") == "1":
+            self.pub_sim_receptionist_task = self.create_publisher(String, "/sim/receptionist/task_command", 5)
+            self.create_subscription(String, "/sim/receptionist/task_state",
+                                     self._sim_receptionist_task_state_cb, 5)
         self.pub_emotion = self.create_publisher(String, "/robot/emotion", 10)
         self.pub_pantilt = self.create_publisher(Vector3, "/pan_tilt/target_degrees", 10)
         # El pan-tilt arranca sin torque (auto_torque=false): se habilita al primer movimiento.
@@ -528,6 +542,9 @@ class HriReceptionistChallengeNode(Node):
         self.request_shutdown = False
         self.current_face_dets: List[Dict] = []
         self.current_poses: List[Dict] = []
+        self.sim_receptionist_state: Dict[str, Any] = {}
+        self.sim_receptionist_bag_state = "idle"
+        self.sim_receptionist_task_started = 0.0
         self.frame_count = 0
         self.last_face_time = 0.0
         self.last_pose_time = 0.0
@@ -700,6 +717,9 @@ class HriReceptionistChallengeNode(Node):
         # era una causa de cortes (USB re-enumerando). Para cerrarlo: pkill -f realsense2_camera_node
         if hasattr(self, "face_worker_stop"):
             self.face_worker_stop.set()
+        worker = getattr(self, "face_worker", None)
+        if worker is not None and worker is not threading.current_thread():
+            worker.join(timeout=5.0)
         super().destroy_node()
 
     # --------------------------------------------------------------------------
@@ -711,6 +731,8 @@ class HriReceptionistChallengeNode(Node):
         semantic_path = os.path.join(
             self.pkg_dir, "..", "base_athome_navigation", "config", "semantic_map.yaml"
         )
+        if os.environ.get("ATHOME_SIM") == "1":
+            semantic_path = os.environ.get("ATHOME_SIM_SEMANTIC_MAP") or semantic_path
         wp_path = os.path.join(
             self.pkg_dir, "..", "base_athome_navigation", "config", "waypoints.yaml"
         )
@@ -1081,6 +1103,49 @@ class HriReceptionistChallengeNode(Node):
         q = msg.pose.pose.orientation
         yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
         self.robot_pose = (msg.pose.pose.position.x, msg.pose.pose.position.y, yaw)
+
+    def _sim_receptionist_state_cb(self, msg: String):
+        """Simulation ground truth; the physical robot never subscribes to this topic."""
+        try:
+            state = json.loads(msg.data)
+            guests = state.get("seated_guests", [])
+            if not isinstance(guests, list):
+                return
+            for guest in guests:
+                if (not isinstance(guest, dict) or len(guest.get("xy", [])) != 2
+                        or not all(math.isfinite(float(v)) for v in guest["xy"])):
+                    return
+            self.sim_receptionist_state = {"guest_index": int(state.get("guest_index", 0)),
+                                           "seated_guests": guests}
+        except (ValueError, TypeError, KeyError, AttributeError):
+            return
+
+    def _sim_receptionist_task_state_cb(self, msg: String):
+        """Accept only known bag task states published by the isolated simulator."""
+        try:
+            state = json.loads(msg.data)
+            bag_state = state.get("bag_state")
+            if bag_state in {"idle", "ready", "handover", "received", "following", "host_at_drop", "dropped"}:
+                self.sim_receptionist_bag_state = bag_state
+        except (ValueError, TypeError, AttributeError):
+            return
+
+    def _sim_receptionist_task_command(self, action: str):
+        if self.pub_sim_receptionist_task is not None:
+            self.pub_sim_receptionist_task.publish(String(data=action))
+
+    def _after_guest_seated(self):
+        if self.guest_index >= 2:
+            self._introduce_guests_to_each_other()
+            if os.environ.get("ATHOME_SIM") == "1":
+                self.say(f"{self.current_name}, may I take your bag, please?", emotion="speaking", blocking=True)
+                self._sim_receptionist_task_command("handover")
+                self.state = self.STATE_SIM_BAG_HANDOVER
+                self.state_start_time = time.time()
+                self.sim_receptionist_task_started = self.state_start_time
+                return
+        self.state = self.STATE_CHECK_NEXT_GUEST
+        self.state_start_time = time.time()
 
     def _pt_connected_cb(self, msg):
         self.pt_connected = bool(msg.data)
@@ -1486,6 +1551,12 @@ class HriReceptionistChallengeNode(Node):
 
     def scan_seats(self) -> Tuple[Dict[str, int], bool]:
         """Mira cada asiento del mapa semantico y cuenta personas en el (ocupacion, uso_profundidad)."""
+        if os.environ.get("ATHOME_SIM") == "1":
+            people = [tuple(map(float, g["xy"]))
+                      for g in self.sim_receptionist_state.get("seated_guests", [])]
+            occ = seatocc.seat_occupancy(self.seats, people)
+            self.get_logger().info(f"🪑 Ocupacion sim verificada (actores): {occ}")
+            return occ, True
         persons: List[Tuple[float, float]] = []
         fallback: Dict[str, int] = {}
         used_depth = False
@@ -2303,16 +2374,19 @@ class HriReceptionistChallengeNode(Node):
                 postures = [d.get("posture", "") for d in poses]
                 seated = scene.person_seated_at(bearing, bearings, postures) if bearing is not None else \
                     any(str(p).upper().startswith("SENTAD") for p in postures)
+            if os.environ.get("ATHOME_SIM") == "1" and self.registered_guests:
+                seat = self.registered_guests[-1].get("seat")
+                seated = seated or any(
+                    int(g.get("guest_index", 0)) == self.guest_index and g.get("xy")
+                    and seatocc.seat_contains(self.seats.get(seat, {}), tuple(map(float, g["xy"])))
+                    for g in self.sim_receptionist_state.get("seated_guests", []))
             if seated and now - self.last_pose_time < 1.0:
                 self.seated_hits += 1
             elif not seated:
                 self.seated_hits = 0
             if self.seated_hits >= 3:
                 self.say(f"Great, {self.current_name}. Make yourself comfortable.", emotion="happy", blocking=True)
-                if self.guest_index >= 2:
-                    self._introduce_guests_to_each_other()
-                self.state = self.STATE_CHECK_NEXT_GUEST
-                self.state_start_time = time.time()  # tras los say() bloqueantes, no el 'now' del inicio del ciclo
+                self._after_guest_seated()
             elif elapsed > 20.0 and not self.seat_reminded:
                 self.seat_reminded = True
                 where = scene.direction_words(bearing) if bearing is not None else "here"
@@ -2320,10 +2394,42 @@ class HriReceptionistChallengeNode(Node):
             elif elapsed > 45.0 or self.force_advance:
                 self.force_advance = False
                 self.get_logger().warn("No vi al invitado sentarse a tiempo; continuo con el siguiente.")
-                if self.guest_index >= 2:
-                    self._introduce_guests_to_each_other()
+                self._after_guest_seated()
+
+        elif self.state == self.STATE_SIM_BAG_HANDOVER:
+            if self.sim_receptionist_bag_state == "received":
+                self.say("Thank you. I will follow our host to the bag drop area.", emotion="happy", blocking=True)
+                self._sim_receptionist_task_command("follow")
+                self.state = self.STATE_SIM_BAG_FOLLOW
+                self.state_start_time = time.time()
+                self.sim_receptionist_task_started = self.state_start_time
+            elif now - self.sim_receptionist_task_started > 25.0:
+                self.get_logger().error("Receptionist sim bag handover timed out; simulator did not confirm receipt.")
+                self.state = self.STATE_CHALLENGE_COMPLETE
+                self.state_start_time = time.time()
+
+        elif self.state == self.STATE_SIM_BAG_FOLLOW:
+            if self.sim_receptionist_bag_state == "host_at_drop":
+                self.say("We have arrived. I will leave the bag in the marked drop area.",
+                         emotion="speaking", blocking=True)
+                self._sim_receptionist_task_command("drop")
+                self.state = self.STATE_SIM_BAG_DROP
+                self.state_start_time = time.time()
+                self.sim_receptionist_task_started = self.state_start_time
+            elif now - self.sim_receptionist_task_started > 90.0:
+                self.get_logger().error("Receptionist sim host-follow timed out before reaching the bag area.")
+                self.state = self.STATE_CHALLENGE_COMPLETE
+                self.state_start_time = time.time()
+
+        elif self.state == self.STATE_SIM_BAG_DROP:
+            if self.sim_receptionist_bag_state == "dropped":
+                self.say("The bag is safely placed in the drop area.", emotion="happy", blocking=True)
                 self.state = self.STATE_CHECK_NEXT_GUEST
-                self.state_start_time = time.time()  # tras los say() bloqueantes, no el 'now' del inicio del ciclo
+                self.state_start_time = time.time()
+            elif now - self.sim_receptionist_task_started > 12.0:
+                self.get_logger().error("Receptionist sim bag drop timed out; bag was not confirmed in the zone.")
+                self.state = self.STATE_CHALLENGE_COMPLETE
+                self.state_start_time = time.time()
 
         elif self.state == self.STATE_CHECK_NEXT_GUEST:
             if self.guest_index < self.max_guests:

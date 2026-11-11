@@ -55,3 +55,10 @@ def test_phonetic_key():
 ])
 def test_yes_no(heard, ans):
     assert parse_yes_no(heard) is ans
+
+
+@pytest.mark.parametrize('drink', ['Apple Juice', 'Mineral Water', 'Sparkling Water',
+                                  'Green Tea', 'Black Tea', 'Red Wine', 'White Wine'])
+def test_specific_known_drink_survives_shorter_fallback_vocabulary(drink):
+    fallback = GuestVocabulary(data_dirs=['/nonexistent'])
+    assert extract_name_and_drink(f'My name is Morgen and I like {drink}', fallback) == ('Morgan', drink)

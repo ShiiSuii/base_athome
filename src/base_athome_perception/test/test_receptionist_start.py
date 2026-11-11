@@ -377,3 +377,34 @@ def test_ready_banner_format(node_cls):
     assert "Voz" in banner
     assert "ESPACIO" in banner
     assert "Nav simulada" in banner
+
+
+def test_destroy_waits_for_face_inference_cleanup():
+    """Do not tear down native vision libraries while their worker is alive."""
+    import ast
+    import time
+    tree = ast.parse(open(SCRIPT).read())
+    source_class = next(n for n in tree.body if isinstance(n, ast.ClassDef)
+                        and n.name == 'HriReceptionistChallengeNode')
+    method = next(n for n in source_class.body if isinstance(n, ast.FunctionDef)
+                  and n.name == 'destroy_node')
+    source_class.body = [method]
+    source_class.bases = [ast.Name(id='Node', ctx=ast.Load())]
+    class Base:
+        def destroy_node(self):
+            self.worker_alive_at_destroy = self.face_worker.is_alive()
+    ns = {'Node': Base, 'threading': threading}
+    exec(compile(ast.fix_missing_locations(ast.Module(body=[source_class], type_ignores=[])), SCRIPT, 'exec'), ns)
+    n = ns['HriReceptionistChallengeNode']()
+    n.face_worker_stop = threading.Event()
+    def inference():
+        n.face_worker_stop.wait()
+        time.sleep(0.05)  # native inference cleanup after its cancellation signal
+    n.face_worker = threading.Thread(target=inference)
+    n.face_worker.start()
+    try:
+        n.destroy_node()
+        assert not n.worker_alive_at_destroy
+    finally:
+        n.face_worker_stop.set()
+        n.face_worker.join(timeout=1)

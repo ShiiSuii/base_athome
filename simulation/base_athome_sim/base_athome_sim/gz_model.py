@@ -68,6 +68,16 @@ def person_sdf(xy, name: str = "persona") -> str:
     return _static_box(name, (xy[0], xy[1], 0.81), (0.52, 0.52, 1.62), (0.2, 0.35, 0.6))
 
 
+def receptionist_bag_sdf(xyz, name: str = "recepcionista_bolsa") -> str:
+    """Small visible simulation prop used for Receptionist handover and delivery."""
+    return _static_box(name, xyz, (0.30, 0.22, 0.24), (0.45, 0.20, 0.08))
+
+
+def receptionist_drop_sdf(xy, name: str = "recepcionista_drop") -> str:
+    """Floor marker for the simulated receptionist bag drop area."""
+    return _static_box(name, (xy[0], xy[1], 0.015), (0.65, 0.65, 0.03), (0.15, 0.65, 0.25))
+
+
 def customer_sdf(name: str, xy, hand: str = "right", seated: bool = False) -> str:
     """Cuerpo visible en Gazebo de un cliente con mano levantada (Restaurant)."""
     h = 1.25 if seated else 1.62
