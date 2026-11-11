@@ -21,7 +21,12 @@ WORKSPACE_ROOTS = ("/home/athome/base_athome_ws", "/home/athome/orca/workspaces/
 LOG = os.path.expanduser("~/.gemini/config/agy_bounded_allow.log")
 
 READ_ONLY = {"ls", "cat", "head", "tail", "wc", "grep", "rg", "pwd", "echo", "which", "tree", "file", "stat",
-             "diff", "sort", "uniq", "cut", "basename", "dirname", "realpath", "true", "date", "md5sum", "sha256sum"}
+             "diff", "sort", "uniq", "cut", "basename", "dirname", "realpath", "true", "date", "md5sum", "sha256sum",
+             # Solo lectura del sistema (pedido del usuario 2026-11-11: menos aprobaciones en el laboratorio)
+             "ps", "pgrep", "ss", "uptime", "free", "df", "du", "nproc", "lsof", "jq", "column", "tr", "nl", "id",
+             "whoami", "hostname", "nvidia-smi", "lscpu"}
+# Dominios ROS del laboratorio de simulacion; el 10 (robot real) nunca.
+LAB_DOMAINS = {"42", "55", "64", "77", "88", "91", "93"}
 GIT_OK = {"status", "diff", "log", "show", "rev-parse", "ls-files", "grep", "add", "commit", "blame",
           "describe", "shortlog", "cat-file", "merge-base", "check-ignore"}
 GIT_LIST_ONLY = {"branch": {"--show-current", "-a", "-v", "-vv", "--list", "-r"},
@@ -114,7 +119,7 @@ def _command_segments(command: str):
 def _segment_ok(argv, directories) -> bool:
     while argv and re.fullmatch(r"[A-Z_][A-Z0-9_]*=[^ ]*", argv[0]):
         name, val = argv[0].split("=", 1)
-        if name == "ROS_DOMAIN_ID" and val not in ("42", "77"):
+        if name == "ROS_DOMAIN_ID" and val not in LAB_DOMAINS:
             return False
         argv = argv[1:]
     if argv[:2] == ["env", "-u"] and len(argv) >= 3:
@@ -124,6 +129,11 @@ def _segment_ok(argv, directories) -> bool:
     cmd, args = os.path.basename(argv[0]), argv[1:]
     if cmd in READ_ONLY:
         return True
+    if cmd == "fuser":  # mirar quien usa un archivo; -k mataria procesos
+        return not any(a.startswith("-") and "k" in a.lstrip("-") for a in args)
+    if cmd == "orca":  # solo mensajeria de orquestacion y lectura
+        return (len(args) >= 2 and args[0] == "orchestration" and args[1] in
+                ("check", "send", "ask", "reply", "worker-list", "inbox", "worker-read")) or args[:2] == ["skills", "get"]
     if cmd == "find":
         return not any(a in ("-exec", "-execdir", "-delete", "-ok", "-fprint", "-fls") for a in args)
     if cmd == "cd":
@@ -164,7 +174,12 @@ def _segment_ok(argv, directories) -> bool:
     if cmd in ("xacro", "check_urdf"):
         return True
     if cmd == "ros2":
-        return len(args) >= 2 and args[0] in ("pkg", "interface") and args[1] in ("list", "show", "prefix", "xml")
+        if len(args) >= 2 and args[0] in ("pkg", "interface") and args[1] in ("list", "show", "prefix", "xml"):
+            return True
+        # Lectura del grafo ROS (solo con dominio de laboratorio, validado arriba si se paso ROS_DOMAIN_ID)
+        return len(args) >= 2 and ((args[0] in ("topic",) and args[1] in ("list", "info", "hz", "echo", "type", "bw"))
+                                   or (args[0] in ("node", "service", "action") and args[1] in ("list", "info", "type"))
+                                   or (args[0] == "param" and args[1] in ("get", "list", "describe")))
     return False
 
 
