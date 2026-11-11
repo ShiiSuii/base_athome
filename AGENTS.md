@@ -110,6 +110,7 @@ secretos).
 - **Claude Code — orquestador maestro:** dueño del plan, reparte el trabajo, integra (cherry-pick a su rama y push a `development`), revisa todo antes de integrar, corre Gazebo y pruebas con hardware, maneja recursos de host (SSH, Jetson, servicios) y `STATUS.md`. Programa él mismo lo más difícil o urgente.
 - **Codex (`gpt-6.1-sol`):** programador principal. Recibe tareas de código con tests en su propio worktree (`git worktree add`) y se lanza con `codex exec -C <worktree> -s workspace-write -c 'sandbox_workspace_write.writable_roots=["<repo>/.git"]' -c 'sandbox_workspace_write.network_access=true'`: puede commitear en su rama y correr tests con ROS en los dominios 42/77; nunca push. También hace revisiones de código (solo lectura).
 - **Antigravity (Gemini):** investigación, documentación (TDP, informes) y código acotado. Modelo fuerte disponible (`gemini-4-argon-high`); si se agota, `gemini-3.8-flash-high`. Si un worker se traba pidiendo aprobación por cada comando, la tarea pasa a Codex.
+- **OpenCode:** código y revisiones con **solo modelos gratis** de OpenCode Zen (`opencode/*-free` y `opencode/big-pickle`). Regla del usuario (2026-11-11): nunca un modelo pago, para no gastar saldo. Se hace cumplir en `~/.config/opencode/opencode.json` con `provider.opencode.whitelist` (solo los gratis), `model` y `small_model` gratis, y `enabled_providers: ["opencode"]`. Al lanzarlo por Orca, no pasar `--model` salvo que sea uno gratis.
 - **Humano:** decide energía, movimiento, navegación, credenciales, `main` y acciones irreversibles.
 
 Reglas:
