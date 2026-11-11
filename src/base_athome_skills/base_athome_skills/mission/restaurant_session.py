@@ -354,10 +354,15 @@ class RestaurantSession:
         track_person_fn: Optional[Callable[[dict], None]] = None,
         stop_tracking_fn: Optional[Callable[[], None]] = None,
         max_no_progress_rounds: Optional[int] = None,
+        dock_fn: Optional[Callable[[], bool]] = None,
+        undock_fn: Optional[Callable[[], bool]] = None,
     ):
         if max_no_progress_rounds is not None and (
                 not isinstance(max_no_progress_rounds, int) or max_no_progress_rounds < 1):
             raise ValueError("max_no_progress_rounds must be a positive integer or None")
+        if (dock_fn is None) != (undock_fn is None):
+            raise ValueError("Dock and undock callbacks must be supplied together")
+        self.dock_fn, self.undock_fn = dock_fn, undock_fn
         self.max_no_progress_rounds = max_no_progress_rounds
         self.detect_barman_fn = detect_barman_fn
         self.detect_people_fn = detect_people_fn
@@ -1305,9 +1310,24 @@ class RestaurantSession:
             return False
         self._set_state(SessionState.ORDERING_BARMAN)
         self._speak(rest.barman_request_phrase(order_items))
+        if self.dock_fn is not None:
+            # Failure can mean a partial approach: never start Nav2 from the gap.
+            try:
+                docked = bool(self.dock_fn())
+            except Exception:
+                docked = False
+            if not docked:
+                return self._delivery_failed("dock_failed")
         held, tray = self._prepare_order(order_items)
         if self.stopped or self._is_timeout() or self._abort_run:
             return False
+        if self.undock_fn is not None:
+            try:
+                undocked = bool(self.undock_fn())
+            except Exception:
+                undocked = False
+            if not undocked:
+                return self._delivery_failed("undock_failed")
         # Nunca viajar con un objeto que no se puede entregar con este contrato.
         if held and not all((self.handover_fn, self.release_fn, self.stow_fn)):
             return self._delivery_failed("missing_delivery_callback")

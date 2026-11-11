@@ -14,6 +14,9 @@ ARM_MOTION=false
 [ "$ARM" = 1 ] && ARM_MOTION=true
 # Parametro acotado al nodo Restaurant: nunca propagar este permiso al elevador.
 ARM_ARG=(-p "arm:=$ARM_MOTION" -p "restaurant_node:allow_motion:=$ARM_MOTION")
+RESTAURANT_DOCK_ARG=false
+[ "${RESTAURANT_DOCK:-0}" = 1 ] && RESTAURANT_DOCK_ARG=true
+ARM_ARG+=(-p "restaurant_dock:=$RESTAURANT_DOCK_ARG")
 HERE=$(cd "$(dirname "$0")" && pwd)
 WS=$(cd "$HERE/../../.." && pwd)
 

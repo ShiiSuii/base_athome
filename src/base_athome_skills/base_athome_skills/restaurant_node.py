@@ -20,6 +20,9 @@ Ensenar pregrasp frente al objeto, postgrasp retirado, carry dentro del chasis y
 handover frente al cliente; validar cada recorrido antes de marcar calibrated:
 true. No se modifica arm_poses_and_limits.yaml. La entrega conserva la pinza
 cerrada hasta release_fn; no habilita torque ni mueve el elevador.
+Docking opt-in: restaurant_dock:=true (RESTAURANT_DOCK=1 en el script), exige
+arm/allow_motion. Selecciona pick por vision y retrocede antes de Nav2; requiere
+scan trasero dedicado y fresco ANTES de acercarse. Real: autorizacion Nivel C.
 """
 
 import json
@@ -60,6 +63,7 @@ from base_athome_perception.restaurant_arm import (
     RestaurantArm, create_restaurant_manipulation, merge_restaurant_poses,
 )
 
+from .restaurant_docking import RestaurantDocking
 from .mission import restaurant as rest
 from .mission import vlm
 from .mission.restaurant_navigation import NavigationStopMonitor, RestaurantNavigation
@@ -89,6 +93,8 @@ class RestaurantNode(Node):
         self.declare_parameter("menu", list(rest.DEFAULT_MENU))
         self.declare_parameter("timeout_s", 900.0)
         self.declare_parameter("tray", True)
+        self.declare_parameter("restaurant_dock", False)
+        self._dock_enabled = bool(self.get_parameter("restaurant_dock").value)
         self.declare_parameter("arm", False)
         self.declare_parameter("allow_motion", False)
         self.declare_parameter("restaurant_arm_poses_file", "")
@@ -243,12 +249,17 @@ class RestaurantNode(Node):
         # El otro worker agrega estos parametros en paralelo. Versiones anteriores
         # reciben solo los que aceptan; arm=false deja pick_item_fn=None (bandeja).
         arm_enabled = bool(self.get_parameter("arm").value)
+        if self._dock_enabled and not (arm_enabled and self.get_parameter("allow_motion").value):
+            raise ValueError("restaurant_dock requires arm and allow_motion")
+        self._docking = RestaurantDocking(self, self._session_active, self._arm_permitted) if self._dock_enabled else None
         session_kwargs.update(supported_kwargs(RestaurantSession, dict(
             enroll_face_fn=self._enroll_face,
             identify_face_fn=self._identify_face,
             detect_item_fn=self._detect_item,
             pick_item_fn=self._arm.pick_item if arm_enabled else None,
-            present_gripper_fn=self._arm.present_gripper if arm_enabled else None,
+            dock_fn=(lambda: self._docking.run()) if self._dock_enabled else None,
+            undock_fn=(lambda: self._docking.run(reverse=True)) if self._dock_enabled else None,
+            present_gripper_fn=self._arm.present_gripper if arm_enabled and not self._dock_enabled else None,
             grip_item_fn=self._arm.grip_item if arm_enabled else None,
             handover_fn=self._arm.handover if arm_enabled else None,
             release_fn=self._arm.release if arm_enabled else None,
@@ -484,6 +495,8 @@ class RestaurantNode(Node):
 
     def _cancel_nav(self) -> None:
         """Marca stop incluso antes de recibir un handle; _navigate espera su fin."""
+        if getattr(self, "_docking", None) is not None:
+            self._docking.cancel()
         self._navigation.cancel()
         self._spinning.cancel()
         backing = getattr(self, "_backing", None)
@@ -724,6 +737,9 @@ class RestaurantNode(Node):
 
     def _detect_item(self, item: str, timeout_s: float) -> bool:
         if not self._session_active():
+            return False
+        if self._dock_enabled and not self._arm.present_gripper():
+            # Wrist camera must face the counter before asking vision to detect.
             return False
         return self._arm.detect_item(item, min(timeout_s, self.session.remaining_s()))
 

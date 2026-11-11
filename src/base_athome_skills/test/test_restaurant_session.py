@@ -2292,3 +2292,31 @@ def test_bar_return_keeps_retreat_armed_until_both_waypoints_succeed():
     assert methods['_navigate'](node, 0., 0., -math.pi, deadline_s=100.)
     assert goals[0][:2] == (1.79, -.10) and goals[1][:2] == (0., 0.)
     assert not node._needs_table_retreat
+
+
+@pytest.mark.parametrize('dock_ok,undock_ok', [(False,True), (True,False), (True,True)])
+def test_docking_brackets_pick_and_gates_navigation(dock_ok, undock_ok):
+    h = FakeRestaurantHarness(speech_script=['yes'] * 10)
+    sequence = []
+    session = h.make_session(
+        dock_fn=lambda: sequence.append('dock') or dock_ok,
+        undock_fn=lambda: sequence.append('undock') or undock_ok,
+        pick_item_fn=lambda item: sequence.append('pick') or True,
+        handover_fn=lambda: sequence.append('handover') or True,
+        release_fn=lambda: True, stow_fn=lambda: True,
+    )
+    session.deadline_s = h.clock() + 900
+    session._abort_run = False
+    session._navigate_to_bar = lambda: True
+    ok = session._fulfill_and_deliver_order(1, {'id':'1','_face_label':'customer_1'}, ['coke','chips'], (2.,1.,0.), [(2.,1.,0.)], 0)
+    if not dock_ok:
+        assert not ok and sequence == ['dock'] and not h.nav_goals
+    elif not undock_ok:
+        assert not ok and sequence == ['dock','pick','undock'] and not h.nav_goals
+    else:
+        assert ok and sequence == ['dock','pick','undock','handover'] and len(h.nav_goals) == 1
+
+
+def test_docking_requires_exit_callback():
+    with pytest.raises(ValueError, match='together'):
+        FakeRestaurantHarness().make_session(dock_fn=lambda: True)
