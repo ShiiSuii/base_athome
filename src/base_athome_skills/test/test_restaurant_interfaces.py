@@ -343,6 +343,12 @@ def test_script_arm_opt_in_defaults_off_in_both_modes():
     invocations = [s for s in script.splitlines() if "session_run_terminal ros2 run" in s]
     assert len(invocations) == 2
     assert all('"${ARM_ARG[@]}"' in s for s in invocations)
+    sim_block = script.split("# MODO SIMULACION (SIM=1)", 1)[1].split("# MODO ROBOT REAL", 1)[0]
+    real_block = script.split("# MODO ROBOT REAL", 1)[1]
+    assert 'SIM_TIMEOUT_ARG=()' in sim_block
+    assert 'SIM_TIMEOUT_VALUE=$(python3 -c' in sim_block
+    assert '"${SIM_TIMEOUT_ARG[@]}"' in sim_block
+    assert "SIM_TIMEOUT_S" not in real_block
 
 
 def test_face_sampling_uses_the_only_centered_face_even_with_people_behind():

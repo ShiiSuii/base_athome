@@ -141,6 +141,8 @@ Ensayo opcional: `SIM=1 SIM_TABLE_RETREAT=1` retrocede 0.45 m a 0.05 m/s
 antes de abandonar una mesa y usa el waypoint del pasillo al volver a la barra.
 Nav2 mantiene su comprobación de colisión; si falla un tramo, los reintentos
 conservan la retirada pendiente. Solo se permite con `ATHOME_SIM=1` en dominio 42.
+Para dar más margen a una misión de simulación se puede ajustar `SIM_TIMEOUT_S`
+al ejecutar `restaurant.sh`; solo se pasa en el bloque `SIM=1`.
 
 Si Nav2 corta la vuelta de búsqueda, se aprovechan los clientes con mano levantada
 confirmada que ya se vieron. Cuando alcanzan para los clientes pendientes, se omite

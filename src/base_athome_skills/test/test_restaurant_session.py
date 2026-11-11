@@ -721,13 +721,14 @@ def test_unknown_navigation_failure_does_not_assume_abort():
 def test_aborted_navigation_is_retried_at_most_once():
     h = FakeRestaurantHarness(customers=[{'xy': [2., 0.]}], nav_success=False)
     assert not h.make_session(get_costmap_fn=make_grid, nav_aborted_fn=lambda: True).run()
-    assert len(h.nav_goals) == 3  # Two candidates, then final bar.
+    assert len(h.nav_goals) == 4  # Two customer candidates and one retry to the bar.
+    assert h.nav_goals[-2:] == [(0.0, 0.0, 0.0), (0.0, 0.0, 0.0)]
 
 
 def test_aborted_fallback_has_no_free_candidate_to_retry():
     h = FakeRestaurantHarness(customers=[{'xy': [2., 0.]}], nav_success=False)
     assert not h.make_session(get_costmap_fn=lambda: make_grid(100), nav_aborted_fn=lambda: True).run()
-    assert len(h.nav_goals) == 2
+    assert len(h.nav_goals) == 3  # Failed approach and bounded final-bar retry.
 
 
 def test_delivery_aborted_retries_other_free_candidate():
@@ -757,7 +758,8 @@ def test_delivery_abort_does_not_retry_an_unchecked_fallback():
 
     session.navigate_fn = navigate
     assert not session.run()
-    assert len(h.nav_goals) == 4  # No free alternatives without a costmap.
+    assert len(h.nav_goals) == 3  # No further search/return after incomplete delivery.
+    assert session.state == SessionState.FAILED
 
 
 class FakeActionHarness:
@@ -1638,6 +1640,65 @@ def test_batch_orders_takes_both_orders_first_then_delivers_both():
     assert h.nav_goals[4][:2] == pytest.approx((0.0, 0.0), abs=0.05)
     assert h.nav_goals[5][0] == pytest.approx(3.1, abs=0.05)
     assert h.nav_goals[6][:2] == pytest.approx((0.0, 0.0), abs=0.05)
+
+
+def test_batch_delivery_failure_stops_instead_of_restarting_customer_search():
+    h = FakeRestaurantHarness(
+        customers=[{"id": "1", "xy": [2., 0.]}, {"id": "2", "xy": [3., 0.]}],
+        speech_script=["yes", "yes", "I want water", "yes", "yes", "I want juice", "yes"],
+    )
+    session = h.make_session(batch_orders=True, max_customers=2)
+    attempts = []
+
+    def deliver(idx, *_args):
+        attempts.append(idx)
+        return idx == 0
+
+    session._fulfill_and_deliver_order = deliver
+    assert session.run() is False
+    assert attempts == [0, 1]
+    assert session.state == SessionState.FAILED
+    assert h.states[-1]["info"]["reason"] == "order_delivery_incomplete"
+    assert sum(s["state"] == "DETECTING_CUSTOMERS" for s in h.states) == 1
+
+
+def test_bar_navigation_retries_once_after_nav2_abort():
+    h = FakeRestaurantHarness(customers=[{"id": "1", "xy": [2., 0.]}])
+    session = h.make_session(nav_aborted_fn=lambda: len(h.nav_goals) == 1)
+    original_navigate = h.navigate
+
+    def abort_first_goal(x, y, yaw, *, deadline_s):
+        original_navigate(x, y, yaw, deadline_s=deadline_s)
+        return len(h.nav_goals) > 1
+
+    session.navigate_fn = abort_first_goal
+    session.start_time = h.clock()
+    session.deadline_s = h.clock() + 900.
+    session._abort_run = False
+    session.bar_pose = (0., 0., 0.)
+
+    assert session._return_to_bar(final=True)
+    assert len(h.nav_goals) == 2
+    assert h.states[-1]["state"] == "RETURNING_TO_BAR_FINAL"
+    assert "The path to the bar was blocked. I will retry once." in h.spoken
+
+
+def test_terminal_success_is_not_changed_to_timeout_by_final_announcement():
+    h = FakeRestaurantHarness(customers=[{"id": "1", "xy": [2., 0.]}],
+                              speech_script=one_customer_protocol())
+    session = h.make_session(max_customers=1)
+    original_speak = h.speak
+
+    def speak(text):
+        original_speak(text)
+        if text == "Mission complete. I am back at the kitchen bar.":
+            h.current_time = session.deadline_s + 1.0
+
+    session.speak_fn = speak
+    assert session.run() is True
+    assert session.state == SessionState.SUCCEEDED
+    assert h.states[-1]["state"] == "SUCCEEDED"
+    assert h.spoken[-1] == "Mission complete. I am back at the kitchen bar."
 
 
 def test_estimated_far_customer_triggers_progressive_advance_and_relocalization():

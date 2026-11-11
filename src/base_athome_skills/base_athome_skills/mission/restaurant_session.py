@@ -299,6 +299,7 @@ def validate_with_planner(
 
 
 class RestaurantSession:
+    BAR_NAV_RETRY_MIN_REMAINING_S = 60.0
     """Maquina de estados pura con interfaces inyectadas para Restaurant.
 
     Los siete callbacks de cara/manipulacion son opcionales. arm=False o
@@ -1296,7 +1297,7 @@ class RestaurantSession:
             return False
         self._set_state(SessionState.RETURNING_TO_BAR)
         self._speak("Moving to the barman table.")
-        nav_bar_ok = self._navigate_to(self._bar_target_pose())
+        nav_bar_ok = self._navigate_to_bar()
         if self.stopped or self._is_timeout():
             return False
         if not nav_bar_ok:
@@ -1381,13 +1382,27 @@ class RestaurantSession:
     def _return_to_bar(self, final: bool = False) -> bool:
         self._set_state(SessionState.RETURNING_TO_BAR_FINAL if final else SessionState.RETURNING_TO_BAR)
         self._speak("Moving to the barman table.")
-        ok = self._navigate_to(self._bar_target_pose())
+        ok = self._navigate_to_bar()
         if self._interrupted():
             return False
         if not ok:
             self._set_state(SessionState.FAILED, {"reason": "bar_unreachable"})
             self._speak("I could not reach the bar.")
         return ok
+
+    def _navigate_to_bar(self) -> bool:
+        """Retry once an aborted bar goal while the session has time to recover."""
+        pose = self._bar_target_pose()
+        if self._navigate_to(pose):
+            return True
+        if (self.stopped or self._is_timeout() or self._abort_run
+                or not self.nav_aborted_fn()
+                or self.remaining_s() <= self.BAR_NAV_RETRY_MIN_REMAINING_S):
+            return False
+        self._speak("The path to the bar was blocked. I will retry once.")
+        if self.stopped or self._is_timeout():
+            return False
+        return self._navigate_to(pose)
 
     def run(self) -> bool:
         """Atencion secuencial o por lotes; vuelve a buscar hasta max_customers/deadline."""
@@ -1470,15 +1485,23 @@ class RestaurantSession:
                 if self.batch_orders:
                     pending.append((idx, cust, items, *reached))
                 else:
-                    self._fulfill_and_deliver_order(idx, cust, items, *reached)
+                    delivered = self._fulfill_and_deliver_order(idx, cust, items, *reached)
                     if self._interrupted():
+                        return False
+                    if not delivered:
+                        self._set_state(SessionState.FAILED,
+                                        {"reason": "order_delivery_incomplete", "customer_idx": idx})
                         return False
                     if not self._return_to_bar(final=self.served >= self.max_customers):
                         return False
             for idx, cust, items, pose, candidates, candidate_idx in pending:
                 self.current_customer_idx = idx
-                self._fulfill_and_deliver_order(idx, cust, items, pose, candidates, candidate_idx)
+                delivered = self._fulfill_and_deliver_order(idx, cust, items, pose, candidates, candidate_idx)
                 if self._interrupted():
+                    return False
+                if not delivered:
+                    self._set_state(SessionState.FAILED,
+                                    {"reason": "order_delivery_incomplete", "customer_idx": idx})
                     return False
             # El modo por lotes retorna una vez tras entregar el lote. Sin pedido
             # tambien regresa a la barra antes de volver a buscar clientes nuevos.
@@ -1490,10 +1513,10 @@ class RestaurantSession:
                     return False
         if self._interrupted():
             return False
-        self._speak("Mission complete. I am back at the kitchen bar.")
-        if self._interrupted():
-            return False
         self._set_state(SessionState.SUCCEEDED, {"served": self.served})
+        # All scored actions, including the final return to the bar, are complete.
+        # The terminal announcement must not turn success into a deadline failure.
+        self._speak("Mission complete. I am back at the kitchen bar.", terminal=True)
         return True
 
     def start(self) -> bool:
