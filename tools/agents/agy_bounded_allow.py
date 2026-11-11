@@ -155,6 +155,11 @@ def _segment_ok(argv, directories) -> bool:
     if cmd == "mkdir":
         return all(not a.startswith("/") and ".." not in a for a in args if a != "-p")
     if cmd == "git":
+        # git -C <worktree del proyecto> <subcomando seguro>: mismo criterio, otro directorio.
+        if args[:1] == ["-C"]:
+            if len(args) < 3 or not _inside_workspace(os.path.realpath(args[1])):
+                return False
+            args = args[2:]
         if not args:
             return False
         sub = args[0]

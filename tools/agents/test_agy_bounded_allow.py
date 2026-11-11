@@ -154,6 +154,7 @@ def test_allow_grants_only_the_exact_command():
     "ROS_DOMAIN_ID=93 ros2 node list",
     "orca orchestration check --terminal term_x --json",
     "orca orchestration send --to dispatch:ctx_x --subject a --body b",
+    "git -C /home/athome/orca/workspaces/base_athome_ws/codex-rest-lab status -s",
 ])
 def test_allows_lab_read_only(cmd):
     assert decide(cmd, WS)["decision"] == "allow", cmd
@@ -170,6 +171,9 @@ def test_allows_lab_read_only(cmd):
     "orca worktree remove x",
     "env",
     "printenv",
+    "git -C /etc status",
+    "git -C /home/athome/orca/workspaces/base_athome_ws/codex-rest-lab push",
+    "git -C /home/athome/orca/workspaces/base_athome_ws/codex-rest-lab reset --hard",
 ])
 def test_blocks_lab_writes_and_robot_domain(cmd):
     assert decide(cmd, WS)["decision"] != "allow", cmd
