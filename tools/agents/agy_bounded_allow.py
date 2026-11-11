@@ -198,6 +198,16 @@ def decide(command: str, workspaces, cwd=None) -> dict:
         directories = [cwd]
     if FORBIDDEN_TOKENS.search(command):
         return {"decision": "ask", "reason": "contiene una operacion que requiere confirmacion humana"}
+    if "\n" in command and not any(c in command for c in ("\r", "\x00")):
+        # Varias lineas: cada una se evalua sola con la misma gramatica; si una linea continua con "\"
+        # o deja comillas abiertas (p. ej. python -c de varias lineas), falla el parseo y se pregunta.
+        lines = [line for line in command.split("\n") if line.strip()]
+        if lines and not any(line.rstrip().endswith("\\") for line in lines):
+            if all(decide(line, workspaces, cwd)["decision"] == "allow" for line in lines):
+                grant = "command(" + " ".join(re.escape(t) for t in command.strip().split()) + ")"
+                return {"decision": "allow", "reason": "operacion inocua (lista acotada de AGENTS.md §6)",
+                        "permissionOverrides": [grant]}
+        return {"decision": "ask", "reason": "sintaxis de shell fuera de la lista acotada"}
     try:
         # Expansiones y saltos de linea quedan fuera de esta gramatica acotada.
         if any(char in command for char in ("$", "`", "\n", "\r", "\x00")):

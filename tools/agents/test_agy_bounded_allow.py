@@ -177,3 +177,13 @@ def test_allows_lab_read_only(cmd):
 ])
 def test_blocks_lab_writes_and_robot_domain(cmd):
     assert decide(cmd, WS)["decision"] != "allow", cmd
+
+
+def test_multiline_allows_only_when_every_line_is_safe():
+    ok = ("cat /home/athome/sim_lab/locks/reserva.txt\n"
+          "fuser /home/athome/sim_lab/locks/turno_1.lock 2>&1 || echo none\n"
+          "cat /home/athome/sim_lab/locks/turno_1.quien 2>/dev/null || true")
+    assert decide(ok, WS)["decision"] == "allow"
+    for bad in ("ls\npython3 evil.py", "ls\nrm -rf x", "cat a \\\npython3 x.py",
+                "python3 -c \"\nimport os\nos.system('x')\n\"", "ls\nROS_DOMAIN_ID=10 ros2 topic list"):
+        assert decide(bad, WS)["decision"] != "allow", bad
