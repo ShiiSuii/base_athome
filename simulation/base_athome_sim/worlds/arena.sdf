@@ -219,7 +219,7 @@
         <material><diffuse>0.5 0.35 0.2 1</diffuse><ambient>0.5 0.35 0.2 1</ambient></material></visual>
     </link></model>
 
-    <model name="silla_1_a"><static>true</static><pose>6.5 3.5 0 0 0 0</pose><link name="l">
+    <model name="silla_1_a"><static>true</static><pose>6.5 3.53 0 0 0 0</pose><link name="l">
       <collision name="c"><pose>0 0 0.225 0 0 0</pose><geometry><box><size>0.45 0.45 0.45</size></box></geometry></collision>
       <visual name="v_c"><pose>0 0 0.225 0 0 0</pose><geometry><box><size>0.45 0.45 0.45</size></box></geometry>
         <material><diffuse>0.25 0.30 0.55 1</diffuse><ambient>0.25 0.30 0.55 1</ambient></material></visual>
@@ -227,7 +227,7 @@
         <material><diffuse>0.25 0.30 0.55 1</diffuse><ambient>0.25 0.30 0.55 1</ambient></material></visual>
     </link></model>
 
-    <model name="silla_1_b"><static>true</static><pose>6.5 1.9 0 0 0 0</pose><link name="l">
+    <model name="silla_1_b"><static>true</static><pose>6.5 1.87 0 0 0 0</pose><link name="l">
       <collision name="c"><pose>0 0 0.225 0 0 0</pose><geometry><box><size>0.45 0.45 0.45</size></box></geometry></collision>
       <visual name="v_c"><pose>0 0 0.225 0 0 0</pose><geometry><box><size>0.45 0.45 0.45</size></box></geometry>
         <material><diffuse>0.25 0.30 0.55 1</diffuse><ambient>0.25 0.30 0.55 1</ambient></material></visual>
@@ -241,7 +241,7 @@
         <material><diffuse>0.5 0.35 0.2 1</diffuse><ambient>0.5 0.35 0.2 1</ambient></material></visual>
     </link></model>
 
-    <model name="silla_2_a"><static>true</static><pose>9 3.5 0 0 0 0</pose><link name="l">
+    <model name="silla_2_a"><static>true</static><pose>9 3.53 0 0 0 0</pose><link name="l">
       <collision name="c"><pose>0 0 0.225 0 0 0</pose><geometry><box><size>0.45 0.45 0.45</size></box></geometry></collision>
       <visual name="v_c"><pose>0 0 0.225 0 0 0</pose><geometry><box><size>0.45 0.45 0.45</size></box></geometry>
         <material><diffuse>0.25 0.30 0.55 1</diffuse><ambient>0.25 0.30 0.55 1</ambient></material></visual>
@@ -249,7 +249,7 @@
         <material><diffuse>0.25 0.30 0.55 1</diffuse><ambient>0.25 0.30 0.55 1</ambient></material></visual>
     </link></model>
 
-    <model name="silla_2_b"><static>true</static><pose>9 1.9 0 0 0 0</pose><link name="l">
+    <model name="silla_2_b"><static>true</static><pose>9 1.87 0 0 0 0</pose><link name="l">
       <collision name="c"><pose>0 0 0.225 0 0 0</pose><geometry><box><size>0.45 0.45 0.45</size></box></geometry></collision>
       <visual name="v_c"><pose>0 0 0.225 0 0 0</pose><geometry><box><size>0.45 0.45 0.45</size></box></geometry>
         <material><diffuse>0.25 0.30 0.55 1</diffuse><ambient>0.25 0.30 0.55 1</ambient></material></visual>

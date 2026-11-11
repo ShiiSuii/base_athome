@@ -1,78 +1,61 @@
-# Mapa semantico SOLO para la evaluacion de Nav2 en simulacion (mundo nav_eval: puerta de 0.85 m en x=-3).
+# Mapa semantico SOLO para la evaluacion de Nav2 en simulacion (mundo nav_eval.sdf).
+# La habitacion mide 8 x 6 m (X -3..5, Y -3..3) y la puerta oeste mide 0.90 m (minimo de arena).
+# Los muebles y sus poligonos son los del SDF: mesa 0.6 x 0.9 x 0.76 m en (1.5, -2.5) y
+# dos sillas de 0.5 x 0.5 x 0.45 m en (-2.0, 2.3) y (-2.0, -2.3). El mapa .pgm se genera con:
+#   python3 simulation/scripts/hacer_mapa.py simulation/base_athome_sim/worlds/nav_eval.sdf \
+#           simulation/config/nav_eval -5 -5 12 10
+
+map_info:
+  yaml_file: simulation/config/nav_eval.yaml
+  image_file: simulation/config/nav_eval.pgm
+  resolution: 0.05
+  origin: [-5.0, -5.0, 0.0]
+
+zones:
+  living_room:
+    name: Sala
+    type: living_room
+    polygon: [[-3.0, -3.0], [5.0, -3.0], [5.0, 3.0], [-3.0, 3.0]]
+
+# Puerta oeste: hueco de 0.90 m centrado en Y=0, entre los tramos w1 y w2 de la pared.
+doors:
+  west_door: {x: -3.0, y: 0.0, width_m: 0.90, axis: y}
+
 waypoints:
-  home:
-    x: 0.0
-    y: 0.0
-    yaw_deg: 0
-  afuera:
-    x: -4.2
-    y: 0.0
-    yaw_deg: 180
-  este:
-    x: 4.2
-    y: 0.0
-    yaw_deg: 0
-  door:
-    x: -2.2
-    y: 0.0
-    yaw_deg: 180
+  home: {x: 0.0, y: 0.0, yaw_deg: 0}
+  afuera: {x: -4.2, y: 0.0, yaw_deg: 180}
+  este: {x: 4.2, y: 0.0, yaw_deg: 0}
+  door: {x: -2.2, y: 0.0, yaw_deg: 180}
+  table: {x: 1.5, y: -1.5, yaw_deg: -90}
+  mesa: {x: 1.5, y: -1.5, yaw_deg: -90}
+
 furniture:
-  mesa_sim:
-    name: Mesa Sim
+  mesa:
+    name: Mesa
     type: table
     height_m: 0.76
-    polygon:
-    - - 0.8
-      - -6.0
-    - - 1.6
-      - -6.0
-    - - 1.6
-      - -5.2
-    - - 0.8
-      - -5.2
-    center:
-      x: 1.2
-      y: -5.6
-      z: 0.38
-  mesa_sin_nada:
-    name: Mesa Sin Nada
-    type: table
-    height_m: 0.76
-    polygon:
-    - - -2.0
-      - -6.0
-    - - -1.2
-      - -6.0
-    - - -1.2
-      - -5.2
-    - - -2.0
-      - -5.2
-    center:
-      x: -1.6
-      y: -5.6
-      z: 0.38
+    polygon: [[1.2, -2.95], [1.8, -2.95], [1.8, -2.05], [1.2, -2.05]]
+    center: {x: 1.5, y: -2.5, z: 0.38}
+  silla_1:
+    name: Silla 1
+    type: chair
+    height_m: 0.45
+    polygon: [[-2.25, 2.05], [-1.75, 2.05], [-1.75, 2.55], [-2.25, 2.55]]
+    center: {x: -2.0, y: 2.3, z: 0.225}
+  silla_2:
+    name: Silla 2
+    type: chair
+    height_m: 0.45
+    polygon: [[-2.25, -2.55], [-1.75, -2.55], [-1.75, -2.05], [-2.25, -2.05]]
+    center: {x: -2.0, y: -2.3, z: 0.225}
+
 objects:
   obj_1:
     number: 1
     name: agua
     class: bottle
-    x: 1.2
-    y: -5.3
+    x: 1.5
+    y: -2.3
     z: 0.86
-    'on': mesa_sim
-    approach:
-      x: 1.2
-      y: -4.7
-      yaw_deg: -90
-  obj_2:
-    number: 2
-    name: taza
-    class: cup
-    x: 1.45
-    y: -5.6
-    z: 0.86
-    'on': mesa_sim
-    approach:
-      x: 2.1
-      y: -5.6
-      yaw_deg: 180
+    on: mesa
+    approach: {x: 1.5, y: -1.5, yaw_deg: -90}

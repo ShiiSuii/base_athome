@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compara perfiles de Nav2 en Gazebo (mundo nav_eval: puerta de 0.85 m). SOLO SIMULACION, ROS_DOMAIN_ID=42.
+"""Compara perfiles de Nav2 en Gazebo (mundo nav_eval: puerta de 0.90 m). SOLO SIMULACION, ROS_DOMAIN_ID=42.
 
   simulation/scripts/nav_eval.py                 # todos los escenarios con el perfil del robot y con 'eval'
   simulation/scripts/nav_eval.py persona eval    # un escenario y un perfil ('robot' = nav2_params.yaml sin cambios)
@@ -23,7 +23,7 @@ WS = HERE.parents[1]
 OUT = Path.home() / ".local" / "share" / "base_athome" / "nav_eval.json"
 FAR = "4.6,2.6"          # persona fuera del camino
 SCENARIOS = {
-    # cruzar la puerta de 0.85 m sin nadie
+    # cruzar la puerta de 0.90 m (minimo de arena) sin nadie
     "puerta": dict(command="go to afuera", person=FAR),
     # una persona quieta en el medio del camino, con lugar para rodearla
     "persona": dict(command="go to este", person="2.0,0.0"),

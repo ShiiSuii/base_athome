@@ -32,10 +32,10 @@ waypoints:
   entrance: {x: -2.0, y: 0.0, yaw_deg: 180}
   living_room: {x: 0.0, y: 0.0, yaw_deg: 0}
   kitchen: {x: 2.0, y: 1.5, yaw_deg: 90}
-  dining_room: {x: 1.5, y: -0.6, yaw_deg: -90}
-  table: {x: 2.0, y: -0.6, yaw_deg: -90}
-  mesa: {x: 2.0, y: -0.6, yaw_deg: -90}
-  dining_table: {x: 2.0, y: -0.6, yaw_deg: -90}
+  dining_room: {x: 1.5, y: -0.35, yaw_deg: -90}
+  table: {x: 2.0, y: -0.35, yaw_deg: -90}
+  mesa: {x: 2.0, y: -0.35, yaw_deg: -90}
+  dining_table: {x: 2.0, y: -0.35, yaw_deg: -90}
   shelf: {x: 0.0, y: 1.9, yaw_deg: 90}
   estante: {x: 0.0, y: 1.9, yaw_deg: 90}
   cabinet: {x: 0.0, y: 1.9, yaw_deg: 90}
@@ -81,7 +81,7 @@ objects:
     y: -1.30
     z: 0.86
     on: mesa
-    approach: {x: 2.0, y: -0.6, yaw_deg: -90}
+    approach: {x: 2.0, y: -0.35, yaw_deg: -90}
   obj_2:
     number: 2
     name: taza
@@ -90,7 +90,7 @@ objects:
     y: -1.30
     z: 0.82
     on: mesa
-    approach: {x: 2.0, y: -0.6, yaw_deg: -90}
+    approach: {x: 2.0, y: -0.35, yaw_deg: -90}
   obj_3:
     number: 3
     name: plato
@@ -99,7 +99,7 @@ objects:
     y: -1.65
     z: 0.78
     on: mesa
-    approach: {x: 2.0, y: -0.6, yaw_deg: -90}
+    approach: {x: 2.0, y: -0.35, yaw_deg: -90}
   obj_4:
     number: 4
     name: snack
