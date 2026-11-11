@@ -24,6 +24,7 @@ cerrada hasta release_fn; no habilita torque ni mueve el elevador.
 
 import json
 import math
+import os
 from pathlib import Path
 import sys
 import threading
@@ -33,7 +34,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from action_msgs.msg import GoalStatus
 from ament_index_python.packages import get_package_share_directory
 from geometry_msgs.msg import Vector3
-from nav2_msgs.action import ComputePathToPose, NavigateToPose, Spin
+from nav2_msgs.action import BackUp, ComputePathToPose, NavigateToPose, Spin
 from nav_msgs.msg import OccupancyGrid
 from rcl_interfaces.srv import GetParameters
 import rclpy
@@ -78,6 +79,13 @@ class RestaurantNode(Node):
 
         # Parametros
         self.declare_parameter("auto_start", False)
+        self.declare_parameter("sim_table_retreat", False)
+        self._sim_table_retreat = bool(self.get_parameter("sim_table_retreat").value)
+        if self._sim_table_retreat and not (
+                os.environ.get("ATHOME_SIM") == "1" and os.environ.get("ROS_DOMAIN_ID") == "42"):
+            raise ValueError("sim_table_retreat requires simulation in domain 42")
+        self._needs_table_retreat = False
+        self._previous_state = None
         self.declare_parameter("menu", list(rest.DEFAULT_MENU))
         self.declare_parameter("timeout_s", 900.0)
         self.declare_parameter("tray", True)
@@ -86,6 +94,7 @@ class RestaurantNode(Node):
         self.declare_parameter("restaurant_arm_poses_file", "")
         self.declare_parameter("face_height_m", 1.2)  # sentado; face_z medido tiene prioridad
         self.declare_parameter("max_customers", 2)
+        self.declare_parameter("max_no_progress_rounds", 3)
         self.declare_parameter("standoff_dist", 0.8)  # 10/11: un poco mas cerca del cliente (antes 0.9)
         self.declare_parameter("delivery_wait_s", 7.0)
         self.declare_parameter("batch_orders", True)
@@ -124,6 +133,8 @@ class RestaurantNode(Node):
         self._navigation = RestaurantNavigation(self.nav_client, warn_fn=self.get_logger().warn)
         self.spin_client = ActionClient(self, Spin, "spin", callback_group=self.cb_group)
         self._spinning = RestaurantNavigation(self.spin_client, warn_fn=self.get_logger().warn)
+        self.backup_client = ActionClient(self, BackUp, "backup", callback_group=self.cb_group)
+        self._backing = RestaurantNavigation(self.backup_client, warn_fn=self.get_logger().warn)
         # Pausa del SLAM durante giros en el lugar (decision del usuario 10/11); sin slam_toolbox no hace nada.
         self._slam_pause_cli = (self.create_client(SlamPause, "/slam_toolbox/pause_new_measurements",
                                                    callback_group=self.cb_group) if SlamPause else None)
@@ -218,6 +229,7 @@ class RestaurantNode(Node):
             delivery_wait_s=delivery_wait_s,
             use_tray=use_tray,
             max_customers=max_cust,
+            max_no_progress_rounds=self.get_parameter("max_no_progress_rounds").value,
             plan_fn=self._plan,
             batch_orders=batch_orders,
             spin_fn=self._spin,
@@ -275,7 +287,7 @@ class RestaurantNode(Node):
             if self._session_thread and self._session_thread.is_alive():
                 self.get_logger().warn("La sesion ya esta en ejecucion.")
                 return
-            if not self._navigation.reset() or not self._spinning.reset():
+            if not self._navigation.reset() or not self._spinning.reset() or not self._backing.reset():
                 self.get_logger().error("Hay una operacion Nav2 pendiente de resultado terminal; inicio rechazado.")
                 return
             self.get_logger().info("Arrancando mision Restaurant...")
@@ -303,7 +315,22 @@ class RestaurantNode(Node):
     def _navigate(self, x: float, y: float, yaw: float, *, deadline_s: float) -> bool:
         """Navega en map, vigilando stop y ambos plazos hasta el resultado terminal."""
         self._nav_aborted = False
+        retreat_needed = getattr(self, "_needs_table_retreat", False)
+        if retreat_needed and not self._back_away_from_table():
+            self.session.stop()
+            return False
+        if retreat_needed and math.hypot(x, y) < 0.5:
+            if not self._navigate_goal(1.79, -0.10, -math.pi / 2, deadline_s=deadline_s):
+                return False
         self.get_logger().info(f"Nav2 -> x={x:.2f}, y={y:.2f}, yaw={yaw:.2f}")
+
+        ok = self._navigate_goal(x, y, yaw, deadline_s=deadline_s)
+        if ok and retreat_needed:
+            self._needs_table_retreat = False
+        return ok
+
+    def _navigate_goal(self, x: float, y: float, yaw: float, *, deadline_s: float) -> bool:
+        """Ejecuta un NavigateToPose con monitor de stop para un tramo."""
 
         goal_msg = NavigateToPose.Goal()
         goal_msg.pose.header.frame_id = "map"
@@ -401,6 +428,24 @@ class RestaurantNode(Node):
             if pause_end:
                 pause_end()
 
+    def _back_away_from_table(self) -> bool:
+        """Ensayo opt-in de simulacion; BackUp conserva el chequeo de colision de Nav2."""
+        self._speak("I will move backwards a little before leaving the table.")
+        if self.session.stopped or self.session.remaining_s() <= 0:
+            return False
+        timeout_s = min(30.0, self.session.remaining_s())
+        goal = BackUp.Goal()
+        goal.target.x = -0.45
+        goal.speed = 0.05
+        goal.time_allowance = Duration(seconds=timeout_s).to_msg()
+        monitor = NavigationStopMonitor(self.voice, self.session.stop)
+        try:
+            return self._backing.navigate(
+                goal, deadline_s=self.session.deadline_s, timeout_s=timeout_s,
+                stop_requested_fn=lambda: self.session.stopped, monitor_fn=monitor.poll)
+        finally:
+            monitor.close()
+
     def _plan(self, pose: Tuple[float, float, float], timeout_s: float = 2.0) -> Optional[float]:
         """Largo del plan de Nav2 desde la pose actual, None sin camino; lanza si no hay planner."""
         if not self.plan_client.wait_for_server(timeout_sec=1.0):
@@ -441,6 +486,9 @@ class RestaurantNode(Node):
         """Marca stop incluso antes de recibir un handle; _navigate espera su fin."""
         self._navigation.cancel()
         self._spinning.cancel()
+        backing = getattr(self, "_backing", None)
+        if backing is not None:
+            backing.cancel()
 
     def _ask_order(self, text: str, menu: List[str]) -> List[str]:
         remaining = self.session.remaining_s()
@@ -511,7 +559,13 @@ class RestaurantNode(Node):
         ev = threading.Event()
         with self._bag_lock:
             self._bag_pending[req_id] = (ev, {})
-        budget = min(self.SCAN_TURN_MAX_S, max(1.0, self.session.remaining_s()))
+        # La busqueda de clientes contiene dos acciones Spin y una locucion
+        # bloqueante entre ambas. El detector debe seguir activo hasta el stop_scan,
+        # tambien si la simulacion tarda en completar los giros.
+        scan_limit = self.SCAN_TURN_MAX_S
+        if on_first_step is not None:
+            scan_limit += self.spin_timeout_s + 15.0
+        budget = min(scan_limit, max(1.0, self.session.remaining_s()))
         self.pub_bag_request.publish(String(data=json.dumps({
             "id": req_id, "mode": "people_here", "view_s": budget, "timeout_s": budget + 2.0, "min_frames": 2,
         })))
@@ -765,6 +819,13 @@ class RestaurantNode(Node):
     def _on_session_state_change(self, state_dict: Dict[str, Any]) -> None:
         """Publica el estado actual en /restaurant/state."""
         state = state_dict.get("state")
+        if getattr(self, "_sim_table_retreat", False):
+            if state == "STARTING":
+                self._needs_table_retreat = False
+            elif (state in {"APPROACHING_CUSTOMER", "RETURNING_TO_BAR", "RETURNING_TO_BAR_FINAL"}
+                  and self._previous_state in {"CONFIRMING_ORDER", "CHECKING_ORDER", "TAKING_ORDER", "WAITING_CUSTOMER"}):
+                self._needs_table_retreat = True
+            self._previous_state = state
         active = state in {"APPROACHING_CUSTOMER", "GREETING", "TAKING_ORDER", "CONFIRMING_ORDER", "DELIVERING_TO_CUSTOMER"}
         customers = self.session.customers
         idx = state_dict.get("customer_idx", 0)

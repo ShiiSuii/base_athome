@@ -343,6 +343,12 @@ def test_script_arm_opt_in_defaults_off_in_both_modes():
     invocations = [s for s in script.splitlines() if "session_run_terminal ros2 run" in s]
     assert len(invocations) == 2
     assert all('"${ARM_ARG[@]}"' in s for s in invocations)
+    sim_block = script.split("# MODO SIMULACION (SIM=1)", 1)[1].split("# MODO ROBOT REAL", 1)[0]
+    real_block = script.split("# MODO ROBOT REAL", 1)[1]
+    assert 'SIM_TIMEOUT_ARG=()' in sim_block
+    assert 'SIM_TIMEOUT_VALUE=$(python3 -c' in sim_block
+    assert '"${SIM_TIMEOUT_ARG[@]}"' in sim_block
+    assert "SIM_TIMEOUT_S" not in real_block
 
 
 def test_face_sampling_uses_the_only_centered_face_even_with_people_behind():
@@ -384,3 +390,43 @@ def test_slam_is_paused_for_a_turn_and_always_resumed_with_toggle_service():
     assert state["paused"] is True
     node._slam_pause_end()
     assert state == {"paused": False, "toggles": 2}
+
+
+@pytest.mark.parametrize('remaining', [900., 20.])
+def test_customer_scan_window_covers_both_spins_and_announcement(remaining):
+    methods = node_methods('_scan_turn')
+    methods['_scan_turn'].__globals__.update(json=json, threading=threading,
+                                            time=NS(time=lambda: 100., sleep=lambda _: None))
+    requests = []
+    node = NS(_bag_lock=threading.Lock(), _bag_pending={},
+              session=NS(remaining_s=lambda: remaining), SCAN_TURN_MAX_S=45., spin_timeout_s=40.,
+              _slam_pause_begin=lambda: None, _slam_pause_end=lambda: None,
+              _scan_turn_spins=lambda cb: True,
+              get_logger=lambda: NS(warn=lambda _: None, info=lambda _: None))
+    def publish(msg):
+        request = json.loads(msg.data)
+        requests.append(request)
+        if request['mode'] == 'people_here':
+            event, _ = node._bag_pending[request['id']]
+            node._bag_pending[request['id']] = (event, {'ok': True, 'customers': []})
+            event.set()
+    node.pub_bag_request = NS(publish=publish)
+    assert methods['_scan_turn'](node, lambda: None) == ([], True)
+    assert requests[0]['view_s'] == min(100., remaining)
+    assert requests[-1]['mode'] == 'stop_scan'
+
+
+def test_simulated_retreat_is_armed_only_after_table_dialogue_and_cleared_on_restart():
+    method = node_methods('_on_session_state_change')['_on_session_state_change']
+    method.__globals__['json'] = json
+    node = NS(_sim_table_retreat=True, _previous_state=None, _needs_table_retreat=False,
+              session=NS(customers=[]), _refresh_customer_tracking=lambda: None,
+              pub_state=NS(publish=lambda _: None))
+    for state in ['FINDING_BARMAN', 'APPROACHING_CUSTOMER']:
+        method(node, {'state': state})
+    assert not node._needs_table_retreat
+    method(node, {'state': 'CONFIRMING_ORDER'})
+    method(node, {'state': 'APPROACHING_CUSTOMER'})
+    assert node._needs_table_retreat
+    method(node, {'state': 'STARTING'})
+    assert not node._needs_table_retreat

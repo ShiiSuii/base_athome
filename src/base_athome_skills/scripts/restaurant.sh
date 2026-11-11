@@ -169,7 +169,13 @@ if [ "${SIM:-0}" = 1 ]; then
 
   echo "Iniciando restaurant_node..."
   AUTO_ARG=(); [ "${AUTO:-0}" = 1 ] && AUTO_ARG=(-p auto_start:=true)   # AUTO=1: sin esperar ENTER (pruebas automaticas)
-  session_run_terminal ros2 run base_athome_skills restaurant_node --ros-args "${AUTO_ARG[@]}" "${ARM_ARG[@]}"
+  [ "${SIM_TABLE_RETREAT:-0}" = 1 ] && AUTO_ARG+=(-p sim_table_retreat:=true)
+  SIM_TIMEOUT_ARG=()
+  if [ -n "${SIM_TIMEOUT_S:-}" ]; then
+    SIM_TIMEOUT_VALUE=$(python3 -c 'import math,sys; v=float(sys.argv[1]); assert math.isfinite(v) and v > 0; print(v)' "$SIM_TIMEOUT_S") || exit 1
+    SIM_TIMEOUT_ARG=(-p "timeout_s:=$SIM_TIMEOUT_VALUE")
+  fi
+  session_run_terminal ros2 run base_athome_skills restaurant_node --ros-args "${AUTO_ARG[@]}" "${SIM_TIMEOUT_ARG[@]}" "${ARM_ARG[@]}"
   exit $?     # al terminar la mision se cierra toda la sesion: quedarse esperando dejaba SLAM y Gazebo abiertos
 fi
 

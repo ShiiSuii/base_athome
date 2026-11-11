@@ -721,13 +721,14 @@ def test_unknown_navigation_failure_does_not_assume_abort():
 def test_aborted_navigation_is_retried_at_most_once():
     h = FakeRestaurantHarness(customers=[{'xy': [2., 0.]}], nav_success=False)
     assert not h.make_session(get_costmap_fn=make_grid, nav_aborted_fn=lambda: True).run()
-    assert len(h.nav_goals) == 3  # Two candidates, then final bar.
+    assert len(h.nav_goals) == 4  # Two customer candidates and one retry to the bar.
+    assert h.nav_goals[-2:] == [(0.0, 0.0, 0.0), (0.0, 0.0, 0.0)]
 
 
 def test_aborted_fallback_has_no_free_candidate_to_retry():
     h = FakeRestaurantHarness(customers=[{'xy': [2., 0.]}], nav_success=False)
     assert not h.make_session(get_costmap_fn=lambda: make_grid(100), nav_aborted_fn=lambda: True).run()
-    assert len(h.nav_goals) == 2
+    assert len(h.nav_goals) == 3  # Failed approach and bounded final-bar retry.
 
 
 def test_delivery_aborted_retries_other_free_candidate():
@@ -757,7 +758,8 @@ def test_delivery_abort_does_not_retry_an_unchecked_fallback():
 
     session.navigate_fn = navigate
     assert not session.run()
-    assert len(h.nav_goals) == 4  # No free alternatives without a costmap.
+    assert len(h.nav_goals) == 3  # No further search/return after incomplete delivery.
+    assert session.state == SessionState.FAILED
 
 
 class FakeActionHarness:
@@ -1034,11 +1036,13 @@ def test_voice_stop_during_node_navigation_cancels_and_aborts_session(speech):
     h = FakeRestaurantHarness(customers=[{'xy': [2., 0.]}])
     session = h.make_session()
     session.clock_fn = lambda: action.now
-    methods = node_methods('_navigate', '_cancel_nav')
+    methods = node_methods('_navigate', '_navigate_goal', '_cancel_nav')
     node = NS(_navigation=action.nav, _spinning=NS(cancel=lambda: None),
               voice=voice, session=session, navigation_timeout_s=90.,
               get_logger=lambda: NS(info=lambda _: None),
               get_clock=lambda: NS(now=lambda: NS(to_msg=lambda: None)))
+    node._navigate_goal = lambda x, y, yaw, *, deadline_s: methods['_navigate_goal'](
+        node, x, y, yaw, deadline_s=deadline_s)
     session.navigate_fn = lambda *pose, **kw: methods['_navigate'](node, *pose, **kw)
     session.cancel_nav_fn = lambda: methods['_cancel_nav'](node)
     assert not session.run()
@@ -1638,6 +1642,65 @@ def test_batch_orders_takes_both_orders_first_then_delivers_both():
     assert h.nav_goals[6][:2] == pytest.approx((0.0, 0.0), abs=0.05)
 
 
+def test_batch_delivery_failure_stops_instead_of_restarting_customer_search():
+    h = FakeRestaurantHarness(
+        customers=[{"id": "1", "xy": [2., 0.]}, {"id": "2", "xy": [3., 0.]}],
+        speech_script=["yes", "yes", "I want water", "yes", "yes", "I want juice", "yes"],
+    )
+    session = h.make_session(batch_orders=True, max_customers=2)
+    attempts = []
+
+    def deliver(idx, *_args):
+        attempts.append(idx)
+        return idx == 0
+
+    session._fulfill_and_deliver_order = deliver
+    assert session.run() is False
+    assert attempts == [0, 1]
+    assert session.state == SessionState.FAILED
+    assert h.states[-1]["info"]["reason"] == "order_delivery_incomplete"
+    assert sum(s["state"] == "DETECTING_CUSTOMERS" for s in h.states) == 1
+
+
+def test_bar_navigation_retries_once_after_nav2_abort():
+    h = FakeRestaurantHarness(customers=[{"id": "1", "xy": [2., 0.]}])
+    session = h.make_session(nav_aborted_fn=lambda: len(h.nav_goals) == 1)
+    original_navigate = h.navigate
+
+    def abort_first_goal(x, y, yaw, *, deadline_s):
+        original_navigate(x, y, yaw, deadline_s=deadline_s)
+        return len(h.nav_goals) > 1
+
+    session.navigate_fn = abort_first_goal
+    session.start_time = h.clock()
+    session.deadline_s = h.clock() + 900.
+    session._abort_run = False
+    session.bar_pose = (0., 0., 0.)
+
+    assert session._return_to_bar(final=True)
+    assert len(h.nav_goals) == 2
+    assert h.states[-1]["state"] == "RETURNING_TO_BAR_FINAL"
+    assert "The path to the bar was blocked. I will retry once." in h.spoken
+
+
+def test_terminal_success_is_not_changed_to_timeout_by_final_announcement():
+    h = FakeRestaurantHarness(customers=[{"id": "1", "xy": [2., 0.]}],
+                              speech_script=one_customer_protocol())
+    session = h.make_session(max_customers=1)
+    original_speak = h.speak
+
+    def speak(text):
+        original_speak(text)
+        if text == "Mission complete. I am back at the kitchen bar.":
+            h.current_time = session.deadline_s + 1.0
+
+    session.speak_fn = speak
+    assert session.run() is True
+    assert session.state == SessionState.SUCCEEDED
+    assert h.states[-1]["state"] == "SUCCEEDED"
+    assert h.spoken[-1] == "Mission complete. I am back at the kitchen bar."
+
+
 def test_estimated_far_customer_triggers_progressive_advance_and_relocalization():
     """Cuando un cliente lejano fue localizado por estimacion sin depth (estimated=True),
     el robot avanza primero un tramo intermedio con navegacion sin mapa, re-mide de cerca y se aproxima."""
@@ -2102,3 +2165,130 @@ def test_barman_is_faced_even_when_the_scan_turn_was_cut_short():
     session._find_barman()
     assert math.degrees(turns[0]) == pytest.approx(90.)
     assert tracked == [fresh] and session.barman_position == (0., 1.5)  # posicion medida de frente
+
+
+def test_cut_short_scan_uses_enough_confirmed_customers_without_head_rescan():
+    h = FakeRestaurantHarness()
+    people = [
+        {'xy': [-2.6, 0.], 'raised_frames': 3},
+        {'xy': [2., 2.8], 'raised_frames': 3},
+        {'xy': [3., -2.9], 'raised_frames': 3},
+        {'xy': [2.1, 2.8], 'raised_frames': 3},
+    ]
+    session = h.make_session(spin_fn=lambda _: False,
+                             scan_turn_fn=lambda cb=None: (people, False))
+    session.barman_position = (-2.6, 0.)
+    rescans = []
+    session.detect_customers_fn = lambda *args: rescans.append(args) or []
+    session.start_time = h.clock()
+    session.deadline_s = h.clock() + 900.
+    found = session._look_around()
+    assert len(found) == 2
+    assert rescans == []
+
+
+@pytest.mark.parametrize('people', [
+    [{'xy': [2., 0.], 'raised_frames': 3}, {'xy': [2.1, 0.], 'raised_frames': 3}],
+    [{'xy': [2., 0.], 'raised_frames': 3}, {'xy': [-2.6, 0.], 'raised_frames': 3}],
+    [{'xy': [2., 0.], 'raised_frames': 3}, {'xy': [3., 2.], 'raised_frames': 0}],
+    [{'xy': [float('nan'), 0.], 'raised_frames': 3}],
+])
+def test_cut_short_scan_still_sweeps_when_confirmed_customers_are_insufficient(people):
+    h = FakeRestaurantHarness()
+    session = h.make_session(spin_fn=lambda _: False,
+                             scan_turn_fn=lambda cb=None: (people, False))
+    session.barman_position = (-2.6, 0.)
+    rescans = []
+    session.detect_customers_fn = lambda *args: rescans.append(args) or []
+    session.deadline_s = h.clock() + 900.
+    session._look_around()
+    assert len(rescans) == 1
+
+
+def test_cut_short_scan_needs_only_one_confirmed_customer_after_first_delivery():
+    h = FakeRestaurantHarness()
+    person = {'xy': [2., 0.], 'raised_frames': 3}
+    session = h.make_session(spin_fn=lambda _: False,
+                             scan_turn_fn=lambda cb=None: ([person], False))
+    session.served = 1
+    session.deadline_s = h.clock() + 900.
+    session.detect_customers_fn = lambda *args: pytest.fail('already found remaining customer')
+    assert len(session._look_around()) == 1
+
+
+@pytest.mark.parametrize('limit', [1, 3])
+@pytest.mark.parametrize('unreachable', [False, True])
+def test_search_stops_after_bounded_rounds_without_serving_customer(limit, unreachable):
+    h = FakeRestaurantHarness(customers=[{'xy': [2., 0.]}] if unreachable else [],
+                              nav_success=not unreachable)
+    session = h.make_session(max_no_progress_rounds=limit)
+    if unreachable:
+        # El regreso a la barra sigue disponible; solo fallan las mesas.
+        session.navigate_fn = lambda x, y, yaw, **kw: (
+            h.navigate(x, y, yaw, **kw) or (x, y) == (0., 0.))
+    assert not session.run()
+    assert session.state == SessionState.FAILED
+    assert h.states[-1]['info'] == {'reason': 'no_customer_progress', 'rounds': limit, 'served': 0}
+    assert h.spoken.count(rest.CUSTOMER_SEARCH) == limit
+    assert h.clock() < session.deadline_s
+
+
+@pytest.mark.parametrize('limit', [0, -1, 1.5, '3'])
+def test_invalid_no_progress_round_limit_is_rejected(limit):
+    with pytest.raises(ValueError, match='max_no_progress_rounds'):
+        FakeRestaurantHarness().make_session(max_no_progress_rounds=limit)
+
+
+def test_no_progress_round_limit_resets_after_a_customer_is_served():
+    h = FakeRestaurantHarness(speech_script=['yes', 'yes', 'water', 'yes', 'yes', 'yes',
+                                            'yes', 'water', 'yes', 'yes', 'yes'])
+    views = iter([[], [], [h.customers[0]], [], [], [h.customers[1]]])
+    session = h.make_session(max_no_progress_rounds=3,
+                             detect_barman_fn=lambda *_: [{'xy': [-2.6, 0.]}])
+    session.detect_customers_fn = lambda *_: next(views, [])
+    assert session.run()
+    assert session.served == 2
+    assert h.spoken.count(rest.CUSTOMER_SEARCH) == 6
+
+
+@pytest.mark.parametrize('remaining', [900., .2])
+def test_simulated_table_retreat_is_slow_bounded_and_announced(remaining):
+    action = FakeActionHarness(finish_after=.05)
+    voice = FakeVoice(action)
+    methods = node_methods('_back_away_from_table')
+    methods['_back_away_from_table'].__globals__['BackUp'] = NS(Goal=lambda: NS(target=NS()))
+    spoken = []
+    node = NS(_backing=action.nav, voice=voice, _speak=spoken.append,
+              session=NS(stopped=False, remaining_s=lambda: remaining, deadline_s=1000., stop=lambda: None))
+    assert methods['_back_away_from_table'](node)
+    assert spoken and action.sent[0].target.x == -.45
+    assert action.sent[0].speed == .05
+    assert action.sent[0].time_allowance.seconds == min(30., remaining)
+    assert voice.cancelled
+
+
+def test_failed_table_retreat_stops_before_sending_another_navigation_goal():
+    events = []
+    methods = node_methods('_navigate')
+    node = NS(_needs_table_retreat=True, _back_away_from_table=lambda: False,
+              session=NS(stop=lambda: events.append('stop')))
+    assert not methods['_navigate'](node, 1., 2., 0., deadline_s=1000.)
+    assert events == ['stop'] and node._needs_table_retreat
+
+
+def test_bar_return_keeps_retreat_armed_until_both_waypoints_succeed():
+    methods = node_methods('_navigate')
+    methods['_navigate'].__globals__.update(math=math)
+    goals = []
+    node = NS(_needs_table_retreat=True, _nav_aborted=False,
+              _back_away_from_table=lambda: True,
+              _navigate_goal=lambda x, y, yaw, *, deadline_s: goals.append((x, y, yaw)) or len(goals) > 1,
+              session=NS(stopped=False, stop=lambda: None),
+              get_logger=lambda: NS(info=lambda _: None))
+    assert not methods['_navigate'](node, 0., 0., -math.pi, deadline_s=100.)
+    assert node._needs_table_retreat
+    goals.clear()
+    node._navigate_goal = lambda x, y, yaw, *, deadline_s: goals.append((x, y, yaw)) or True
+    assert methods['_navigate'](node, 0., 0., -math.pi, deadline_s=100.)
+    assert goals[0][:2] == (1.79, -.10) and goals[1][:2] == (0., 0.)
+    assert not node._needs_table_retreat

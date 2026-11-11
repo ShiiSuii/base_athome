@@ -299,6 +299,7 @@ def validate_with_planner(
 
 
 class RestaurantSession:
+    BAR_NAV_RETRY_MIN_REMAINING_S = 60.0
     """Maquina de estados pura con interfaces inyectadas para Restaurant.
 
     Los siete callbacks de cara/manipulacion son opcionales. arm=False o
@@ -352,7 +353,12 @@ class RestaurantSession:
         grip_item_fn: Optional[Callable[[], bool]] = None,
         track_person_fn: Optional[Callable[[dict], None]] = None,
         stop_tracking_fn: Optional[Callable[[], None]] = None,
+        max_no_progress_rounds: Optional[int] = None,
     ):
+        if max_no_progress_rounds is not None and (
+                not isinstance(max_no_progress_rounds, int) or max_no_progress_rounds < 1):
+            raise ValueError("max_no_progress_rounds must be a positive integer or None")
+        self.max_no_progress_rounds = max_no_progress_rounds
         self.detect_barman_fn = detect_barman_fn
         self.detect_people_fn = detect_people_fn
         self.present_gripper_fn = present_gripper_fn
@@ -522,6 +528,20 @@ class RestaurantSession:
                 self._speak(rest.CUSTOMER_TURN)
             people, turned = self._scan_turn(announce)
             if not turned and not (self.stopped or self._is_timeout()):
+                # Un giro cortado puede haber visto ya a todos los clientes que
+                # faltan. No gastar otro barrido completo de cabeza en ese caso.
+                confirmed = []
+                for person in people:
+                    xy = self._person_xy(person)
+                    if (xy and self._raised(person) and self._eligible_customer(person)
+                            and all(math.hypot(xy[0] - p["xy"][0], xy[1] - p["xy"][1]) >= 0.7
+                                    for p in confirmed)):
+                        confirmed.append(dict(person, xy=list(xy)))
+                if len(confirmed) >= self.max_customers - self.served:
+                    if not announced:
+                        self._speak(rest.CUSTOMER_TURN)
+                    self._look_forward()
+                    return confirmed
                 # Prueba real 10/11: pegado a la barra, Nav2 corta el Spin ("Collision Ahead") a los
                 # pocos grados y la busqueda se repetia sin fin. Se mira con la cabeza, base quieta.
                 if not announced:
@@ -1277,7 +1297,7 @@ class RestaurantSession:
             return False
         self._set_state(SessionState.RETURNING_TO_BAR)
         self._speak("Moving to the barman table.")
-        nav_bar_ok = self._navigate_to(self._bar_target_pose())
+        nav_bar_ok = self._navigate_to_bar()
         if self.stopped or self._is_timeout():
             return False
         if not nav_bar_ok:
@@ -1362,13 +1382,27 @@ class RestaurantSession:
     def _return_to_bar(self, final: bool = False) -> bool:
         self._set_state(SessionState.RETURNING_TO_BAR_FINAL if final else SessionState.RETURNING_TO_BAR)
         self._speak("Moving to the barman table.")
-        ok = self._navigate_to(self._bar_target_pose())
+        ok = self._navigate_to_bar()
         if self._interrupted():
             return False
         if not ok:
             self._set_state(SessionState.FAILED, {"reason": "bar_unreachable"})
             self._speak("I could not reach the bar.")
         return ok
+
+    def _navigate_to_bar(self) -> bool:
+        """Retry once an aborted bar goal while the session has time to recover."""
+        pose = self._bar_target_pose()
+        if self._navigate_to(pose):
+            return True
+        if (self.stopped or self._is_timeout() or self._abort_run
+                or not self.nav_aborted_fn()
+                or self.remaining_s() <= self.BAR_NAV_RETRY_MIN_REMAINING_S):
+            return False
+        self._speak("The path to the bar was blocked. I will retry once.")
+        if self.stopped or self._is_timeout():
+            return False
+        return self._navigate_to(pose)
 
     def run(self) -> bool:
         """Atencion secuencial o por lotes; vuelve a buscar hasta max_customers/deadline."""
@@ -1396,9 +1430,24 @@ class RestaurantSession:
         self._speak("Please remove all the objects from the counter. When I have the orders, "
                     "I will ask you to place each object.")
 
+        no_progress_rounds = 0
+        last_served = self.served
         while self.served < self.max_customers:
             if self._interrupted():
                 return False
+            if self.served > last_served:
+                no_progress_rounds = 0
+                last_served = self.served
+            if (self.max_no_progress_rounds is not None
+                    and no_progress_rounds >= self.max_no_progress_rounds):
+                self._speak("I could not make progress serving customers. I will stop the search.")
+                if self._interrupted():
+                    return False
+                self._set_state(SessionState.FAILED, {"reason": "no_customer_progress",
+                                                     "rounds": no_progress_rounds,
+                                                     "served": self.served})
+                return False
+            no_progress_rounds += 1
             self._speak(rest.CUSTOMER_SEARCH)
             customers = self._look_around()
             if self._interrupted():
@@ -1436,15 +1485,23 @@ class RestaurantSession:
                 if self.batch_orders:
                     pending.append((idx, cust, items, *reached))
                 else:
-                    self._fulfill_and_deliver_order(idx, cust, items, *reached)
+                    delivered = self._fulfill_and_deliver_order(idx, cust, items, *reached)
                     if self._interrupted():
+                        return False
+                    if not delivered:
+                        self._set_state(SessionState.FAILED,
+                                        {"reason": "order_delivery_incomplete", "customer_idx": idx})
                         return False
                     if not self._return_to_bar(final=self.served >= self.max_customers):
                         return False
             for idx, cust, items, pose, candidates, candidate_idx in pending:
                 self.current_customer_idx = idx
-                self._fulfill_and_deliver_order(idx, cust, items, pose, candidates, candidate_idx)
+                delivered = self._fulfill_and_deliver_order(idx, cust, items, pose, candidates, candidate_idx)
                 if self._interrupted():
+                    return False
+                if not delivered:
+                    self._set_state(SessionState.FAILED,
+                                    {"reason": "order_delivery_incomplete", "customer_idx": idx})
                     return False
             # El modo por lotes retorna una vez tras entregar el lote. Sin pedido
             # tambien regresa a la barra antes de volver a buscar clientes nuevos.
@@ -1456,10 +1513,10 @@ class RestaurantSession:
                     return False
         if self._interrupted():
             return False
-        self._speak("Mission complete. I am back at the kitchen bar.")
-        if self._interrupted():
-            return False
         self._set_state(SessionState.SUCCEEDED, {"served": self.served})
+        # All scored actions, including the final return to the bar, are complete.
+        # The terminal announcement must not turn success into a deadline failure.
+        self._speak("Mission complete. I am back at the kitchen bar.", terminal=True)
         return True
 
     def start(self) -> bool:

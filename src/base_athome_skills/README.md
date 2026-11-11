@@ -137,6 +137,27 @@ cancelación a mitad de navegación (goal cancelado, base quieta). Con Nav2 real
 
 ## Restaurant: aproximación y barrido
 
+Ensayo opcional: `SIM=1 SIM_TABLE_RETREAT=1` retrocede 0.45 m a 0.05 m/s
+antes de abandonar una mesa y usa el waypoint del pasillo al volver a la barra.
+Nav2 mantiene su comprobación de colisión; si falla un tramo, los reintentos
+conservan la retirada pendiente. Solo se permite con `ATHOME_SIM=1` en dominio 42.
+Para dar más margen a una misión de simulación se puede ajustar `SIM_TIMEOUT_S`
+al ejecutar `restaurant.sh`; solo se pasa en el bloque `SIM=1`.
+
+Si Nav2 corta la vuelta de búsqueda, se aprovechan los clientes con mano levantada
+confirmada que ya se vieron. Cuando alcanzan para los clientes pendientes, se omite
+el barrido adicional de cabeza (hasta 80 s). Se excluyen el barman, los clientes
+ya visitados y las detecciones duplicadas; si faltan clientes, se conserva el barrido.
+Restaurant solicita una ventana que cubra ambos giros y la locución intermedia,
+limitada por el plazo global; `stop_scan` la termina al acabar la vuelta.
+PENDIENTE: `bag_finder` aún limita esa vista a 55 s (timeout 60 s), de modo que
+puede cerrarla antes de terminar el segundo giro en una simulación lenta.
+El nodo limita la búsqueda a
+`max_no_progress_rounds=3` rondas sin servir a otro cliente y termina en `FAILED`
+con `reason=no_customer_progress`; cada entrega reinicia ese contador. El contrato
+puro acepta `max_no_progress_rounds=None` para conservar el comportamiento anterior
+hasta el plazo global en adaptadores existentes.
+
 `restaurant_node` consume `/global_costmap/costmap` (`nav_msgs/OccupancyGrid`,
 transient local, marco `map`). La sesión evalúa 12 ángulos por radio (standoff,
 0.8 y 1.1 m), ordenados por distancia al robot, con radio circular de 0.3 m:
