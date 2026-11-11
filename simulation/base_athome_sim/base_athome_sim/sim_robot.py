@@ -160,6 +160,15 @@ class SimRobot(Node):
         self.guest_idx = 0
         self.receptionist_seated_guests = []
         self.receptionist_seat_xy = None
+        self.receptionist_bag_state = "idle"
+        self.receptionist_bag_held = False
+        self.receptionist_bag_model = "recepcionista_bolsa"
+        self.receptionist_host_xy = [2.0, 1.9]
+        self.receptionist_host_yaw = 0.0
+        self.receptionist_follow_active = False
+        self.receptionist_host_path_done = False
+        self.receptionist_drop_xy = [4.15, 0.55]
+        self.receptionist_bag_pose_update = 0.0
         self.guest_d = float(gp("guest_distance_m"))
         faces = [f for f in gp("faces") if f] or sorted(glob.glob(os.path.expanduser("~/sim_faces/*.jpg"))) or DEFAULT_FACES
         self.faces = [im for im in (cv2.imread(f) for f in faces) if im is not None]
@@ -197,6 +206,7 @@ class SimRobot(Node):
         self.pub_scan = self.create_publisher(LaserScan, "/scan", qos_profile_sensor_data)
         self.pub_map = self.create_publisher(OccupancyGrid, "/map", latched)
         self.pub_world = self.create_publisher(MarkerArray, "/sim/world", 5)
+        self.pub_receptionist_task = self.create_publisher(String, "/sim/receptionist/task_state", 5)
         self.pub_pt_conn.publish(Bool(data=True))
         self.create_timer(0.5, self._publish_receptionist_state)
 
@@ -217,6 +227,7 @@ class SimRobot(Node):
         sub(Twist, "/cmd_vel", lambda m: setattr(self, "cmd_vel", (m.linear.x, m.angular.z, time.time())))
         sub(Float64, "/torso/goal", self._torso_goal)
         sub(String, "/hri/say_something", self._heard_robot)
+        sub(String, "/sim/receptionist/task_command", self._receptionist_task_cb, 5)
         srv = lambda t, n, f: self.create_service(t, n, f, callback_group=self.cb)
         srv(SetBool, "/arm/set_enable", self._srv_enable)
         srv(SetBool, "/pan_tilt/set_torque", self._srv_torque)
@@ -602,6 +613,8 @@ class SimRobot(Node):
             models.append(gz_model.person_sdf(self.person_xy))
         if self.auto_guest:
             models.append(gz_model.customer_sdf("recep_guest", self.person_xy, hand="none", seated=False))
+            models.append(gz_model.customer_sdf("recep_host", self.receptionist_host_xy, hand="none", seated=False))
+            models.append(gz_model.receptionist_drop_sdf(self.receptionist_drop_xy))
         if self.bag2 is not None:
             models.append(gz_model.bag_sdf(self.bag2[:2], self.bag2[2]).replace(f'name="{gz_model.BAG_MODEL}"', 'name="bolsa_2"')
                           .replace(gz_model.BAG_ODOM_TOPIC, "/sim/gz/bolsa_2/odometry"))
@@ -669,6 +682,12 @@ class SimRobot(Node):
 
     def _gz_tick(self, now):
         v = w = 0.0
+        if self.receptionist_follow_active:
+            cmd = Twist()
+            self.gz_cmd.publish(cmd)
+            if self.receptionist_bag_held and now - self.receptionist_bag_pose_update > 0.25:
+                self._gz_move_receptionist_bag_to_gripper()
+            return
         g = self.base.goal
         if g is not None:
             dx, dy = g[0] - self.base.x, g[1] - self.base.y
@@ -809,12 +828,123 @@ class SimRobot(Node):
         sdf = gz_model.customer_sdf("recep_guest", xy, hand="none", seated=True)
         self._gz_run(gz_model.create_command(GZ_WORLD, sdf))
         self._record_seated_guest(xy, guest_index)
+        self._publish_receptionist_state()
 
     def _gz_reset_reception_guest(self):
         """Bring the next scripted guest back to the reception area before the HRI greeting."""
         self._gz_run(gz_model.remove_command(GZ_WORLD, "recep_guest"))
         sdf = gz_model.customer_sdf("recep_guest", self.person_xy, hand="none", seated=False)
         self._gz_run(gz_model.create_command(GZ_WORLD, sdf))
+        if self.guest_idx >= 1:
+            self._gz_run(gz_model.remove_command(GZ_WORLD, self.receptionist_bag_model))
+            xyz = (self.person_xy[0] + 0.30, self.person_xy[1] - 0.28, 0.95)
+            self._gz_run(gz_model.create_command(
+                GZ_WORLD, gz_model.receptionist_bag_sdf(xyz, self.receptionist_bag_model)))
+            self.receptionist_bag_state = "ready"
+            self._publish_receptionist_task_state()
+
+    def _publish_receptionist_task_state(self):
+        self.pub_receptionist_task.publish(String(data=json.dumps({
+            "bag_state": self.receptionist_bag_state,
+            "host_xy": self.receptionist_host_xy,
+            "drop_xy": self.receptionist_drop_xy,
+        })))
+
+    def _receptionist_task_cb(self, msg):
+        if not self.gz:
+            return
+        action = msg.data.strip().lower()
+        if action == "handover" and self.receptionist_bag_state == "ready":
+            threading.Thread(target=self._gz_receptionist_handover, daemon=True).start()
+        elif action == "follow" and self.receptionist_bag_state == "received" and not self.receptionist_follow_active:
+            threading.Thread(target=self._gz_receptionist_follow_host, daemon=True).start()
+        elif action == "drop" and self.receptionist_bag_state == "host_at_drop":
+            threading.Thread(target=self._gz_receptionist_drop_bag, daemon=True).start()
+
+    def _gz_move_receptionist_bag_to_gripper(self):
+        tf = self._lookup("map", "tcp_link")
+        if tf is None:
+            return
+        xyz = tf[1]
+        self._gz_run(gz_model.set_pose_command(
+            GZ_WORLD, self.receptionist_bag_model,
+            (float(xyz[0]), float(xyz[1]), float(xyz[2]) + 0.16)))
+        self.receptionist_bag_pose_update = time.time()
+
+    def _gz_receptionist_handover(self):
+        """Simulation-only proxy for present_gripper/grip_item; move the visible bag into the gripper."""
+        self.receptionist_bag_state = "handover"
+        self._publish_receptionist_task_state()
+        guest = next((g for g in self.receptionist_seated_guests if g["guest_index"] == 2), None)
+        if guest:
+            start = [float(guest["xy"][0]) - 0.35, float(guest["xy"][1]), 0.95]
+        else:
+            start = [self.person_xy[0] + 0.30, self.person_xy[1] - 0.28, 0.95]
+        self._gz_run(gz_model.set_pose_command(GZ_WORLD, self.receptionist_bag_model, start))
+        time.sleep(0.5)
+        for _ in range(6):
+            self._gz_move_receptionist_bag_to_gripper()
+            time.sleep(0.25)
+        self.receptionist_bag_held = True
+        self.receptionist_bag_state = "received"
+        self._publish_receptionist_task_state()
+        self.get_logger().info("Receptionist sim: bolsa del invitado 2 recibida en la pinza simulada")
+
+    def _gz_receptionist_follow_host(self):
+        """Walk the visible host while ground-truth sim steps move the base behind it."""
+        self.receptionist_bag_state = "following"
+        self.receptionist_follow_active = True
+        self.receptionist_host_path_done = False
+        self._publish_receptionist_task_state()
+        start = tuple(self.receptionist_host_xy)
+        self.base.goal = None
+        path = [start, (2.60, 1.90), (2.60, 0.45), tuple(self.receptionist_drop_xy)]
+        first_yaw = math.atan2(path[1][1] - start[1], path[1][0] - start[0])
+        self._gz_move_receptionist_base((start[0] - 0.72 * math.cos(first_yaw),
+                                         start[1] - 0.72 * math.sin(first_yaw)), first_yaw)
+        for a, b in zip(path, path[1:]):
+            distance = math.dist(a, b)
+            steps = max(2, int(distance / 0.45))
+            yaw = math.atan2(b[1] - a[1], b[0] - a[0])
+            for step in range(1, steps + 1):
+                t = step / steps
+                xy = [a[i] + t * (b[i] - a[i]) for i in range(2)]
+                self.receptionist_host_xy = xy
+                self.receptionist_host_yaw = yaw
+                self._gz_run(gz_model.set_pose_command(
+                    GZ_WORLD, "recep_host", (xy[0], xy[1], 0.81), yaw=yaw))
+                target = (xy[0] - 0.72 * math.cos(yaw), xy[1] - 0.72 * math.sin(yaw))
+                self._gz_move_receptionist_base(target, yaw)
+                time.sleep(0.05)
+        self.receptionist_host_path_done = True
+        self.receptionist_follow_active = False
+        self.receptionist_bag_state = "host_at_drop"
+        self._gz_move_receptionist_bag_to_gripper()
+        self._publish_receptionist_task_state()
+        self.get_logger().info("Receptionist sim: robot siguió al anfitrión hasta la zona de entrega")
+
+    def _gz_move_receptionist_base(self, xy, yaw):
+        start = (self.base.x, self.base.y)
+        distance = math.dist(start, xy)
+        steps = max(1, int(distance / 0.45))
+        for step in range(1, steps + 1):
+            t = step / steps
+            x = start[0] + t * (xy[0] - start[0])
+            y = start[1] + t * (xy[1] - start[1])
+            self._gz_run(gz_model.set_pose_command(GZ_WORLD, gz_model.MODEL, (x, y, 0.0), yaw=yaw))
+            self.base.x, self.base.y, self.base.yaw = x, y, yaw
+            if self.receptionist_bag_held:
+                self._gz_move_receptionist_bag_to_gripper()
+            time.sleep(0.05)
+
+    def _gz_receptionist_drop_bag(self):
+        self.receptionist_bag_held = False
+        self._gz_run(gz_model.set_pose_command(
+            GZ_WORLD, self.receptionist_bag_model,
+            (self.receptionist_drop_xy[0], self.receptionist_drop_xy[1], 0.15)))
+        self.receptionist_bag_state = "dropped"
+        self._publish_receptionist_task_state()
+        self.get_logger().info("Receptionist sim: bolsa colocada en la zona marcada")
 
     def _walked_to(self, elapsed, start):
         """Camina por los puntos de ATHOME_SIM_PERSON_WALK a velocidad de persona, y se queda en el ultimo."""
