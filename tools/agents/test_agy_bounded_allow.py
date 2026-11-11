@@ -142,3 +142,34 @@ def test_allow_grants_only_the_exact_command():
     out = decide("git status -b", WS)
     assert out["permissionOverrides"] == ["command(git status \\-b)"]
     assert "permissionOverrides" not in decide("git push", WS)
+
+
+@pytest.mark.parametrize("cmd", [
+    "fuser /home/athome/sim_lab/locks/turno_1.lock",
+    "ps -fp 1234",
+    "pgrep -fa llm_server",
+    "ss -tulpn",
+    "uptime",
+    "ROS_DOMAIN_ID=55 ros2 topic hz /scan",
+    "ROS_DOMAIN_ID=93 ros2 node list",
+    "orca orchestration check --terminal term_x --json",
+    "orca orchestration send --to dispatch:ctx_x --subject a --body b",
+])
+def test_allows_lab_read_only(cmd):
+    assert decide(cmd, WS)["decision"] == "allow", cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    "fuser -k /home/athome/sim_lab/locks/turno_1.lock",
+    "fuser -vk /tmp/x",
+    "pkill -f gz",
+    "ROS_DOMAIN_ID=10 ros2 topic list",
+    "ROS_DOMAIN_ID=10 ros2 topic echo /cmd_vel",
+    "ros2 topic pub /cmd_vel geometry_msgs/msg/Twist {}",
+    "ros2 param set /x y 1",
+    "orca worktree remove x",
+    "env",
+    "printenv",
+])
+def test_blocks_lab_writes_and_robot_domain(cmd):
+    assert decide(cmd, WS)["decision"] != "allow", cmd
