@@ -149,12 +149,21 @@ if [ "${SIM:-0}" = 1 ]; then
   [ "${GZ_GUI:-0}" = 1 ] && GUI=true
   RV=false     # el RViz de Restaurant se abre aparte (start_rviz), con costmaps y plan
 
+  if [ "$ATHOME_SIM_WORLD" = restaurant.sdf ]; then
+    HUMAN_MODELS="$WS/simulation/base_athome_sim/models/humans"
+    python3 "$HUMAN_MODELS/download_restaurant.py" || exit 1
+    export GZ_SIM_RESOURCE_PATH="$HUMAN_MODELS:${GZ_SIM_RESOURCE_PATH:-}"
+  fi
   session_start sim ros2 launch base_athome_sim sim.launch.py gazebo:=true gz_gui:=$GUI rviz:=$RV "${W_ARG[@]}"
   echo "Esperando arranque de Gazebo..."
   sleep 15
 
   export OMP_NUM_THREADS=2
-  session_start bag_finder python3 "$WS/src/base_athome_perception/scripts/bag_finder.py"
+  POSE_PY=python3
+  if [ "${ATHOME_SIM_REAL_PERCEPTION:-0}" = 1 ]; then
+    POSE_PY="${ATHOME_POSE_PYTHON:-$HOME/ros2_vision_venv/bin/python3}"
+  fi
+  session_start bag_finder "$POSE_PY" "$WS/src/base_athome_perception/scripts/bag_finder.py"
 
   LLM_PY=$HOME/.local/share/llm-venv/bin/python
   [ -x "$LLM_PY" ] && session_start llm env -u PYTHONPATH nice -n 10 "$LLM_PY" "$HERE/llm_server.py"
@@ -170,6 +179,9 @@ if [ "${SIM:-0}" = 1 ]; then
   echo "Iniciando restaurant_node..."
   AUTO_ARG=(); [ "${AUTO:-0}" = 1 ] && AUTO_ARG=(-p auto_start:=true)   # AUTO=1: sin esperar ENTER (pruebas automaticas)
   [ "${SIM_TABLE_RETREAT:-0}" = 1 ] && AUTO_ARG+=(-p sim_table_retreat:=true)
+  # Rendered YOLO + Gazebo can run below real time: extend the bounded action deadline,
+  # without changing angular speed, collision checks, or the physical-robot defaults.
+  [ "${ATHOME_SIM_REAL_PERCEPTION:-0}" = 1 ] && AUTO_ARG+=(-p spin_timeout_s:=120.0)
   SIM_TIMEOUT_ARG=()
   if [ -n "${SIM_TIMEOUT_S:-}" ]; then
     SIM_TIMEOUT_VALUE=$(python3 -c 'import math,sys; v=float(sys.argv[1]); assert math.isfinite(v) and v > 0; print(v)' "$SIM_TIMEOUT_S") || exit 1

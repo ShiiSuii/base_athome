@@ -8,6 +8,8 @@
 z es la parte superior de la bolsa (donde esta la manija). Marco map. Las mediciones estan en base_athome_perception.bag_vision.
 Detector de bolsas: YOLO-World (wrist_detector.BagDetector), el mismo de la muneca. Con ATHOME_SIM=1 corre todo este codigo
 contra la imagen dibujada por la simulacion, sin modelos: la persona llega con sus keypoints por /sim/people.
+ATHOME_SIM_REAL_PERCEPTION=1 selecciona RGB-D de Gazebo y YOLO pose, sin posiciones privilegiadas;
+/bag_finder/sim_metrics informa porcentajes por estado sobre cuadros RGB unicos procesados.
 """
 import json
 import math
@@ -39,6 +41,7 @@ from base_athome_skills.mission import bag_task
 
 MODELS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "models")
 SIM = os.environ.get("ATHOME_SIM") == "1"
+REAL_SIM = SIM and os.environ.get("ATHOME_SIM_REAL_PERCEPTION") == "1"
 FRAME = "camera_color_optical_frame"
 SEARCH_PANS = (0.0, 30.0, -30.0, 60.0, -60.0)
 RAISED_HANDS_PANS = (0.0, -90.0, 0.0, 90.0, 0.0)
@@ -71,9 +74,9 @@ class BagFinder(Node):
         self.rgb, self.depth, self.K = None, None, None
         self.tf_buf = Buffer()
         self.tf_listener = TransformListener(self.tf_buf, self)
-        self.create_subscription(Image, "/camera/camera/color/image_raw", self._rgb, qos_profile_sensor_data)
-        self.create_subscription(Image, "/camera/camera/aligned_depth_to_color/image_raw", self._depth, qos_profile_sensor_data)
-        self.create_subscription(CameraInfo, "/camera/camera/color/camera_info", self._info, qos_profile_sensor_data)
+        self.create_subscription(Image, "/sim/gz/head/image" if REAL_SIM else "/camera/camera/color/image_raw", self._rgb, qos_profile_sensor_data)
+        self.create_subscription(Image, "/sim/gz/head/depth_image" if REAL_SIM else "/camera/camera/aligned_depth_to_color/image_raw", self._depth, qos_profile_sensor_data)
+        self.create_subscription(CameraInfo, "/sim/gz/head/camera_info" if REAL_SIM else "/camera/camera/color/camera_info", self._info, qos_profile_sensor_data)
         self.create_subscription(String, "/bag_finder/request", self._request, 5)
         self.pub = self.create_publisher(String, "/bag_finder/result", 5)
         self.pub_people = self.create_publisher(String, "/bag_finder/people", 5)
@@ -91,22 +94,45 @@ class BagFinder(Node):
         self.head_speed, self._head_prev = 0.0, None     # grados por segundo, medidos
         self.sim_people = []
         self.pose_model = None
+        if REAL_SIM:
+            from base_athome_perception.sim_perception import FrameMetrics
+            self.sim_metrics = FrameMetrics()
+            self.sim_scenario = "startup"
+            self.pub_sim_metrics = self.create_publisher(String, "/bag_finder/sim_metrics", 10)
+            self.create_subscription(String, "/restaurant/state", self._sim_state, 10)
         self.bags = make_bag_detector(MODELS, wrist=False)
-        if SIM:
+        if SIM and not REAL_SIM:
             self.create_subscription(String, "/sim/people", self._sim_people, 5)
-        else:
+        if not SIM or REAL_SIM:
             from ultralytics import YOLO
             self.pose_model = YOLO(os.path.join(MODELS, "yolov8n-pose.pt"))
-            if not self.bags.available():
+            if not SIM and not self.bags.available():
                 raise SystemExit(f"Faltan los pesos del detector de bolsas: {self.bags.weights}")
-            self.bags.load()
+            if not SIM:
+                self.bags.load()
             blank = np.zeros((480, 640, 3), np.uint8)
             self.pose_model.predict(blank, verbose=False, device="cpu")
-            self.bags.detect(blank)
+            if not SIM:
+                self.bags.detect(blank)
         self.get_logger().info("bag_finder listo" + (" (simulacion)" if SIM else "; detector de bolsas: YOLO-World"))
         # Grupo separado: inferir no bloquea los callbacks de RGB/depth/feedback.
         self.debug_timer = self.create_timer(1.0 / 3.0, self._debug_tick,
                                             callback_group=MutuallyExclusiveCallbackGroup())
+
+    def _sim_state(self, msg):
+        state = json.loads(msg.data)
+        self.sim_scenario = f"{state.get('state', 'unknown')}/customer_{state.get('customer_idx', 0)}"
+
+    def _record_sim_metrics(self, people):
+        with self.lock:
+            stamp, depth = self.rgb_stamp, self.depth
+        if stamp is None:
+            return
+        row = self.sim_metrics.add((stamp.sec, stamp.nanosec), self.sim_scenario, bool(people),
+            any(classify_raised_hand(p[1], p[2]).is_raised for p in people),
+            any(bv.person_depth_sample(p, depth) is not None for p in people))
+        if row is not None:
+            self.pub_sim_metrics.publish(String(data=json.dumps(row)))
 
     def _sim_people(self, m):
         self.sim_people = json.loads(m.data)["people"]
@@ -120,7 +146,8 @@ class BagFinder(Node):
 
     def _depth(self, m):
         with self.lock:
-            self.depth = np.frombuffer(m.data, np.uint16).reshape(m.height, m.width).copy()
+            from base_athome_perception.sim_perception import decode_depth
+            self.depth = decode_depth(m.data, m.height, m.width, m.encoding, m.step, m.is_bigendian)
 
     def _head_state(self, m):
         d = dict(zip(m.name, m.position))
@@ -246,14 +273,17 @@ class BagFinder(Node):
             return (*frames, self.rgb_stamp) if with_stamp else frames
 
     def _poses(self, rgb, cam=None):
-        if SIM:
+        if SIM and not REAL_SIM:
             cam = cam or self._cam()
             if cam is None or self.K is None:
                 return []
             return bv.project_people(self.sim_people, cam[0], cam[1], self.K, rgb.shape[1], rgb.shape[0])
         # Ultralytics mantiene estado mutable: compartir el modelo exige serializar inferencia.
         with self.pose_lock:
-            return bv.yolo_people(self.pose_model.predict(rgb, conf=0.45, verbose=False, device="cpu")[0])
+            people = bv.yolo_people(self.pose_model.predict(rgb, conf=0.45, verbose=False, device="cpu")[0])
+            if REAL_SIM:
+                self._record_sim_metrics(people)
+            return people
 
     def _track(self, person, img_w, img_h):
         """Un paso de seguimiento: lleva el torso de la persona al centro de la imagen."""
@@ -361,7 +391,7 @@ class BagFinder(Node):
             seen["head_stale"] = seen.get("head_stale", 0) + int(stale)
             seen["people"] = max(seen["people"], len(people))
             for person in people:
-                spot = self._sim_person_spot(person, cam) if SIM else None
+                spot = self._sim_person_spot(person, cam) if SIM and not REAL_SIM else None
                 if spot is None and depth is not None and cam is not None and self.K is not None:
                     spot = bv.person_map_position(person, depth, cam[0], cam[1], self.K)
                 if spot is not None:
@@ -573,7 +603,7 @@ class BagFinder(Node):
                                 is_raised = classify_raised_hand(person[1], person[2]).is_raised
                                 # En simulacion los puntos del cuerpo no coinciden con el modelo dibujado: la profundidad del
                                 # torso caia en la pared de atras (~2x de distancia). Ahi se usa la posicion de la persona simulada.
-                                spot = self._sim_person_spot(person, cam) if SIM else None
+                                spot = self._sim_person_spot(person, cam) if SIM and not REAL_SIM else None
                                 estimated = False
                                 if spot is None and depth is not None and cam is not None and self.K is not None:
                                     spot = bv.person_map_position(person, depth, cam[0], cam[1], self.K)
@@ -752,7 +782,7 @@ class BagFinder(Node):
 def main():
     import cv2
     cv2.setNumThreads(2)
-    if not SIM:
+    if not SIM or REAL_SIM:
         import torch
         torch.set_num_threads(2)      # no quitarle CPU a Nav2 ni a los controladores
         torch.set_num_interop_threads(1)

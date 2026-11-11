@@ -222,6 +222,9 @@ def bridge_args() -> list:
         "/sim/gz/head/camera_info@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo",
         "/sim/gz/wrist@sensor_msgs/msg/Image[gz.msgs.Image",  # sensor "camera": la imagen va en el topico base
     ]
+    import os
+    if os.environ.get("ATHOME_SIM_REAL_PERCEPTION") == "1":
+        args += ["/sim/gz/joint_states@sensor_msgs/msg/JointState[gz.msgs.Model"]
     args += [f"{joint_cmd_topic(j)}@std_msgs/msg/Float64]gz.msgs.Double" for j in POSITION_JOINTS]
     args += [f"{BAG_ATTACH_TOPIC}@std_msgs/msg/Empty]gz.msgs.Empty", f"{BAG_DETACH_TOPIC}@std_msgs/msg/Empty]gz.msgs.Empty",
              f"{BAG_ODOM_TOPIC}@nav_msgs/msg/Odometry[gz.msgs.Odometry"]

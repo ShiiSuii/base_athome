@@ -2,6 +2,8 @@
 """Clientes y barman simulados para probar Restaurant en Gazebo (dominio 42). Escucha lo que dice el robot y,
 cuando el microfono simulado abre, contesta: el pedido de cada cliente o "ready" al barman. Solo simulacion."""
 import sys
+import os
+import json
 import threading
 
 import rclpy
@@ -11,10 +13,36 @@ ORDERS = ["coke and water", "juice and tea"]
 
 
 def main():
+    if os.environ.get("ROS_DOMAIN_ID") != "42":
+        raise SystemExit("Restaurant actor requires isolated ROS_DOMAIN_ID=42")
     rclpy.init()
     node = rclpy.create_node("restaurant_actor")
     pub = node.create_publisher(String, "/sim/speech", 10)
     state = dict(last="", customer=0, answered=0)
+    if os.environ.get("ATHOME_SIM_REAL_PERCEPTION") == "1":
+        from base_athome_sim.restaurant_humans import reply_for_state
+        mission = {}
+        def on_state(msg):
+            mission.clear()
+            mission.update(json.loads(msg.data))
+        def on_request(msg):
+            request = json.loads(msg.data)
+            if request.get("prompt") == "Stop.":
+                return
+            text = reply_for_state(mission)
+            threading.Timer(1.0, lambda: pub.publish(String(data=text))).start()
+        node.create_subscription(String, "/restaurant/state", on_state, 10)
+        node.create_subscription(String, "/voice/listen_request", on_request, 10)
+        try:
+            rclpy.spin(node)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            node.destroy_node()
+            if rclpy.ok():
+                rclpy.shutdown()
+        return
+
 
     def heard(msg):
         state["last"] = msg.data.lower()

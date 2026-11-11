@@ -562,7 +562,7 @@ class RestaurantNode(Node):
         # La busqueda de clientes contiene dos acciones Spin y una locucion
         # bloqueante entre ambas. El detector debe seguir activo hasta el stop_scan,
         # tambien si la simulacion tarda en completar los giros.
-        scan_limit = self.SCAN_TURN_MAX_S
+        scan_limit = max(self.SCAN_TURN_MAX_S, self.spin_timeout_s + 5.0)
         if on_first_step is not None:
             scan_limit += self.spin_timeout_s + 15.0
         budget = min(scan_limit, max(1.0, self.session.remaining_s()))

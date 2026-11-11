@@ -528,11 +528,16 @@ class SimRobot(Node):
         pt.header.stamp = stamp
         full = JointState(name=arm.name + pt.name + ["torso_lift_joint"], position=list(arm.position) + list(pt.position) + [self.torso_pos])
         full.header.stamp = stamp
+        joint_commands = list(zip(full.name, full.position))
+        if self.gz and os.environ.get("ATHOME_SIM_REAL_PERCEPTION") == "1":
+            from base_athome_sim.restaurant_humans import apply_measured_head
+            apply_measured_head(self, full, pt)
         self.pub_js.publish(full)
         self.pub_arm_js.publish(arm)
-        self.pub_pt_js.publish(pt)
+        if pt.name:
+            self.pub_pt_js.publish(pt)
         if self.gz:
-            for j, v in zip(full.name, full.position):
+            for j, v in joint_commands:
                 self.gz_joint_pubs[j].publish(Float64(data=float(v)))
         t = TransformStamped()
         t.header.stamp, t.header.frame_id, t.child_frame_id = stamp, "odom", "base_footprint"
@@ -560,6 +565,9 @@ class SimRobot(Node):
         sub(Image, "/sim/gz/head/depth_image", self._gz_depth)
         sub(CameraInfo, "/sim/gz/head/camera_info", self._gz_info)
         sub(Image, "/sim/gz/wrist", self._gz_wrist)
+        if os.environ.get("ATHOME_SIM_REAL_PERCEPTION") == "1":
+            from base_athome_sim.restaurant_humans import setup_measured_head
+            setup_measured_head(self)
         self.get_logger().info("Modo Gazebo: base/lidar/camaras desde gz sim")
         if self.bag_map is not None:
             self.pub_bag_attach = self.create_publisher(Empty, gz_model.BAG_ATTACH_TOPIC, 10)
@@ -618,7 +626,10 @@ class SimRobot(Node):
         if self.bag2 is not None:
             models.append(gz_model.bag_sdf(self.bag2[:2], self.bag2[2]).replace(f'name="{gz_model.BAG_MODEL}"', 'name="bolsa_2"')
                           .replace(gz_model.BAG_ODOM_TOPIC, "/sim/gz/bolsa_2/odometry"))
+        from base_athome_sim.restaurant_humans import rendered_restaurant
         for i, c in enumerate(self.customers_xy):
+            if rendered_restaurant():
+                continue  # textured fixed humans already belong to restaurant.sdf
             name = f"cliente_{i+1}"
             models.append(gz_model.customer_sdf(name, c["xy"], hand=c.get("hand", "right"), seated=c.get("seated", False)))
         time.sleep(3.0)

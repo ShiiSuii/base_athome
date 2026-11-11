@@ -264,7 +264,7 @@ class SweepHarness:
         methods = [n for n in cls.body if isinstance(n, ast.FunctionDef)
                    and n.name in ("_find_raised_hands", "_sweep_people", "_head_state", "_head_still")]
         env = dict(math=math, time=NS(time=lambda: self.now, sleep=self.advance),
-                   SIM=True, RaisedHandsAggregator=RaisedHandsAggregator, classify_raised_hand=classify_raised_hand,
+                   SIM=True, REAL_SIM=False, RaisedHandsAggregator=RaisedHandsAggregator, classify_raised_hand=classify_raised_hand,
                    bv=NS(HEAD_STILL_DPS=3.0))
         for n in tree.body:
             if isinstance(n, ast.Assign) and isinstance(n.targets[0], ast.Name):
@@ -473,7 +473,7 @@ def test_find_person_reuses_sweep_and_map_positions_without_ros(sim, fresh_frame
                  RaisedHandsAggregator=RaisedHandsAggregator, classify_raised_hand=classify_raised_hand,
                  RAISED_HANDS_PANS=(-60., -30., 0., 30., 60.), SEARCH_TILT=0.,
                  RAISED_HANDS_VIEW_S=2., RAISED_HANDS_SETTLE_S=1.5,
-                 SIM=sim, extract_person_attributes=extract_person_attributes, String=SimpleNamespace,
+                 SIM=sim, REAL_SIM=False, extract_person_attributes=extract_person_attributes, String=SimpleNamespace,
                  bv=SimpleNamespace(person_map_position=lambda *args: (4., 2.)))
     exec(compile(ast.fix_missing_locations(ast.Module(body=[cls], type_ignores=[])), str(source), 'exec'), scope)
     node = scope['BagFinder']()

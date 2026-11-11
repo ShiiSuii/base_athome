@@ -1,4 +1,5 @@
 from glob import glob
+from pathlib import Path
 from setuptools import setup
 
 package_name = 'base_athome_sim'
@@ -13,7 +14,9 @@ setup(
         ('share/' + package_name + '/worlds', glob('worlds/*.sdf')),
         ('share/' + package_name + '/rviz', glob('rviz/*.rviz')),
         ('share/' + package_name + '/config', glob('config/*.yaml') + glob('config/*.xml')),
-    ],
+        ('share/' + package_name + '/models/humans', ['models/humans/download_restaurant.py']),
+    ] + [(str(Path('share') / package_name / asset.parent), [str(asset)])
+         for asset in Path('models/humans/male_visitor').rglob('*') if asset.is_file()],
     install_requires=['setuptools'],
     zip_safe=True,
     maintainer='UruBots',

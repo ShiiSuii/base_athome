@@ -33,6 +33,7 @@ def _setup(context):
     if use_gz:
         shares = {os.path.dirname(get_package_share_directory(p)) for p in ("piper_description", "hoverboard_base")}
         shares.add(os.path.join(get_package_prefix("piper_description"), "share"))
+        shares.add(os.path.join(sim_share, "models", "humans"))
         world_arg = LaunchConfiguration("world").perform(context)
         world_env = os.environ.get("ATHOME_SIM_WORLD")
         if world_arg:

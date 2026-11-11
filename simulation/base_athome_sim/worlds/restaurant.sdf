@@ -128,5 +128,24 @@
         <material><diffuse>0.25 0.30 0.55 1</diffuse><ambient>0.25 0.30 0.55 1</ambient></material></visual>
       <visual name="vis_respaldo_3_b"><pose>0 -0.20 0.625 0 0 0</pose><geometry><box><size>0.45 0.05 0.35</size></box></geometry>
         <material><diffuse>0.25 0.30 0.55 1</diffuse><ambient>0.25 0.30 0.55 1</ambient></material></visual></link></model>
+
+    <!-- CC0-1.0 OpenRobotics Male visitor v2; generated static poses.
+         Run models/humans/download_restaurant.py and add models/humans to GZ_SIM_RESOURCE_PATH.
+         Positions agree with ATHOME_SIM_CUSTOMERS and restaurant_actor.py order. -->
+    <model name="human_diner_north"><static>true</static><pose>2 2.8 0 0 0 -1.57079633</pose>
+      <link name="body"><visual name="textured_human"><geometry><mesh>
+        <uri>model://male_visitor/meshes/seated_right.dae</uri>
+      </mesh></geometry></visual></link>
+    </model>
+    <model name="human_diner_south"><static>true</static><pose>3 -2.9 0 0 0 1.57079633</pose>
+      <link name="body"><visual name="textured_human"><geometry><mesh>
+        <uri>model://male_visitor/meshes/seated_left.dae</uri>
+      </mesh></geometry></visual></link>
+    </model>
+    <model name="human_barman"><static>true</static><pose>-2.6 0 0 0 0 0</pose>
+      <link name="body"><visual name="textured_human"><geometry><mesh>
+        <uri>model://male_visitor/meshes/standing_right.dae</uri>
+      </mesh></geometry></visual></link>
+    </model>
   </world>
 </sdf>
