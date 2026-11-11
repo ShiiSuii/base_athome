@@ -271,7 +271,7 @@ HTML_PAGE = r'''<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Base@Home - Studio de Edición de Mapas PGM y Zonas Semánticas</title>
+<title>Robbie@Home - Studio de Edición de Mapas PGM y Zonas Semánticas</title>
 <style>
   :root, [data-theme="dark"] {
     --bg-canvas: #090c15;
@@ -393,19 +393,19 @@ HTML_PAGE = r'''<!DOCTYPE html>
 
   /* Cabecera Superior */
   .header-bar {
-    padding: 14px 18px;
+    padding: 13px 16px;
     border-bottom: 1px solid var(--border-default);
     background: var(--bg-header);
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
+    gap: 10px;
   }
   .header-title {
     display: flex;
     flex-direction: column;
-    gap: 3px;
     min-width: 0;
+    flex: 1;
   }
   .header-title-row {
     display: flex;
@@ -419,7 +419,7 @@ HTML_PAGE = r'''<!DOCTYPE html>
     letter-spacing: -0.2px;
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 7px;
     white-space: nowrap;
   }
   .brand-badge {
@@ -428,32 +428,45 @@ HTML_PAGE = r'''<!DOCTYPE html>
     -webkit-text-fill-color: transparent;
     font-weight: 800;
   }
-  .header-title p {
-    font-size: 11px;
+
+  /* Subtítulo del Encabezado en 2 Líneas Limpias (Sin Recorte) */
+  .header-meta-container {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 6px;
+    margin-top: 3px;
+  }
+  .header-meta-container .meta-tag {
+    font-size: 10px;
     color: var(--text-secondary);
     font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    padding: 1px 6px;
+    border-radius: 4px;
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    line-height: 1.35;
   }
 
   .header-controls {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 5px;
+    flex-shrink: 0;
   }
   .header-icon-btn {
     background: var(--bg-surface);
     border: 1px solid var(--border-default);
     color: var(--text-secondary);
-    width: 32px;
-    height: 32px;
+    width: 30px;
+    height: 30px;
     border-radius: 6px;
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    font-size: 14px;
+    font-size: 13px;
     transition: all 0.15s ease;
   }
   .header-icon-btn:hover {
@@ -512,7 +525,7 @@ HTML_PAGE = r'''<!DOCTYPE html>
     border: none;
     border-radius: 6px;
     color: var(--text-secondary);
-    padding: 9px 4px;
+    padding: 8px 3px;
     font-size: 11px;
     font-weight: 600;
     cursor: pointer;
@@ -1458,9 +1471,12 @@ HTML_PAGE = r'''<!DOCTYPE html>
   <div class="header-bar">
     <div class="header-title">
       <div class="header-title-row">
-        <h1>🤖 <span class="brand-badge">Base@Home</span> Studio</h1>
+        <h1>🤖 <span class="brand-badge">Robbie@Home</span> Studio</h1>
       </div>
-      <p id="map-meta-info">Mapa PGM: 324x582 px (0.05 m/px)</p>
+      <div class="header-meta-container">
+        <span id="map-meta-info" class="meta-tag">Mapa PGM: 324×582 px (0.05 m/px)</span>
+        <span id="map-meta-origin" class="meta-tag">Orig: [-6.19, -9.15]</span>
+      </div>
     </div>
     <div class="header-controls">
       <button class="header-icon-btn" id="theme-toggle-btn" title="Alternar Modo Claro / Oscuro" onclick="toggleTheme()">☀️</button>
@@ -1822,7 +1838,7 @@ HTML_PAGE = r'''<!DOCTYPE html>
     <div class="item-list" id="waypoints-list"></div>
   </div>
 
-  <!-- Capas de Visualización Plegables -->
+  <!-- Capas de Visualización Plegables (Con Interruptor de Etiquetas) -->
   <div class="layers-container">
     <div class="layers-header" onclick="toggleLayersPanel()">
       <span>Capas de Visualización</span>
@@ -1859,10 +1875,15 @@ HTML_PAGE = r'''<!DOCTYPE html>
         <span class="layer-swatch" style="background: #00d2ff;"></span>
         <span>📐 Zonas</span>
       </label>
-      <label class="layer-item" style="grid-column: span 2;">
+      <label class="layer-item">
+        <input type="checkbox" id="layer-labels" checked onchange="draw()">
+        <span class="layer-swatch" style="background: #38bdf8;"></span>
+        <span>🏷️ Etiquetas</span>
+      </label>
+      <label class="layer-item">
         <input type="checkbox" id="layer-keepout" checked onchange="draw()">
         <span class="layer-swatch" style="background: #f43f5e;"></span>
-        <span>🚫 Zonas Prohibidas</span>
+        <span>🚫 Prohibidas</span>
       </label>
     </div>
   </div>
@@ -2077,6 +2098,10 @@ HTML_PAGE = r'''<!DOCTYPE html>
   let pendingGeometry = null;
   let hasUnsavedChanges = false;
 
+  // Seguimiento del cursor en coordenadas de pantalla para hover de etiquetas
+  let lastMouseScreen = { x: -1000, y: -1000 };
+  let pendingLabels = [];
+
   // Transformación de Vista
   let view = { x: 50, y: 50, zoom: 1.5 };
 
@@ -2199,8 +2224,15 @@ HTML_PAGE = r'''<!DOCTYPE html>
       seats = data.seats || {};
       objects = data.objects || {};
 
-      document.getElementById('map-meta-info').textContent =
-        `Mapa PGM: ${mapInfo.width}x${mapInfo.height} px (${mapInfo.resolution} m/px)`;
+      const resMm = (mapInfo.resolution || 0.05).toFixed(2);
+      const metaEl = document.getElementById('map-meta-info');
+      if (metaEl) {
+        metaEl.textContent = `PGM: ${mapInfo.width}×${mapInfo.height} px · ${resMm} m/px`;
+      }
+      const origEl = document.getElementById('map-meta-origin');
+      if (origEl && mapInfo.origin && mapInfo.origin.length >= 2) {
+        origEl.textContent = `Orig: [${Number(mapInfo.origin[0]).toFixed(2)}, ${Number(mapInfo.origin[1]).toFixed(2)}]`;
+      }
 
       rawCanvas.width = mapInfo.width;
       rawCanvas.height = mapInfo.height;
@@ -2344,7 +2376,6 @@ HTML_PAGE = r'''<!DOCTYPE html>
     const targetTab = document.getElementById(`tab-${tabId}`);
     if (targetTab) targetTab.classList.add('active');
 
-    // Encuentra el botón que corresponde al switchTab
     const btns = document.querySelectorAll('.tab-btn');
     btns.forEach(b => {
       if (b.getAttribute('onclick') && b.getAttribute('onclick').includes(`'${tabId}'`)) {
@@ -2521,6 +2552,8 @@ HTML_PAGE = r'''<!DOCTYPE html>
 
   // --- Renderizado del Mapa y Capas Semánticas ---
   function draw() {
+    pendingLabels = [];
+
     ctx.clearRect(0, 0, displayCanvas.width, displayCanvas.height);
 
     ctx.save();
@@ -2573,7 +2606,7 @@ HTML_PAGE = r'''<!DOCTYPE html>
 
         const center = getPolygonCenter(zone.polygon);
         const cp = worldToPixel(center.x, center.y);
-        drawBadge(cp.x, cp.y, zone.name || id, zone.color || '#00d2ff');
+        drawBadge(cp.x, cp.y, zone.name || id, zone.color || '#00d2ff', 5, 'zone');
       }
     }
 
@@ -2642,7 +2675,7 @@ HTML_PAGE = r'''<!DOCTYPE html>
 
         const wm = (w * mapInfo.resolution).toFixed(2);
         const hm = (h * mapInfo.resolution).toFixed(2);
-        drawBadge(minX + w / 2, minY - 10 / view.zoom, `${wm}m x ${hm}m`, '#00f090');
+        drawBadge(minX + w / 2, minY, `${wm}m × ${hm}m`, '#00f090', 0, 'preview', -14);
       } else if (currentMode === 'draw_vol_box') {
         const minX = Math.min(dragStartPixel.x, mousePixel.x);
         const minY = Math.min(dragStartPixel.y, mousePixel.y);
@@ -2690,9 +2723,12 @@ HTML_PAGE = r'''<!DOCTYPE html>
 
         drawBadge(
           minX + w / 2 + isoDx,
-          minY - 14 / view.zoom + isoDy,
+          minY + isoDy,
           `📦 ${wM.toFixed(2)}m × ${lM.toFixed(2)}m × ${hM.toFixed(2)}m (${volM3.toFixed(2)}m³)`,
-          color
+          color,
+          0,
+          'preview',
+          -14
         );
       } else if (currentMode === 'line_wall') {
         ctx.beginPath();
@@ -2705,7 +2741,7 @@ HTML_PAGE = r'''<!DOCTYPE html>
 
         const distPx = Math.hypot(mousePixel.x - dragStartPixel.x, mousePixel.y - dragStartPixel.y);
         const distM = (distPx * mapInfo.resolution).toFixed(2);
-        drawBadge((dragStartPixel.x + mousePixel.x) / 2, (dragStartPixel.y + mousePixel.y) / 2 - 12 / view.zoom, `${distM} m`, '#38bdf8');
+        drawBadge((dragStartPixel.x + mousePixel.x) / 2, (dragStartPixel.y + mousePixel.y) / 2, `${distM} m`, '#38bdf8', 0, 'preview', -14);
       } else if (currentMode === 'waypoint' || currentMode === 'place_wp_template') {
         const dx = mousePixel.x - dragStartPixel.x;
         const dy = mousePixel.y - dragStartPixel.y;
@@ -2755,6 +2791,9 @@ HTML_PAGE = r'''<!DOCTYPE html>
     }
 
     ctx.restore();
+
+    // 9. DIBUJAR ETIQUETAS EN COORDENADAS DE PANTALLA FIJAS (~11px)
+    flushLabels();
   }
 
   function drawVolumetricExtrusion(polyWorld, heightM, color, label, icon, isSolidified) {
@@ -2816,25 +2855,145 @@ HTML_PAGE = r'''<!DOCTYPE html>
 
     const hLabel = `${Math.round(hM * 100)}cm`;
     const solidBadge = isSolidified ? ' ⚡' : '';
-    drawBadge(topCx, topCy, `${icon} ${label} (${hLabel})${solidBadge}`, color);
+    drawBadge(topCx, topCy, `${icon} ${label} (${hLabel})${solidBadge}`, color, 4, 'furniture');
   }
 
-  function drawBadge(x, y, text, color) {
-    const fontSize = Math.max(7.5, Math.min(10, 8.5 / Math.sqrt(view.zoom)));
-    ctx.font = `600 ${fontSize}px sans-serif`;
+  function drawBadge(px, py, text, color, priority = 3, type = 'item', offsetScreenY = 0) {
+    pendingLabels.push({
+      pixelX: px,
+      pixelY: py,
+      text: text,
+      color: color,
+      priority: priority,
+      type: type,
+      offsetScreenY: offsetScreenY
+    });
+  }
+
+  function flushLabels() {
+    const showLabels = document.getElementById('layer-labels') ? document.getElementById('layer-labels').checked : true;
+    if (!showLabels && pendingLabels.every(l => l.priority !== 0)) {
+      pendingLabels = [];
+      return;
+    }
+
+    const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+    ctx.save();
+    ctx.font = '500 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
 
-    ctx.save();
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.9)';
-    ctx.shadowBlur = 2;
-    ctx.strokeStyle = 'rgba(8, 12, 18, 0.85)';
-    ctx.lineWidth = 2.0 / view.zoom;
-    ctx.strokeText(text, x, y);
+    const items = [];
+    for (const l of pendingLabels) {
+      if (!showLabels && l.priority !== 0) continue;
 
-    ctx.fillStyle = color;
-    ctx.fillText(text, x, y);
+      const screen = pixelToScreen(l.pixelX, l.pixelY);
+      screen.y += (l.offsetScreenY || 0);
+
+      // Descartar etiquetas que están fuera de la ventana gráfica
+      if (screen.x < -140 || screen.x > displayCanvas.width + 140 || screen.y < -30 || screen.y > displayCanvas.height + 30) {
+        continue;
+      }
+
+      const textWidth = ctx.measureText(l.text).width;
+      const pillW = Math.round(textWidth + 14);
+      const pillH = 19;
+      const pillX = Math.round(screen.x - pillW / 2);
+      const pillY = Math.round(screen.y - pillH / 2);
+
+      const isHovered = (
+        lastMouseScreen.x >= pillX - 6 &&
+        lastMouseScreen.x <= pillX + pillW + 6 &&
+        lastMouseScreen.y >= pillY - 4 &&
+        lastMouseScreen.y <= pillY + pillH + 4
+      );
+
+      items.push({
+        ...l,
+        screenX: screen.x,
+        screenY: screen.y,
+        pillX,
+        pillY,
+        pillW,
+        pillH,
+        isHovered,
+        box: {
+          x1: pillX - 3,
+          y1: pillY - 3,
+          x2: pillX + pillW + 3,
+          y2: pillY + pillH + 3
+        }
+      });
+    }
+
+    // Ordenar por prioridad:
+    // Hovered primero (siempre visibles), luego menor valor de priority (0: preview, 1: obj, 2: wp, 3: seat, 4: furniture, 5: zone)
+    items.sort((a, b) => {
+      if (a.isHovered && !b.isHovered) return -1;
+      if (!a.isHovered && b.isHovered) return 1;
+      return a.priority - b.priority;
+    });
+
+    const placedBoxes = [];
+    const toRender = [];
+
+    for (const item of items) {
+      if (item.priority === 0 || item.isHovered) {
+        toRender.push(item);
+        placedBoxes.push(item.box);
+        continue;
+      }
+
+      let collides = false;
+      for (const b of placedBoxes) {
+        if (!(item.box.x2 < b.x1 || item.box.x1 > b.x2 || item.box.y2 < b.y1 || item.box.y1 > b.y2)) {
+          collides = true;
+          break;
+        }
+      }
+
+      if (!collides) {
+        toRender.push(item);
+        placedBoxes.push(item.box);
+      }
+    }
+
+    // Dibujar pastillas semitransparentes
+    for (const item of toRender) {
+      ctx.beginPath();
+      if (ctx.roundRect) {
+        ctx.roundRect(item.pillX, item.pillY, item.pillW, item.pillH, 9);
+      } else {
+        ctx.rect(item.pillX, item.pillY, item.pillW, item.pillH);
+      }
+
+      if (item.isHovered) {
+        ctx.fillStyle = isLight ? 'rgba(255, 255, 255, 0.98)' : 'rgba(15, 23, 42, 0.96)';
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.35)';
+        ctx.shadowBlur = 6;
+      } else {
+        ctx.fillStyle = isLight ? 'rgba(255, 255, 255, 0.85)' : 'rgba(15, 23, 42, 0.82)';
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.18)';
+        ctx.shadowBlur = 3;
+      }
+      ctx.fill();
+      ctx.shadowBlur = 0;
+
+      // Borde sutil del color del elemento
+      ctx.strokeStyle = item.isHovered ? item.color : hexToRgba(item.color, 0.5);
+      ctx.lineWidth = item.isHovered ? 1.5 : 1.0;
+      ctx.stroke();
+
+      // Texto nítido con tamaño fijo (~11px)
+      ctx.font = item.isHovered
+        ? '600 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", sans-serif'
+        : '500 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", sans-serif';
+      ctx.fillStyle = isLight ? '#0f172a' : '#f8fafc';
+      ctx.fillText(item.text, item.pillX + item.pillW / 2, item.pillY + item.pillH / 2 + 0.5);
+    }
+
     ctx.restore();
+    pendingLabels = [];
   }
 
   function drawWaypointPin(px, py, yawDeg, label) {
@@ -2859,7 +3018,7 @@ HTML_PAGE = r'''<!DOCTYPE html>
     ctx.lineWidth = 3 / view.zoom;
     ctx.stroke();
 
-    drawBadge(px, py - 14 / view.zoom, label, '#00f090');
+    drawBadge(px, py, label, '#00f090', 2, 'waypoint', -15);
   }
 
   function drawSeatPin(px, py, label, gesture) {
@@ -2871,7 +3030,7 @@ HTML_PAGE = r'''<!DOCTYPE html>
     ctx.lineWidth = 1.5 / view.zoom;
     ctx.stroke();
 
-    drawBadge(px, py - 14 / view.zoom, `🛋️ ${label}`, '#b388ff');
+    drawBadge(px, py, `🛋️ ${label}`, '#b388ff', 3, 'seat', -15);
   }
 
   function drawObjectMarker(px, py, number, name, objClass, appPx, appPy, yawDeg) {
@@ -2925,7 +3084,7 @@ HTML_PAGE = r'''<!DOCTYPE html>
     ctx.fillText(`${number}`, px, py);
     ctx.restore();
 
-    drawBadge(px, py - 16 / view.zoom, `${name} (${objClass})`, '#ff7700');
+    drawBadge(px, py, `${name} (${objClass})`, '#ff7700', 1, 'object', -17);
   }
 
   function getPolygonCenter(pts) {
@@ -2973,7 +3132,7 @@ HTML_PAGE = r'''<!DOCTYPE html>
     const rect = displayCanvas.getBoundingClientRect();
     const sx = e.clientX - rect.left;
     const sy = e.clientY - rect.top;
-    const prevMousePixel = { ...mousePixel };
+    lastMouseScreen = { x: sx, y: sy };
     mousePixel = screenToPixel(sx, sy);
 
     const world = pixelToWorld(mousePixel.x, mousePixel.y);
@@ -3003,9 +3162,7 @@ HTML_PAGE = r'''<!DOCTYPE html>
         draw();
       }
     } else {
-      if (['erase', 'obstacle', 'unknown', 'draw_vol_poly', 'zone', 'keepout', 'place_zone_template'].includes(currentMode)) {
-        draw();
-      }
+      draw();
     }
   });
 
@@ -3050,10 +3207,10 @@ HTML_PAGE = r'''<!DOCTYPE html>
       const minPxY = Math.min(dragStartPixel.y, mousePixel.y);
       const maxPxY = Math.max(dragStartPixel.y, mousePixel.y);
 
-      const p0 = pixelToWorld(minPxX, maxPxY); // bottom-left
-      const p1 = pixelToWorld(maxPxX, maxPxY); // bottom-right
-      const p2 = pixelToWorld(maxPxX, minPxY); // top-right
-      const p3 = pixelToWorld(minPxX, minPxY); // top-left
+      const p0 = pixelToWorld(minPxX, maxPxY);
+      const p1 = pixelToWorld(maxPxX, maxPxY);
+      const p2 = pixelToWorld(maxPxX, minPxY);
+      const p3 = pixelToWorld(minPxX, minPxY);
 
       const wM = Math.hypot(p1.x - p0.x, p1.y - p0.y);
       const lM = Math.hypot(p3.x - p0.x, p3.y - p0.y);
@@ -3389,7 +3546,7 @@ HTML_PAGE = r'''<!DOCTYPE html>
           <div class="item-actions">
             <button class="icon-btn focus-btn" title="Centrar en mapa" onclick="focusItem(${center.x}, ${center.y})">🎯</button>
             <button class="icon-btn solidify" title="Solidificar/Despejar en PGM" onclick="toggleSolidify('seats', '${id}')">⚡</button>
-            <button class="icon-btn danger" title="Eliminar" onclick="deleteItem('seats', '${id}')">🗑️</button>
+            <button class="icon-btn danger" onclick="deleteItem('seats', '${id}')">🗑️</button>
           </div>
         `;
         sList.appendChild(card);
