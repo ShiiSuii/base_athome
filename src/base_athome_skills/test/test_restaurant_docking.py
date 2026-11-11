@@ -17,6 +17,7 @@ def adapter():
     d.scan = d.rear_scan = d.pose = d.odom_at = None
     d.controller = None
     d.advance_m = 0.
+    d.docked_pose = None
     d.pub = Mock()
     d.active = lambda: True
     d.permitted = lambda: True
@@ -73,3 +74,16 @@ def test_exception_in_watchdog_publishes_zero():
     d._tick()
     assert d.controller.result == 'adapter_error'
     assert d.pub.publish.call_args.args[0].linear.x == 0.
+
+
+@pytest.mark.parametrize('pose', [(0.04, 0., 0.), (0., .04, 0.), (0., 0., .06)])
+def test_retreat_rejects_base_displaced_while_manipulating(pose, monkeypatch):
+    monkeypatch.setattr('base_athome_skills.restaurant_docking.time.sleep',
+                        lambda _: pytest.fail('Retreat started from a displaced base'))
+    d = adapter()
+    d.advance_m = .28
+    d.docked_pose = (0., 0., 0.)
+    d.pose = pose
+    assert not d.run(reverse=True)
+    assert d.controller is None
+    d.pub.publish.assert_not_called()

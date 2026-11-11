@@ -7,6 +7,9 @@ currently has no such sensor: retreat fails closed. This is not clearance
 certification at other heights. Never enable on hardware without Level C review.
 A 20Hz timer owns velocity output and stops on stale headers AND stale arrivals;
 run() blocks only the mission thread, leaving sensor and watchdog callbacks live.
+Retreat also requires the base to remain within 3 cm / 0.05 rad of its docked
+pose while manipulating. An unexpected displacement invalidates the exit path
+instead of starting a new relative retreat from an unverified location.
 """
 import math
 import threading
@@ -27,6 +30,7 @@ class RestaurantDocking:
         self.scan = self.rear_scan = self.pose = self.odom_at = None
         self.controller = None
         self.advance_m = 0.0
+        self.docked_pose = None
         self.pub = node.create_publisher(Twist, '/cmd_vel', 1)
         for topic, reverse in (('/scan', False), ('/restaurant/rear_scan', True)):
             node.create_subscription(LaserScan, topic, lambda m, r=reverse: self._scan(m, r),
@@ -109,6 +113,14 @@ class RestaurantDocking:
                 return False
             if reverse and self.advance_m <= .005:
                 return False
+            if reverse:
+                parked = self.docked_pose
+                if (parked is None or not all(math.isfinite(v) for v in self.pose)
+                        or math.hypot(self.pose[0]-parked[0], self.pose[1]-parked[1]) > .03
+                        or abs(math.atan2(math.sin(self.pose[2]-parked[2]),
+                                         math.cos(self.pose[2]-parked[2]))) > .05):
+                    self.node.get_logger().error('Undock rejected: base moved during manipulation')
+                    return False
             c = ManipulationDock(now, self.pose, enabled=True,
                                  retreat_m=self.advance_m if reverse else None)
             self.controller = c
@@ -124,7 +136,9 @@ class RestaurantDocking:
                 self._zero()
                 if not reverse:
                     self.advance_m = c.travel_m
+                    self.docked_pose = self.pose if c.result == 'done' else None
                 elif c.result == 'done':
                     self.advance_m = 0.0
+                    self.docked_pose = None
             self.node.get_logger().info(f'Manipulation dock: reverse={reverse}, result={c.result}, travel_m={c.travel_m:.3f}')
         return c.result == 'done'

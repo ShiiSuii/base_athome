@@ -127,6 +127,14 @@ def test_item_classes(item, label):
     assert item_yolo_class(item) == label
 
 
+def test_coke_accepts_cans_and_bottles_but_rejects_other_items():
+    fake = NS(detect=lambda _: [((0, 0, 40, 60), .9, name)
+                               for name in ('can', 'bottle', 'apple')])
+    detector = RestaurantItemDetector(fake)
+    detector.label = item_yolo_class('coke')
+    assert [d[2] for d in detector.detect(None)] == ['can', 'bottle']
+
+
 def test_item_without_class_never_detects_or_grasps():
     arm, m, _ = harness()
     assert not arm.detect_item("chips", 1)

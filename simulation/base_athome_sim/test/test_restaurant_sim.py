@@ -23,6 +23,24 @@ from base_athome_perception.raised_hand import classify_raised_hand, RaisedHandS
 RESTAURANT_SDF = SIM_DIR / "worlds" / "restaurant.sdf"
 
 
+def test_manipulation_lab_monitors_every_collision_without_changing_geometry():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('manipulation_dock_lab',
+                                                SIM_DIR.parent / 'scripts/manipulation_dock_lab.py')
+    lab = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(lab)
+    source = '<sdf><model name="robot"><link name="a"><collision name="a1"><geometry><box><size>1 2 3</size></box></geometry></collision><collision name="a2"/></link><link name="b"><collision name="b1"/></link></model></sdf>'
+    root = ET.fromstring(lab.with_contact_sensors(source))
+    for link in root.findall('./model/link'):
+        collisions = {c.get('name') for c in link.findall('collision')}
+        assert {s.findtext('contact/collision') for s in link.findall('sensor')} == collisions
+        assert all(s.findtext('topic') == '/restaurant/contacts' for s in link.findall('sensor'))
+        assert all(s.findtext('contact/topic') == '/restaurant/contacts' for s in link.findall('sensor'))
+        for sensor in link.findall('sensor'):
+            link.remove(sensor)
+    assert ET.tostring(root) == ET.tostring(ET.fromstring(source))
+
+
 def test_make_customer_raised_hand_keypoints():
     """make_customer debe situar la muneca por encima de la cabeza y los hombros."""
     # Mano derecha levantada (de pie)

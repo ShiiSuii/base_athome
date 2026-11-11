@@ -210,7 +210,13 @@ def make_bag_detector(models_dir: str, wrist: bool = True):
 
 
 def make_detector(models_dir: str):
-    """WristDetector real, o SimColorDetector si ATHOME_SIM=1."""
-    if os.environ.get("ATHOME_SIM") == "1":
+    """Real detector, or color simulation by default.
+
+    ATHOME_SIM_WRIST_DETECTOR=yolo opts simulated camera images into the real
+    neural detector for textured Fuel props. It does not change motion guards,
+    simulated calibration storage, or the default hardware detector.
+    """
+    if (os.environ.get("ATHOME_SIM") == "1"
+            and os.environ.get("ATHOME_SIM_WRIST_DETECTOR") != "yolo"):
         return SimColorDetector()
     return WristDetector(models_dir)

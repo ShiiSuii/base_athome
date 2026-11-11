@@ -335,11 +335,13 @@ def test_script_arm_opt_in_defaults_off_in_both_modes():
     script = (Path(__file__).parents[1] / "scripts/restaurant.sh").read_text()
     assert "ARM=${ARM:-0}" in script
     prefix = script.split("HERE=", 1)[0]
+    env = {k: v for k, v in os.environ.items() if k != 'RESTAURANT_DOCK'}
     for arm, expected in (("0", "false"), ("1", "true")):
         result = subprocess.run(["bash", "-c", prefix + '\nprintf "%s\\n" "${ARM_ARG[@]}"'],
-                                env=dict(os.environ, ARM=arm), capture_output=True, text=True, check=True)
+                                env=dict(env, ARM=arm), capture_output=True, text=True, check=True)
         assert result.stdout.splitlines() == ["-p", f"arm:={expected}", "-p",
-                                              f"restaurant_node:allow_motion:={expected}"]
+                                              f"restaurant_node:allow_motion:={expected}",
+                                              "-p", "restaurant_dock:=false"]
     invocations = [s for s in script.splitlines() if "session_run_terminal ros2 run" in s]
     assert len(invocations) == 2
     assert all('"${ARM_ARG[@]}"' in s for s in invocations)

@@ -10,6 +10,8 @@ postgrasp retirado del mostrador, carry dentro de la envolvente de transporte y
 handover frente al cliente. Revisar limites, colisiones y recorridos completos
 con supervision antes de marcar cada entrada calibrated: true en ese YAML.
 Volver a ensenar invalida esa marca. No modificar arm_poses_and_limits.yaml.
+Coke/cola/beer accept bottle OR can detections (YOLO-World fallback); the
+original visual label is retained. A recognized drink is not proof of a grasp.
 """
 
 from copy import deepcopy
@@ -27,7 +29,7 @@ RESTAURANT_POSES = (
 ITEM_YOLO_CLASSES = {
     "apple": "apple", "orange": "orange", "banana": "banana",
     "bottle": "bottle", "cup": "cup", "wine glass": "wine glass",
-    "water": "bottle", "coke": "bottle", "cola": "bottle", "beer": "bottle",
+    "water": "bottle", "coke": "bottle|can", "cola": "bottle|can", "beer": "bottle|can",
     "soda": "bottle", "fanta": "bottle", "sprite": "bottle",
     "juice": "bottle", "orange juice": "bottle", "apple juice": "bottle",
     "milk": "bottle", "chocolate milk": "bottle", "lemonade": "bottle",
@@ -54,8 +56,12 @@ class RestaurantItemDetector:
         return self.detector.source
 
     def detect(self, frame):
-        label = self.label
-        return [d for d in self.detector.detect(frame) if d[2].casefold() == label]
+        # detect_blocking already accepts | alternatives. Preserve the detector's
+        # actual label (a can must not be relabelled a bottle); filter distractors.
+        labels = set((self.label or '').casefold().split('|'))
+        if not self.label:
+            return []
+        return [d for d in self.detector.detect(frame) if d[2].casefold() in labels]
 
 
 def item_yolo_class(item):
