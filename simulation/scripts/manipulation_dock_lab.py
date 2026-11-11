@@ -10,7 +10,9 @@ Results distinguish measured docking/retreat from UNTESTED physical grasp,
 Nav2 delivery and collision contacts. A dock-only result is always PARCIAL in
 the shared ledger. Invoke through sim_lab/tools/gz_turno.sh to reserve a turn.
 Camera resolution and rates match the production simulator; only the rear
-sensor is added. All child processes are owned and terminated on exit.
+sensor is added. --measure-seconds records receive frequency, maximum/p95 gaps
+and header age in sensor_rates.json without publishing motion during measurement.
+All child processes are owned and terminated on exit.
 """
 import argparse
 import datetime
@@ -33,6 +35,7 @@ def main():
     parser.add_argument('--output', required=True, type=Path)
     parser.add_argument('--iteration', required=True)
     parser.add_argument('--trials', type=int, default=1)
+    parser.add_argument('--measure-seconds', type=float, default=0.)
     args = parser.parse_args()
     out = args.output.resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -45,6 +48,9 @@ def main():
     from rclpy.callback_groups import ReentrantCallbackGroup
     from rclpy.executors import MultiThreadedExecutor
     from base_athome_skills.restaurant_docking import RestaurantDocking
+    from nav_msgs.msg import Odometry
+    from sensor_msgs.msg import LaserScan
+    from rclpy.qos import qos_profile_sensor_data
 
     urdf = Path(get_package_share_directory('hoverboard_base'))/'urdf/robot.urdf'
     rear = '''<link name="restaurant_rear_laser"/>
@@ -96,8 +102,13 @@ def main():
         node = Node('manipulation_dock_probe')
         node.cb_group = ReentrantCallbackGroup()
         dock = RestaurantDocking(node, lambda: rclpy.ok(), lambda: True)
-        sensor_times = {'front': [], 'rear': [], 'odom': []}
-        node.create_timer(.05, lambda: sensor_times['front'].append((time.monotonic(), dock.scan.received_at if dock.scan else None)), callback_group=node.cb_group)
+        sensor_times = {'/scan': [], '/restaurant/rear_scan': [], '/odom': []}
+        def record(topic, msg):
+            stamp = msg.header.stamp.sec + msg.header.stamp.nanosec*1e-9
+            sensor_times[topic].append((time.monotonic(), time.time()-stamp))
+        for topic, typ in (('/scan', LaserScan), ('/restaurant/rear_scan', LaserScan), ('/odom', Odometry)):
+            node.create_subscription(typ, topic, lambda msg, t=topic: record(t,msg),
+                                     qos_profile_sensor_data, callback_group=node.cb_group)
         executor = MultiThreadedExecutor(4)
         executor.add_node(node)
         thread = threading.Thread(target=executor.spin, daemon=True)
@@ -131,6 +142,23 @@ def main():
                             'data: '+json.dumps(gz_model.MODEL)],env=env,timeout=5,check=False)
             subprocess.run(['/home/athome/sim_lab/tools/capturar.sh',f'restaurant-manip/{args.iteration}_{trial+1}'],
                            env=env,timeout=20,check=False)
+            if args.measure_seconds > 0:
+                # Passive bounded measurement, no motion commands during this interval.
+                time.sleep(min(30., args.measure_seconds))
+                rates = {}
+                for topic, rows in sensor_times.items():
+                    rows = list(rows)
+                    gaps = sorted(b[0]-a[0] for a,b in zip(rows,rows[1:]))
+                    span = rows[-1][0]-rows[0][0] if len(rows)>1 else 0.
+                    rates[topic] = dict(messages=len(rows), span_s=span,
+                        hz=(len(rows)-1)/span if span else 0.,
+                        max_gap_s=max(gaps) if gaps else None,
+                        p95_gap_s=gaps[min(len(gaps)-1,int(len(gaps)*.95))] if gaps else None,
+                        gaps_over_300ms=sum(g>.3 for g in gaps),
+                        max_header_age_s=max((r[1] for r in rows),default=None))
+                (out/'sensor_rates.json').write_text(json.dumps(rates,indent=2)+'\n')
+                (out/f'sensor_times_{trial}.json').write_text(json.dumps(sensor_times))
+                print('SENSOR_RATES '+json.dumps(rates),flush=True)
             if not ok or not exit_ok:
                 break
             time.sleep(.5)
